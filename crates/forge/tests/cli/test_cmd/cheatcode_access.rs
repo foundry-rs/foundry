@@ -143,6 +143,56 @@ Ran 4 test suites [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)
     }
 }
 
+#[forgetest]
+async fn fork_create2_deployer_children_require_caller_access(prj: _, cmd: _) {
+    let (api, handle) = spawn(NodeConfig::test().with_disable_default_create2_deployer(true)).await;
+    prj.add_test("Create2Deployer.t.sol", CREATE2_DEPLOYER_ACCESS);
+    let mut run = |fork_url: bool| {
+        cmd.forge_fuse();
+        cmd.unset_env("FOUNDRY_ACCESS_REGRESSION_UNUSED");
+        cmd.args(["test", "--evm-version", "prague", "--match-contract", "Create2DeployerTest"]);
+        // Fork either from the command line or from inside the test.
+        if fork_url {
+            cmd.unset_env("FOUNDRY_ACCESS_REGRESSION_FORK_URL");
+            cmd.args(["--fork-url", &handle.http_endpoint()]);
+        } else {
+            cmd.env("FOUNDRY_ACCESS_REGRESSION_FORK_URL", handle.http_endpoint());
+        }
+        cmd.assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/Create2Deployer.t.sol:Create2DeployerTest
+[PASS] testForkCreate2DeployerChildrenRequireCallerAccess() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+    };
+    for deployer_on_fork in [false, true] {
+        if deployer_on_fork {
+            api.anvil_set_code(
+                foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER,
+                Bytes::from_static(foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE),
+            )
+            .await
+            .unwrap();
+        }
+        // A linked library makes the runner deploy it through the factory.
+        for linked_library in [false, true] {
+            let library = prj.add_source("LinkedReader.sol", LINKED_LIBRARY);
+            if !linked_library {
+                std::fs::remove_file(library).unwrap();
+            }
+            run(true);
+            run(false);
+        }
+    }
+
+    // Foundry installs the default factory even when another one is configured.
+    prj.update_config(|config| config.create2_deployer = Address::with_last_byte(0xde));
+    run(false);
+}
+
 const CHEATCODE_ACCESS_COMPATIBILITY: &str = r#"
 interface Vm {
     function prank(address sender) external;
@@ -547,7 +597,6 @@ contract Create2RedirectImplementation is UsesVm {
     address constant CREATE2_FACTORY = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
     Create2EnvChanger internal changer;
     bool internal issuerAuthorized;
-    bool internal factoryAuthorized;
 
     function testForkCreate2RedirectAuthorization() public {
         for (uint256 mode; mode < 4; mode++) {
@@ -567,12 +616,13 @@ contract Create2RedirectImplementation is UsesVm {
                 require(created == issuerAuthorized, "constructor authorization changed");
             }
 
-            // Explicit factory calls retain their own authorization after successful or failed creates.
+            // Explicit factory calls are authorized by the issuing code, not by the factory, after
+            // successful or failed creates.
             (bool ok, bytes memory output) = CREATE2_FACTORY.call(
                 abi.encodePacked(bytes32(mode + 4), type(EnvReader).creationCode)
             );
             require(ok && output.length == 20, "explicit factory creation failed");
-            checkAccess(EnvReader(address(bytes20(output))), factoryAuthorized);
+            checkAccess(EnvReader(address(bytes20(output))), issuerAuthorized);
         }
     }
 
@@ -585,8 +635,7 @@ contract Create2RedirectImplementation is UsesVm {
 
 abstract contract Create2RedirectFixture is Create2RedirectImplementation {
     function setUpImplementation(bool authorized, bool authorizeFactory) internal {
-        factoryAuthorized = authorizeFactory;
-        if (factoryAuthorized) vm.allowCheatcodes(CREATE2_FACTORY);
+        if (authorizeFactory) vm.allowCheatcodes(CREATE2_FACTORY);
         changer = new Create2EnvChanger();
         issuerAuthorized = authorized;
         address implementation = address(0x1234);
@@ -621,4 +670,154 @@ contract UntrustedIssuerUntrustedFactoryCreate2RedirectTest is Create2RedirectFi
     }
 }
 
+"#;
+
+const CREATE2_DEPLOYER_ACCESS: &str = r#"
+interface Vm {
+    function chainId(uint256 newChainId) external;
+    function createSelectFork(string calldata urlOrAlias) external returns (uint256);
+    function envOr(string calldata name, string calldata defaultValue) external view returns (string memory);
+    function envOr(string calldata name, uint256 defaultValue) external view returns (uint256);
+    function etch(address target, bytes calldata code) external;
+    function addr(uint256 privateKey) external pure returns (address);
+    function executeTransaction(bytes calldata rawTx) external returns (bytes memory);
+    function getNonce(address account) external view returns (uint64);
+    function sign(uint256 privateKey, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
+}
+
+abstract contract UsesVm {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function readDefault() internal view returns (uint256) {
+        return vm.envOr("FOUNDRY_ACCESS_REGRESSION_UNUSED", uint256(7));
+    }
+}
+
+contract ConstructorReader is UsesVm {
+    uint256 public constructorValue;
+
+    constructor() {
+        constructorValue = readDefault();
+    }
+}
+
+interface EnvChanger {
+    function changeChainId() external;
+}
+
+contract DeployerRelay {
+    address constant CREATE2_FACTORY = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
+
+    function deploy(bytes32 salt) public returns (bool ok) {
+        (ok,) = CREATE2_FACTORY.call(abi.encodePacked(salt, type(ConstructorReader).creationCode));
+    }
+
+    function deployAfterEnvChange(bytes32 salt) external returns (bool) {
+        EnvChanger(address(this)).changeChainId();
+        return deploy(salt);
+    }
+}
+
+contract Create2DeployerTest is UsesVm {
+    address constant CREATE2_FACTORY = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
+    address constant RELAY = address(0x1234);
+
+    function setUp() public {
+        string memory url = vm.envOr("FOUNDRY_ACCESS_REGRESSION_FORK_URL", string(""));
+        if (bytes(url).length != 0) vm.createSelectFork(url);
+        vm.etch(RELAY, type(DeployerRelay).runtimeCode);
+    }
+
+    function changeChainId() external {
+        vm.chainId(block.chainid + 1);
+    }
+
+    function testForkCreate2DeployerChildrenRequireCallerAccess() public {
+        // Code without cheatcode access must not gain it by deploying through the factory, also
+        // when authorized code delegates to it and after it changes the environment.
+        require(!DeployerRelay(RELAY).deploy(bytes32(0)), "unauthorized factory child read cheatcodes");
+        bytes[2] memory delegated = [
+            abi.encodeCall(DeployerRelay.deploy, (bytes32(uint256(1)))),
+            abi.encodeCall(DeployerRelay.deployAfterEnvChange, (bytes32(uint256(2))))
+        ];
+        for (uint256 i; i < delegated.length; i++) {
+            (bool ok, bytes memory output) = RELAY.delegatecall(delegated[i]);
+            require(ok && !abi.decode(output, (bool)), "delegated factory child read cheatcodes");
+        }
+        (bool created,) = CREATE2_FACTORY.call(abi.encodePacked(bytes32(uint256(3)), type(ConstructorReader).creationCode));
+        require(created, "authorized factory child lost cheatcode access");
+
+        // A transaction to the factory does not reuse the authorization of an earlier call.
+        (bool ok,) = address(vm).call(abi.encodeCall(
+            Vm.executeTransaction, (factoryTransaction(bytes32(uint256(4)), type(ConstructorReader).creationCode))
+        ));
+        require(!ok, "factory transaction child read cheatcodes");
+        vm.executeTransaction(factoryTransaction(bytes32(uint256(5)), type(DeployerRelay).creationCode));
+    }
+
+    /// Returns a signed legacy transaction without a chain ID that deploys `initCode` through the
+    /// factory.
+    function factoryTransaction(bytes32 salt, bytes memory initCode) internal returns (bytes memory) {
+        uint256 key = 1;
+        bytes[] memory fields = new bytes[](9);
+        fields[0] = rlp(vm.getNonce(vm.addr(key)));
+        fields[1] = rlp(0);
+        fields[2] = rlp(1_000_000);
+        fields[3] = rlp(abi.encodePacked(CREATE2_FACTORY));
+        fields[4] = rlp(0);
+        fields[5] = rlp(abi.encodePacked(salt, initCode));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(key, keccak256(rlpList(fields, 6)));
+        fields[6] = rlp(v);
+        fields[7] = rlp(uint256(r));
+        fields[8] = rlp(uint256(s));
+        return rlpList(fields, 9);
+    }
+
+    function rlp(uint256 value) internal pure returns (bytes memory) {
+        return rlp(trimmed(value));
+    }
+
+    function rlp(bytes memory value) internal pure returns (bytes memory) {
+        if (value.length == 1 && uint8(value[0]) < 0x80) return value;
+        return bytes.concat(rlpHeader(0x80, value.length), value);
+    }
+
+    function rlpList(bytes[] memory items, uint256 count) internal pure returns (bytes memory payload) {
+        for (uint256 i; i < count; i++) payload = bytes.concat(payload, items[i]);
+        return bytes.concat(rlpHeader(0xc0, payload.length), payload);
+    }
+
+    function rlpHeader(uint256 offset, uint256 length) internal pure returns (bytes memory) {
+        if (length <= 55) return abi.encodePacked(uint8(offset + length));
+        bytes memory size = trimmed(length);
+        return bytes.concat(abi.encodePacked(uint8(offset + 55 + size.length)), size);
+    }
+
+    /// Returns `value` as big-endian bytes without leading zeros.
+    function trimmed(uint256 value) internal pure returns (bytes memory out) {
+        while (value != 0) {
+            out = bytes.concat(abi.encodePacked(uint8(value)), out);
+            value >>= 8;
+        }
+    }
+}
+"#;
+
+const LINKED_LIBRARY: &str = r#"
+interface Vm {
+    function envOr(string calldata name, uint256 defaultValue) external view returns (uint256);
+}
+
+library LinkedReader {
+    function read() external view returns (uint256) {
+        return Vm(address(uint160(uint256(keccak256("hevm cheat code")))))
+            .envOr("FOUNDRY_ACCESS_REGRESSION_UNUSED", uint256(7));
+    }
+}
+
+contract LinkedReaderUser {
+    function read() external view returns (uint256) {
+        return LinkedReader.read();
+    }
+}
 "#;

@@ -604,6 +604,9 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         // transaction runs in.
         let origin_override = cheats.origin_override.take();
         let create2_redirects = cheats.pending_create2_redirects.len();
+        // The root frame skips the cheatcode hooks, so a call into the CREATE2 deployer recorded
+        // outside the transaction must not authorize its create.
+        cheats.create2_deployer_call = None;
         // The nested transaction has its own journal.
         let snapshot_restores = mem::take(&mut cheats.snapshot_restores);
         // The nested transaction's persistent writes refer to its own journal, so they are kept
@@ -1368,8 +1371,14 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         // The frame EVM's hooks see their own interpreter, not the caller's memory the input of
         // a call instruction's message is a range of.
         message.input = message.input.to_bytes(interp.memory()).into();
-        // The new root interpreter describes the CREATE itself, so preserve its issuing code.
-        let creator = (message.kind.is_create() && interp.message().depth < message.depth)
+        // The new root interpreter describes the message itself, so preserve the code issuing a
+        // CREATE or a call into the CREATE2 deployer.
+        let issues_create = message.kind.is_create()
+            || self
+                .cheatcodes
+                .as_deref()
+                .is_some_and(|cheats| cheats.is_create2_deployer(message.code_address));
+        let creator = (issues_create && interp.message().depth < message.depth)
             .then_some(interp.message().code_address);
         let previous_creator = self
             .cheatcodes
