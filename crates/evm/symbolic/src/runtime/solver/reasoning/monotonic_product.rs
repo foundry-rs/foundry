@@ -307,6 +307,28 @@ fn expr_less_or_equal<'a>(
         {
             true
         }
+        // `c + x <= c + y` for `x <= y` when the larger sum does not wrap.
+        (SymExprKind::BinOp(SymBinOp::Add, a, b), SymExprKind::BinOp(SymBinOp::Add, c, d))
+            if bounds
+                .word_range(c)
+                .zip(bounds.word_range(d))
+                .is_some_and(|((_, c), (_, d))| c.checked_add(d).is_some())
+                && [(a, b), (b, a)].into_iter().any(|(common, x)| {
+                    [(c, d), (d, c)].into_iter().any(|(other, y)| {
+                        common == other && expr_less_or_equal(x, y, facts, bounds)
+                    })
+                }) =>
+        {
+            true
+        }
+        // `x - p <= y - p` for `p <= x <= y`, so neither difference wraps.
+        (SymExprKind::BinOp(SymBinOp::Sub, x, p), SymExprKind::BinOp(SymBinOp::Sub, y, q))
+            if p == q
+                && expr_less_or_equal(p, x, facts, bounds)
+                && expr_less_or_equal(x, y, facts, bounds) =>
+        {
+            true
+        }
         // A failed bounded proof falls through: later arms can still order non-wrapping products.
         (
             SymExprKind::BinOp(SymBinOp::Mul, left_a, left_b),
