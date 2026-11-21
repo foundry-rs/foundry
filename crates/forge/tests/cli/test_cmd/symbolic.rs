@@ -9141,6 +9141,90 @@ contract SymbolicDowncastShare {
     }
 }
 
+// A withdrawal pays out `balance * shares / supply`, at most the balance once `shares <= supply`,
+// so the payout fits the balance's type and a checked fee multiply on it cannot overflow. Shares
+// above the supply can pay out more than the balance, and without that order neither factor
+// bounds the payout.
+#[forgetest_init]
+fn symbolic_proves_payout_share_bounded(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_payout_share_bounded");
+    prj.add_test(
+        "SymbolicPayoutShare.t.sol",
+        r#"
+contract SymbolicPayoutShare {
+    function checkFeeOnPayout(uint128 balance, uint256 shares, uint256 supply, uint16 bps)
+        public
+        pure
+    {
+        require(supply != 0 && shares <= supply && bps <= 10000);
+        uint256 payout = uint256(balance) * shares / supply;
+        assert(payout * bps / 10000 <= payout);
+    }
+
+    function checkPayoutFits(uint128 balance, uint128 shares, uint128 supply) public pure {
+        require(supply != 0 && shares <= supply);
+        assert(uint256(balance) * shares / supply <= type(uint128).max);
+    }
+
+    function checkSharesAboveSupply(uint128 balance, uint128 shares, uint128 supply) public pure {
+        require(supply != 0 && shares <= uint256(supply) + 1);
+        assert(uint256(balance) * shares / supply <= balance);
+    }
+
+    function checkUnorderedNarrowShares(uint256 balance, uint128 shares, uint128 supply)
+        public
+        pure
+    {
+        require(supply != 0);
+        assert(balance * shares / supply <= type(uint128).max);
+    }
+
+    function checkUnorderedNarrowBalance(uint128 balance, uint256 shares, uint128 supply)
+        public
+        pure
+    {
+        require(supply != 0);
+        assert(balance * shares / supply <= type(uint128).max);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicPayoutShare"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+
+        for signature in [
+            "checkFeeOnPayout(uint128,uint256,uint256,uint16)",
+            "checkPayoutFits(uint128,uint128,uint128)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        }
+
+        for signature in [
+            "checkSharesAboveSupply(uint128,uint128,uint128)",
+            "checkUnorderedNarrowShares(uint256,uint128,uint128)",
+            "checkUnorderedNarrowBalance(uint128,uint256,uint128)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "optimized={optimized}: {result}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "optimized={optimized}: {result}"
+            );
+        }
+    }
+}
+
 // Fee splits and payment splitters floor each share `w * a / k`, and two shares with
 // `a + b <= k` sum to at most `w`, so their checked sum cannot overflow either. A wrapped
 // `a + b <= k` does not bound the shares.
