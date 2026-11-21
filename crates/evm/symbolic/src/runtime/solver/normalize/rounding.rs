@@ -265,7 +265,7 @@ impl ConstraintContext {
                     return Some(nonzero(interval(large)) && !rest.min.is_zero());
                 }
                 // Rounding up adds at most `d - 1`, so `(x * y + c) / d <= x` still holds once
-                // `c <= d - 1`; a wrapped sum only shrinks the dividend.
+                // `c <= d - 1`; a wrapped product or sum only shrinks the dividend.
                 let mut bounded = |dividend: &SymExpr, addend: Option<&SymExpr>| {
                     let SymExprKind::BinOp(SymBinOp::Mul, left, right) = dividend.kind() else {
                         return false;
@@ -287,7 +287,6 @@ impl ConstraintContext {
                     }) && (other == divisor
                         || interval(other).is_some_and(|other| other.max <= range.min)
                         || self.asserts_less_or_equal(other, divisor))
-                        && self.mul_cannot_overflow_256(left, right)
                 };
                 // `round_down(n, t) <= n` (zero when `t == 0`), so dividing the rounded product
                 // is bounded by `n / d`. The EVM `DIV` may still carry its `t == 0` guard.
@@ -304,8 +303,9 @@ impl ConstraintContext {
                     SymExprKind::BinOp(SymBinOp::Add, a, b) => [(a, b), (b, a)]
                         .into_iter()
                         .any(|(product, addend)| bounded(product, Some(addend))),
-                    // `(x * y + d) - 1`. A wrapped sum is smaller, and a sum that wraps to zero
-                    // gives `MAX == x * y + d - 1` exactly.
+                    // `(x * y + d) - 1`. A wrapped sum is smaller. A sum that wraps to zero gives
+                    // `MAX`: either `MAX == x * y + d - 1` exactly, or `x * y` wrapped and
+                    // `x >= 2**256 / d` bounds `MAX / d`.
                     SymExprKind::BinOp(SymBinOp::Sub, sum, one)
                         if one.as_const() == Some(U256::ONE)
                             && let SymExprKind::BinOp(SymBinOp::Add, a, b) = sum.kind()
