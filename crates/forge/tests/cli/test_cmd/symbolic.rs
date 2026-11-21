@@ -8926,17 +8926,15 @@ contract SymbolicRemainingRatio {
             .clone();
         let result = json_test_result(&output, "checkRemainingRatio(uint256,uint256)");
         assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
-        for signature in ["checkUnrelatedRemainder(uint256,uint256,uint256)"] {
-            let result = json_test_result(&output, signature);
-            assert_eq!(
-                result["symbolic"]["status"], "fail_counterexample",
-                "{signature}, optimized={optimized}: {result}"
-            );
-            assert_eq!(
-                result["symbolic"]["replay"]["status"], "confirmed",
-                "{signature}, optimized={optimized}: {result}"
-            );
-        }
+        let result = json_test_result(&output, "checkUnrelatedRemainder(uint256,uint256,uint256)");
+        assert_eq!(
+            result["symbolic"]["status"], "fail_counterexample",
+            "optimized={optimized}: {result}"
+        );
+        assert_eq!(
+            result["symbolic"]["replay"]["status"], "confirmed",
+            "optimized={optimized}: {result}"
+        );
     }
 }
 
