@@ -8946,6 +8946,65 @@ contract SymbolicStrictCap {
     }
 }
 
+// A SafeCast downcast of `amount * weight / type(uint16).max`, a share by a uint16 weight,
+// succeeds and keeps the share, since it fits the amount's type. A smaller divisor may not fit,
+// and a sum one bit wider than the mask keeps it.
+#[forgetest_init]
+fn symbolic_proves_downcast_share_fits(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_downcast_share_fits");
+    prj.add_test(
+        "SymbolicDowncastShare.t.sol",
+        r#"
+contract SymbolicDowncastShare {
+    error Overflow();
+
+    function toUint96(uint256 value) internal pure returns (uint96) {
+        if (value > type(uint96).max) revert Overflow();
+        return uint96(value);
+    }
+
+    function checkDowncastShare(uint96 amount, uint16 weight) public pure {
+        assert(toUint96(uint256(amount) * weight / type(uint16).max) <= amount);
+    }
+
+    function checkWideSumKeepsMask(uint96 a, uint96 b) public pure {
+        uint256 s = uint256(a) + b;
+        if (s >= 2 ** 96) assert(uint96(s) < s);
+    }
+
+    function checkDowncastBelowWhole(uint96 amount, uint16 weight) public pure {
+        assert(toUint96(uint256(amount) * weight / (uint256(type(uint16).max) - 1)) <= amount);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicDowncastShare"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        for signature in
+            ["checkDowncastShare(uint96,uint16)", "checkWideSumKeepsMask(uint96,uint96)"]
+        {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        }
+        let result = json_test_result(&output, "checkDowncastBelowWhole(uint96,uint16)");
+        assert_eq!(
+            result["symbolic"]["status"], "fail_counterexample",
+            "optimized={optimized}: {result}"
+        );
+        assert_eq!(
+            result["symbolic"]["replay"]["status"], "confirmed",
+            "optimized={optimized}: {result}"
+        );
+    }
+}
+
 // Fee splits and payment splitters floor each share `w * a / k`, and two shares with
 // `a + b <= k` sum to at most `w`, so their checked sum cannot overflow either. A wrapped
 // `a + b <= k` does not bound the shares.
