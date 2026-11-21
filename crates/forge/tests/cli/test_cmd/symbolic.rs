@@ -8883,6 +8883,66 @@ contract SymbolicVestingSchedule {
     }
 }
 
+// A collateral ratio `collateral * WAD / debt` of at least a minimum of 100% or more implies the
+// collateral covers the debt, since `collateral < debt` makes the ratio below `WAD`. A minimum
+// just under 100% does not, and collateral equal to the debt reaches a ratio of exactly `WAD`.
+#[forgetest_init]
+fn symbolic_proves_collateral_ratio_covers_debt(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_collateral_ratio_covers_debt");
+    prj.add_test(
+        "SymbolicCollateralRatio.t.sol",
+        r#"
+contract SymbolicCollateralRatio {
+    uint256 internal constant WAD = 1e18;
+
+    function checkRatioCoversDebt(uint128 collateral, uint128 debt, uint128 minRatio) public pure {
+        require(debt != 0 && minRatio >= WAD);
+        require(uint256(collateral) * WAD / debt >= minRatio);
+        assert(collateral >= debt);
+    }
+
+    function checkMinimumBelowOne(uint128 collateral, uint128 debt, uint128 minRatio) public pure {
+        require(debt != 0 && minRatio >= WAD - 1);
+        require(uint256(collateral) * WAD / debt >= minRatio);
+        assert(collateral >= debt);
+    }
+
+    function checkCollateralEqualsDebt(uint128 collateral, uint128 debt) public pure {
+        require(debt != 0 && collateral <= debt);
+        require(uint256(collateral) * WAD / debt >= WAD);
+        assert(collateral < debt);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicCollateralRatio"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        let result = json_test_result(&output, "checkRatioCoversDebt(uint128,uint128,uint128)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        for signature in [
+            "checkMinimumBelowOne(uint128,uint128,uint128)",
+            "checkCollateralEqualsDebt(uint128,uint128)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "{signature}, optimized={optimized}: {result}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "{signature}, optimized={optimized}: {result}"
+            );
+        }
+    }
+}
+
 // Fee splits and payment splitters floor each share `w * a / k`, and two shares with
 // `a + b <= k` sum to at most `w`, so their checked sum cannot overflow either. A wrapped
 // `a + b <= k` does not bound the shares.
