@@ -297,13 +297,14 @@ fn expr_less_or_equal<'a>(
         {
             true
         }
-        // `a <= a + b` when the sum does not wrap.
+        // `left <= a` or `left <= b`, so `left <= a + b` when the sum does not wrap.
         (_, SymExprKind::BinOp(SymBinOp::Add, a, b))
-            if (a == left || b == left)
-                && bounds
-                    .word_range(a)
-                    .zip(bounds.word_range(b))
-                    .is_some_and(|((_, a), (_, b))| a.checked_add(b).is_some()) =>
+            if bounds
+                .word_range(a)
+                .zip(bounds.word_range(b))
+                .is_some_and(|((_, a), (_, b))| a.checked_add(b).is_some())
+                && (expr_less_or_equal(left, a, facts, bounds)
+                    || expr_less_or_equal(left, b, facts, bounds)) =>
         {
             true
         }

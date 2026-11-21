@@ -9075,7 +9075,8 @@ contract SymbolicDivisorOrder {
 }
 
 // A balance scaled by an index that only grows stays at least the balance:
-// `principal * newIndex / oldIndex >= principal`.
+// `principal * newIndex / oldIndex >= principal`. Aave rounds `rayMul` half up, and
+// `scaled * index + HALF_RAY >= scaled * RAY` once `index >= RAY`.
 #[forgetest_init]
 fn symbolic_proves_indexed_balance_growth(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_indexed_balance_growth");
@@ -9083,6 +9084,34 @@ fn symbolic_proves_indexed_balance_growth(prj: _, cmd: _) {
         "SymbolicIndexedBalance.t.sol",
         r#"
 contract SymbolicIndexedBalance {
+    uint256 internal constant RAY = 1e27;
+    uint256 internal constant HALF_RAY = 0.5e27;
+
+    uint128 internal scaledBalance;
+    uint128 internal liquidityIndex;
+
+    // Half-up `rayMul` as in Aave v3's `WadRayMath`.
+    function rayMul(uint256 a, uint256 b) internal pure returns (uint256 c) {
+        assembly {
+            if iszero(or(iszero(b), iszero(gt(a, div(sub(not(0), HALF_RAY), b))))) { revert(0, 0) }
+            c := div(add(mul(a, b), HALF_RAY), RAY)
+        }
+    }
+
+    function checkRayBalanceGrows(uint128 scaled, uint128 index) public {
+        require(index >= RAY);
+        scaledBalance = scaled;
+        liquidityIndex = index;
+        assert(rayMul(scaledBalance, liquidityIndex) >= scaledBalance);
+    }
+
+    function checkRayIndexBelowOne(uint128 scaled, uint128 index) public {
+        require(index >= RAY - 1);
+        scaledBalance = scaled;
+        liquidityIndex = index;
+        assert(rayMul(scaledBalance, liquidityIndex) >= scaledBalance);
+    }
+
     function checkBalanceGrows(uint128 principal, uint128 oldIndex, uint128 newIndex) public pure {
         require(oldIndex != 0 && oldIndex <= newIndex);
         assert(uint256(principal) * newIndex / oldIndex >= principal);
@@ -9127,14 +9156,19 @@ contract SymbolicIndexedBalance {
             .stdout
             .clone();
 
-        let result = json_test_result(&output, "checkBalanceGrows(uint128,uint128,uint128)");
-        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
-        assert_eq!(
-            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
-            "optimized={optimized}"
-        );
+        for signature in
+            ["checkBalanceGrows(uint128,uint128,uint128)", "checkRayBalanceGrows(uint128,uint128)"]
+        {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "pass", "{signature}, optimized={optimized}");
+            assert_eq!(
+                result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+                "{signature}, optimized={optimized}"
+            );
+        }
 
         for signature in [
+            "checkRayIndexBelowOne(uint128,uint128)",
             "checkIndexShrank(uint128,uint128,uint128)",
             "checkWrappingProduct(uint256,uint256,uint256)",
             "checkOtherPrincipal(uint128,uint128,uint128,uint128)",
