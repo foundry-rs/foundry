@@ -444,6 +444,7 @@ jobs:
 
           echo "Building $TARGET with features: $features"
           flags=(--locked --target "$TARGET" --profile "$RUST_PROFILE"
+            -p anvil -p cast -p chisel -p forge -p solar
             --no-default-features --features "$features")
 
           # `jemalloc` is not fully supported on MSVC or aarch64 Linux.
@@ -537,7 +538,10 @@ jobs:
           cat "$FOUNDRY_CHECKSUM"
 
       - name: Install sbom-attest
-        run: cargo install sbom-attest --version 0.4.0 --locked
+        run: |
+          cargo install sbom-attest --locked \
+            --git https://github.com/Mattbusel/sbom-attest \
+            --rev 33863ad70539898fd9c1b0c7410bd6fff8a8c8f2
 
       - name: Generate SBOM (SPDX)
         env:

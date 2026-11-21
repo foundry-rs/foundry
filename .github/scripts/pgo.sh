@@ -76,7 +76,7 @@ printf '%s  %s\n' b8b0642d46838575d3177628b685564b52f51f2aee546cb4dce781951d23c6
 chmod +x "$solc"
 
 bins=(anvil cast chisel forge solar)
-bin_args=(--workspace)
+bin_args=()
 for name in "${bins[@]}"; do
   bin_args+=(--bin "$name")
 done
