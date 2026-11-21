@@ -7923,8 +7923,9 @@ mod tests {
                 err,
                 "failed to extract foundry config:\n\
                  foundry config error: Key collision detected in profile 'default' when extending \
-                 'base.toml'. Conflicting keys: [\"tracing\"]. Use 'extends.strategy' or \
-                 'extends_strategy' to specify how to handle conflicts.\n"
+                 'base.toml'. Conflicting keys: [\"tracing\"]. Remove the conflicting key from one \
+                 file, or set 'extends.strategy' to 'extend-arrays' (the default) or \
+                 'replace-arrays'.\n"
             );
 
             Ok(())
