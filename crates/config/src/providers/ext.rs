@@ -249,7 +249,8 @@ impl TomlFileProvider {
                             if !collisions.is_empty() {
                                 return Err(Error::custom(format!(
                                     "Key collision detected in profile '{profile_str}' when extending '{extends_path}'. \
-                                    Conflicting keys: {collisions:?}. Use 'extends.strategy' or 'extends_strategy' to specify how to handle conflicts."
+                                    Conflicting keys: {collisions:?}. Remove them from one file, or set `strategy` in \
+                                    `extends` to \"extend-arrays\" (the default) or \"replace-arrays\"."
                                 )));
                             }
                         }
