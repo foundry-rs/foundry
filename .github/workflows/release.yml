@@ -449,7 +449,9 @@ jobs:
           # `jemalloc` is not fully supported on MSVC or aarch64 Linux.
           if [[ "$TARGET" != *msvc* && "$TARGET" != "aarch64-unknown-linux-gnu" ]]; then
             flags+=(--features jemalloc)
+            features="${features},jemalloc"
           fi
+          echo "RELEASE_FEATURES=$features" >> "$GITHUB_ENV"
 
           [[ "$TARGET" == *windows* ]] && ext=".exe"
 
@@ -534,20 +536,21 @@ jobs:
           fi
           cat "$FOUNDRY_CHECKSUM"
 
-      - name: Install Syft
-        uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+      - name: Install sbom-attest
+        run: cargo install sbom-attest --version 0.4.0 --locked
 
       - name: Generate SBOM (SPDX)
         env:
           FOUNDRY_SBOM: ${{ steps.artifacts.outputs.foundry_sbom }}
           VERSION_NAME: ${{ (env.IS_NIGHTLY == 'true' && 'nightly') || needs.prepare.outputs.tag_name }}
+          TARGET: ${{ matrix.target }}
         shell: bash
         run: |
           set -euo pipefail
-          syft scan dir:. \
-            --source-name foundry \
-            --source-version "$VERSION_NAME" \
-            -o spdx-json="$FOUNDRY_SBOM"
+          sbom-attest generate --locked -p anvil,cast,chisel,forge,solar \
+            --target "$TARGET" --no-default-features --features "$RELEASE_FEATURES" \
+            --name foundry --product-version "$VERSION_NAME" \
+            --spdx "$FOUNDRY_SBOM"
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
