@@ -295,6 +295,13 @@ fn expr_less_or_equal<'a>(
     facts.less_or_equal_results.borrow_mut().insert(key.clone(), false);
 
     let result = match (left.kind(), right.kind()) {
+        // `x - e <= x` for `e <= x`, so the difference does not wrap, as for an accrued index
+        // delta.
+        (SymExprKind::BinOp(SymBinOp::Sub, minuend, subtrahend), _)
+            if minuend == right && expr_less_or_equal(subtrahend, minuend, facts, bounds) =>
+        {
+            true
+        }
         (
             SymExprKind::BinOp(SymBinOp::UDiv, left_num, left_den),
             SymExprKind::BinOp(SymBinOp::UDiv, right_num, right_den),

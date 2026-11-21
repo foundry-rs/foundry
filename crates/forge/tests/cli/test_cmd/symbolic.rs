@@ -9141,6 +9141,61 @@ contract SymbolicDowncastShare {
     }
 }
 
+// Reward accrual scales the delta `rewardPerToken - paid`, at most the full index once
+// `paid <= rewardPerToken`, so the accrued amount is at most `balance * rewardPerToken / WAD`. A
+// delta taken from another index is not bounded by it.
+#[forgetest_init]
+fn symbolic_proves_accrued_delta_bounded(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_accrued_delta_bounded");
+    prj.add_test(
+        "SymbolicAccruedDelta.t.sol",
+        r#"
+contract SymbolicAccruedDelta {
+    uint256 internal constant WAD = 1e18;
+
+    function checkEarnedBelowAccrual(uint128 balance, uint128 rewardPerToken, uint128 paid)
+        public
+        pure
+    {
+        require(paid <= rewardPerToken);
+        uint256 earned = uint256(balance) * (uint256(rewardPerToken) - paid) / WAD;
+        assert(earned <= uint256(balance) * rewardPerToken / WAD);
+    }
+
+    function checkOtherIndex(uint128 balance, uint128 rewardPerToken, uint128 other, uint128 paid)
+        public
+        pure
+    {
+        require(paid <= other);
+        uint256 earned = uint256(balance) * (uint256(other) - paid) / WAD;
+        assert(earned <= uint256(balance) * rewardPerToken / WAD);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicAccruedDelta"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        let result = json_test_result(&output, "checkEarnedBelowAccrual(uint128,uint128,uint128)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        let result = json_test_result(&output, "checkOtherIndex(uint128,uint128,uint128,uint128)");
+        assert_eq!(
+            result["symbolic"]["status"], "fail_counterexample",
+            "optimized={optimized}: {result}"
+        );
+        assert_eq!(
+            result["symbolic"]["replay"]["status"], "confirmed",
+            "optimized={optimized}: {result}"
+        );
+    }
+}
+
 // Fee splits and payment splitters floor each share `w * a / k`, and two shares with
 // `a + b <= k` sum to at most `w`, so their checked sum cannot overflow either. A wrapped
 // `a + b <= k` does not bound the shares.
