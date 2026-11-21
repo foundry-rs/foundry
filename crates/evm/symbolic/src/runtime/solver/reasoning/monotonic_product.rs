@@ -30,6 +30,10 @@ pub(crate) fn product_monotonic_unsat_normalized(constraints: &[SymBoolExpr]) ->
             )
             || less_or_equal_comparison(constraint).is_some_and(|(left, right)| {
                 successor_product_exceeds(left, right, &facts, &bounds)
+                    || quotient_below_scale(right, left, &facts, &bounds)
+                    || facts.less_or_equal.iter().any(|(small, large)| {
+                        *small == right && quotient_below_scale(large, left, &facts, &bounds)
+                    })
             })
             || disequality(constraint).is_some_and(|(left, right)| {
                 expr_less_or_equal(left, right, &facts, &bounds)
@@ -753,5 +757,26 @@ fn successor_product_exceeds(
             bounds.word_range(u).is_some_and(|(_, max)| max < U256::MAX)
                 && bounds.mul_cannot_overflow_256(successor, c)
                 && product_less_or_equal_known(x, y, u, c, facts, bounds)
+        })
+}
+
+/// Returns whether `quotient = x * scale / d` is below `scale` because `x < d`, refuting
+/// `scale <= quotient` as in a collateral ratio of at least one with collateral below debt.
+/// `x * scale < d * scale` even when the product wraps, and `d > x` makes `d` nonzero.
+fn quotient_below_scale(
+    quotient: &SymExpr,
+    scale: &SymExpr,
+    facts: &OrderFacts<'_>,
+    bounds: &ConstraintContext,
+) -> bool {
+    let SymExprKind::BinOp(SymBinOp::UDiv, product, divisor) = quotient.kind() else {
+        return false;
+    };
+    let Some((a, b)) = mul_operands(product) else { return false };
+    let Some(x) = (a == scale).then_some(b).or((b == scale).then_some(a)) else { return false };
+    (facts.positive.contains(scale)
+        || bounds.word_range(scale).is_some_and(|(min, _)| !min.is_zero()))
+        && facts.less_than.iter().any(|(small, large)| {
+            *large == divisor && (*small == x || expr_less_or_equal(x, small, facts, bounds))
         })
 }
