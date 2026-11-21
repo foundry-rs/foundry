@@ -8883,6 +8883,70 @@ contract SymbolicVestingSchedule {
     }
 }
 
+// Unoptimized checked multiplication by a constant guards `x != 0 && x <= MAX / c`. With nonzero
+// factors that fit, intervals decide both conjuncts, so a scaled product such as Uniswap V2's
+// `reserveIn * amountOut * 1000` is proved without the solver. A zero factor still reaches its
+// counterexample.
+#[forgetest_init]
+fn symbolic_decides_unoptimized_constant_multiply_guard(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_decides_unoptimized_constant_multiply_guard");
+    prj.add_test(
+        "SymbolicConstantMultiplyGuard.t.sol",
+        r#"
+contract SymbolicConstantMultiplyGuard {
+    function checkScaledQuotient(uint112 reserveIn, uint112 amountOut, uint112 denominator)
+        public
+        pure
+    {
+        require(reserveIn != 0 && amountOut != 0 && denominator != 0);
+        uint256 numerator = uint256(reserveIn) * amountOut * 1000;
+        assert(numerator / denominator <= numerator);
+    }
+
+    function checkZeroFactor(uint112 reserveIn, uint112 amountOut, uint112 denominator)
+        public
+        pure
+    {
+        require(denominator != 0);
+        uint256 numerator = uint256(reserveIn) * amountOut * 1000;
+        assert(numerator != 0);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args([
+                "test",
+                "--symbolic",
+                "--json",
+                "--match-contract",
+                "SymbolicConstantMultiplyGuard",
+            ])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        let result = json_test_result(&output, "checkScaledQuotient(uint112,uint112,uint112)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        assert_eq!(
+            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+            "optimized={optimized}: {result}"
+        );
+        let result = json_test_result(&output, "checkZeroFactor(uint112,uint112,uint112)");
+        assert_eq!(
+            result["symbolic"]["status"], "fail_counterexample",
+            "optimized={optimized}: {result}"
+        );
+        assert_eq!(
+            result["symbolic"]["replay"]["status"], "confirmed",
+            "optimized={optimized}: {result}"
+        );
+    }
+}
+
 // Fee splits and payment splitters floor each share `w * a / k`, and two shares with
 // `a + b <= k` sum to at most `w`, so their checked sum cannot overflow either. A wrapped
 // `a + b <= k` does not bound the shares.
