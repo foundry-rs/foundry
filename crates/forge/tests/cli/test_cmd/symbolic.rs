@@ -8883,6 +8883,68 @@ contract SymbolicVestingSchedule {
     }
 }
 
+// Q96 and Q128 fixed-point math scales an amount with `(x * y) >> k`, which is at most `x` once
+// `y <= 2**k`. A larger factor, or a bound on the other factor, proves nothing.
+#[forgetest_init]
+fn symbolic_proves_shifted_product_bounded(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_shifted_product_bounded");
+    prj.add_test(
+        "SymbolicShiftedProduct.t.sol",
+        r#"
+contract SymbolicShiftedProduct {
+    function checkQ96Scale(uint128 amount, uint160 price) public pure {
+        require(price <= 2 ** 96);
+        assert((uint256(amount) * price) >> 96 <= amount);
+    }
+
+    function checkQ128Fees(uint128 liquidity, uint256 growth) public pure {
+        require(growth <= 2 ** 128);
+        assert((uint256(liquidity) * growth) >> 128 <= liquidity);
+    }
+
+    function checkQ96ScaleAboveOne(uint128 amount, uint160 price) public pure {
+        require(price <= 2 ** 97);
+        assert((uint256(amount) * price) >> 96 <= amount);
+    }
+
+    function checkQ96ScaleAgainstPrice(uint128 amount, uint160 price) public pure {
+        require(price <= 2 ** 96);
+        assert((uint256(amount) * price) >> 96 <= price);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicShiftedProduct"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+
+        for signature in ["checkQ96Scale(uint128,uint160)", "checkQ128Fees(uint128,uint256)"] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        }
+
+        for signature in
+            ["checkQ96ScaleAboveOne(uint128,uint160)", "checkQ96ScaleAgainstPrice(uint128,uint160)"]
+        {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "optimized={optimized}: {result}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "optimized={optimized}: {result}"
+            );
+        }
+    }
+}
+
 // Fee splits and payment splitters floor each share `w * a / k`, and two shares with
 // `a + b <= k` sum to at most `w`, so their checked sum cannot overflow either. A wrapped
 // `a + b <= k` does not bound the shares.
