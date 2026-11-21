@@ -212,6 +212,19 @@ impl ConstraintContext {
         }
         let mut interval = |expr: &SymExpr| self.interval_cached(expr, intervals, remaining);
         let nonzero = |range: Option<WordInterval>| range.is_some_and(|range| !range.min.is_zero());
+        // `n <= ceil(n / d) * d` for a nonzero `d`, rounding up as `(n + d - 1) / d` or as
+        // OpenZeppelin's `(n - 1) / d + 1`. Both exceed `(n - 1) / d`, so their multiple exceeds
+        // `n - 1`, and both multiples are at most `n + d - 1`, so nothing wraps once `n + d` does
+        // not. A zero `n` makes the bound trivial.
+        if let SymExprKind::BinOp(SymBinOp::Mul, left, right) = large.kind()
+            && let Some((_, divisor)) = [(left, right), (right, left)]
+                .into_iter()
+                .find(|(ceiling, divisor)| rounds_up(ceiling, small, divisor))
+            && let Some(range) = interval(divisor).filter(|range| !range.min.is_zero())
+            && interval(small).is_some_and(|value| value.max.checked_add(range.max).is_some())
+        {
+            return Some(false);
+        }
         match small.kind() {
             SymExprKind::BinOp(SymBinOp::URem, dividend, divisor) => {
                 if dividend == large {
@@ -490,4 +503,27 @@ impl ConstraintContext {
         }
         None
     }
+}
+
+/// Matches `ceiling` as `n` rounded up by `d`, either `(n + d - 1) / d` or `(n - 1) / d + 1`.
+fn rounds_up(ceiling: &SymExpr, n: &SymExpr, d: &SymExpr) -> bool {
+    let one = |expr: &SymExpr| expr.as_const() == Some(U256::ONE);
+    let (quotient, incremented) = match ceiling.kind() {
+        SymExprKind::BinOp(SymBinOp::Add, quotient, increment) if one(increment) => {
+            (quotient, true)
+        }
+        _ => (ceiling, false),
+    };
+    let Some((numerator, divisor)) = quotient.udiv_operands() else { return false };
+    let SymExprKind::BinOp(SymBinOp::Sub, value, decrement) = numerator.kind() else {
+        return false;
+    };
+    divisor == d
+        && one(decrement)
+        && if incremented {
+            value == n
+        } else {
+            matches!(value.kind(), SymExprKind::BinOp(SymBinOp::Add, a, b)
+                if (a == n && b == d) || (a == d && b == n))
+        }
 }
