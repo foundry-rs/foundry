@@ -8883,6 +8883,100 @@ contract SymbolicVestingSchedule {
     }
 }
 
+// Liquidations cap the repaid debt at `debt * closeFactor / 1e4`, rounded down or half up as in
+// Aave's `percentMul`, so the capped amount never exceeds the debt once the close factor is at
+// most 100%. A larger factor or a rounding addend of a whole unit can exceed it.
+#[forgetest_init]
+fn symbolic_proves_liquidation_cap_bounded(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_liquidation_cap_bounded");
+    prj.add_test(
+        "SymbolicLiquidationCap.t.sol",
+        r#"
+contract SymbolicLiquidationCap {
+    uint256 internal constant PERCENTAGE_FACTOR = 1e4;
+    uint256 internal constant HALF_PERCENTAGE_FACTOR = 0.5e4;
+
+    // Half-up `percentMul` as in Aave v3's `PercentageMath`.
+    function percentMul(uint256 value, uint256 percentage) internal pure returns (uint256 result) {
+        assembly {
+            if iszero(
+                or(
+                    iszero(percentage),
+                    iszero(gt(value, div(sub(not(0), HALF_PERCENTAGE_FACTOR), percentage)))
+                )
+            ) { revert(0, 0) }
+            result := div(add(mul(value, percentage), HALF_PERCENTAGE_FACTOR), PERCENTAGE_FACTOR)
+        }
+    }
+
+    function cap(uint256 debtToCover, uint256 maxLiquidatable) internal pure returns (uint256) {
+        return debtToCover > maxLiquidatable ? maxLiquidatable : debtToCover;
+    }
+
+    function checkHalfUpCap(uint128 debt, uint256 debtToCover, uint16 closeFactor) public pure {
+        require(closeFactor <= PERCENTAGE_FACTOR);
+        assert(cap(debtToCover, percentMul(debt, closeFactor)) <= debt);
+    }
+
+    function checkTruncatedCap(uint128 debt, uint256 debtToCover, uint16 closeFactor) public pure {
+        require(closeFactor <= PERCENTAGE_FACTOR);
+        assert(cap(debtToCover, uint256(debt) * closeFactor / PERCENTAGE_FACTOR) <= debt);
+    }
+
+    function checkLargeCloseFactor(uint128 debt, uint256 debtToCover, uint16 closeFactor)
+        public
+        pure
+    {
+        require(closeFactor <= PERCENTAGE_FACTOR + 1);
+        assert(cap(debtToCover, uint256(debt) * closeFactor / PERCENTAGE_FACTOR) <= debt);
+    }
+
+    function checkWholeUnitAddend(uint128 debt, uint256 debtToCover, uint16 closeFactor)
+        public
+        pure
+    {
+        require(closeFactor <= PERCENTAGE_FACTOR);
+        uint256 rounded = (uint256(debt) * closeFactor + PERCENTAGE_FACTOR) / PERCENTAGE_FACTOR;
+        assert(cap(debtToCover, rounded) <= debt);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicLiquidationCap"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        for signature in
+            ["checkHalfUpCap(uint128,uint256,uint16)", "checkTruncatedCap(uint128,uint256,uint16)"]
+        {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "pass",
+                "{signature}, optimized={optimized}: {result}"
+            );
+        }
+        for signature in [
+            "checkLargeCloseFactor(uint128,uint256,uint16)",
+            "checkWholeUnitAddend(uint128,uint256,uint16)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "{signature}, optimized={optimized}: {result}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "{signature}, optimized={optimized}: {result}"
+            );
+        }
+    }
+}
+
 // Fee splits and payment splitters floor each share `w * a / k`, and two shares with
 // `a + b <= k` sum to at most `w`, so their checked sum cannot overflow either. A wrapped
 // `a + b <= k` does not bound the shares.
