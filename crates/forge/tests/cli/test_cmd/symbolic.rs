@@ -9141,6 +9141,65 @@ contract SymbolicDowncastShare {
     }
 }
 
+// A vault converts a share balance to `balance * totalAssets / totalSupply`, at most the total
+// assets once `balance <= totalSupply`, and may also check the result against its idle liquidity.
+// That check implies the total's type bound, which is then dropped, so the bound must not rely on
+// it. A balance above the supply can exceed the total.
+#[forgetest_init]
+fn symbolic_proves_converted_shares_below_total(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_converted_shares_below_total");
+    prj.add_test(
+        "SymbolicConvertedShares.t.sol",
+        r#"
+contract SymbolicConvertedShares {
+    function checkWithinIdle(uint128 balance, uint128 totalAssets, uint128 totalSupply, uint128 idle)
+        public
+        pure
+    {
+        require(totalSupply != 0 && balance <= totalSupply);
+        uint256 assets = uint256(balance) * totalAssets / totalSupply;
+        require(assets < idle);
+        assert(assets <= totalAssets);
+    }
+
+    function checkBalanceAboveSupply(
+        uint128 balance,
+        uint128 totalAssets,
+        uint128 totalSupply,
+        uint128 idle
+    ) public pure {
+        require(totalSupply != 0 && balance <= uint256(totalSupply) + 1);
+        uint256 assets = uint256(balance) * totalAssets / totalSupply;
+        require(assets < idle);
+        assert(assets <= totalAssets);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicConvertedShares"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        let result = json_test_result(&output, "checkWithinIdle(uint128,uint128,uint128,uint128)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        let result =
+            json_test_result(&output, "checkBalanceAboveSupply(uint128,uint128,uint128,uint128)");
+        assert_eq!(
+            result["symbolic"]["status"], "fail_counterexample",
+            "optimized={optimized}: {result}"
+        );
+        assert_eq!(
+            result["symbolic"]["replay"]["status"], "confirmed",
+            "optimized={optimized}: {result}"
+        );
+    }
+}
+
 // Fee splits and payment splitters floor each share `w * a / k`, and two shares with
 // `a + b <= k` sum to at most `w`, so their checked sum cannot overflow either. A wrapped
 // `a + b <= k` does not bound the shares.
