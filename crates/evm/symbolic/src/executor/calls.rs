@@ -13,6 +13,33 @@ impl SymbolicExecutor {
         kind: CallKind,
     ) -> Result<StepOutcome, SymbolicError> {
         let free_write_targets = self.free_address_write_targets(executor, state, kind)?;
+        // An alias another cheatcode gave a word stands for the accounts the fork rules out, so a
+        // branch that fixes the word to a known account sees that account. An alias may hold state
+        // written while that account was not known yet, which such a branch would drop.
+        for (write_target, candidates) in &free_write_targets {
+            let unguarded = state.world.unguarded_alias_candidates(
+                write_target,
+                candidates,
+                &state.persistent_accounts,
+            );
+            if !unguarded.is_empty() {
+                let address = write_target.clone().address_operand(&mut self.cx);
+                let names_candidate = unguarded
+                    .iter()
+                    .map(|&candidate| {
+                        SymBoolExpr::eq_word_const(&mut self.cx, &address, address_word(candidate))
+                    })
+                    .collect();
+                let names_candidate = SymBoolExpr::or(&mut self.cx, names_candidate);
+                if self.constraints_for_condition(state, names_candidate)?.is_some() {
+                    return Err(SymbolicError::Unsupported(
+                        "symbolic address whose representative account holds state from \
+                         before the run knew an account it may name",
+                    ));
+                }
+            }
+            state.world.guard_symbolic_address(write_target, candidates);
+        }
         let pre_call_state = (!state.function_mocks.is_empty()
             || !free_write_targets.is_empty()
             || !state.expected_calls.is_empty()
@@ -62,6 +89,9 @@ impl SymbolicExecutor {
         let target = state.stack.pop()?;
         self.ensure_gas_modeled(&target)?;
         let target = target.address_operand(&mut self.cx);
+        // A target the path fixes runs as that account. A guarded alias that holds state stands
+        // for the fixed account, so it stays on the symbolic call path.
+        let target = state.fixed_address_word(&mut self.cx, target);
         let target_address = state.world.resolve_address(&target);
         let value = match (kind, target_address) {
             (CallKind::Call, Some(to))

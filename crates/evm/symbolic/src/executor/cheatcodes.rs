@@ -644,10 +644,12 @@ impl SymbolicExecutor {
     ///
     /// `vm.etch` and the nonce cheatcodes through a free address fork over every known account,
     /// since they need concrete code and nonces, and `vm.store` over the known precompiles,
-    /// where it reverts. `vm.deal` and the rest of a `vm.store` write each account under a
-    /// guard instead. A word written that way is decided only once a call targets it, a pranked
-    /// call takes it as caller or origin, or a cheatcode other than these writes and their
-    /// reads takes it.
+    /// where it reverts. `vm.resetNonce`, `vm.makePersistent`, and `vm.revokePersistent` fork the
+    /// same way, and `vm.prank` and `vm.startPrank` fork a free sender and origin, since they
+    /// would otherwise write or alias an empty representative account. `vm.deal` and the rest of
+    /// a `vm.store` write each account under a guard instead. A word written that way is decided
+    /// only once a call targets it, a pranked call takes it as caller or origin, or a cheatcode
+    /// other than these writes and their reads takes it.
     pub(super) fn free_address_write_targets(
         &mut self,
         executor: &ExecutorView<'_>,
@@ -723,23 +725,75 @@ impl SymbolicExecutor {
         // The first argument to scan for guarded words.
         let mut first_scanned = 0;
         if to == Some(CHEATCODE_ADDRESS) {
+            // An input without a word for every argument fails to decode, so the cheatcode reverts
+            // before it takes any of them.
+            if in_size < 4 + 32 * vm_params(selector).len() {
+                return Ok(words);
+            }
             let store = selector == storeCall::SELECTOR;
-            if store
-                || [etchCall::SELECTOR, setNonceCall::SELECTOR, setNonceUnsafeCall::SELECTOR]
-                    .contains(&selector)
-            {
-                // The target forks here, or `vm.store` writes it under guards; the other
-                // arguments may still be guarded words.
+            if store {
+                // `vm.store` writes the target under guards, except on the precompiles, where it
+                // reverts; the other arguments may still be guarded words.
                 first_scanned = 1;
                 let word = read_abi_word_arg(&mut self.cx, memory, args_offset, 0)?;
                 if state.constrained_word(&mut self.cx, &word).is_none() {
                     let mut candidates = state.world.concrete_alias_candidates(executor);
-                    if store {
-                        candidates
-                            .retain(|address| is_precompile_for_spec(*address, executor.spec_id));
-                    }
+                    candidates.retain(|address| is_precompile_for_spec(*address, executor.spec_id));
                     if !candidates.is_empty() {
                         words.push((word, candidates));
+                    }
+                }
+            }
+            if [
+                etchCall::SELECTOR,
+                setNonceCall::SELECTOR,
+                setNonceUnsafeCall::SELECTOR,
+                resetNonceCall::SELECTOR,
+                makePersistent_0Call::SELECTOR,
+                makePersistent_1Call::SELECTOR,
+                makePersistent_2Call::SELECTOR,
+                revokePersistent_0Call::SELECTOR,
+                prank_0Call::SELECTOR,
+                prank_1Call::SELECTOR,
+                prank_2Call::SELECTOR,
+                prank_3Call::SELECTOR,
+                startPrank_0Call::SELECTOR,
+                startPrank_1Call::SELECTOR,
+                startPrank_2Call::SELECTOR,
+                startPrank_3Call::SELECTOR,
+            ]
+            .contains(&selector)
+            {
+                // These need concrete code and nonces, or write or alias the account a free
+                // address names on an empty representative account, whose state a later branch
+                // that fixes the address would not see. So their leading addresses first fork
+                // over the known accounts they may name, even when another cheatcode already
+                // aliased them. Only the low 160 bits name the account.
+                first_scanned = vm_params(selector)
+                    .iter()
+                    .take_while(|param| **param == DynSolType::Address)
+                    .count();
+                // A prank the cheatcode rejects for overwriting another applies nothing.
+                let start = [
+                    startPrank_0Call::SELECTOR,
+                    startPrank_1Call::SELECTOR,
+                    startPrank_2Call::SELECTOR,
+                    startPrank_3Call::SELECTOR,
+                ]
+                .contains(&selector);
+                let prank = [
+                    prank_0Call::SELECTOR,
+                    prank_1Call::SELECTOR,
+                    prank_2Call::SELECTOR,
+                    prank_3Call::SELECTOR,
+                ]
+                .contains(&selector);
+                let rejected = (prank || start) && state.prank_overwrite_error(start).is_some();
+                for index in (0..first_scanned).filter(|_| !rejected) {
+                    let word = read_abi_word_arg(&mut self.cx, memory, args_offset, index)?;
+                    let address = word.clone().address_operand(&mut self.cx);
+                    if state.constrained_word(&mut self.cx, &address).is_none() {
+                        words.push((word, state.world.concrete_alias_candidates(executor)));
                     }
                 }
             }
@@ -1550,13 +1604,7 @@ impl SymbolicExecutor {
                         )
                     })
                     .transpose()?;
-                // Like Forge, root frames share one prank slot, so a prank parked for another root
-                // frame also blocks an overwrite, and a new prank ends it.
-                let parked = state.root_pranks.values().filter(|_| state.call_depth == 0);
-                if let Some(error) = std::iter::once(&state.prank)
-                    .chain(parked)
-                    .find_map(|prank| prank.overwrite_error(persistent))
-                {
+                if let Some(error) = state.prank_overwrite_error(persistent) {
                     let name = if persistent { "startPrank" } else { "prank" };
                     return Ok(CheatcodeOutcome::Revert(error_string_return_data(
                         &mut self.cx,
