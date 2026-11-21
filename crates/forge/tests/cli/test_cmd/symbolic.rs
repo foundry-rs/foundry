@@ -9112,6 +9112,19 @@ contract SymbolicIndexedBalance {
         assert(rayMul(scaledBalance, liquidityIndex) >= scaledBalance);
     }
 
+    // Each sum reuses the previous two, so walking the sums as trees takes exponential time.
+    function checkSharedSums(uint8 a, uint8 b, uint256 low, uint256 high) public pure {
+        unchecked {
+            uint256 p = a;
+            uint256 q = b;
+            for (uint256 i = 0; i < 40; i++) {
+                (p, q) = (q, p + q);
+            }
+            require(low <= q && q <= high);
+            assert(low <= high);
+        }
+    }
+
     function checkBalanceGrows(uint128 principal, uint128 oldIndex, uint128 newIndex) public pure {
         require(oldIndex != 0 && oldIndex <= newIndex);
         assert(uint256(principal) * newIndex / oldIndex >= principal);
@@ -9156,9 +9169,11 @@ contract SymbolicIndexedBalance {
             .stdout
             .clone();
 
-        for signature in
-            ["checkBalanceGrows(uint128,uint128,uint128)", "checkRayBalanceGrows(uint128,uint128)"]
-        {
+        for signature in [
+            "checkBalanceGrows(uint128,uint128,uint128)",
+            "checkRayBalanceGrows(uint128,uint128)",
+            "checkSharedSums(uint8,uint8,uint256,uint256)",
+        ] {
             let result = json_test_result(&output, signature);
             assert_eq!(result["symbolic"]["status"], "pass", "{signature}, optimized={optimized}");
             assert_eq!(

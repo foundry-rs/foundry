@@ -297,14 +297,18 @@ fn expr_less_or_equal<'a>(
         {
             true
         }
-        // `left <= a` or `left <= b`, so `left <= a + b` when the sum does not wrap.
+        // `left <= a` or `left <= b`, so `left <= a + b` when the sum does not wrap. Summands that
+        // are sums are not searched, which keeps shared sums from being walked as trees.
         (_, SymExprKind::BinOp(SymBinOp::Add, a, b))
             if bounds
                 .word_range(a)
                 .zip(bounds.word_range(b))
                 .is_some_and(|((_, a), (_, b))| a.checked_add(b).is_some())
-                && (expr_less_or_equal(left, a, facts, bounds)
-                    || expr_less_or_equal(left, b, facts, bounds)) =>
+                && [a, b].into_iter().any(|summand| {
+                    summand == left
+                        || (!matches!(summand.kind(), SymExprKind::BinOp(SymBinOp::Add, _, _))
+                            && expr_less_or_equal(left, summand, facts, bounds))
+                }) =>
         {
             true
         }
