@@ -210,6 +210,34 @@ impl ConstraintContext {
         {
             return Some(false);
         }
+        // A factor that is itself at most `x`, like a fee `x * a / k` split into shares, keeps
+        // `(f * y) / d <= f <= x` once `y <= d`, since `f * y <= f * d` and a wrapped product only
+        // shrinks the dividend. `UDiv` by zero is all ones, so `d` must be nonzero.
+        if let Some((dividend, divisor)) = small.udiv_operands()
+            && let SymExprKind::BinOp(SymBinOp::Mul, left, right) = dividend.kind()
+            && left != large
+            && right != large
+            && let Some(divisor) = self
+                .interval_cached(divisor, intervals, remaining)
+                .filter(|divisor| !divisor.min.is_zero())
+        {
+            // Cached intervals cost no budget, so charge each recursion to bound shared DAGs, such
+            // as repeated squaring.
+            let orders = if left == right { 1 } else { 2 };
+            for (factor, other) in [(left, right), (right, left)].into_iter().take(orders) {
+                if *remaining == 0 {
+                    break;
+                }
+                *remaining -= 1;
+                if self
+                    .interval_cached(other, intervals, remaining)
+                    .is_some_and(|other| other.max <= divisor.min)
+                    && self.division_order(factor, large, intervals, remaining).is_some()
+                {
+                    return Some(false);
+                }
+            }
+        }
         let mut interval = |expr: &SymExpr| self.interval_cached(expr, intervals, remaining);
         let nonzero = |range: Option<WordInterval>| range.is_some_and(|range| !range.min.is_zero());
         match small.kind() {
