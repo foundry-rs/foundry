@@ -289,21 +289,16 @@ impl ConstraintContext {
                         || self.asserts_less_or_equal(other, divisor))
                         && self.mul_cannot_overflow_256(left, right)
                 };
-                // `round_down(n, t) <= n` (zero when `t == 0`), so dividing the rounded product
-                // is bounded by `n / d`. The EVM `DIV` may still carry its `t == 0` guard.
-                let peeled = match dividend.kind() {
-                    SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
-                        [(left, right), (right, left)].into_iter().find_map(|(quotient, factor)| {
-                            word_division_operands(quotient)
-                                .and_then(|(n, t)| (t == factor).then_some(n))
+                // Rounding up may also round a rounded product, as when a share amount rounded
+                // down is converted back rounding up.
+                let rounded_up = match dividend.kind() {
+                    SymExprKind::BinOp(SymBinOp::Add, a, b) => {
+                        [(a, b), (b, a)].into_iter().any(|(product, addend)| {
+                            bounded(product, Some(addend))
+                                || rounded_down_dividend(product)
+                                    .is_some_and(|n| bounded(n, Some(addend)))
                         })
                     }
-                    _ => None,
-                };
-                let rounded_up = match dividend.kind() {
-                    SymExprKind::BinOp(SymBinOp::Add, a, b) => [(a, b), (b, a)]
-                        .into_iter()
-                        .any(|(product, addend)| bounded(product, Some(addend))),
                     // `(x * y + d) - 1`. A wrapped sum is smaller, and a sum that wraps to zero
                     // gives `MAX == x * y + d - 1` exactly.
                     SymExprKind::BinOp(SymBinOp::Sub, sum, one)
@@ -313,11 +308,14 @@ impl ConstraintContext {
                                 (a == divisor).then_some(b).or((b == divisor).then_some(a)) =>
                     {
                         bounded(product, None)
+                            || rounded_down_dividend(product).is_some_and(|n| bounded(n, None))
                     }
                     _ => false,
                 };
+                // `round_down(n, t) <= n` (zero when `t == 0`), so dividing the rounded product
+                // is bounded by `n / d`.
                 (rounded_up
-                    || peeled.is_some_and(|peeled| bounded(peeled, None))
+                    || rounded_down_dividend(dividend).is_some_and(|peeled| bounded(peeled, None))
                     || bounded(dividend, None))
                 .then_some(false)
             }
@@ -490,4 +488,13 @@ impl ConstraintContext {
         }
         None
     }
+}
+
+/// Returns `n` for the rounded product `(n / t) * t`. The EVM `DIV` may still carry its guard
+/// selecting zero for `t == 0`.
+fn rounded_down_dividend(product: &SymExpr) -> Option<&SymExpr> {
+    let SymExprKind::BinOp(SymBinOp::Mul, left, right) = product.kind() else { return None };
+    [(left, right), (right, left)].into_iter().find_map(|(quotient, factor)| {
+        word_division_operands(quotient).and_then(|(n, t)| (t == factor).then_some(n))
+    })
 }
