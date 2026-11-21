@@ -9141,6 +9141,104 @@ contract SymbolicDowncastShare {
     }
 }
 
+// A protocol takes a share of a fee, `(amount * a / k) * b / k`, which stays at most the amount
+// once `a <= k` and `b <= k`. A share factor above `k`, or a fee above the amount, proves nothing.
+// Chained products share their factors, so the search must not walk them as a tree.
+#[forgetest_init]
+fn symbolic_proves_chained_share_bounded(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_chained_share_bounded");
+    prj.add_test(
+        "SymbolicChainedShare.t.sol",
+        r#"
+contract SymbolicChainedShare {
+    function checkProtocolCut(uint128 amount, uint16 feeBps, uint16 shareBps) public pure {
+        require(feeBps <= 10000 && shareBps <= 10000);
+        uint256 fee = uint256(amount) * feeBps / 10000;
+        assert(fee * shareBps / 10000 <= amount);
+    }
+
+    function checkShareAboveWhole(uint128 amount, uint16 feeBps, uint16 shareBps) public pure {
+        require(feeBps <= 10000 && shareBps <= 10001);
+        uint256 fee = uint256(amount) * feeBps / 10000;
+        assert(fee * shareBps / 10000 <= amount);
+    }
+
+    function checkFeeAboveAmount(uint128 amount, uint16 feeBps, uint16 shareBps) public pure {
+        require(feeBps <= 10001 && shareBps <= 10000);
+        uint256 fee = uint256(amount) * feeBps / 10000;
+        assert(fee * shareBps / 10000 <= amount);
+    }
+
+    function checkSharedProducts(uint256 x, uint256 y) public pure {
+        require(x < 1e17 && y < 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        assert(x <= 1e18);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicChainedShare"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        for signature in
+            ["checkProtocolCut(uint128,uint16,uint16)", "checkSharedProducts(uint256,uint256)"]
+        {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        }
+
+        for signature in [
+            "checkShareAboveWhole(uint128,uint16,uint16)",
+            "checkFeeAboveAmount(uint128,uint16,uint16)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "optimized={optimized}: {result}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "optimized={optimized}: {result}"
+            );
+        }
+    }
+}
+
 // Fee splits and payment splitters floor each share `w * a / k`, and two shares with
 // `a + b <= k` sum to at most `w`, so their checked sum cannot overflow either. A wrapped
 // `a + b <= k` does not bound the shares.
