@@ -8775,6 +8775,130 @@ contract SymbolicMinRatioNested {
     }
 }
 
+// An EMA or weighted average `(p * u + q * v) / k` with `u + v <= k` stays at most the larger
+// of `p` and `q`.
+#[forgetest_init]
+fn symbolic_proves_weighted_average_bound(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_weighted_average_bound");
+    prj.add_test(
+        "SymbolicWeightedAverage.t.sol",
+        r#"
+contract SymbolicWeightedAverage {
+    uint256 internal constant WAD = 1e18;
+
+    function checkEmaBelowCap(uint128 price, uint128 ema, uint64 alpha, uint128 cap)
+        public
+        pure
+    {
+        require(alpha <= WAD && price <= cap && ema <= cap);
+        uint256 next = (uint256(price) * alpha + uint256(ema) * (WAD - alpha)) / WAD;
+        assert(next <= cap);
+    }
+
+    function checkWeightedAverageBelowMax(uint128 a, uint128 b, uint64 w) public pure {
+        require(w <= WAD && a <= b);
+        assert((uint256(a) * w + uint256(b) * (WAD - w)) / WAD <= b);
+    }
+
+    // Parameter order changes symbol ids and so which summand the canonical sum puts first.
+    function checkEmaBelowCapReordered(uint128 cap, uint64 alpha, uint128 price, uint128 ema)
+        public
+        pure
+    {
+        require(alpha <= WAD && price <= cap && ema <= cap);
+        uint256 next = (uint256(price) * alpha + uint256(ema) * (WAD - alpha)) / WAD;
+        assert(next <= cap);
+    }
+
+    function checkWeightedAverageBelowMaxReordered(uint64 w, uint128 b, uint128 a) public pure {
+        require(w <= WAD && a <= b);
+        assert((uint256(a) * w + uint256(b) * (WAD - w)) / WAD <= b);
+    }
+
+    function checkEmaWeightsOverBudget(
+        uint128 price,
+        uint128 ema,
+        uint64 u,
+        uint64 v,
+        uint128 cap
+    ) public pure {
+        require(uint256(u) + v <= WAD + 1 && price <= cap && ema <= cap);
+        uint256 next = (uint256(price) * u + uint256(ema) * v) / WAD;
+        assert(next <= cap);
+    }
+
+    function checkEmaPriceAboveCap(uint128 price, uint128 ema, uint64 alpha, uint128 cap)
+        public
+        pure
+    {
+        require(alpha <= WAD && price <= uint256(cap) + 1 && ema <= cap);
+        uint256 next = (uint256(price) * alpha + uint256(ema) * (WAD - alpha)) / WAD;
+        assert(next <= cap);
+    }
+
+    function checkEmaOtherComplement(
+        uint128 price,
+        uint128 ema,
+        uint64 alpha,
+        uint64 beta,
+        uint128 cap
+    ) public pure {
+        require(alpha <= WAD && beta <= WAD && price <= cap && ema <= cap);
+        uint256 next = (uint256(price) * alpha + uint256(ema) * (WAD - beta)) / WAD;
+        assert(next <= cap);
+    }
+
+    function checkEmaWrappingComplement(uint128 price, uint128 ema, uint64 alpha, uint128 cap)
+        public
+        pure
+    {
+        require(price <= cap && ema <= cap);
+        uint256 next;
+        unchecked {
+            next = (uint256(price) * alpha + uint256(ema) * (WAD - alpha)) / WAD;
+        }
+        assert(next <= cap);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicWeightedAverage"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+
+        for signature in [
+            "checkEmaBelowCap(uint128,uint128,uint64,uint128)",
+            "checkWeightedAverageBelowMax(uint128,uint128,uint64)",
+            "checkEmaBelowCapReordered(uint128,uint64,uint128,uint128)",
+            "checkWeightedAverageBelowMaxReordered(uint64,uint128,uint128)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+            assert_eq!(
+                result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+                "optimized={optimized}: {signature}"
+            );
+        }
+
+        for signature in [
+            "checkEmaWeightsOverBudget(uint128,uint128,uint64,uint64,uint128)",
+            "checkEmaPriceAboveCap(uint128,uint128,uint64,uint128)",
+            "checkEmaOtherComplement(uint128,uint128,uint64,uint64,uint128)",
+            "checkEmaWrappingComplement(uint128,uint128,uint64,uint128)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "fail_counterexample", "{signature}");
+            assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "{signature}");
+        }
+    }
+}
+
 // OpenZeppelin's `VestingWallet` (MIT) vests `total * (t - start) / duration` once
 // `start <= t < start + duration`, so the elapsed time stays at most the duration.
 #[forgetest_init]

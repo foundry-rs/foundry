@@ -150,6 +150,8 @@ impl ConstraintContext {
     /// Another conjunct's cross-multiplied `x * k <= y * l` also decides `x <= y` once `k` is
     /// positive, `l <= k`, and `x * k` cannot wrap.
     /// The shares `w * a / k + w * b / k <= w` once `a + b <= k`.
+    /// A weighted average `(p * u + q * v) / k` with `u + v <= k` is at most a bound on `p` and
+    /// `q`.
     pub(super) fn division_comparison_value(&self, expr: &SymBoolExpr) -> Option<bool> {
         if let SymBoolExprKind::Not(inner) = expr.kind() {
             return self.division_comparison_value(inner).map(|value| !value);
@@ -209,6 +211,30 @@ impl ConstraintContext {
             && self.shares_whole(first, second, Some(large), intervals, remaining).is_some()
         {
             return Some(false);
+        }
+        if let Some((dividend, divisor)) = small.udiv_operands()
+            && self.weighted_within(dividend, divisor, large, intervals, remaining)
+        {
+            return Some(false);
+        }
+        // Division comparisons are rewritten to `(b + 1) * k <= sum` before facts apply.
+        if let SymExprKind::BinOp(SymBinOp::Mul, x, y) = large.kind() {
+            for (multiplier, divisor) in [(x, y), (y, x)] {
+                if self.weighted_within(small, divisor, multiplier, intervals, remaining) {
+                    return Some(false);
+                }
+                // Strict once `b + 1` and `(b + 1) * k` do not wrap.
+                if let SymExprKind::BinOp(SymBinOp::Add, bound, one) = multiplier.kind()
+                    && one.as_const() == Some(U256::ONE)
+                    && self.weighted_within(small, divisor, bound, intervals, remaining)
+                    && self
+                        .interval_cached(bound, intervals, remaining)
+                        .is_some_and(|bound| bound.max < U256::MAX)
+                    && self.mul_cannot_overflow_256(multiplier, divisor)
+                {
+                    return Some(true);
+                }
+            }
         }
         let mut interval = |expr: &SymExpr| self.interval_cached(expr, intervals, remaining);
         let nonzero = |range: Option<WordInterval>| range.is_some_and(|range| !range.min.is_zero());
@@ -445,6 +471,62 @@ impl ConstraintContext {
             || is_sum(divisor)
             || asserted(&|x, y| is_sum(x) && y == divisor))
         .then_some(found)
+    }
+
+    /// Returns whether `p * u + q * v <= b * k`, so `(p * u + q * v) / k <= b`, as in a weighted
+    /// average or an EMA: both multipliers are at most `b`, the weights satisfy `u + v <= k`, `k`
+    /// is nonzero, and `b * k` does not wrap. Each product is then at most `b * k`, so neither the
+    /// products nor the sum wrap. With `v = k - u`, possibly masked, `u <= k` keeps the complement
+    /// exact; either weight may be the complement.
+    fn weighted_within(
+        &self,
+        dividend: &SymExpr,
+        divisor: &SymExpr,
+        bound: &SymExpr,
+        intervals: &mut HashMap<SymExpr, Option<WordInterval>>,
+        remaining: &mut usize,
+    ) -> bool {
+        let SymExprKind::BinOp(SymBinOp::Add, first, second) = dividend.kind() else {
+            return false;
+        };
+        let (SymExprKind::BinOp(SymBinOp::Mul, p1, u1), SymExprKind::BinOp(SymBinOp::Mul, q1, v1)) =
+            (first.kind(), second.kind())
+        else {
+            return false;
+        };
+        let mut interval = |expr: &SymExpr| self.interval_cached(expr, intervals, remaining);
+        let (Some(k), Some(b)) = (interval(divisor), interval(bound)) else {
+            return false;
+        };
+        if k.min.is_zero() || !self.mul_cannot_overflow_256(bound, divisor) {
+            return false;
+        }
+        let complement = |u: &SymExpr, v: &SymExpr| {
+            let unmasked = match v.kind() {
+                SymExprKind::BinOp(SymBinOp::And, value, mask) if mask.as_const().is_some() => {
+                    value
+                }
+                _ => v,
+            };
+            matches!(unmasked.kind(), SymExprKind::BinOp(SymBinOp::Sub, total, part)
+                if total == divisor && part == u)
+        };
+        [(p1, u1, q1, v1), (u1, p1, q1, v1), (p1, u1, v1, q1), (u1, p1, v1, q1)].into_iter().any(
+            |(p, u, q, v)| {
+                [p, q].into_iter().all(|multiplier| {
+                    multiplier == bound
+                        || self.asserts_less_or_equal(multiplier, bound)
+                        || interval(multiplier).is_some_and(|m| m.max <= b.min)
+                }) && ([(u, v), (v, u)].into_iter().any(|(u, v)| {
+                    complement(u, v)
+                        && (self.asserts_less_or_equal(u, divisor)
+                            || interval(u).is_some_and(|u| u.max <= k.min))
+                }) || interval(u)
+                    .zip(interval(v))
+                    .and_then(|(u, v)| u.max.checked_add(v.max))
+                    .is_some_and(|sum| sum <= k.min))
+            },
+        )
     }
 
     /// Returns whether other conjuncts assert `small <= large`, including strict `<`. An elapsed
