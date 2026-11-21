@@ -11,6 +11,7 @@ use foundry_evm_networks::NetworkConfigs;
 use foundry_test_utils::{
     TestCommand,
     rpc::{self, next_etherscan_api_key, rpc_endpoints},
+    snapbox::IntoData,
     str,
     util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION},
 };
@@ -9247,4 +9248,58 @@ contract RevertedSwitchForkTest {
 [PASS] testForkCreatedAccountSelfDestructsAfterRevertedSwitch() ([GAS])
 ...
 "#]]);
+}
+
+// Raw trace data in JSON output applies the same cheatcode redaction as decoded traces.
+#[forgetest]
+fn test_json_redacts_raw_cheatcode_secrets(prj: _, cmd: _) {
+    prj.add_test(
+        "Secret.t.sol",
+        r#"
+interface Vm {
+    function deriveKey(string calldata mnemonic, uint32 index) external pure returns (uint256);
+    function addr(uint256 privateKey) external pure returns (address);
+}
+
+contract SecretTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testSecret() public pure {
+        uint256 pk =
+            vm.deriveKey("test test test test test test test test test test test junk", 0);
+        require(vm.addr(pk) == 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266);
+    }
+}
+   "#,
+    );
+
+    let output: serde_json::Value = serde_json::from_slice(
+        &cmd.args(["test", "-vvv", "--json"]).assert_success().get_output().stdout,
+    )
+    .unwrap();
+    let traces = output["test/Secret.t.sol:SecretTest"]["test_results"]["testSecret()"]["traces"]
+        .as_array()
+        .unwrap();
+    let execution = traces.iter().find(|trace| trace[0] == "Execution").unwrap();
+    let vm_calls = execution[1]["arena"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|node| &node["trace"])
+        .filter(|trace| trace["address"] == "0x7109709ecfa91a80626ff3989d68f67f5b1dd12d")
+        .map(|trace| serde_json::json!({ "data": trace["data"], "output": trace["output"] }))
+        .collect::<Vec<_>>();
+    assert_data_eq!(
+        serde_json::to_string(&vm_calls).unwrap().is_json(),
+        str![[r#"
+[
+  { "data": "0x6229498b", "output": "0x" },
+  {
+    "data": "0xffa18649",
+    "output": "0x000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266"
+  }
+]
+"#]]
+        .is_json(),
+    );
 }
