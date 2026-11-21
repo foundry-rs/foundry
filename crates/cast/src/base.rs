@@ -193,6 +193,8 @@ impl NumberWithBase {
             Some(p) if p.eq_ignore_ascii_case(base.prefix()) => &s[2..],
             _ => s,
         };
+        // `U256::from_str_radix` accepts an empty string as zero.
+        eyre::ensure!(!s.is_empty(), "cannot parse integer from empty string");
         U256::from_str_radix(s, base as u64).map_err(Into::into)
     }
 
@@ -382,5 +384,15 @@ mod tests {
             assert_eq!(num.with_base(Decimal).format(), n.to_string().trim_start_matches('-'));
             assert_eq!(format!("{num}"), n.to_string());
         }
+    }
+
+    #[test]
+    fn rejects_empty_digits() {
+        for s in ["", "-", "+"] {
+            assert!(NumberWithBase::parse_int(s, None).is_err(), "int {s:?}");
+            assert!(NumberWithBase::parse_uint(s, None).is_err(), "uint {s:?}");
+            assert!(NumberWithBase::parse_int(s, Some("hex")).is_err(), "hex int {s:?}");
+        }
+        assert_eq!(NumberWithBase::parse_int("0", None).unwrap().number(), U256::ZERO);
     }
 }
