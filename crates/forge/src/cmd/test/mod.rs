@@ -3181,15 +3181,7 @@ fn ensure_mutation_workspace_safe(config: &Config) -> Result<()> {
                 max_path_len = path_len;
                 highest_permission = perm.access;
             } else if path_len == max_path_len {
-                highest_permission = match (highest_permission, perm.access) {
-                    (FsAccessPermission::ReadWrite, _)
-                    | (FsAccessPermission::Read, FsAccessPermission::Write)
-                    | (FsAccessPermission::Write, FsAccessPermission::Read) => {
-                        FsAccessPermission::ReadWrite
-                    }
-                    (FsAccessPermission::None, perm) => perm,
-                    (existing_perm, _) => existing_perm,
-                };
+                highest_permission = highest_permission.merge(perm.access);
             }
         }
         (max_path_len > 0).then_some(highest_permission)
@@ -3858,6 +3850,7 @@ impl JunitOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use foundry_config::{FsPermissions, fs_permissions::PathPermission};
 
     #[test]
     fn parses_opcode_names_exactly() {
@@ -4236,5 +4229,24 @@ mod tests {
         assert_eq!(config.invariant.corpus.payable_value_weight, 34);
         assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_splice, 2);
         assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_cmp, 7);
+    }
+
+    #[test]
+    fn mutation_rejects_same_path_read_then_read_write_on_libs() {
+        let root = TempDir::new().unwrap();
+        let lib = root.path().join("lib");
+        std::fs::create_dir(&lib).unwrap();
+        for permissions in [
+            [PathPermission::read("./lib"), PathPermission::read_write("./lib")],
+            [PathPermission::read_write("./lib"), PathPermission::read("./lib")],
+        ] {
+            let config = Config {
+                root: root.path().to_path_buf(),
+                libs: vec![lib.clone()],
+                fs_permissions: FsPermissions::new(permissions),
+                ..Default::default()
+            };
+            assert!(ensure_mutation_workspace_safe(&config).is_err());
+        }
     }
 }

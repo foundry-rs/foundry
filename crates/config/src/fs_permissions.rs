@@ -60,8 +60,7 @@ impl FsPermissions {
     /// ./out/contracts = read
     /// ./out/contracts = write
     /// ```
-    /// Checking `./out/contracts/MyContract.sol` returns `write` (highest privilege, which also
-    /// grants read access)
+    /// Checking `./out/contracts/MyContract.sol` returns `read-write` (the union of both grants)
     pub fn find_permission(&self, path: &Path) -> Option<FsAccessPermission> {
         let mut max_path_len = 0;
         let mut highest_permission = FsAccessPermission::None;
@@ -77,12 +76,7 @@ impl FsPermissions {
                     highest_permission = perm.access;
                 } else if path_len == max_path_len {
                     // Same path length, keep the highest privilege
-                    highest_permission = match (highest_permission, perm.access) {
-                        (existing, new) if existing == new => existing,
-                        (FsAccessPermission::None, perm) | (perm, FsAccessPermission::None) => perm,
-                        // Any two distinct grants combine into both read and write access.
-                        _ => FsAccessPermission::ReadWrite,
-                    }
+                    highest_permission = highest_permission.merge(perm.access);
                 }
             }
         }
@@ -201,6 +195,16 @@ impl FsAccessPermission {
             (Self::Read, FsAccessKind::Read) => true,
             (Self::None, _) => false,
             _ => false,
+        }
+    }
+
+    /// Combines two permissions for the same path into the union of their grants.
+    pub const fn merge(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::None, perm) | (perm, Self::None) => perm,
+            (Self::Read, Self::Read) => Self::Read,
+            (Self::Write, Self::Write) => Self::Write,
+            _ => Self::ReadWrite,
         }
     }
 }
