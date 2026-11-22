@@ -24,7 +24,7 @@ use alloy_provider::{
 };
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions, EIP1186AccountProofResponse,
-    FeeHistory, Filter, FilterBlockOption, FilterSet, Index, Log,
+    FeeHistory, Filter, Index, Log,
     request::TransactionRequest,
     simulate::{SimulatePayload, SimulatedBlock},
     state::StateOverride,
@@ -285,15 +285,14 @@ impl<N: Network> ClientFork<N> {
     }
 
     pub async fn logs(&self, filter: &Filter) -> Result<Vec<Log>, TransportError> {
-        let key = LogsCacheKey::from(filter);
-        if let Some(logs) = self.storage_read().logs.get(&key).cloned() {
+        if let Some(logs) = self.storage_read().logs.get(filter).cloned() {
             return Ok(logs);
         }
 
         let logs = self.provider().get_logs(filter).await?;
 
         let mut storage = self.storage_write();
-        storage.logs.insert(key, logs.clone());
+        storage.logs.insert(filter.clone(), logs.clone());
         Ok(logs)
     }
 
@@ -1112,7 +1111,7 @@ pub struct ForkedStorage<N: Network = AnyNetwork> {
     pub transactions: FbHashMap<32, N::TransactionResponse>,
     pub transaction_receipts: FbHashMap<32, FoundryTxReceipt>,
     pub transaction_traces: FbHashMap<32, Vec<Trace>>,
-    pub logs: HashMap<LogsCacheKey, Vec<Log>>,
+    pub logs: HashMap<Filter, Vec<Log>>,
     pub geth_transaction_traces: FbHashMap<32, Vec<(GethDebugTracingOptions, GethTrace)>>,
     pub geth_block_traces: FbHashMap<32, Vec<(GethDebugTracingOptions, Vec<TraceResult>)>>,
     pub block_traces: HashMap<u64, Vec<Trace>>,
@@ -1147,31 +1146,4 @@ impl<N: Network> ForkedStorage<N> {
         // simply replace with a completely new, empty instance
         *self = Self::default()
     }
-}
-
-/// Cache key for a log [`Filter`].
-///
-/// [`Filter`] is not hashable because its address and topic sets iterate in arbitrary order, so
-/// the key stores them sorted.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct LogsCacheKey {
-    block_option: FilterBlockOption,
-    address: Vec<Address>,
-    topics: [Vec<B256>; 4],
-}
-
-impl From<&Filter> for LogsCacheKey {
-    fn from(filter: &Filter) -> Self {
-        Self {
-            block_option: filter.block_option,
-            address: sorted_filter_set(&filter.address),
-            topics: filter.topics.each_ref().map(sorted_filter_set),
-        }
-    }
-}
-
-fn sorted_filter_set<T: Copy + Ord + std::hash::Hash>(set: &FilterSet<T>) -> Vec<T> {
-    let mut values = set.iter().copied().collect::<Vec<_>>();
-    values.sort_unstable();
-    values
 }

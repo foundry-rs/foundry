@@ -21,7 +21,7 @@ use alloy_provider::{
     ext::{DebugApi, TxPoolApi},
 };
 use alloy_rpc_types::{
-    AccountInfo, BlockId, BlockNumberOrTag, Index,
+    AccountInfo, BlockId, BlockNumberOrTag, Filter, Index,
     anvil::Forking,
     request::{TransactionInput, TransactionRequest},
     state::EvmOverrides,
@@ -5338,6 +5338,34 @@ fn test_fork_uncached_reads_do_not_deadlock_saturated_runtime() {
     });
 
     done_rx.recv_timeout(Duration::from_secs(60)).expect("fork node deadlocked");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_logs_cache_ignores_filter_set_order() {
+    let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    origin_api.mine_one().await.unwrap();
+    let (endpoint, requests) =
+        rpc::spawn_rpc_proxy_recording_method(origin_handle.http_endpoint(), "eth_getLogs").await;
+    let (_fork_api, fork_handle) = spawn(
+        NodeConfig::test().with_eth_rpc_url(Some(endpoint)).with_fork_block_number(Some(1u64)),
+    )
+    .await;
+    let provider = fork_handle.http_provider();
+    let addresses = vec![Address::repeat_byte(1), Address::repeat_byte(2)];
+    let topics = vec![B256::repeat_byte(3), B256::repeat_byte(4)];
+    let filter = Filter::new().select(0u64).address(addresses.clone());
+
+    let logs = provider.get_logs(&filter.clone().event_signature(topics.clone())).await.unwrap();
+    assert_eq!(requests.lock().unwrap().len(), 1);
+    let reordered = Filter::new()
+        .select(0u64)
+        .address(addresses.into_iter().rev().collect::<Vec<_>>())
+        .event_signature(topics.iter().copied().rev().collect::<Vec<_>>());
+    assert_eq!(provider.get_logs(&reordered).await.unwrap(), logs);
+    assert_eq!(requests.lock().unwrap().len(), 1);
+
+    provider.get_logs(&filter.topic1(topics)).await.unwrap();
+    assert_eq!(requests.lock().unwrap().len(), 2);
 }
 
 #[test]
