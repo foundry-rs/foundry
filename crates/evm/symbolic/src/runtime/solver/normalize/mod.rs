@@ -2186,6 +2186,14 @@ impl ConstraintContext {
         if self.bounded_zero_check_operand(condition) == Some(operand) {
             return true;
         }
+        // `normalize_cmp_for_solver` rewrites the zero check `a - b == 0` to `a == b`, with a
+        // constant operand on the right, so either order can occur.
+        if let SymExprKind::BinOp(SymBinOp::Sub, a, b) = operand.kind()
+            && let SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) = condition.kind()
+            && ((left == a && right == b) || (left == b && right == a))
+        {
+            return true;
+        }
         // For a positive constant d, n / d == 0 iff n < d. Normalization
         // exposes this comparison before the Solidity multiplication guard.
         if let Some((numerator, denominator)) = operand.udiv_operands()
