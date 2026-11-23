@@ -1,4 +1,5 @@
 use super::*;
+use std::cell::RefCell;
 
 type LessThanFacts<'a> = HashSet<(&'a SymExpr, &'a SymExpr)>;
 type LessOrEqualFacts<'a> = HashSet<(&'a SymExpr, &'a SymExpr)>;
@@ -11,6 +12,9 @@ struct OrderFacts<'a> {
     less_or_equal: LessOrEqualFacts<'a>,
     positive: PositiveFacts<'a>,
     zero: ZeroFacts<'a>,
+    /// `expr_less_or_equal` results under these facts and the bounds of the same constraints.
+    /// Shared subterms would otherwise make the search take exponential time.
+    less_or_equal_results: RefCell<HashMap<(SymExpr, SymExpr), bool>>,
 }
 
 /// Returns whether normalized monotonic product facts make constraints unsatisfiable.
@@ -280,8 +284,14 @@ fn expr_less_or_equal<'a>(
     if left == right || facts.less_or_equal.contains(&(left, right)) {
         return true;
     }
+    let key = (left.clone(), right.clone());
+    if let Some(&result) = facts.less_or_equal_results.borrow().get(&key) {
+        return result;
+    }
+    // A pair still being searched counts as unproven, which only declines.
+    facts.less_or_equal_results.borrow_mut().insert(key.clone(), false);
 
-    match (left.kind(), right.kind()) {
+    let result = match (left.kind(), right.kind()) {
         (
             SymExprKind::BinOp(SymBinOp::UDiv, left_num, left_den),
             SymExprKind::BinOp(SymBinOp::UDiv, right_num, right_den),
@@ -297,18 +307,14 @@ fn expr_less_or_equal<'a>(
         {
             true
         }
-        // `left <= a` or `left <= b`, so `left <= a + b` when the sum does not wrap. Summands that
-        // are sums are not searched, which keeps shared sums from being walked as trees.
+        // `left <= a` or `left <= b`, so `left <= a + b` when the sum does not wrap.
         (_, SymExprKind::BinOp(SymBinOp::Add, a, b))
             if bounds
                 .word_range(a)
                 .zip(bounds.word_range(b))
                 .is_some_and(|((_, a), (_, b))| a.checked_add(b).is_some())
-                && [a, b].into_iter().any(|summand| {
-                    summand == left
-                        || (!matches!(summand.kind(), SymExprKind::BinOp(SymBinOp::Add, _, _))
-                            && expr_less_or_equal(left, summand, facts, bounds))
-                }) =>
+                && (expr_less_or_equal(left, a, facts, bounds)
+                    || expr_less_or_equal(left, b, facts, bounds)) =>
         {
             true
         }
@@ -370,7 +376,9 @@ fn expr_less_or_equal<'a>(
             rounded_quotients_ordered(upper, lower, facts, bounds)
         }
         _ => false,
-    }
+    };
+    facts.less_or_equal_results.borrow_mut().insert(key, result);
+    result
 }
 
 /// Rounding of `x * y / d` over the integers, where every rounding of `x * y / 0` is zero as in
