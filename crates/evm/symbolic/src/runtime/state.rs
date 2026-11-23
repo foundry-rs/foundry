@@ -1157,7 +1157,9 @@ impl PathState {
         .flatten()
         {
             *address = self.address_or_symbolic_slot(cx, word.clone());
-            if self.constrained_word(cx, word).is_none() {
+            // An alias that already holds state, such as a dealt balance, may hold it for a
+            // precompile, so a guard would hide that state from reads through its address.
+            if self.constrained_word(cx, word).is_none() && !self.world.alias_holds_state(word) {
                 let precompiles = active_precompile_addresses(executor.spec_id)
                     .into_iter()
                     .filter(|precompile| {
@@ -2637,6 +2639,11 @@ impl SymbolicWorld {
                         .is_none_or(|guarded| !guarded.contains(&address))
             })
             .map(|(alias, _)| alias)
+    }
+
+    /// Returns whether the address word `expr` has an alias, guarded or not.
+    pub(crate) fn has_alias(&self, expr: &SymExpr) -> bool {
+        self.alias_entry(expr).is_some()
     }
 
     /// Returns whether the address word `expr` has an alias whose representative account has

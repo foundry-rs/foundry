@@ -3422,6 +3422,8 @@ contract SymbolicPrankedAddress is Test {
     }
 
     function checkEtchedCodeThroughOtherWord(address writer, uint256 raw) public {
+        // `vm.etch` reverts on a precompile.
+        vm.assume(uint160(writer) > 0x100);
         vm.etch(writer, hex"00");
         if (raw != 0xB0B) return;
         assert(address(uint160(raw)).code.length == 0);
@@ -3582,6 +3584,24 @@ contract SymbolicLaterCandidates is Test {
         assert(keccak256(callee.callSenderAndCount()) != keccak256(hex"0102"));
     }
 
+    // A dealt address may still be the identity precompile. Its balance belongs to the
+    // precompile on that branch, which the run does not model, so this reports incomplete.
+    function checkDealtAddressCallsPrecompile(address who) public {
+        vm.deal(who, 1);
+        (, bytes memory out) = who.staticcall(hex"0102");
+        assert(keccak256(out) != keccak256(hex"0102"));
+    }
+
+    // Fails for `who == raw == 4`: the balance dealt through `who` stays visible through `raw`
+    // after a pranked call takes `who`.
+    function checkDealtPrankedBalanceThroughOtherWord(address who, uint256 raw) public {
+        vm.deal(who, 5);
+        vm.prank(who);
+        callee.senderCodeSize();
+        if (raw != 4) return;
+        assert(address(uint160(raw)).balance != 5);
+    }
+
     // Fails for `who == address(0xB0B)`, which has code once the pranked call runs.
     function checkPrankedSenderEtchedAfterPrank(address who) public {
         vm.prank(who);
@@ -3602,13 +3622,15 @@ contract SymbolicLaterCandidates is Test {
 
     assert_symbolic(cmd.args(["test", "--symbolic"])).failure().stdout_eq(str![[r#"
 ...
-Ran 5 tests for test/SymbolicLaterCandidates.t.sol:SymbolicLaterCandidates
+Ran 7 tests for test/SymbolicLaterCandidates.t.sol:SymbolicLaterCandidates
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic address whose representative account holds state from before the run knew an account it may name] checkDealtAddressCallsPrecompile(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealtPrankedBalanceThroughOtherWord(address,uint256) ([METRICS])
 [FAIL: vm.etch: cannot use precompile [..] as an argument; counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkEtchFreeAddress(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedPrecompileSender(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedPrecompileSenderCall(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedSenderEtchedAfterPrank(address) ([METRICS])
 [FAIL: vm.store: cannot use precompile [..] as an argument; counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkStoreFreeAddress(address) ([METRICS])
-Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 7 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

@@ -673,12 +673,12 @@ impl SymbolicExecutor {
                 }
                 let pranked = state.prank.words().cloned().collect::<Vec<_>>();
                 words = self.known_guarded_words(executor, state, &pranked, words);
-                // An alias without code stands for an empty account, which a precompile nothing
-                // touched yet differs from only once a call runs it. An equivalence check
-                // abstracts calls to unknown code, precompiles included.
+                // An alias without code, guarded or not, stands for an empty account, which a
+                // precompile nothing touched yet differs from only once a call runs it. An
+                // equivalence check abstracts calls to unknown code, precompiles included.
                 if to.is_none()
                     && self.equivalence.is_none()
-                    && state.world.resolve_address(target).is_some()
+                    && state.world.has_alias(target)
                     && !state.world.alias_has_code(target)
                 {
                     let address = target.clone().address_operand(&mut self.cx);
