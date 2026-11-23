@@ -2186,7 +2186,8 @@ impl ConstraintContext {
         if self.bounded_zero_check_operand(condition) == Some(operand) {
             return true;
         }
-        // The zero check `a - b == 0` canonicalizes to `a == b`.
+        // `normalize_cmp_for_solver` rewrites the zero check `a - b == 0` to `a == b`, with a
+        // constant operand on the right, so either order can occur.
         if let SymExprKind::BinOp(SymBinOp::Sub, a, b) = operand.kind()
             && let SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) = condition.kind()
             && ((left == a && right == b) || (left == b && right == a))
