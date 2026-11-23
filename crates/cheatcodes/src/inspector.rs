@@ -2185,8 +2185,15 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         executor: &mut dyn CheatcodesExecutor<FEN>,
     ) {
         // `expectRevert`: keep the gas a halting frame has left, which the EVM consumes when the
-        // frame ends.
-        if self.expected_revert.is_some() && interp.result().is_err_and(InstrStop::is_halt) {
+        // frame ends. Only the halts that `hook_steps` steps count, so the result does not depend
+        // on which other cheatcodes step every instruction.
+        if self.expected_revert.is_some()
+            && interp.result().is_err_and(InstrStop::is_halt)
+            && interp
+                .original_bytecode()
+                .get(self.pc)
+                .is_some_and(|&opcode| matches!(opcode, op::INVALID | op::RETURNDATACOPY))
+        {
             self.halted_frame_gas =
                 Some((usize::from(interp.message().depth), interp.gas().remaining()));
         }

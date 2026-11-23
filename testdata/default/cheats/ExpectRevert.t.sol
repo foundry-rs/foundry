@@ -701,6 +701,22 @@ contract ExpectRevertHaltGasTest is Test {
         success;
         assertGt(gasBefore - gasleft(), 1_000_000_000);
     }
+
+    /// Only the halts on the stepped instructions give gas back, also when another cheatcode
+    /// steps every instruction.
+    function testExpectRevertBadJumpConsumesGasWhenStepped() public {
+        vm.setArbitraryStorage(address(this));
+        // Runtime code `PUSH1 0 JUMP`, which jumps to a non-JUMPDEST.
+        bytes memory initcode = hex"626000566000526003601df3";
+        address jumper;
+        assembly {
+            jumper := create(0, add(initcode, 32), mload(initcode))
+        }
+        uint256 gasBefore = gasleft();
+        vm.expectRevert();
+        Reverter(jumper).revertWithoutReason();
+        assertGt(gasBefore - gasleft(), 1_000_000_000);
+    }
 }
 
 contract HaltingConstructor {
