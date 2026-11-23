@@ -81,7 +81,7 @@ pub struct InspectorStackBuilder<BLOCK: Clone> {
     /// Whether to print all opcode traces into the console. Useful for debugging the EVM.
     pub print: Option<bool>,
     /// The chisel state inspector.
-    pub chisel_state: Option<usize>,
+    pub chisel_state: Option<ChiselState>,
     /// Whether to enable call isolation.
     /// In isolation mode all top-level calls are executed as a separate transaction in a separate
     /// EVM context, enabling more precise gas accounting and transaction state changes.
@@ -172,8 +172,8 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
 
     /// Set the Chisel inspector.
     #[inline]
-    pub const fn chisel_state(mut self, final_pc: usize) -> Self {
-        self.chisel_state = Some(final_pc);
+    pub fn chisel_state(mut self, final_pc: Option<usize>) -> Self {
+        self.chisel_state = Some(ChiselState::new(final_pc));
         self
     }
 
@@ -498,8 +498,9 @@ pub struct InspectorStackInner {
     /// Whether the frame that just ended ran on a frame EVM with an in-flight environment change,
     /// whose hooks already ran there. See `InspectorStackRefMut::env_handoff`.
     env_handoff_ended: bool,
-    /// Accounts the running top-level transaction created, directly or through isolated calls.
-    tx_created: AddressSet,
+    /// Accounts the running top-level transaction created, directly or through isolated calls,
+    /// with the forks it created them on.
+    tx_created: AddressMap<HashSet<Option<U256>>>,
     /// Accounts the running nested transaction, from `executeTransaction` or an isolated call,
     /// self-destructed, including the ones it created. Captured when its root frame ends, before
     /// the transaction destroys them. An isolated call that replaces the running state, such as by
@@ -830,9 +831,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
 
     /// Set the Chisel inspector.
     #[inline]
-    pub fn set_chisel(&mut self, final_pc: usize) {
-        self.chisel_state = Some(ChiselState::new(final_pc).into());
-        self.refresh_static_step_end_dispatch();
+    pub fn set_chisel(&mut self, chisel: ChiselState) {
+        self.chisel_state = Some(chisel.into());
+        self.refresh_static_opcode_dispatch();
     }
 
     /// Set whether to enable the line coverage collector.
@@ -1279,7 +1280,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             && stop.is_success()
             && let Some(address) = result.created_address
         {
-            self.inner.tx_created.insert(address);
+            let fork = self.backend.backend().active_fork_id();
+            self.inner.tx_created.entry(address).or_default().insert(fork);
         }
         let backend = Some(&mut *self.backend);
         let cheats = self.cheatcodes.as_deref_mut();
@@ -1523,9 +1525,27 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         // Monad's reserve balance context and tracker.
         *child.ext_mut() = evm.ext().clone();
         child.ext_mut().set_preserve_transaction_state(true);
-        // Accounts the running transaction created stay created in the nested one, so that
-        // EIP-6780 SELFDESTRUCT still deletes them, and keep the storage it holds for them.
-        for address in &self.inner.tx_created {
+        // Accounts the running transaction created and holds created on this fork, not ones it
+        // created on another fork, stay created in the nested one, so that EIP-6780 SELFDESTRUCT
+        // still deletes them, and keep the storage it holds for them. A revert past a fork switch
+        // can drop the mark the switch restored, so an account created on this fork stays created
+        // too, unless it is persistent, whose state can come from another fork. Only accounts the
+        // running transaction loaded are checked, so checking loads no others.
+        let state = evm.state_mut();
+        let loaded = state
+            .loaded_accounts()
+            .map(|(address, _)| *address)
+            .filter(|address| self.inner.tx_created.contains_key(address))
+            .collect::<Vec<_>>();
+        let held = loaded
+            .into_iter()
+            .filter(|address| {
+                state.account(address).is_ok_and(|account| account.is_created())
+                    || (self.inner.tx_created[address].contains(&source_fork)
+                        && !backend.backend().is_persistent(address))
+            })
+            .collect::<AddressSet>();
+        for address in &held {
             match child.state_mut().account(address) {
                 Ok(mut account) => {
                     if account.exists() {
@@ -1633,19 +1653,20 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         if skip_floor {
             result.floor_gas = floor;
         }
-        self.inner.tx_created.extend(
-            executed
-                .pending_state
-                .account_changes()
-                // A created account the call self-destructed is kept until the running
-                // transaction ends.
-                .filter(|change| {
-                    change.created && (change.current.is_some() || change.selfdestructed)
-                })
-                .map(|change| change.address),
-        );
+        // The accounts the call's state holds created, on the fork it ended on. A created account
+        // the call self-destructed is kept until the running transaction ends.
+        let fork = backend.backend().active_fork_id();
+        let created = executed
+            .pending_state
+            .account_changes()
+            .filter(|change| change.created && (change.current.is_some() || change.selfdestructed))
+            .map(|change| change.address)
+            .collect::<AddressSet>();
+        for address in &created {
+            self.inner.tx_created.entry(*address).or_default().insert(fork);
+        }
 
-        let fork_changed = backend.backend().active_fork_id() != source_fork;
+        let fork_changed = fork != source_fork;
         let replaced = restored
             || fork_changed
             || epoch != self.cheatcodes.as_deref().map(|cheats| cheats.state_epoch);
@@ -1698,10 +1719,16 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 }
             }
             // The new transaction overlay does not know which accounts the running transaction
-            // created, so a later isolated call that loads them would merge them as new and wipe
-            // their storage. Its database already holds their storage.
-            for address in &self.inner.tx_created {
-                if let Ok(mut account) = evm.state_mut().account(address)
+            // holds created: the ones the call's state held created, the ones held created before
+            // a call that kept the fork, and the ones it created on the fork the call ended on,
+            // other than persistent accounts, whose state can come from another fork. Without the
+            // mark, a later isolated call that loads them would merge them as new and wipe their
+            // storage. Its database already holds their storage.
+            for (address, forks) in &self.inner.tx_created {
+                if (created.contains(address)
+                    || (!fork_changed && held.contains(address))
+                    || (forks.contains(&fork) && !backend.backend().is_persistent(address)))
+                    && let Ok(mut account) = evm.state_mut().account(address)
                     && account.exists()
                 {
                     account.mark_created();
@@ -1957,8 +1984,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             if static_end_stepped {
                 call_inspectors!(
                     [
-                        // These are sorted in definition order.
-                        &mut inner.chisel_state,
+                        // These are sorted in definition order. Chisel dumps the running
+                        // transaction, not a nested one such as `vm.executeTransaction`'s.
+                        inner.chisel_state.as_mut().filter(|_| !inner.in_inner_context),
                         &mut inner.printer,
                         &mut inner.revert_diag,
                         &mut inner.script_execution_inspector,
@@ -2010,7 +2038,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             call_inspectors!(
                 [
                     // These are sorted in definition order.
-                    &mut inner.chisel_state,
+                    inner.chisel_state.as_mut().filter(|_| !inner.in_inner_context),
                     &mut inner.printer,
                     &mut inner.revert_diag,
                     &mut inner.tracer,
@@ -2203,9 +2231,14 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         }
 
         let inner = &mut *self.inner;
-        call_inspectors!([&mut inner.line_coverage, &mut inner.tracer], |inspector| {
-            Inspector::<TypesFor<FEN>>::initialize_interp(&mut **inspector, interp)
-        },);
+        call_inspectors!(
+            [
+                inner.chisel_state.as_mut().filter(|_| !inner.in_inner_context),
+                &mut inner.line_coverage,
+                &mut inner.tracer,
+            ],
+            |inspector| Inspector::<TypesFor<FEN>>::initialize_interp(&mut **inspector, interp),
+        );
         if let Some(cheats) = self.cheatcodes.as_deref_mut() {
             cheats.initialize_interp_hook(interp);
         }
@@ -3055,8 +3088,8 @@ mod tests {
         assert!(!stack.inner.has_static_step_inspectors);
         assert!(!stack.inner.has_static_step_end_inspectors);
 
-        stack.set_chisel(0);
-        assert!(!stack.inner.has_static_step_inspectors);
+        stack.set_chisel(ChiselState::new(None));
+        assert!(stack.inner.has_static_step_inspectors);
         assert!(stack.inner.has_static_step_end_inspectors);
     }
 

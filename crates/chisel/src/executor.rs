@@ -124,7 +124,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
         // Recompile the project and ensure no errors occurred.
         let output = self.build()?;
 
-        let (bytecode, final_pc) = output.enter(|output| -> Result<_> {
+        let (bytecode, final_pc, run_is_empty) = output.enter(|output| -> Result<_> {
             let contract = output
                 .repl_contract()
                 .ok_or_else(|| eyre::eyre!("failed to find REPL contract"))?;
@@ -132,11 +132,19 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             let bytecode = contract
                 .get_bytecode_bytes()
                 .ok_or_else(|| eyre::eyre!("No bytecode found for `REPL` contract"))?;
-            Ok((bytecode.into_owned(), output.final_pc(contract)?))
+            Ok((
+                bytecode.into_owned(),
+                output.final_pc(contract)?,
+                output.run_func_body().is_empty(),
+            ))
         })?;
-        let final_pc = final_pc.unwrap_or_default();
         let mut runner = self.build_runner(final_pc).await?;
-        runner.run(bytecode)
+        let mut result = runner.run(bytecode)?;
+        // An empty `run()` has no state to dump, only the dispatcher's.
+        if run_is_empty {
+            result.state = None;
+        }
+        Ok(result)
     }
 
     /// Inspect a contract element inside of the current session
@@ -296,7 +304,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
         })
     }
 
-    async fn build_runner(&mut self, final_pc: usize) -> Result<ChiselRunner<FEN>> {
+    async fn build_runner(&mut self, final_pc: Option<usize>) -> Result<ChiselRunner<FEN>> {
         let backend = if let Some(backend) = &self.config.cached_backend {
             backend.clone()
         } else {
@@ -682,7 +690,7 @@ mod tests {
 
     async fn assert_celo_transfer_precompile(config: SessionSourceConfig<EthEvmNetwork>) {
         let mut source = SessionSource::<EthEvmNetwork>::new(config).unwrap();
-        let mut runner = source.build_runner(0).await.unwrap();
+        let mut runner = source.build_runner(None).await.unwrap();
         let from = Address::with_last_byte(1);
         let to = Address::with_last_byte(2);
         let amount = U256::from(4);
@@ -735,7 +743,7 @@ mod tests {
         })
         .unwrap();
 
-        let runner = source.build_runner(0).await.unwrap();
+        let runner = source.build_runner(None).await.unwrap();
         assert_eq!(
             runner.executor.inspector().extra_cheatcode_addresses(),
             &[MONAD_CHEATCODE_ADDRESS]

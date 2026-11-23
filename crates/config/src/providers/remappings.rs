@@ -95,10 +95,17 @@ impl Remappings {
         }
 
         if self.remappings.iter().any(|existing| {
+            let same_context = match (&existing.context, &remapping.context) {
+                (Some(existing), Some(context)) => {
+                    existing.len() == context.len() && context_starts_with(existing, context)
+                }
+                (None, None) => true,
+                _ => false,
+            };
             if remapping.name.ends_with(".sol") {
                 // For .sol files, only prevent duplicate source names in the same context
                 return existing.name == remapping.name
-                    && existing.context == remapping.context
+                    && same_context
                     && existing.path == remapping.path;
             }
 
@@ -112,8 +119,7 @@ impl Remappings {
             // the namespace.
             // Compare without one optional trailing slash so `pkg` and `pkg/` denote the same
             // alias while preserving significant repeated slashes.
-            remapping_name_is_prefix(&existing.name, &remapping.name)
-                && existing.context == remapping.context
+            remapping_name_is_prefix(&existing.name, &remapping.name) && same_context
         }) {
             return false;
         };
@@ -215,6 +221,8 @@ pub struct RemappingsProvider<'a> {
     pub remappings: Result<Vec<Remapping>, Error>,
     /// Source, test and script directories owned by the root project.
     pub project_paths: Vec<PathBuf>,
+    /// Extra directories the compiler searches for imports.
+    pub include_paths: Vec<PathBuf>,
     /// Warnings collected by earlier configuration providers.
     pub warnings: Result<Vec<Warning>, Error>,
 }
@@ -402,6 +410,7 @@ impl RemappingsProvider<'_> {
                 .map(|remapping| remapping.into_relative(self.root))
                 .collect::<BTreeSet<_>>();
             let mut contextual_remappings = Vec::new();
+            let mut scoped_remappings = Vec::new();
             for (lib, r, kind) in &nested_foundry_remappings {
                 if r.context.is_some() {
                     continue;
@@ -434,12 +443,10 @@ impl RemappingsProvider<'_> {
                             .any(|other| remappings_conflict(r, other, self.root)))
                 {
                     if let Some(contextual) = scope_nested_remapping(r.clone(), lib) {
-                        warnings.push(Warning::ScopedDependencyRemapping {
-                            remapping: relative_remapping_preserving_context_boundary(
-                                contextual.clone(),
-                                self.root,
-                            ),
-                        });
+                        scoped_remappings.push(relative_remapping_preserving_context_boundary(
+                            contextual.clone(),
+                            self.root,
+                        ));
                         if let Some(overlays) =
                             contextual_overlays(&authoritative_remappings, &contextual)
                         {
@@ -525,13 +532,14 @@ impl RemappingsProvider<'_> {
                     .collect(),
             );
 
-            retain_changed_remapping_warnings(
-                &mut warnings,
+            warnings.extend(scoped_remapping_warnings(
+                scoped_remappings,
                 &previous_globals,
                 &all_remappings.remappings,
                 &self.project_paths,
+                &self.include_paths,
                 self.root,
-            );
+            ));
             suppress_overridden_remapping_warnings(&mut warnings, &authoritative_remappings);
             return Ok(RemappingsOutput {
                 remappings: all_remappings.into_inner(),
@@ -618,18 +626,15 @@ impl RemappingsProvider<'_> {
                 && seen.insert(entry.canonical.clone())
             {
                 // Nested library roots must stay inside both dependency identities.
-                let owner = normalize_remapping_context(&entry.path);
-                for lib in config.libs.iter().filter(|lib| lib.is_relative()) {
-                    let lib = entry.path.join(lib);
-                    if normalize_remapping_context(&lib).starts_with(&owner)
-                        && let Ok(canonical) = dunce::canonicalize(&lib)
-                        && canonical.starts_with(&entry.canonical)
-                    {
-                        pending.extend(foundry_toml_dir_entries(lib).into_iter().filter(|entry| {
-                            !fs::symlink_metadata(&entry.path)
-                                .is_ok_and(|metadata| metadata.file_type().is_symlink())
-                        }));
-                    }
+                for lib in config
+                    .libs
+                    .iter()
+                    .filter_map(|lib| contained_library_path(&entry.path, &entry.canonical, lib))
+                {
+                    pending.extend(foundry_toml_dir_entries(lib).into_iter().filter(|entry| {
+                        !fs::symlink_metadata(&entry.path)
+                            .is_ok_and(|metadata| metadata.file_type().is_symlink())
+                    }));
                 }
             }
 
@@ -681,6 +686,31 @@ impl RemappingsProvider<'_> {
         }
         discovery
     }
+}
+
+/// Returns the normalized library directories the dependency at `root` configures, as nested
+/// remapping discovery accepts them.
+pub fn dependency_library_paths(root: &Path) -> Vec<PathBuf> {
+    let figment = Config::with_root(root).to_figment(FigmentProviders::Cast);
+    let Ok(config) = Config::from_figment_fallback(figment) else { return Vec::new() };
+    let canonical = dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    config
+        .libs
+        .iter()
+        .filter_map(|lib| contained_library_path(root, &canonical, lib))
+        .map(|lib| normalize_remapping_context(&lib))
+        .collect()
+}
+
+/// Joins a dependency's library directory when it is relative and stays inside both the
+/// dependency's lexical and canonical directory, so symlinks and parent components cannot
+/// impersonate another owner.
+fn contained_library_path(owner: &Path, canonical: &Path, lib: &Path) -> Option<PathBuf> {
+    let joined = owner.join(lib);
+    (lib.is_relative()
+        && normalize_remapping_context(&joined).starts_with(normalize_remapping_context(owner))
+        && dunce::canonicalize(&joined).is_ok_and(|joined| joined.starts_with(canonical)))
+    .then_some(joined)
 }
 
 fn load_nested_config(root: &Path) -> Result<Option<CachedNestedConfig>, Error> {
@@ -910,7 +940,15 @@ fn sort_by_context_specificity(remappings: &mut [Remapping]) {
             .components()
             .count()
             .cmp(&Path::new(a_context).components().count())
-            .then_with(|| a_context.cmp(b_context))
+            .then_with(|| {
+                #[cfg(windows)]
+                {
+                    // Equivalent contexts must retain declaration order before deduplication.
+                    a_context.replace('\\', "/").cmp(&b_context.replace('\\', "/"))
+                }
+                #[cfg(not(windows))]
+                a_context.cmp(b_context)
+            })
     });
 }
 
@@ -937,39 +975,87 @@ fn suppress_overridden_remapping_warnings(
     authoritative: &[Remapping],
 ) {
     warnings.retain(|warning| match warning {
-        Warning::ScopedDependencyRemapping { remapping } => !authoritative.iter().any(|mapping| {
-            mapping.context.is_none() && remapping_name_is_prefix(&mapping.name, &remapping.name)
-        }),
+        Warning::ScopedDependencyRemapping { remapping, .. } => {
+            !authoritative.iter().any(|mapping| {
+                mapping.context.is_none()
+                    && remapping_name_is_prefix(&mapping.name, &remapping.name)
+            })
+        }
         _ => true,
     });
 }
 
-/// Retains migration advice only for former global targets that are no longer available.
-fn retain_changed_remapping_warnings(
-    warnings: &mut Vec<Warning>,
+/// Returns migration advice for scoped declarations whose former global target root imports
+/// silently replace.
+///
+/// Root imports still resolve when a root mapping covers the alias, or when the root or an include
+/// path contains it. Otherwise imports of it fail with actionable compiler help, so warning here
+/// would flag projects that never import the alias.
+fn scoped_remapping_warnings(
+    scoped: Vec<RelativeRemapping>,
     previous_globals: &BTreeSet<RelativeRemapping>,
     current: &[Remapping],
     project_paths: &[PathBuf],
+    include_paths: &[PathBuf],
     root: &Path,
-) {
+) -> Vec<Warning> {
     let mut warned = BTreeSet::new();
-    warnings.retain(|warning| {
-        let Warning::ScopedDependencyRemapping { remapping } = warning else { return true };
-        let mut global = remapping.clone();
-        global.context = None;
-        let original = global.clone().to_relative_remapping();
-        previous_globals.contains(&global)
-            // Project-path aliases could not have supplied root imports before scoping.
-            && !project_paths.iter().any(|path| {
-                original.name.eq_ignore_ascii_case(&project_path_remapping_name(path))
-            })
-            && !current.iter().any(|mapping| {
-                mapping.context.is_none()
-                    && remapping_name_is_prefix(&mapping.name, &global.name)
-                    && !remappings_conflict(mapping, &original, root)
-            })
-            && warned.insert(global)
-    });
+    scoped
+        .into_iter()
+        .filter_map(|remapping| {
+            let mut global = remapping.clone();
+            global.context = None;
+            let original = global.clone().to_relative_remapping();
+            if !previous_globals.contains(&global)
+                // Project-path aliases could not have supplied root imports before scoping.
+                || project_paths.iter().any(|path| {
+                    original.name.eq_ignore_ascii_case(&project_path_remapping_name(path))
+                })
+                || !warned.insert(global.clone())
+            {
+                return None;
+            }
+            // Like solc, the longest root alias wins; without one, the root or an include path
+            // resolves it.
+            let resolved = match current
+                .iter()
+                .filter(|mapping| {
+                    mapping.context.is_none()
+                        && remapping_name_is_prefix(&mapping.name, &global.name)
+                })
+                .max_by_key(|mapping| mapping.name.len())
+            {
+                Some(mapping) if remappings_conflict(mapping, &original, root) => {
+                    let mut target =
+                        RelativeRemapping::new(mapping.clone(), root).to_relative_remapping();
+                    // Render the target with `/`, like the remappings in the same warning.
+                    target.slash_path();
+                    let suffix = original.name[mapping.name.trim_end_matches('/').len()..]
+                        .trim_start_matches('/');
+                    if suffix.is_empty() {
+                        target.path
+                    } else {
+                        format!("{}/{suffix}", target.path.trim_end_matches('/'))
+                    }
+                }
+                None => {
+                    let found = std::iter::once(root.to_path_buf())
+                        .chain(include_paths.iter().map(|path| root.join(path)))
+                        .map(|base| base.join(&original.name))
+                        .find(|path| path.exists())?;
+                    let found =
+                        project_path_remapping_name(found.strip_prefix(root).unwrap_or(&found));
+                    if original.name.ends_with('/') {
+                        found
+                    } else {
+                        found.trim_end_matches('/').to_string()
+                    }
+                }
+                _ => return None,
+            };
+            Some(Warning::ScopedDependencyRemapping { remapping, resolved })
+        })
+        .collect()
 }
 
 fn project_path_remapping_name(path: &Path) -> String {
@@ -1050,6 +1136,7 @@ mod tests {
             root,
             remappings: Ok(vec![]),
             project_paths: Vec::new(),
+            include_paths: Vec::new(),
             warnings: Ok(Vec::new()),
         };
 
@@ -1080,6 +1167,7 @@ mod tests {
             root: &root,
             remappings: Ok(vec![]),
             project_paths: Vec::new(),
+            include_paths: Vec::new(),
             warnings: Ok(Vec::new()),
         };
 
@@ -1119,6 +1207,7 @@ mod tests {
             root: &root,
             remappings: Ok(vec![]),
             project_paths: Vec::new(),
+            include_paths: Vec::new(),
             warnings: Ok(Vec::new()),
         };
 
@@ -1251,6 +1340,7 @@ mod tests {
             root: root.path(),
             remappings: Ok(Vec::new()),
             project_paths: Vec::new(),
+            include_paths: Vec::new(),
             warnings: Ok(Vec::new()),
         };
 
@@ -1903,7 +1993,7 @@ mod tests {
             );
             assert_eq!(
                 config.warnings[1].to_string(),
-                "Dependency remapping `shared/=lib/a/src/pinned/` now applies only within `lib/a/`. Root imports may resolve differently. To retain the previous target, add `shared/=lib/a/src/pinned/` to your root remappings."
+                "Dependency remapping `shared/=lib/a/src/pinned/` now applies only within `lib/a/`. Root imports of `shared/` now resolve to `lib/a/lib/shared/src/` instead. Adding `shared/=lib/a/src/pinned/` to your root remappings restores the previous resolution for the whole project, including other dependencies; to keep a dependency's own target, also add `<dependency>/:shared/=<target>`."
             );
             assert_eq!(
                 config
@@ -1975,18 +2065,72 @@ mod tests {
                     .get_all_remappings()
                     .filter(|mapping| mapping.name == "pkg/" || mapping.name == alias)
                     .collect::<Vec<_>>();
-                assert_eq!(config.warnings.len(), usize::from(scoped), "{alias}={target}");
-                if scoped {
-                    assert_eq!(
-                        config.warnings[0].to_string(),
-                        "Dependency remapping `pkg/=lib/a/src/` now applies only within `lib/a/`. Root imports may resolve differently. To retain the previous target, add `pkg/=lib/a/src/` to your root remappings."
-                    );
-                }
+                // No root mapping covers a scoped alias, so root imports fail with compiler help
+                // instead of resolving silently elsewhere.
+                assert!(config.warnings.is_empty(), "{alias}={target}");
                 assert!(
                     aliases.iter().all(|mapping| mapping.context.is_some() == scoped),
                     "{alias}={target}"
                 );
             }
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn scoped_dependency_alias_shadowed_by_root_or_include_path_warns() {
+        figment::Jail::expect_with(|_| {
+            let temp = tempdir().unwrap();
+            let root = temp.path();
+            fs::create_dir_all(root.join("lib/a/src/utils")).unwrap();
+            fs::create_dir_all(root.join("utils")).unwrap();
+            fs::write(
+                root.join("lib/a").join(Config::FILE_NAME),
+                "[profile.default]\nremappings = [\"utils/=src/utils/\"]\n",
+            )
+            .unwrap();
+            fs::write(root.join("lib/a/src/utils/U.sol"), "contract Dependency {}\n").unwrap();
+            fs::write(root.join("utils/U.sol"), "contract Root {}\n").unwrap();
+            fs::write(root.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
+
+            // Root imports of `utils/` now silently resolve to the root directory.
+            let config = Config::load_with_root(root).unwrap();
+            assert_eq!(
+                config.warnings.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                [
+                    "Dependency remapping `utils/=lib/a/src/utils/` now applies only within `lib/a/`. Root imports of `utils/` now resolve to `utils/` instead. Adding `utils/=lib/a/src/utils/` to your root remappings restores the previous resolution for the whole project, including other dependencies; to keep a dependency's own target, also add `<dependency>/:utils/=<target>`."
+                ]
+            );
+
+            // An include path can supply the replacement too, once another dependency's
+            // conflicting declaration scopes the alias.
+            fs::remove_dir_all(root.join("utils")).unwrap();
+            fs::create_dir_all(root.join("lib/b/src/other")).unwrap();
+            fs::write(
+                root.join("lib/b").join(Config::FILE_NAME),
+                "[profile.default]\nremappings = [\"utils/=src/other/\"]\n",
+            )
+            .unwrap();
+            fs::create_dir_all(root.join("vendor/utils")).unwrap();
+            fs::write(root.join("vendor/utils/U.sol"), "contract Vendored {}\n").unwrap();
+            assert!(Config::load_with_root(root).unwrap().warnings.is_empty());
+            fs::write(
+                root.join(Config::FILE_NAME),
+                "[profile.default]\ninclude_paths = [\"vendor\"]\n",
+            )
+            .unwrap();
+            assert_eq!(
+                Config::load_with_root(root)
+                    .unwrap()
+                    .warnings
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>(),
+                [
+                    "Dependency remapping `utils/=lib/a/src/utils/` now applies only within `lib/a/`. Root imports of `utils/` now resolve to `vendor/utils/` instead. Adding `utils/=lib/a/src/utils/` to your root remappings restores the previous resolution for the whole project, including other dependencies; to keep a dependency's own target, also add `<dependency>/:utils/=<target>`."
+                ]
+            );
 
             Ok(())
         });
@@ -2091,6 +2235,7 @@ mod tests {
                 root: &linked_root,
                 remappings: Ok(Vec::new()),
                 project_paths: Vec::new(),
+                include_paths: Vec::new(),
                 warnings: Ok(Vec::new()),
             };
             assert_eq!(
@@ -2131,5 +2276,31 @@ mod tests {
             );
             Ok(())
         });
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn remapping_precedence_accepts_mixed_windows_separators() {
+        let declared = Remapping {
+            context: Some(r"C:\workspace\lib/a\".to_string()),
+            name: "shared/".to_string(),
+            path: "lib/a/src/pinned/".to_string(),
+        };
+        let discovered = Remapping {
+            context: Some("C:/workspace/lib/a/".to_string()),
+            name: "shared/".to_string(),
+            path: "lib/a/lib/shared/src/".to_string(),
+        };
+        let mut contextual = vec![declared.clone(), discovered.clone()];
+        sort_by_context_specificity(&mut contextual);
+        let mut remappings = Remappings::new();
+        remappings.extend(contextual);
+        assert_eq!(remappings.clone().into_inner(), vec![declared.clone()]);
+
+        // Directory boundaries and longer contexts remain significant Solidity prefixes.
+        let distinct = ["C:/workspace/lib/a", "C:/workspace/lib/abc/", "C:/workspace/lib/a/lib/x/"]
+            .map(|context| Remapping { context: Some(context.to_string()), ..discovered.clone() });
+        remappings.extend(distinct.to_vec());
+        assert_eq!(remappings.into_inner(), [vec![declared], distinct.to_vec()].concat());
     }
 }

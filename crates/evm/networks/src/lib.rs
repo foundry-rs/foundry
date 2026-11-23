@@ -34,7 +34,7 @@ use tempo_contracts::precompiles::{
 };
 
 #[cfg(feature = "base")]
-use base_common_eip8130::NonceManagerSlots;
+use base_common_base_tx::NonceManagerSlots;
 #[cfg(feature = "base")]
 use base_evm2::precompiles::{
     ACTIVATION_REGISTRY_ADDRESS, B20_FACTORY_ADDRESS, POLICY_REGISTRY_ADDRESS, TX_CONTEXT_ADDRESS,
@@ -105,8 +105,8 @@ const BASE_PRECOMPILES: &[(&str, Address)] = &[
 /// from every function and are code-less on chain, so stubbing them would diverge — a contract
 /// guarding calls with an `isContract` probe would pass locally and revert on Base.
 ///
-/// The nonce manager separately receives a stub at Zenith from Base's own
-/// `ensure_eip8130_system_accounts` transition, for EIP-161 state clearing rather than for
+/// The nonce manager separately receives a stub at Everest from Base's own
+/// `ensure_base_tx_system_accounts` transition, for EIP-161 state clearing rather than for
 /// `extcodesize`. That transition owns it; this list must not.
 #[cfg(feature = "base")]
 pub const BASE_CODE_SENTINEL_ADDRESSES: &[Address] =

@@ -425,11 +425,60 @@ fn normalize_bool_node_for_solver(cx: &mut SymCx, expr: SymBoolExpr) -> SymBoolE
             if *op == SymCmpOp::Eq && polynomial_identity(&left, &right) {
                 return SymBoolExpr::constant(cx, true);
             }
+            if let Some(normalized) = normalize_ite_branch_cmp(cx, *op, &left, &right) {
+                return normalized;
+            }
             let normalized = normalize_cmp_for_solver(cx, *op, left, right);
             normalized.normalize_udiv_for_solver(cx).unwrap_or(normalized)
         }
         _ => expr,
     }
+}
+
+/// Compares an `ite` against one of its own branches, as in `ite(c, a, b) < b => c && a < b`.
+/// Fires only when one branch comparison folds to `false`, so the expression never grows; for a
+/// strict comparison the branch equal to the other operand always does. Equality is left to
+/// `SymBoolExpr::ite_eq_arm`.
+fn normalize_ite_branch_cmp(
+    cx: &mut SymCx,
+    op: SymCmpOp,
+    left: &SymExpr,
+    right: &SymExpr,
+) -> Option<SymBoolExpr> {
+    if op == SymCmpOp::Eq {
+        return None;
+    }
+    let (condition, then_value, else_value, ite_on_left) = match (left.kind(), right.kind()) {
+        (SymExprKind::Ite(condition, then_value, else_value), _)
+            if then_value == right || else_value == right =>
+        {
+            (condition, then_value, else_value, true)
+        }
+        (_, SymExprKind::Ite(condition, then_value, else_value))
+            if then_value == left || else_value == left =>
+        {
+            (condition, then_value, else_value, false)
+        }
+        _ => return None,
+    };
+    let mut branch_cmp = |value: &SymExpr| {
+        if ite_on_left {
+            SymBoolExpr::cmp(cx, op, value.clone(), right.clone())
+        } else {
+            SymBoolExpr::cmp(cx, op, left.clone(), value.clone())
+        }
+    };
+    let then_cmp = branch_cmp(then_value);
+    let else_cmp = branch_cmp(else_value);
+    let selected = if then_cmp.as_const() == Some(false) {
+        let not_condition = condition.clone().not(cx);
+        SymBoolExpr::and(cx, vec![not_condition, else_cmp])
+    } else if else_cmp.as_const() == Some(false) {
+        SymBoolExpr::and(cx, vec![condition.clone(), then_cmp])
+    } else {
+        return None;
+    };
+    Some(normalize_bool_for_solver(cx, selected))
 }
 
 fn normalize_cmp_for_solver(
@@ -445,6 +494,13 @@ fn normalize_cmp_for_solver(
         && let Some(normalized) = normalize_quotient_offset_eq(cx, &left, &right)
     {
         return normalized;
+    }
+    if op == SymCmpOp::Eq
+        && let Some((a, b)) =
+            mul_high_operands(&left, &right).or_else(|| mul_high_operands(&right, &left))
+    {
+        let high = SymExpr::binop(cx, SymBinOp::MulHigh, a.clone(), b.clone());
+        return SymBoolExpr::eq_word_const(cx, &high, U256::ZERO);
     }
     if op == SymCmpOp::Eq {
         for (quotient, expected) in [(&left, &right), (&right, &left)] {
@@ -540,6 +596,8 @@ pub(super) struct ConstraintContext {
     non_wrapping_products: HashSet<(SymExpr, SymExpr)>,
     /// Conjuncts of the context, which decide `ite` conditions they assert or deny.
     facts: HashSet<SymBoolExpr>,
+    /// The words each word is asserted to be at most, by a `<=` or `<` conjunct.
+    order_facts: HashMap<SymExpr, Vec<SymExpr>>,
 }
 
 #[derive(Clone, Copy)]
@@ -620,6 +678,18 @@ impl ConstraintContext {
             context.record_lower_bound_constraint(constraint);
             context.record_unsigned_lower_bound_constraint(constraint, promote_unsigned_bounds);
             context.record_zero_mul_high(constraint);
+        }
+        for fact in &context.facts {
+            let (small, large) = match fact.kind() {
+                SymBoolExprKind::Cmp(SymCmpOp::Ult | SymCmpOp::Ule, left, right) => (left, right),
+                SymBoolExprKind::Not(inner)
+                    if let SymBoolExprKind::Cmp(SymCmpOp::Ult, left, right) = inner.kind() =>
+                {
+                    (right, left)
+                }
+                _ => continue,
+            };
+            context.order_facts.entry(small.clone()).or_default().push(large.clone());
         }
         // A bounded number of rounds closes ordinary order chains. Relational propagation keeps
         // strict comparisons weak (`a < b` propagates only `a <= upper(b)`), so inconsistent
@@ -860,7 +930,10 @@ impl ConstraintContext {
         }
         if let SymExprKind::BinOp(SymBinOp::And, value, mask) = expr.kind()
             && let Some(bits) = mask.as_const().and_then(mask_low_bits)
-            && self.unsigned_bits(value) <= bits
+            && (self.unsigned_bits(value) <= bits
+                // Bit widths ignore a divisor, so a share `x * w / k` with `w`'s bound at most
+                // `k`'s minimum looks wider than `x`; its interval divides by `k`.
+                || self.interval(value).is_some_and(|range| range.max.bit_len() <= bits))
         {
             // `x & low_mask => x` when the current context proves `x` fits the mask.
             return value.clone();
@@ -1428,6 +1501,11 @@ impl ConstraintContext {
         self.interval(expr).map(|interval| (interval.min, interval.max))
     }
 
+    /// Returns the words that another conjunct asserts `small` is at most, including strict `<`.
+    fn asserted_upper_bounds(&self, small: &SymExpr) -> &[SymExpr] {
+        self.order_facts.get(small).map_or(&[], Vec::as_slice)
+    }
+
     fn interval(&self, expr: &SymExpr) -> Option<WordInterval> {
         let mut intervals = HashMap::default();
         let mut remaining = MAX_LOCAL_ANALYSIS_NODES;
@@ -1495,14 +1573,14 @@ impl ConstraintContext {
                     max: left.max.checked_add(right.max)?,
                 })
             }
-            SymExprKind::BinOp(SymBinOp::Sub, left, right) => {
+            SymExprKind::BinOp(SymBinOp::Sub, minuend, subtrahend) => {
                 if let Some(interval) =
-                    self.rounding_error_interval(left, right, intervals, remaining)
+                    self.rounding_error_interval(minuend, subtrahend, intervals, remaining)
                 {
                     return Some(interval);
                 }
-                let left = self.interval_cached(left, intervals, remaining)?;
-                let right = self.interval_cached(right, intervals, remaining)?;
+                let left = self.interval_cached(minuend, intervals, remaining)?;
+                let right = self.interval_cached(subtrahend, intervals, remaining)?;
                 if left.max < right.min {
                     // Every subtraction wraps exactly once, so the unsigned image is contiguous.
                     return Some(WordInterval {
@@ -1511,7 +1589,11 @@ impl ConstraintContext {
                     });
                 }
                 if left.min < right.max {
-                    return None;
+                    // An asserted `subtrahend <= minuend` rules out wrapping.
+                    return self
+                        .asserted_upper_bounds(subtrahend)
+                        .contains(minuend)
+                        .then(|| WordInterval { min: U256::ZERO, max: left.max - right.min });
                 }
                 Some(WordInterval {
                     min: left.min.checked_sub(right.max)?,
@@ -1624,12 +1706,14 @@ fn normalize_expr_node_for_solver(cx: &mut SymCx, expr: SymExpr) -> SymExpr {
         SymExprKind::Ite(cond, left, right) => {
             normalize_ite_expr_for_solver(cx, cond.clone(), left.clone(), right.clone())
         }
-        SymExprKind::BinOp(SymBinOp::Sub, _, _) => match mul_high_operands(&expr) {
-            Some((left, right)) => {
-                SymExpr::binop(cx, SymBinOp::MulHigh, left.clone(), right.clone())
+        SymExprKind::BinOp(SymBinOp::Sub, minuend, subtrahend) => {
+            match mul_high_operands(minuend, subtrahend) {
+                Some((left, right)) => {
+                    SymExpr::binop(cx, SymBinOp::MulHigh, left.clone(), right.clone())
+                }
+                None => expr,
             }
-            None => expr,
-        },
+        }
         _ => expr,
     }
 }
@@ -2105,6 +2189,14 @@ impl ConstraintContext {
         if self.bounded_zero_check_operand(condition) == Some(operand) {
             return true;
         }
+        // `normalize_cmp_for_solver` rewrites the zero check `a - b == 0` to `a == b`, with a
+        // constant operand on the right, so either order can occur.
+        if let SymExprKind::BinOp(SymBinOp::Sub, a, b) = operand.kind()
+            && let SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) = condition.kind()
+            && ((left == a && right == b) || (left == b && right == a))
+        {
+            return true;
+        }
         // For a positive constant d, n / d == 0 iff n < d. Normalization
         // exposes this comparison before the Solidity multiplication guard.
         if let Some((numerator, denominator)) = operand.udiv_operands()
@@ -2202,10 +2294,12 @@ impl ConstraintContext {
         .then_some((divisor, other))
     }
 
-    /// Learns multiplication safety from a retained successful Solidity overflow check.
+    /// Learns multiplication safety from a retained successful overflow guard.
     fn record_non_wrapping_product(&mut self, cx: &mut SymCx, constraint: &SymBoolExpr) -> bool {
         let fact = bitwise_bool_word_fact(cx, constraint).unwrap_or_else(|| constraint.clone());
         let factors = if let Some(factors) = self.checked_product_factors(&fact, None) {
+            Some(factors)
+        } else if let Some(factors) = Self::division_guard_factors(&fact) {
             Some(factors)
         } else if let SymBoolExprKind::Not(inner) = fact.kind()
             && let SymBoolExprKind::And(terms) = inner.kind()
@@ -2217,6 +2311,14 @@ impl ConstraintContext {
             let second = terms[1].clone().not(cx);
             self.checked_product_factors(&second, Some(&first))
                 .or_else(|| self.checked_product_factors(&first, Some(&second)))
+                .or_else(|| {
+                    // `y == 0 || x <= MAX / y`, as in Solmate's `mulDivDown`.
+                    [(&first, &second), (&second, &first)].into_iter().find_map(|(guard, zero)| {
+                        let (value, factor) = Self::division_guard_factors(guard)?;
+                        (self.bounded_zero_check_operand(zero) == Some(&factor))
+                            .then_some((value, factor))
+                    })
+                })
         } else {
             None
         };
@@ -2236,6 +2338,16 @@ impl ConstraintContext {
         } else {
             false
         }
+    }
+
+    /// Returns `(x, y)` for `x <= n / y` with any numerator, as in `x <= MAX / y`, since then
+    /// `x * y <= (n / y) * y <= n`. The product is zero when `y == 0`, and an EVM division that
+    /// yields zero only forces `x == 0`.
+    fn division_guard_factors(predicate: &SymBoolExpr) -> Option<(SymExpr, SymExpr)> {
+        let SymBoolExprKind::Not(inner) = predicate.kind() else { return None };
+        let SymBoolExprKind::Cmp(SymCmpOp::Ult, bound, value) = inner.kind() else { return None };
+        let (_, factor) = word_division_operands(bound)?;
+        Some((value.clone(), factor.clone()))
     }
 
     fn checked_product_factors(
@@ -2264,17 +2376,29 @@ impl ConstraintContext {
     }
 
     pub(super) fn mul_cannot_overflow_256(&self, left: &SymExpr, right: &SymExpr) -> bool {
+        let mut intervals = HashMap::default();
+        let mut remaining = MAX_LOCAL_ANALYSIS_NODES;
+        self.mul_cannot_overflow_256_cached(left, right, &mut intervals, &mut remaining)
+    }
+
+    /// Like [`Self::mul_cannot_overflow_256`], sharing the caller's interval cache and node
+    /// budget, so a proof nested inside interval analysis does not restart it.
+    fn mul_cannot_overflow_256_cached(
+        &self,
+        left: &SymExpr,
+        right: &SymExpr,
+        intervals: &mut HashMap<SymExpr, Option<WordInterval>>,
+        remaining: &mut usize,
+    ) -> bool {
         // `(a / d) * d <= a`, and the product is zero when `d == 0`, so it never wraps.
         if self.has_non_wrapping_product(left, right)
             || rounded_product_operands(left, right).is_some()
         {
             return true;
         }
-        let mut intervals = HashMap::default();
-        let mut remaining = MAX_LOCAL_ANALYSIS_NODES;
         if self
-            .interval_cached(left, &mut intervals, &mut remaining)
-            .zip(self.interval_cached(right, &mut intervals, &mut remaining))
+            .interval_cached(left, intervals, remaining)
+            .zip(self.interval_cached(right, intervals, remaining))
             .is_some_and(|(left, right)| left.max.checked_mul(right.max).is_some())
         {
             return true;

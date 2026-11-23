@@ -19,7 +19,7 @@ use crate::{
         collect_symbolic_artifacts_from_suites, emit_symbolic_regressions,
     },
     traces::{
-        CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
+        CallTraceDecoder, CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
         debug::{ContractSources, DebugTraceIdentifier},
         decode_trace_arena, folded_stack_trace,
         identifier::SignaturesIdentifier,
@@ -1351,6 +1351,48 @@ impl TestArgs {
         Ok(())
     }
 
+    /// Warns about test contracts that the project compiles from outside its `src`, `test` and
+    /// `script` directories and `libs`, since they no longer run as test suites.
+    fn warn_skipped_test_suites(
+        &self,
+        output: &ProjectCompileOutput,
+        config: &Config,
+        inline_config: &InlineConfig,
+        filter: &ProjectPathsAwareFilter,
+    ) -> Result<()> {
+        let matcher = TestFunctionMatcher::new(config, inline_config, None);
+        let mut skipped = output
+            .artifact_ids()
+            .filter_map(|(id, artifact)| {
+                let abi = artifact.abi.as_ref()?;
+                let id = id.with_stripped_file_prefixes(&config.root);
+                (filter.is_outside_test_roots(&id.source)
+                    && filter.matches_contract(&id.name)
+                    && is_runnable_test_contract(output, config, &id, artifact, abi)
+                    && matcher
+                        .test_functions(id.identifier(), abi, |contract_id, func, kind| {
+                            filter.matches_test_function_kind_in_contract(contract_id, func, kind)
+                        })
+                        .next()
+                        .is_some())
+                .then(|| id.identifier())
+            })
+            .collect::<Vec<_>>();
+        skipped.sort();
+        skipped.dedup();
+        if !skipped.is_empty() {
+            sh_warn!(
+                "Skipping test contracts outside the configured `src`, `test` and `script` directories:\n\t{}\n\
+                 They are compiled because other files import them, but do not run as test \
+                 suites. To run them, set `test` (currently `{}`) to a directory that contains \
+                 them.",
+                skipped.join("\n\t"),
+                config.test.strip_prefix(&config.root).unwrap_or(&config.test).display(),
+            )?;
+        }
+        Ok(())
+    }
+
     /// Builds the delegated `forge test` invocation for `forge fuzz run`.
     pub(crate) fn from_fuzz_run(args: FuzzRunArgs) -> Self {
         let campaign = args.campaign;
@@ -1961,6 +2003,7 @@ impl TestArgs {
             filter,
             &execution.multi_network,
         )?;
+        self.warn_skipped_test_suites(output, &config, &execution.inline_config, filter)?;
 
         let mut filter = filter.clone();
         self.apply_gas_report_overrides(&mut config, &mut evm_opts);
@@ -2921,26 +2964,15 @@ impl TestArgs {
         config: &Config,
         gas_snapshots: &BTreeMap<String, BTreeMap<String, String>>,
     ) -> Result<()> {
-        let check = self.gas_snapshot_check.unwrap_or(config.gas_snapshot_check);
-        let emit = self.gas_snapshot_emit.unwrap_or(config.gas_snapshot_emit);
-        if !check && !emit {
-            return Ok(());
-        }
-        let gas_snapshots = gas_snapshots
-            .iter()
-            .map(|(group, snapshots)| {
-                gas_snapshot_path(&config.snapshots, group).map(|path| (group, snapshots, path))
-            })
-            .collect::<Result<Vec<_>>>()?;
-
-        if check {
+        if self.gas_snapshot_check.unwrap_or(config.gas_snapshot_check) {
             let mut differences_found = false;
-            for (group, snapshots, path) in &gas_snapshots {
+            for (group, snapshots) in gas_snapshots {
+                let path = config.snapshots.join(format!("{group}.json"));
                 // If the snapshot file doesn't exist, we can't compare so we skip.
                 if !path.exists() {
                     continue;
                 }
-                let previous_snapshots: BTreeMap<String, String> = fs::read_json_file(path)?;
+                let previous_snapshots: BTreeMap<String, String> = fs::read_json_file(&path)?;
                 let diff = snapshots
                     .iter()
                     .filter_map(|(k, v)| {
@@ -2971,10 +3003,12 @@ impl TestArgs {
             }
         }
 
-        if emit {
-            for (_, snapshots, path) in gas_snapshots {
-                fs::create_dir_all(path.parent().expect("snapshot path has a parent"))?;
-                fs::write_pretty_json_file(&path, snapshots)?;
+        if self.gas_snapshot_emit.unwrap_or(config.gas_snapshot_emit) {
+            for (group, snapshots) in gas_snapshots {
+                // Groups may be nested, such as `core/Pool`.
+                let path = config.snapshots.join(format!("{group}.json"));
+                fs::create_dir_all(path.parent().unwrap_or(&config.snapshots))?;
+                fs::write_pretty_json_file(&path, &snapshots)?;
             }
         }
         Ok(())
@@ -3029,6 +3063,7 @@ fn prepare_results_for_json(
     verbosity: u8,
     trace_depth: Option<usize>,
 ) {
+    let decoder = CallTraceDecoder::new();
     for test_result in results.values_mut().flat_map(|suite| suite.test_results.values_mut()) {
         if verbosity >= 2 {
             test_result.decoded_logs = decode_console_logs(&test_result.logs);
@@ -3038,12 +3073,13 @@ fn prepare_results_for_json(
         for (_, arena) in &mut test_result.traces {
             // Discard presentation-only decoding populated by the streaming renderer.
             for node in arena.nodes_mut() {
+                decoder.redact_raw_cheatcode_secrets(&mut node.trace);
                 node.trace.decoded = None;
                 for log in &mut node.logs {
                     log.decoded = None;
                 }
-                for step in &mut node.trace.steps {
-                    step.decoded = None;
+                for extra in node.trace.steps.iter_mut().filter_map(|step| step.extra.as_mut()) {
+                    extra.decoded = None;
                 }
             }
             if let Some(trace_depth) = trace_depth {
@@ -3790,29 +3826,6 @@ impl JunitOutput {
             }
         }
     }
-}
-
-/// Resolves a snapshot path, rejecting symlinks below the user-configured snapshots root.
-fn gas_snapshot_path(root: &Path, group: &str) -> Result<PathBuf> {
-    let relative = PathBuf::from(format!("{group}.json"));
-    let path = root.join(&relative);
-    let mut current = root.to_path_buf();
-    for component in relative.components() {
-        current.push(component);
-        match std::fs::symlink_metadata(&current) {
-            Ok(metadata) if metadata.file_type().is_symlink() => {
-                bail!("gas snapshot path traverses a symlink: {}", current.display());
-            }
-            Ok(_) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
-            Err(error) => {
-                return Err(error).wrap_err_with(|| {
-                    format!("failed to inspect gas snapshot path {}", current.display())
-                });
-            }
-        }
-    }
-    Ok(path)
 }
 
 #[cfg(test)]

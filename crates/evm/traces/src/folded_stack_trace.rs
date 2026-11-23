@@ -59,8 +59,8 @@ impl EvmFoldedStackTraceBuilder {
         step_exits: &mut Vec<usize>,
     ) {
         let step = &steps[step_idx];
-        if let Some(decoded_step) = &step.decoded {
-            match decoded_step.as_ref() {
+        if let Some(decoded_step) = step.decoded() {
+            match decoded_step {
                 DecodedTraceStep::InternalCall(decoded_internal_call, step_end_idx) => {
                     // Gas metering resets can increase the remaining gas across an internal call.
                     let gas_used =
@@ -222,7 +222,7 @@ pub fn build(arena: &CallTraceArena) -> Vec<String> {
 mod tests {
     use super::*;
     use crate::{CallTrace, DecodedInternalCall};
-    use alloy_primitives::{Bytes, U256};
+    use alloy_primitives::U256;
     use evm2::interpreter::{InstrStop, opcode::OpCode};
 
     fn trace_step(gas_remaining: u64) -> CallTraceStep {
@@ -232,17 +232,13 @@ mod tests {
             stack: Some(Vec::<U256>::new().into_boxed_slice()),
             push_stack: None,
             memory: None,
-            returndata: Bytes::new(),
             gas_remaining,
             gas_refund_counter: 0,
             gas_cost: 0,
-            state_gas_cost: None,
             state_gas_reservoir: None,
-            state_gas_spent: 0,
             storage_change: None,
             status: Some(InstrStop::Stop),
-            immediate_bytes: None,
-            decoded: None,
+            extra: None,
         }
     }
 
@@ -355,14 +351,14 @@ mod tests {
         root.trace.gas_used = 100;
         root.trace.gas_limit = 100;
         root.trace.steps = vec![trace_step(100), trace_step(70)];
-        root.trace.steps[0].decoded = Some(Box::new(DecodedTraceStep::InternalCall(
+        *root.trace.steps[0].decoded_mut() = DecodedTraceStep::InternalCall(
             DecodedInternalCall {
                 func_name: "DebugVarsTest::foo(uint256)".to_string(),
                 args: Some(vec!["42".to_string()]),
                 return_data: Some(vec!["43".to_string()]),
             },
             1,
-        )));
+        );
         root.ordering = vec![TraceMemberOrder::Step(0), TraceMemberOrder::Step(1)];
 
         assert_eq!(
@@ -379,14 +375,14 @@ mod tests {
         root.trace.gas_used = 100;
         root.trace.gas_limit = 100;
         root.trace.steps = vec![trace_step(70), trace_step(100)];
-        root.trace.steps[0].decoded = Some(Box::new(DecodedTraceStep::InternalCall(
+        *root.trace.steps[0].decoded_mut() = DecodedTraceStep::InternalCall(
             DecodedInternalCall {
                 func_name: "DebugVarsTest::resetsGas()".to_string(),
                 args: None,
                 return_data: None,
             },
             1,
-        )));
+        );
         root.ordering = vec![TraceMemberOrder::Step(0), TraceMemberOrder::Step(1)];
 
         assert_eq!(
