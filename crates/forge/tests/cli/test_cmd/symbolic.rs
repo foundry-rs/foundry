@@ -9142,8 +9142,8 @@ contract SymbolicDowncastShare {
 }
 
 // Utilization and remaining-share ratios scale `(total - used) * WAD / total`, which stays at
-// most `WAD` once `used <= total`. A remainder of an unrelated amount is not bounded by the
-// total.
+// most `WAD` once `used <= total`. A remainder of an unrelated amount, or one that wraps, is not
+// bounded by the total.
 #[forgetest_init]
 fn symbolic_proves_remaining_ratio_bounded(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_remaining_ratio_bounded");
@@ -9170,6 +9170,14 @@ contract SymbolicRemainingRatio {
         require(used <= cap);
         assert(mulDivDown(cap - used, WAD, total) <= WAD);
     }
+
+    function checkWrappedRemainder(uint256 total, uint256 used) public pure {
+        uint256 remaining;
+        unchecked {
+            remaining = total - used;
+        }
+        assert(mulDivDown(remaining, WAD, total) <= WAD);
+    }
 }
 "#,
     );
@@ -9184,15 +9192,20 @@ contract SymbolicRemainingRatio {
             .clone();
         let result = json_test_result(&output, "checkRemainingRatio(uint256,uint256)");
         assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
-        let result = json_test_result(&output, "checkUnrelatedRemainder(uint256,uint256,uint256)");
-        assert_eq!(
-            result["symbolic"]["status"], "fail_counterexample",
-            "optimized={optimized}: {result}"
-        );
-        assert_eq!(
-            result["symbolic"]["replay"]["status"], "confirmed",
-            "optimized={optimized}: {result}"
-        );
+        for signature in [
+            "checkUnrelatedRemainder(uint256,uint256,uint256)",
+            "checkWrappedRemainder(uint256,uint256)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "optimized={optimized} {signature}: {result}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "optimized={optimized} {signature}: {result}"
+            );
+        }
     }
 }
 
