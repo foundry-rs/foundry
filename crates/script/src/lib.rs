@@ -1186,6 +1186,8 @@ pub struct ScriptConfig<FEN: FoundryEvmNetwork> {
     pub tempo: TempoOpts,
     /// Profile builds by the URL of the `[rpc_endpoints]` entry naming the profile.
     pub chain_builds: BTreeMap<String, Arc<ChainBuild>>,
+    /// CREATE2 libraries to deploy on each fork.
+    pub create2_libraries: Vec<(Address, Bytes)>,
 }
 
 impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
@@ -1224,6 +1226,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
             batch,
             tempo,
             chain_builds: BTreeMap::new(),
+            create2_libraries: Vec::new(),
         })
     }
 
@@ -1364,6 +1367,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
                         library_deployments::rerun_unsafe_cheatcode_selectors();
                 }
                 cheats_config.chain_builds = Some(self.chain_builds.clone());
+                cheats_config.create2_libraries.clone_from(&self.create2_libraries);
                 stack
                     .cheatcodes(cheats_config.into())
                     .wallets(script_wallets)

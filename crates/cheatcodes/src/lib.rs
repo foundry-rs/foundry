@@ -31,7 +31,7 @@ pub use config::{ChainBuild, CheatsConfig};
 pub use error::{Error, ErrorKind, Result};
 pub use inspector::{
     BroadcastableTransaction, BroadcastableTransactions, Cheatcodes, CheatcodesExecutor,
-    StorageHook, decode_cheatcode_call, message_result, revert_frame,
+    StorageHook, decode_cheatcode_call, message_result, referenced_chain_libraries, revert_frame,
 };
 pub use spec::{CheatcodeDef, Vm};
 

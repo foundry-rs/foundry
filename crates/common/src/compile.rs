@@ -1373,6 +1373,7 @@ pub fn compile_endpoint_profiles(
             build.artifacts_dir == artifacts_dir
                 && build.config.hardfork == config.hardfork
                 && build.config.libraries == config.libraries
+                && build.config.create2_library_salt == config.create2_library_salt
         }) {
             build.profiles.push(profile.to_string());
             continue;
@@ -1590,14 +1591,21 @@ mod tests {
 evm_version = "cancun"
 [profile.first]
 hardfork = "cancun"
+create2_library_salt = "0x0000000000000000000000000000000000000000000000000000000000000001"
 [profile.second]
 hardfork = "prague"
+create2_library_salt = "0x0000000000000000000000000000000000000000000000000000000000000002"
 [profile.third]
 hardfork = "cancun"
+create2_library_salt = "0x0000000000000000000000000000000000000000000000000000000000000001"
+[profile.fourth]
+hardfork = "cancun"
+create2_library_salt = "0x0000000000000000000000000000000000000000000000000000000000000002"
 [rpc_endpoints]
 first = { endpoint = "http://127.0.0.1:1", profile = "first" }
 second = { endpoint = "http://127.0.0.1:2", profile = "second" }
 third = { endpoint = "http://127.0.0.1:3", profile = "third" }
+fourth = { endpoint = "http://127.0.0.1:4", profile = "fourth" }
 "#,
             )?;
             let config = Config::load().unwrap();
@@ -1609,10 +1617,15 @@ third = { endpoint = "http://127.0.0.1:3", profile = "third" }
                 })
                 .unwrap();
             assert_eq!(count.get(), 1);
-            assert_eq!(builds.len(), 2);
+            assert_eq!(builds.len(), 3);
             assert_eq!(builds[0].profiles, ["first", "third"]);
-            assert_eq!(builds[0].artifacts_dir, builds[1].artifacts_dir);
-            assert_ne!(builds[0].config.hardfork, builds[1].config.hardfork);
+            assert_eq!(builds[1].profiles, ["fourth"]);
+            assert!(builds.iter().all(|build| build.artifacts_dir == builds[0].artifacts_dir));
+            assert_ne!(builds[0].config.hardfork, builds[2].config.hardfork);
+            assert_ne!(
+                builds[0].config.create2_library_salt,
+                builds[1].config.create2_library_salt
+            );
             Ok(())
         });
     }

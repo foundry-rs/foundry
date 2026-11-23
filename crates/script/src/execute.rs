@@ -1,7 +1,7 @@
 use super::{JsonResult, NestedValue, ScriptResult, runner::ScriptRunner};
 use crate::{
     ScriptArgs, ScriptConfig,
-    build::{CompiledState, LinkedBuildData},
+    build::{CompiledState, LinkedBuildData, ScriptPredeployLibraries},
     simulate::PreSimulationState,
 };
 use alloy_dyn_abi::FunctionExt;
@@ -13,7 +13,7 @@ use alloy_primitives::{
 };
 use alloy_provider::Provider;
 use eyre::{OptionExt, Result};
-use foundry_cheatcodes::Wallets;
+use foundry_cheatcodes::{Wallets, referenced_chain_libraries};
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
 use foundry_common::{
     ContractsByArtifact,
@@ -174,7 +174,7 @@ impl<FEN: FoundryEvmNetwork> PreExecutionState<FEN> {
             runner.executor.backend_mut().allow_cheatcode_access(address.parse()?);
         }
 
-        let (address, mut setup_result) = runner.setup(
+        let (address, mut setup_result, library_count) = runner.setup(
             &self.build_data.predeploy_libraries,
             self.execution_data.bytecode.clone(),
             needs_setup(&self.execution_data.abi),
@@ -204,6 +204,16 @@ impl<FEN: FoundryEvmNetwork> PreExecutionState<FEN> {
                 }
                 _ => {}
             }
+        }
+
+        // Drops the setup's library deployments if the script broadcasts on other chains only.
+        let fork_url = &self.script_config.evm_opts.fork_url;
+        if matches!(self.build_data.predeploy_libraries, ScriptPredeployLibraries::Create2 { .. })
+            && let Some(txs) = &mut setup_result.transactions
+            && txs.iter().skip(library_count).all(|tx| tx.rpc != *fork_url)
+            && txs.iter().any(|tx| tx.rpc != *fork_url)
+        {
+            txs.drain(..library_count);
         }
 
         Ok(setup_result)
@@ -350,9 +360,9 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
 
         if rpc_data.is_multi_chain() && !silent {
             sh_warn!("Multi chain deployment is still under development. Use with caution.")?;
-            if !self.build_data.libraries.is_empty() {
+            if self.build_data.predeploy_libraries.has_nonce_libraries() {
                 eyre::bail!(
-                    "Multi chain deployment does not support library linking at the moment."
+                    "Multi chain deployment does not support libraries deployed at nonce addresses."
                 );
             }
         }
@@ -379,12 +389,74 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
                             && !linked.clone().any(|other| {
                                 other.parse::<Address>().is_ok_and(|other| other == *address)
                             })
+                            && build.create2_libraries.iter().all(|(other, _)| other != address)
                     }) {
                         eyre::bail!(
                             "a broadcast to a profiled endpoint uses a library of the run build that its profile does not link"
                         );
                     }
                 }
+            }
+        }
+        // Refuses broadcasts that reference libraries not deployed on their chain.
+        let chain_builds = &self.script_config.chain_builds;
+        let (run_libraries, local) = match &self.build_data.predeploy_libraries {
+            ScriptPredeployLibraries::Default { local, .. } => (local, true),
+            ScriptPredeployLibraries::Create2 { onchain, .. } => (onchain, false),
+        };
+        let run_libraries = run_libraries
+            .iter()
+            .map(|library| (library.address, library.bytecode.clone()))
+            .collect::<Vec<_>>();
+        let libraries = run_libraries
+            .iter()
+            .cloned()
+            .chain(chain_builds.values().flat_map(|build| build.create2_libraries.iter().cloned()))
+            .collect::<Vec<_>>();
+        if !libraries.is_empty()
+            && let Some(txs) = &self.execution_result.transactions
+            && txs.iter().any(|tx| {
+                let deployed = match tx.rpc.as_ref().and_then(|rpc| chain_builds.get(rpc)) {
+                    Some(build) => &build.create2_libraries[..],
+                    None if local => &[],
+                    None => &run_libraries[..],
+                };
+                tx.transaction.input().is_some_and(|input| {
+                    referenced_chain_libraries(input, &libraries)
+                        .iter()
+                        .any(|(address, _)| deployed.iter().all(|(other, _)| other != address))
+                })
+            })
+        {
+            eyre::bail!("a broadcast uses libraries that are not deployed on its chain");
+        }
+        // Library deployments need the CREATE2 deployer on their chain.
+        let create2_deployer = self.script_config.evm_opts.create2_deployer;
+        let library_rpcs = self
+            .execution_result
+            .transactions
+            .iter()
+            .flatten()
+            .filter(|tx| {
+                tx.transaction.to() == Some(create2_deployer)
+                    && tx.transaction.input().is_some_and(|input| {
+                        libraries.iter().any(|(_, code)| input.get(32..) == Some(&code[..]))
+                    })
+            })
+            .filter_map(|tx| tx.rpc.clone())
+            // Skips a `--rpc-url` endpoint without a profile.
+            .filter(|rpc| {
+                self.script_config.evm_opts.fork_url.as_ref() != Some(rpc)
+                    || chain_builds.contains_key(rpc)
+            })
+            .collect::<HashSet<_>>();
+        for rpc in library_rpcs {
+            let code = ProviderBuilder::<AnyNetwork>::new(&rpc)
+                .build()?
+                .get_code_at(create2_deployer)
+                .await?;
+            if code.is_empty() {
+                eyre::bail!("CREATE2 deployer {create2_deployer} is not deployed on {rpc}");
             }
         }
         if !silent {

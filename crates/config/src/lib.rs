@@ -3170,6 +3170,7 @@ impl Config {
             extra_args: other.extra_args,
             libraries: own.libraries,
             remappings: other.remappings,
+            create2_library_salt: other.create2_library_salt,
             additional_compiler_profiles: other.additional_compiler_profiles,
             compilation_restrictions: other.compilation_restrictions,
             ..self.clone()

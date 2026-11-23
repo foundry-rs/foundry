@@ -49,10 +49,31 @@ async fn can_deploy_multi_chain_script_without_lib(prj: _, cmd: _) {
 }
 
 #[forgetest]
-async fn can_not_deploy_multi_chain_script_with_lib(prj: _, cmd: _) {
-    let (_, handle1) = spawn(NodeConfig::test()).await;
-    let (_, handle2) = spawn(NodeConfig::test()).await;
+async fn can_deploy_multi_chain_fork_script_with_lib(prj: _, cmd: _) {
+    let (api1, handle1) = spawn(NodeConfig::test()).await;
+    let (api2, handle2) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast_without_endpoint(cmd, prj.root());
+
+    tester
+        .load_private_keys(&[0, 1])
+        .await
+        .add_deployer(0)
+        .add_sig("MultiChainBroadcastLink", "deploy(string memory,string memory)")
+        .args(&[&handle1.http_endpoint(), &handle2.http_endpoint()])
+        .broadcast(ScriptOutcome::OkBroadcast);
+
+    let deployer = tester.accounts_pub[1];
+    for (api, handle) in [(&api1, &handle1), (&api2, &handle2)] {
+        assert_eq!(api.transaction_count(deployer, None).await.unwrap().to::<u32>(), 2);
+        assert!(!handle.http_provider().get_code_at(deployer.create(1)).await.unwrap().is_empty());
+    }
+}
+
+#[forgetest]
+async fn can_not_deploy_multi_chain_fork_script_with_lib_without_create2_deployer(prj: _, cmd: _) {
+    let (_, handle1) = spawn(NodeConfig::test().with_disable_default_create2_deployer(true)).await;
+    let (_, handle2) = spawn(NodeConfig::test().with_disable_default_create2_deployer(true)).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle1.http_endpoint(), prj.root());
 
     tester
         .load_private_keys(&[0, 1])
@@ -957,7 +978,7 @@ contract ProfileScript is Script {
 contract ProfileFailures is Script {
     function unlinked() external {
         vm.createSelectFork("first");
-        new UsesUnconfigured();
+        require(new UsesUnconfigured().value() == 2);
     }
 
     function stale() external {
@@ -1065,11 +1086,8 @@ retrying = {{ endpoint = "{}", profile = "first", retries = 3 }}
 
     cmd.forge_fuse()
         .args(["script", "ProfileFailures", "--sig", "unlinked()", "--rpc-url", "first"])
-        .assert_failure()
-        .stderr_eq(str![[r#"
-Error: the `--rpc-url` endpoint names a profile, so libraries of the run build can't be deployed on it
-
-"#]]);
+        .assert_success();
+    cmd.forge_fuse().args(["script", "ProfileFailures", "--sig", "unlinked()"]).assert_success();
 
     // Tests fork profiled endpoints with the run build.
     prj.add_test(
@@ -1089,13 +1107,6 @@ contract ForkProfiledTest is Test {
 
     prj.create_file("out/Stale.sol/Stale.json", "{}");
     for (sig, error) in [
-        (
-            "unlinked()",
-            str![[r#"
-Error: script failed: no linked artifact for [..]/src/ProfileScript.sol:UsesUnconfigured in the profile build
-
-"#]],
-        ),
         (
             "stale()",
             str![[r#"
@@ -1519,6 +1530,548 @@ local = {{ endpoint = "{}", profile = "endpoint" }}
         .assert_failure()
         .stderr_eq(str![[r#"
 Error: a broadcast to a profiled endpoint uses a library of the run build that its profile does not link
+
+"#]]);
+}
+
+#[forgetest_init]
+async fn endpoint_profile_fork_keeps_run_libraries_local(prj: _, cmd: _) {
+    let (_, node) = spawn(NodeConfig::test().with_hardfork(Some("paris".parse().unwrap()))).await;
+    prj.add_source(
+        "LocalRunLibraries.sol",
+        r#"
+import "forge-std/Script.sol";
+library AutoLib { function value() external pure returns (uint256) { return 7; } }
+contract UsesAutoLib {
+    uint256 public value;
+    constructor() { value = AutoLib.value(); }
+}
+contract Factory {
+    function deploy(bytes memory code) external returns (address result) {
+        assembly { result := create(0, add(code, 32), mload(code)) }
+    }
+}
+contract LocalRunLibraries is Script {
+    function setUp() external { require(AutoLib.value() == 7); }
+    function run() external {
+        vm.startBroadcast();
+        UsesAutoLib child = new UsesAutoLib();
+        vm.stopBroadcast();
+        require(child.value() == 7);
+    }
+    function embedded() external {
+        vm.startBroadcast();
+        new Factory().deploy(type(UsesAutoLib).creationCode);
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    prj.create_file(
+        "foundry.toml",
+        &format!(
+            r#"
+[profile.default]
+evm_version = "shanghai"
+[profile.endpoint]
+evm_version = "paris"
+[rpc_endpoints]
+local = {{ endpoint = "{}", profile = "endpoint" }}
+"#,
+            node.http_endpoint()
+        ),
+    );
+    cmd.args([
+        "script",
+        "LocalRunLibraries",
+        "--rpc-url",
+        "local",
+        "--broadcast",
+        "--private-key",
+        PRIVATE_KEY,
+    ])
+    .assert_success();
+    let sequence: Value = foundry_common::fs::read_json_file(
+        &prj.root().join("broadcast/LocalRunLibraries.sol/31337/run-latest.json"),
+    )
+    .unwrap();
+    // Only the Paris library and the child belong on chain, not the Shanghai setup library.
+    assert_eq!(sequence["transactions"].as_array().unwrap().len(), 2);
+    assert_eq!(sequence["receipts"].as_array().unwrap().len(), 2);
+    assert_eq!(sequence["transactions"][1]["contractName"], "UsesAutoLib");
+    let sender =
+        sequence["transactions"][0]["transaction"]["from"].as_str().unwrap().parse().unwrap();
+    assert_eq!(node.http_provider().get_transaction_count(sender).await.unwrap(), 2);
+
+    // Run-build code embedded in a broadcast would call libraries that only exist locally.
+    cmd.forge_fuse()
+        .args(["script", "LocalRunLibraries", "--sig", "embedded()", "--rpc-url", "local"])
+        .args(["--broadcast", "--private-key", PRIVATE_KEY])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: a broadcast to a profiled endpoint uses a library of the run build that its profile does not link
+
+"#]]);
+    assert_eq!(node.http_provider().get_transaction_count(sender).await.unwrap(), 2);
+}
+
+#[forgetest_init]
+async fn endpoint_profile_fork_reinitializes_libraries_without_duplicate_transactions(
+    prj: _,
+    cmd: _,
+) {
+    prj.add_source(
+        "ForkLibraries.sol",
+        r#"
+import "forge-std/Script.sol";
+library AutoLib { function value() external pure returns (uint256) { return 7; } }
+contract UsesAutoLib {
+    uint256 public value;
+    constructor() { value = AutoLib.value(); }
+}
+contract ForkLibraries is Script {
+    function run(bool restore) external {
+        vm.createSelectFork("local");
+        uint256 snapshot = vm.snapshotState();
+        vm.startBroadcast(0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266);
+        UsesAutoLib first = new UsesAutoLib();
+        vm.stopBroadcast();
+        require(first.value() == 7);
+        if (restore) require(vm.revertToState(snapshot));
+        else vm.createSelectFork("local");
+        vm.startBroadcast(0x70997970C51812dc3A010C7d01b50e0d17dc79C8);
+        UsesAutoLib second = new UsesAutoLib();
+        vm.stopBroadcast();
+        require(second.value() == 7);
+    }
+}
+"#,
+    );
+    // A fresh fork of a profiled endpoint, and a snapshot of the `--rpc-url` endpoint whose run
+    // library was recorded during setup.
+    for (profile, restore) in [(true, false), (false, true)] {
+        let (_, node) = spawn(NodeConfig::test()).await;
+        let endpoint = if profile {
+            format!(r#"{{ endpoint = "{}", profile = "endpoint" }}"#, node.http_endpoint())
+        } else {
+            format!("\"{}\"", node.http_endpoint())
+        };
+        prj.create_file(
+            "foundry.toml",
+            &format!(
+                r#"
+[profile.default]
+evm_version = "shanghai"
+[profile.endpoint]
+evm_version = "paris"
+create2_library_salt = "0x0000000000000000000000000000000000000000000000000000000000000042"
+[rpc_endpoints]
+local = {endpoint}
+"#
+            ),
+        );
+        let cmd = cmd.forge_fuse().args([
+            "script",
+            "ForkLibraries",
+            "--sig",
+            "run(bool)",
+            if restore { "true" } else { "false" },
+            "--broadcast",
+            "--unlocked",
+            "--sender",
+            "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+        ]);
+        if restore {
+            cmd.args(["--rpc-url", "local"]);
+        }
+        cmd.assert_success();
+        let sequence: Value = foundry_common::fs::read_json_file(
+            &prj.root().join("broadcast/ForkLibraries.sol/31337/run-latest.json"),
+        )
+        .unwrap();
+        // Local initialization on the second fork must not record or charge another library.
+        assert_eq!(sequence["transactions"].as_array().unwrap().len(), 3);
+        assert_eq!(sequence["receipts"].as_array().unwrap().len(), 3);
+        for (index, nonce) in [(0, "0x0"), (1, "0x1"), (2, "0x0")] {
+            assert_eq!(sequence["transactions"][index]["transaction"]["nonce"], nonce);
+        }
+    }
+}
+
+#[forgetest_init]
+async fn endpoint_profile_fork_shares_run_create2_libraries(prj: _, cmd: _) {
+    let (_, node) = spawn(NodeConfig::test()).await;
+    prj.add_source(
+        "SharedLibraries.sol",
+        r#"
+import "forge-std/Script.sol";
+library SharedLib { function value() external pure returns (uint256) { return 7; } }
+contract UsesSharedLib {
+    uint256 public value;
+    constructor() { value = SharedLib.value(); }
+}
+contract SharedLibraries is Script {
+    function run() external {
+        vm.createSelectFork("local");
+        vm.broadcast();
+        require(new UsesSharedLib().value() == 7);
+    }
+}
+contract Probe {
+    function peek(address) external pure {}
+}
+contract SharedProbe is Script {
+    function run() external {
+        vm.createSelectFork("local");
+        bytes32 codeHash = keccak256(vm.getCode("SharedLibraries.sol:SharedLib"));
+        address lib = vm.computeCreate2Address(bytes32(0), codeHash, CREATE2_FACTORY);
+        Probe probe = new Probe();
+        vm.startBroadcast();
+        probe.peek(lib);
+        new Probe();
+        vm.stopBroadcast();
+    }
+
+    function linked() external pure returns (uint256) {
+        return SharedLib.value();
+    }
+}
+"#,
+    );
+    prj.create_file(
+        "foundry.toml",
+        &format!(
+            r#"
+[profile.endpoint]
+hardfork = "cancun"
+[rpc_endpoints]
+local = {{ endpoint = "{}", profile = "endpoint" }}
+"#,
+            node.http_endpoint()
+        ),
+    );
+    // Static calls are not broadcast, so they record no library.
+    let sender = node.dev_accounts().next().unwrap();
+    cmd.args(["script", "SharedProbe", "--broadcast", "--private-key", PRIVATE_KEY])
+        .assert_success();
+    assert_eq!(node.http_provider().get_transaction_count(sender).await.unwrap(), 1);
+    cmd.forge_fuse()
+        .args(["script", "SharedLibraries", "--broadcast", "--private-key", PRIVATE_KEY])
+        .assert_success();
+    assert_eq!(node.http_provider().get_transaction_count(sender).await.unwrap(), 3);
+}
+
+#[forgetest_init]
+async fn endpoint_profile_fork_records_libraries_once_all_deploy(prj: _, cmd: _) {
+    let (_, node) = spawn(NodeConfig::test()).await;
+    prj.add_source(
+        "Partial.sol",
+        r#"
+library SmallLib { function value() external pure returns (uint256) { return 7; } }
+library OtherLib { function value() external pure returns (uint256) { return 8; } }
+contract UsesBoth {
+    function value() external pure returns (uint256) {
+        return SmallLib.value() + OtherLib.value();
+    }
+}
+contract UsesOther {
+    function value() external pure returns (uint256) { return OtherLib.value(); }
+}
+contract Plain {}
+"#,
+    );
+    prj.add_script(
+        "Partial.s.sol",
+        r#"
+import "forge-std/Script.sol";
+import "../src/Partial.sol";
+contract Partial is Script {
+    function run() external {
+        vm.createSelectFork("local");
+        bytes32 codeHash = keccak256(vm.getCode("Partial.sol:SmallLib"));
+        vm.setNonce(vm.computeCreate2Address(bytes32(0), codeHash, CREATE2_FACTORY), 1);
+        vm.startBroadcast();
+        try new UsesBoth() returns (UsesBoth) {} catch {}
+        new Plain();
+        new UsesOther();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    prj.create_file(
+        "foundry.toml",
+        &format!(
+            r#"
+[profile.default]
+libraries = [
+    "src/Partial.sol:SmallLib:0x0000000000000000000000000000000000005678",
+    "src/Partial.sol:OtherLib:0x0000000000000000000000000000000000005679",
+]
+[profile.endpoint]
+optimizer = true
+libraries = []
+[rpc_endpoints]
+local = {{ endpoint = "{}", profile = "endpoint" }}
+"#,
+            node.http_endpoint()
+        ),
+    );
+    cmd.args(["script", "Partial", "--broadcast", "--private-key", PRIVATE_KEY]).assert_success();
+    let sequence: Value = foundry_common::fs::read_json_file(
+        &prj.root().join("broadcast/Partial.s.sol/31337/run-latest.json"),
+    )
+    .unwrap();
+    // The failed frame records nothing, and the library it installed is recorded when needed.
+    let transactions = sequence["transactions"].as_array().unwrap();
+    assert_eq!(transactions.len(), 3);
+    assert_eq!(transactions[0]["contractName"], "Plain");
+    assert_eq!(transactions[2]["contractName"], "UsesOther");
+}
+
+#[forgetest_init]
+async fn endpoint_profile_fork_installs_libraries_before_local_creates(prj: _, cmd: _) {
+    prj.add_source(
+        "LocalProfileLibraries.sol",
+        r#"
+import "forge-std/Script.sol";
+library AutoLib { function value() external pure returns (uint256) { return 7; } }
+contract UsesAutoLib {
+    uint256 public value;
+    constructor(uint256 marker) { value = AutoLib.value() + marker; }
+}
+contract Caller {
+    function get() external view returns (address) { return msg.sender; }
+}
+contract LocalProfileLibraries is Script {
+    function run() external {
+        address script = new Caller().get();
+        address pranker = address(0xBEEF);
+        address expected = vm.computeCreateAddress(pranker, vm.getNonce(pranker));
+        uint64 nonce = vm.getNonce(script);
+        vm.prank(pranker);
+        require(address(new UsesAutoLib(0)) == expected, "prank not applied");
+        require(vm.getNonce(script) == nonce, "script nonce changed");
+        vm.interceptInitcode();
+        try new UsesAutoLib(42) { revert("creation was not intercepted"); }
+        catch (bytes memory initcode) {
+            uint256 marker;
+            assembly { marker := mload(add(initcode, mload(initcode))) }
+            require(marker == 42, "wrong intercepted initcode");
+        }
+        require(new UsesAutoLib(0).value() == 7);
+        vm.startBroadcast();
+        UsesAutoLib child = new UsesAutoLib(0);
+        vm.stopBroadcast();
+        require(child.value() == 7);
+    }
+}
+"#,
+    );
+    let (_, node) = spawn(NodeConfig::test()).await;
+    prj.create_file(
+        "foundry.toml",
+        &format!(
+            r#"
+[profile.default]
+evm_version = "shanghai"
+[profile.endpoint]
+evm_version = "shanghai"
+create2_library_salt = "0x0000000000000000000000000000000000000000000000000000000000000042"
+[rpc_endpoints]
+local = {{ endpoint = "{}", profile = "endpoint" }}
+"#,
+            node.http_endpoint()
+        ),
+    );
+    cmd.args([
+        "script",
+        "LocalProfileLibraries",
+        "--rpc-url",
+        "local",
+        "--broadcast",
+        "--private-key",
+        PRIVATE_KEY,
+    ])
+    .assert_success();
+    let sequence: Value = foundry_common::fs::read_json_file(
+        &prj.root().join("broadcast/LocalProfileLibraries.sol/31337/run-latest.json"),
+    )
+    .unwrap();
+    // A library installed locally still needs its on-chain deployment before the first child.
+    assert_eq!(sequence["transactions"].as_array().unwrap().len(), 2);
+    assert_eq!(sequence["receipts"].as_array().unwrap().len(), 2);
+    assert_eq!(sequence["transactions"][0]["transaction"]["nonce"], "0x0");
+    assert_eq!(sequence["transactions"][1]["transaction"]["nonce"], "0x1");
+    assert_eq!(sequence["transactions"][1]["contractName"], "UsesAutoLib");
+}
+
+#[forgetest_init]
+async fn multi_chain_fork_rerun_keeps_salted_setup_creates(prj: _, cmd: _) {
+    let (_, first) = spawn(NodeConfig::test().with_chain_id(Some(31338u64))).await;
+    let (_, second) = spawn(NodeConfig::test().with_chain_id(Some(31339u64))).await;
+    prj.add_script(
+        "Drain.s.sol",
+        r#"
+import "forge-std/Script.sol";
+library DrainLib { function value() external pure returns (uint256) { return 7; } }
+contract DrainChild { uint256 public value = DrainLib.value(); }
+contract Salted {}
+contract Drain is Script {
+    function setUp() external {
+        vm.broadcast();
+        new Salted{salt: bytes32(block.number)}();
+    }
+
+    function run(string memory other) external {
+        vm.createSelectFork(other);
+        vm.broadcast();
+        new DrainChild();
+    }
+}
+"#,
+    );
+    let sender = first.dev_accounts().next().unwrap();
+    // The second run finds the library deployed and records no library transaction.
+    for nonce in [2, 3] {
+        cmd.forge_fuse()
+            .args(["script", "Drain", "--sig", "run(string)", &second.http_endpoint()])
+            .args(["--rpc-url", &first.http_endpoint(), "--broadcast", "--private-key"])
+            .arg(PRIVATE_KEY)
+            .assert_success();
+        assert_eq!(first.http_provider().get_transaction_count(sender).await.unwrap(), nonce);
+    }
+}
+
+#[forgetest_init]
+async fn endpoint_profile_fork_requires_the_create2_deployer(prj: _, cmd: _) {
+    let (_, node) = spawn(NodeConfig::test().with_disable_default_create2_deployer(true)).await;
+    prj.add_source(
+        "NoDeployer.sol",
+        r#"
+import "forge-std/Script.sol";
+library NoDeployerLib { function value() external pure returns (uint256) { return 1; } }
+contract UsesNoDeployerLib {
+    function value() external pure returns (uint256) { return NoDeployerLib.value(); }
+}
+contract Registry {
+    function set(address) external {}
+}
+contract NoDeployer is Script {
+    function run() external {
+        vm.createSelectFork("local");
+        vm.broadcast();
+        new UsesNoDeployerLib();
+    }
+
+    function caught() external {
+        vm.createSelectFork("local");
+        bytes32 codeHash = keccak256(vm.getCode("NoDeployer.sol:NoDeployerLib"));
+        address lib = vm.computeCreate2Address(bytes32(0), codeHash, address(0x1234));
+        Registry registry = new Registry();
+        vm.startBroadcast();
+        try new UsesNoDeployerLib() returns (UsesNoDeployerLib) {} catch {}
+        try registry.set(lib) {} catch {}
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    prj.create_file(
+        "foundry.toml",
+        &format!(
+            r#"
+[profile.endpoint]
+optimizer = true
+[rpc_endpoints]
+local = {{ endpoint = "{}", profile = "endpoint" }}
+"#,
+            node.http_endpoint()
+        ),
+    );
+    cmd.args(["script", "NoDeployer", "--broadcast", "--private-key", PRIVATE_KEY])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: CREATE2 deployer 0x4e59b44847b379578588920cA78FbF26c0B4956C is not deployed on http://127.0.0.1:[..]
+
+"#]]);
+    let sender = node.dev_accounts().next().unwrap();
+    assert_eq!(node.http_provider().get_transaction_count(sender).await.unwrap(), 0);
+
+    // A create whose library deployment fails is not broadcast, even when the script catches it.
+    prj.create_file(
+        "foundry.toml",
+        &format!(
+            r#"
+[profile.default]
+libraries = ["src/NoDeployer.sol:NoDeployerLib:0x0000000000000000000000000000000000005678"]
+[profile.endpoint]
+optimizer = true
+libraries = []
+[rpc_endpoints]
+local = {{ endpoint = "{}", profile = "endpoint" }}
+"#,
+            node.http_endpoint()
+        ),
+    );
+    cmd.forge_fuse()
+        .args(["script", "NoDeployer", "--sig", "caught()", "--broadcast", "--private-key"])
+        .args([PRIVATE_KEY, "--create2-deployer", "0x0000000000000000000000000000000000001234"])
+        .assert_success();
+    assert_eq!(node.http_provider().get_transaction_count(sender).await.unwrap(), 0);
+}
+
+#[forgetest_init]
+async fn endpoint_profile_fork_refuses_profile_libraries_on_other_chains(prj: _, cmd: _) {
+    let (_, first) = spawn(NodeConfig::test().with_chain_id(Some(31338u64))).await;
+    let (_, second) = spawn(NodeConfig::test().with_chain_id(Some(31339u64))).await;
+    prj.add_source(
+        "Carry.sol",
+        r#"
+import "forge-std/Script.sol";
+library CarriedLib { function value() external pure returns (uint256) { return 1; } }
+contract UsesCarriedLib {
+    function value() external pure returns (uint256) { return CarriedLib.value(); }
+}
+contract CarryFactory {
+    function deploy(bytes memory code) external returns (address result) {
+        assembly { result := create(0, add(code, 32), mload(code)) }
+    }
+}
+contract Carry is Script {
+    function run() external {
+        vm.createSelectFork("profiled");
+        bytes memory code = vm.getCode("Carry.sol:UsesCarriedLib");
+        vm.createSelectFork("plain");
+        vm.startBroadcast();
+        new CarryFactory().deploy(code);
+        vm.stopBroadcast();
+    }
+
+    function local() external {
+        new UsesCarriedLib();
+    }
+}
+"#,
+    );
+    prj.create_file(
+        "foundry.toml",
+        &format!(
+            r#"
+[profile.endpoint]
+optimizer = true
+[rpc_endpoints]
+profiled = {{ endpoint = "{}", profile = "endpoint" }}
+plain = "{}"
+"#,
+            first.http_endpoint(),
+            second.http_endpoint()
+        ),
+    );
+    cmd.args(["script", "Carry", "--broadcast", "--private-key", PRIVATE_KEY])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: a broadcast uses libraries that are not deployed on its chain
 
 "#]]);
 }

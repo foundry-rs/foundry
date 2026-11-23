@@ -26,7 +26,10 @@ use foundry_common::{compile::Analysis, sh_warn};
 use foundry_config::FuzzCorpusConfig;
 use foundry_evm_core::{
     backend::transaction_error,
-    constants::{CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER_CODEHASH},
+    constants::{
+        CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, DEFAULT_CREATE2_DEPLOYER_CODEHASH,
+        DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
+    },
     evm::{
         BlockEnvFor, DestructedAccount, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, ExecutedNested,
         FoundryEvmExt, FoundryEvmFactory, FoundryEvmFor, FoundryEvmNetwork, FoundryExecutionHooks,
@@ -2254,6 +2257,128 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         }
         true
     }
+
+    /// Deploys the CREATE2 libraries a frame of the script needs on the active fork, and records
+    /// their deployment before the first broadcast that needs them.
+    fn deploy_chain_libraries(
+        &mut self,
+        interp: &mut InterpreterFor<'_, '_, FEN>,
+        message: &MessageFor<FEN>,
+    ) -> Result<(), Bytes> {
+        let depth = usize::from(message.depth);
+        let Some(cheats) = self.cheatcodes.as_deref() else { return Ok(()) };
+        let config = &cheats.core.config;
+        if (!config.has_chain_builds() && config.create2_libraries.is_empty())
+            || (cheats.broadcast.is_none() && !cheats.is_own_create_depth(depth))
+        {
+            return Ok(());
+        }
+        let Some(fork) = self.backend.backend().active_fork_info() else { return Ok(()) };
+        let Some((sender, salt, libraries)) = cheats.chain_libraries(
+            &fork.url,
+            depth,
+            message.caller,
+            message.input.as_bytes(interp.memory()),
+            !message.is_static(),
+        ) else {
+            return Ok(());
+        };
+        let rpc = fork.url.clone();
+        let create2_deployer = self.inner.create2_deployer;
+        let account = |interp: &mut InterpreterFor<'_, '_, FEN>, address: Address| {
+            interp
+                .host()
+                .state_mut()
+                .account(&address)
+                .map(|account| (account.code_hash(), account.nonce()))
+                .map_err(|err| {
+                    Bytes::from(
+                        format!("failed to load {address} for a library: {err}").into_bytes(),
+                    )
+                })
+        };
+        if create2_deployer == DEFAULT_CREATE2_DEPLOYER
+            && account(interp, create2_deployer)?.0 == alloy_primitives::KECCAK256_EMPTY
+        {
+            // Installs the default deployer on the fork.
+            interp
+                .host()
+                .state_mut()
+                .account(&create2_deployer)
+                .map_err(|err| Bytes::from(err.to_string().into_bytes()))?
+                .set_code(
+                    DEFAULT_CREATE2_DEPLOYER_CODEHASH,
+                    Bytecode::new_legacy(Bytes::from_static(DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE)),
+                );
+        }
+        let mut deployments = Vec::with_capacity(libraries.len());
+        for (address, code) in libraries {
+            let missing = account(interp, address)?.0 == alloy_primitives::KECCAK256_EMPTY;
+            let input = Bytes::from([salt.as_slice(), code.as_ref()].concat());
+            if missing {
+                let caller_nonce = account(interp, message.caller)?.1;
+                let deployment = MessageFor::<FEN> {
+                    depth: message.depth,
+                    gas_limit: interp.host().block().gas_limit.saturating_to(),
+                    caller: message.caller,
+                    destination: create2_deployer,
+                    call_target: create2_deployer,
+                    code_address: create2_deployer,
+                    input: input.clone().into(),
+                    ..Default::default()
+                };
+                // The local deployment runs without cheatcodes.
+                let cheats = self.cheatcodes.take();
+                let result = self.transact_inner(interp, &deployment, 0);
+                self.cheatcodes = cheats;
+                interp
+                    .host()
+                    .state_mut()
+                    .account(&message.caller)
+                    .map_err(|err| Bytes::from(err.to_string().into_bytes()))?
+                    .set_nonce(caller_nonce);
+                if !result.stop.is_success()
+                    || account(interp, address)?.0 == alloy_primitives::KECCAK256_EMPTY
+                {
+                    return Err(format!("CREATE2 deployment of library {address} failed")
+                        .into_bytes()
+                        .into());
+                }
+            }
+            if missing && let Some(cheats) = self.cheatcodes.as_deref_mut() {
+                cheats.mark_library_missing(rpc.clone(), address);
+            }
+            deployments.push((address, input));
+        }
+        // Records the deployments once every library the frame needs is deployed.
+        for (address, input) in deployments {
+            let from = sender
+                .map(|sender| account(interp, sender).map(|(_, nonce)| (sender, nonce)))
+                .transpose()?;
+            let Some(cheats) = self.cheatcodes.as_deref_mut() else { return Ok(()) };
+            let next = cheats.record_library_deployment(
+                rpc.clone(),
+                from,
+                address,
+                create2_deployer,
+                input,
+            );
+            let write = if let Some(next) = next
+                && let Some((sender, nonce)) = from
+                && next > nonce
+                && let Ok(mut account) = interp.host().state_mut().account(&sender)
+            {
+                account.set_nonce(next);
+                Some(PersistentWrite::nonce(&account, nonce))
+            } else {
+                None
+            };
+            if let Some(write) = write {
+                cheats.record_persistent(depth.saturating_sub(1), interp.host().state(), [write]);
+            }
+        }
+        Ok(())
+    }
 }
 
 impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'_, FEN> {
@@ -2439,9 +2564,15 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         } else {
             0
         };
+        let library_error = if message.destination == CHEATCODE_ADDRESS {
+            None
+        } else {
+            self.deploy_chain_libraries(interp, message).err()
+        };
         let mut cheatcode_outcome = None;
         if let Some((cheats, backend, inner)) = self.cheats_and_backend() {
             apply_mocked_function(cheats, interp, message);
+            let broadcast = if library_error.is_some() { cheats.broadcast.take() } else { None };
             cheatcode_outcome = cheats.call_with_executor(
                 interp,
                 message,
@@ -2449,6 +2580,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
                 inner,
                 isolate && message.kind == MessageKind::Call,
             );
+            if broadcast.is_some() {
+                cheats.broadcast = broadcast;
+            }
         }
 
         if let Some(trace_idx) = trace_idx
@@ -2460,6 +2594,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
             };
             let node = &mut tracer.traces_mut().nodes_mut()[trace_idx];
             node.trace.caller = caller;
+        }
+
+        if let Some(error) = library_error {
+            return Some(message_result(message, InstrStop::Revert, error));
         }
 
         if let Some(output) = cheatcode_outcome {
@@ -2618,9 +2756,14 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         } else {
             0
         };
+        let library_error = self.deploy_chain_libraries(interp, message).err();
         let mut cheatcode_outcome = None;
         if let Some((cheats, backend, _)) = self.cheats_and_backend() {
-            let broadcast = if init_code_ok { None } else { cheats.broadcast.take() };
+            let broadcast = if init_code_ok && library_error.is_none() {
+                None
+            } else {
+                cheats.broadcast.take()
+            };
             cheatcode_outcome = cheats.create_hook(interp, message, backend);
             if broadcast.is_some() {
                 cheats.broadcast = broadcast;
@@ -2639,7 +2782,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
 
         // If the CREATE2 deployer is invalid, return the error here, after the other inspectors
         // were notified, so tracing stays balanced.
-        if let Some(error) = self.inner.pending_create2_error.take() {
+        if let Some(error) = library_error.or_else(|| self.inner.pending_create2_error.take()) {
             if let Some(cheats) = self.cheatcodes.as_deref_mut() {
                 cheats.unrun_create_depth = Some(usize::from(depth));
             }

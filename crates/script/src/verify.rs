@@ -58,16 +58,17 @@ impl<FEN: FoundryEvmNetwork> BroadcastedState<FEN> {
                 .front()
                 .and_then(|tx| script_config.chain_builds.get(&tx.rpc))
             {
-                let config = &build.profile.config;
+                let mut config = build.profile.config.clone();
+                config.libraries.clone_from(&build.libraries);
                 let mut profiled = VerifyBundle::new(
                     &config.project()?,
-                    config,
+                    &config,
                     build.artifacts.clone(),
                     verify.retry,
                     verify.verifier.clone(),
                     verify.verify_external,
                 );
-                profiled.config = Some(config.clone());
+                profiled.config = Some(config);
                 profiled.fallback = Some(Box::new(verify));
                 verify = profiled;
             }

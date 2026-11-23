@@ -80,7 +80,8 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
         Ok(())
     }
 
-    /// Deploys the libraries and broadcast contract. Calls setUp method if requested.
+    /// Deploys the libraries and broadcast contract. Calls setUp method if requested. Returns the
+    /// contract address, the result and the number of library deployments it records first.
     pub fn setup(
         &mut self,
         libraries: &ScriptPredeployLibraries,
@@ -88,7 +89,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
         setup: bool,
         script_config: &ScriptConfig<FEN>,
         is_broadcast: bool,
-    ) -> Result<(Address, ScriptResult<FEN::Network>)> {
+    ) -> Result<(Address, ScriptResult<FEN::Network>, usize)> {
         trace!(target: "script", "executing setUP()");
 
         if !is_broadcast {
@@ -189,6 +190,16 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
 
                     script_config.tempo.apply::<FEN::Network>(&mut tx_req, None);
 
+                    if let Some(rpc) = &self.evm_opts.fork_url
+                        && let Some(cheats) = self.executor.inspector_mut().cheatcodes.as_mut()
+                    {
+                        cheats.mark_library_deployment_recorded(
+                            rpc.clone(),
+                            address,
+                            self.evm_opts.sender,
+                            sender_nonce + library_transactions.len() as u64,
+                        );
+                    }
                     library_transactions.push_back(BroadcastableTransaction {
                         rpc: self.evm_opts.fork_url.clone(),
                         transaction: TransactionMaybeSigned::new(tx_req),
@@ -205,6 +216,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
             }
         };
 
+        let library_count = library_transactions.len();
         let address = CALLER.create(self.executor.get_nonce(CALLER)?);
 
         // Set the contracts initial balance before deployment, so it is available during the
@@ -295,6 +307,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                 address: None,
                 ..Default::default()
             },
+            library_count,
         ))
     }
 

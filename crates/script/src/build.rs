@@ -22,7 +22,7 @@ use forge_script_sequence::ScriptSequence;
 use foundry_cheatcodes::{ChainBuild, Wallets};
 use foundry_cli::opts::TempoOpts;
 use foundry_common::{
-    ContractData, ContractsByArtifact, ContractsByArtifactBuilder,
+    ContractData, ContractsByArtifact, ContractsByArtifactBuilder, LIBRARY_DEPLOYER,
     compile::{ProfileBuild, ProjectCompiler, compile_endpoint_profiles},
     external_compiler::is_builtin_compiler_source,
     fs::canonicalize_path,
@@ -79,6 +79,29 @@ impl BuildData {
         self,
         script_config: &ScriptConfig<FEN>,
     ) -> Result<LinkedBuildData> {
+        // On a profiled `--rpc-url` endpoint, the run build's libraries only exist locally.
+        if script_config
+            .evm_opts
+            .fork_url
+            .as_ref()
+            .is_some_and(|rpc| script_config.chain_builds.contains_key(rpc))
+        {
+            let output = self.get_linker().link_with_nonce_or_address_detailed(
+                script_config.config.libraries_with_remappings()?,
+                LIBRARY_DEPLOYER,
+                0,
+                [&self.target],
+            )?;
+            return LinkedBuildData::new(
+                output.output.libraries,
+                ScriptPredeployLibraries::Default {
+                    onchain: Vec::new(),
+                    local: output.linked_libraries,
+                },
+                self,
+            );
+        }
+
         let create2_deployer = script_config.evm_opts.create2_deployer;
         let can_use_create2 = script_config
             .backend
@@ -159,6 +182,11 @@ impl ScriptPredeployLibraries {
             Self::Default { onchain, .. } => onchain.len(),
             Self::Create2 { onchain, .. } => onchain.len(),
         }
+    }
+
+    /// Returns whether libraries are deployed at nonce addresses.
+    pub const fn has_nonce_libraries(&self) -> bool {
+        matches!(self, Self::Default { onchain, .. } if !onchain.is_empty())
     }
 }
 
@@ -333,15 +361,15 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
     pub async fn link(self) -> Result<LinkedState<FEN>> {
         let Self { args, mut script_config, script_wallets, browser_wallet, build_data } = self;
 
-        script_config.chain_builds = chain_builds(&script_config.config, &build_data)?;
+        script_config.chain_builds = chain_builds(
+            &script_config.config,
+            script_config.evm_opts.create2_deployer,
+            &build_data,
+        )?;
         let build_data = build_data.link(&script_config).await?;
-        if let Some(rpc) = &script_config.evm_opts.fork_url
-            && script_config.chain_builds.contains_key(rpc)
-            && build_data.predeploy_libraries.libraries_count() > 0
-        {
-            eyre::bail!(
-                "the `--rpc-url` endpoint names a profile, so libraries of the run build can't be deployed on it"
-            );
+        if let ScriptPredeployLibraries::Create2 { onchain, .. } = &build_data.predeploy_libraries {
+            script_config.create2_libraries =
+                onchain.iter().map(|library| (library.address, library.bytecode.clone())).collect();
         }
 
         Ok(LinkedState { args, script_config, script_wallets, browser_wallet, build_data })
@@ -349,8 +377,11 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
 
     /// Tries loading the resumed state from the cache files, skipping simulation stage.
     pub async fn resume(mut self) -> Result<BundledState<FEN>> {
-        self.script_config.chain_builds =
-            chain_builds(&self.script_config.config, &self.build_data)?;
+        self.script_config.chain_builds = chain_builds(
+            &self.script_config.config,
+            self.script_config.evm_opts.create2_deployer,
+            &self.build_data,
+        )?;
         let endpoint = if self.args.multi {
             if self.args.evm.rpc.rpc_url.is_some() {
                 sh_warn!(
@@ -795,9 +826,10 @@ async fn configurable_account_signers_available<FEN: FoundryEvmNetwork>(
     Ok(true)
 }
 
-/// Returns the profile builds by endpoint URL, linked with the libraries their profiles configure.
+/// Returns the profile builds by endpoint URL, linked with CREATE2 libraries.
 fn chain_builds(
     config: &Config,
+    create2_deployer: Address,
     build_data: &BuildData,
 ) -> Result<BTreeMap<String, Arc<ChainBuild>>> {
     let builds = build_data
@@ -806,14 +838,42 @@ fn chain_builds(
         .map(|build| {
             let linker =
                 Linker::new(build_data.project_root.clone(), build.output.artifact_ids().collect());
+            let (target, _) = build
+                .output
+                .artifact_ids()
+                .find(|(id, _)| {
+                    id.source == build_data.target.source && id.name == build_data.target.name
+                })
+                .ok_or_eyre("target not found in profile build")?;
+            let output = linker.link_with_create2_detailed(
+                build.config.libraries_with_remappings()?,
+                create2_deployer,
+                build.config.create2_library_salt,
+                [&target],
+            )?;
             let artifacts = ContractsByArtifactBuilder::new(
                 linker
-                    .get_linked_artifacts(&build.config.libraries_with_remappings()?)?
+                    .get_linked_artifacts(&output.output.libraries)?
                     .iter()
                     .map(|(id, artifact)| (id.clone(), artifact.into())),
             )
             .build();
-            Ok(ChainBuild { profile: build.clone(), artifacts })
+            let libraries = output
+                .output
+                .libraries
+                .libs
+                .iter()
+                .flat_map(|(file, libs)| {
+                    libs.iter()
+                        .map(move |(name, address)| format!("{}:{name}:{address}", file.display()))
+                })
+                .collect();
+            let create2_libraries = output
+                .linked_libraries
+                .into_iter()
+                .map(|library| (library.address, library.bytecode))
+                .collect();
+            Ok(ChainBuild { profile: build.clone(), artifacts, create2_libraries, libraries })
         })
         .collect::<Result<Vec<_>>>()?;
     ChainBuild::by_endpoint(config, builds)

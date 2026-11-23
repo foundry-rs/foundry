@@ -1215,7 +1215,8 @@ async fn script_verify_resume_uses_endpoint_profile_build_on_fork(prj: _, cmd: _
     prj.add_source(
         "Alpha.sol",
         r#"
-contract Alpha { uint256 public x = 1; }
+library AlphaLib { function one() external pure returns (uint256) { return 1; } }
+contract Alpha { uint256 public x = AlphaLib.one(); }
 contract Beta { uint256 public y = 2; }
 contract Factory {
     function deploy(bytes memory code) external returns (address result) {
@@ -1273,7 +1274,7 @@ profiled = {{ endpoint = "{}", profile = "optimized" }}
     ];
     cmd.forge_fuse().args(script).assert_success();
 
-    // Records the optimizer and metadata settings of each submission.
+    // Records the optimizer, metadata and library settings of each submission.
     let submissions = Arc::new(Mutex::new(Vec::new()));
     let state = submissions.clone();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1290,9 +1291,10 @@ profiled = {{ endpoint = "{}", profile = "optimized" }}
                     let input =
                         serde_json::from_str::<serde_json::Value>(&form["sourceCode"]).unwrap();
                     let settings = &input["settings"];
-                    let (optimizer, metadata) = (&settings["optimizer"], &settings["metadata"]);
+                    let (optimizer, metadata, libraries) =
+                        (&settings["optimizer"], &settings["metadata"], &settings["libraries"]);
                     let name = &form["contractname"];
-                    state.lock().unwrap().push(format!("{name} {optimizer} {metadata}"));
+                    state.lock().unwrap().push(format!("{name} {optimizer} {metadata} {libraries}"));
                     r#"{"status":"1","message":"OK","result":"guid"}"#
                 }
                 Some("checkverifystatus") => {
@@ -1311,22 +1313,23 @@ profiled = {{ endpoint = "{}", profile = "optimized" }}
         .stderr_eq(str![[r#"
 
 Deployed contracts (chain 31337):
-  Alpha    0x5FbDB2315678afecb367f032d93F642f64180aa3
-  Factory  0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
-  Beta     0xCafac3dD18aC6c6e92c921884f9E4176737C052c
+  AlphaLib  0xa855FFfd46df10067e44EE404d2027ac082386a3
+  Alpha     0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+  Factory   0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
+  Beta      0x75537828f2ce51be7289709686A69CbFDbB714F1
 ##
-Start verification for (3) contracts
-Start verifying contract `0x5FbDB2315678afecb367f032d93F642f64180aa3` deployed on anvil-hardhat
+Start verification for (4) contracts
+Start verifying contract `0xa855FFfd46df10067e44EE404d2027ac082386a3` deployed on anvil-hardhat
 EVM version: [..]
 Compiler version: [..]
 Optimizations:    2
 
 Verifying on custom...
-Submitting verification for [src/Alpha.sol:Alpha] 0x5FbDB2315678afecb367f032d93F642f64180aa3.
+Submitting verification for [src/Alpha.sol:AlphaLib] 0xa855FFfd46df10067e44EE404d2027ac082386a3.
 Submitted contract for verification:
 	Response: `OK`
 	GUID: `guid`
-	URL: http://127.0.0.1:[..]/address/0x5fbdb2315678afecb367f032d93f642f64180aa3
+	URL: http://127.0.0.1:[..]/address/0xa855fffd46df10067e44ee404d2027ac082386a3
 
 Waiting for custom verification result...
 Contract verification status:
@@ -1339,7 +1342,7 @@ Compiler version: [..]
 Optimizations:    2
 
 Verifying on custom...
-Submitting verification for [src/Alpha.sol:Factory] 0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512.
+Submitting verification for [src/Alpha.sol:Alpha] 0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512.
 Submitted contract for verification:
 	Response: `OK`
 	GUID: `guid`
@@ -1350,31 +1353,49 @@ Contract verification status:
 Response: `OK`
 Details: `Pass - Verified`
 Contract successfully verified
-Start verifying contract `0xCafac3dD18aC6c6e92c921884f9E4176737C052c` deployed on anvil-hardhat
+Start verifying contract `0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0` deployed on anvil-hardhat
 EVM version: [..]
 Compiler version: [..]
+Optimizations:    2
 
 Verifying on custom...
-Submitting verification for [src/Alpha.sol:Beta] 0xCafac3dD18aC6c6e92c921884f9E4176737C052c.
+Submitting verification for [src/Alpha.sol:Factory] 0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0.
 Submitted contract for verification:
 	Response: `OK`
 	GUID: `guid`
-	URL: http://127.0.0.1:[..]/address/0xcafac3dd18ac6c6e92c921884f9e4176737c052c
+	URL: http://127.0.0.1:[..]/address/0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0
 
 Waiting for custom verification result...
 Contract verification status:
 Response: `OK`
 Details: `Pass - Verified`
 Contract successfully verified
-All (3) contracts were verified!
+Start verifying contract `0x75537828f2ce51be7289709686A69CbFDbB714F1` deployed on anvil-hardhat
+EVM version: [..]
+Compiler version: [..]
+
+Verifying on custom...
+Submitting verification for [src/Alpha.sol:Beta] 0x75537828f2ce51be7289709686A69CbFDbB714F1.
+Submitted contract for verification:
+	Response: `OK`
+	GUID: `guid`
+	URL: http://127.0.0.1:[..]/address/0x75537828f2ce51be7289709686a69cbfdbb714f1
+
+Waiting for custom verification result...
+Contract verification status:
+Response: `OK`
+Details: `Pass - Verified`
+Contract successfully verified
+All (4) contracts were verified!
 
 "#]]);
     snapbox::assert_data_eq!(
         submissions.lock().unwrap().join("\n"),
         str![[r#"
-src/Alpha.sol:Alpha {"enabled":true,"runs":2} {"useLiteralContent":false,"bytecodeHash":"none","appendCBOR":true}
-src/Alpha.sol:Factory {"enabled":true,"runs":2} {"useLiteralContent":false,"bytecodeHash":"none","appendCBOR":true}
-src/Alpha.sol:Beta {"enabled":false,"runs":200} {"useLiteralContent":false,"bytecodeHash":"ipfs","appendCBOR":true}
+src/Alpha.sol:AlphaLib {"enabled":true,"runs":2} {"useLiteralContent":false,"bytecodeHash":"none","appendCBOR":true} {"src/Alpha.sol":{"AlphaLib":"0xa855FFfd46df10067e44EE404d2027ac082386a3"}}
+src/Alpha.sol:Alpha {"enabled":true,"runs":2} {"useLiteralContent":false,"bytecodeHash":"none","appendCBOR":true} {"src/Alpha.sol":{"AlphaLib":"0xa855FFfd46df10067e44EE404d2027ac082386a3"}}
+src/Alpha.sol:Factory {"enabled":true,"runs":2} {"useLiteralContent":false,"bytecodeHash":"none","appendCBOR":true} {"src/Alpha.sol":{"AlphaLib":"0xa855FFfd46df10067e44EE404d2027ac082386a3"}}
+src/Alpha.sol:Beta {"enabled":false,"runs":200} {"useLiteralContent":false,"bytecodeHash":"ipfs","appendCBOR":true} {}
 "#]]
     );
 }

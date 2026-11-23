@@ -290,6 +290,14 @@ the profile's spec in `build_rpc_simulation_context`, transaction metadata and v
 build of each RPC, and `--resume` rebuilds the builds from the current config and looks them up by
 URL.
 
+Profile builds are linked with CREATE2 libraries. `deploy_chain_libraries` deploys the libraries a
+frame of the script references on the active fork, with the cheatcodes detached, and
+`Cheatcodes::record_library_deployment` records their deployment once per endpoint URL before the
+first broadcast that references them. On a profiled `--rpc-url` endpoint the run build's libraries
+are only deployed locally, and broadcasts that reference a library not deployed on their chain are
+refused before simulation. Setup returns how many library deployments it recorded, and they are
+dropped when the script broadcasts on other chains only.
+
 ## Known failure windows
 
 | Window                                                                    | Recovery behavior or remaining limitation                                   |

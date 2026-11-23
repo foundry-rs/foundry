@@ -746,10 +746,6 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
     pub async fn bundle(mut self) -> Result<BundledState<FEN>> {
         let is_multi_deployment = self.execution_artifacts.rpc_data.total_rpcs.len() > 1;
 
-        if is_multi_deployment && !self.build_data.libraries.is_empty() {
-            eyre::bail!("Multi-chain deployment is not supported with libraries.");
-        }
-
         let mut total_gas_per_rpc: HashMap<String, u128> = HashMap::default();
 
         // Batches sequence of transactions from different rpcs.

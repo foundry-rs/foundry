@@ -1,6 +1,6 @@
 use super::Result;
 use crate::Vm::Rpc;
-use alloy_primitives::{Bytes, U256, map::AddressHashMap};
+use alloy_primitives::{Address, B256, Bytes, U256, map::AddressHashMap};
 use foundry_common::{
     ContractData, ContractsByArtifact, compile::ProfileBuild, fs::normalize_path,
     matches_contract_creation,
@@ -81,6 +81,10 @@ pub struct CheatsConfig {
     /// Profile builds by the URL of the `[rpc_endpoints]` entry naming the profile, if the
     /// command builds them.
     pub chain_builds: Option<BTreeMap<String, Arc<ChainBuild>>>,
+    /// CREATE2 libraries of the run's build to deploy on each fork.
+    pub create2_libraries: Vec<(Address, Bytes)>,
+    /// CREATE2 salt of the library deployment.
+    pub create2_library_salt: B256,
 }
 
 impl CheatsConfig {
@@ -128,6 +132,8 @@ impl CheatsConfig {
             seed: config.fuzz.seed,
             internal_expect_revert: config.allow_internal_expect_revert,
             chain_builds: None,
+            create2_libraries: Vec::new(),
+            create2_library_salt: config.create2_library_salt,
         }
     }
 
@@ -304,6 +310,8 @@ impl Default for CheatsConfig {
             seed: None,
             internal_expect_revert: false,
             chain_builds: None,
+            create2_libraries: Vec::new(),
+            create2_library_salt: Config::DEFAULT_CREATE2_LIBRARY_SALT,
         }
     }
 }
@@ -333,6 +341,10 @@ pub struct ChainBuild {
     pub profile: Arc<ProfileBuild>,
     /// Linked artifacts of the build.
     pub artifacts: ContractsByArtifact,
+    /// CREATE2 libraries to deploy on each fork using this build.
+    pub create2_libraries: Vec<(Address, Bytes)>,
+    /// Linked libraries, as `file:name:address`, for verification.
+    pub libraries: Vec<String>,
 }
 
 impl ChainBuild {
@@ -406,7 +418,6 @@ impl ChainBuild {
 mod tests {
 
     use super::*;
-    use alloy_primitives::Address;
     use foundry_config::{RpcEndpoints, fs_permissions::PathPermission};
     use tempfile::TempDir;
 
