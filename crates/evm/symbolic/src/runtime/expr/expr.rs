@@ -1,5 +1,4 @@
 use super::{hashcons::HashConsed, *};
-use std::collections::BTreeMap;
 
 // Boolean selector recovery is an optional expression rewrite. Bound it to one word's worth of
 // unique nodes so adversarial expression trees cannot make construction unbounded.
@@ -37,17 +36,6 @@ impl SymExpr {
             (self.storage_mapping_root_slot(cx), write_key.storage_mapping_root_slot(cx))
             && read_root != write_root
         {
-            // A root may be a folded entry of the other key's mapping chain. A match records it, so
-            // the keys compare again through their common root.
-            for (root, other) in [(read_root, write_key), (write_root, self)] {
-                for level in storage_mapping_slot_words(cx, other) {
-                    match find_folded_slot(cx, root, &level) {
-                        Some(true) => return self.storage_key_eq(cx, write_key),
-                        None => return SymBoolExpr::eq(cx, self.clone(), write_key.clone()),
-                        Some(false) => {}
-                    }
-                }
-            }
             return SymBoolExpr::constant(cx, false);
         }
         // The hash assumption only rules out aliasing for small offsets: an offset chosen as
@@ -84,18 +72,6 @@ impl SymExpr {
                 if base.as_const().is_none()
                     && (self.as_const().is_some() || write_key.as_const().is_some()) =>
             {
-                let found = match (self.as_const(), write_key.as_const()) {
-                    (Some(slot), _) => find_folded_slot(cx, slot, write_key),
-                    (_, Some(slot)) => find_folded_slot(cx, slot, self),
-                    _ => Some(false),
-                };
-                match found {
-                    // The constant is now a recorded entry and compares by its keys.
-                    Some(true) => return self.storage_key_eq(cx, write_key),
-                    // The search did not finish, so the words are compared exactly.
-                    None => return SymBoolExpr::eq(cx, self.clone(), write_key.clone()),
-                    Some(false) => {}
-                }
                 let large_offset = storage_offset_is_large(cx, &offset);
                 if large_offset.as_const() == Some(false) {
                     return SymBoolExpr::constant(cx, false);
@@ -121,8 +97,8 @@ impl SymExpr {
             (self.storage_mapping_key(cx), other.storage_mapping_key(cx))
         else {
             // Nested slots such as struct members `keccak(..) + i` or fixed mapping roots compare
-            // as storage keys. Two bare hash bases, or a constant that may be a folded entry the
-            // search did not find, stay a word equality.
+            // as storage keys. Two bare hash bases, or a large constant that may be a folded entry
+            // with no recorded hash base, stay a word equality.
             let is_base = |key: Option<(Self, Self)>| {
                 key.is_some_and(|(_, offset)| offset.as_const() == Some(U256::ZERO))
             };
@@ -297,12 +273,6 @@ fn storage_mapping_slot_words(cx: &mut SymCx, key: &SymExpr) -> Vec<SymExpr> {
     words
 }
 
-/// Returns whether a constant slot may be a folded mapping entry `keccak(..) + offset`. Below
-/// `2^128` that needs a hash with 128 leading zero or one bits.
-fn may_be_folded_slot(slot: U256) -> bool {
-    slot >= U256::ONE << 128
-}
-
 /// Returns whether `slot` is within `2^64` of the root of the mapping chain of `entry`, a range no
 /// entry of that chain reaches.
 fn is_near_chain_root(cx: &mut SymCx, slot: U256, entry: &SymExpr) -> bool {
@@ -312,95 +282,14 @@ fn is_near_chain_root(cx: &mut SymCx, slot: U256, entry: &SymExpr) -> bool {
         .is_some_and(|root| slot.abs_diff(root) < U256::ONE << STORAGE_LAYOUT_OFFSET_BITS)
 }
 
-/// Returns whether `slot` is a constant that may be a folded mapping entry and that the search
-/// over `entry` did not find.
+/// Returns whether `slot` is a constant that may be a folded mapping entry `keccak(..) + offset`
+/// with no recorded hash base, other than near the root of the chain of `entry`. Below `2^128`
+/// that needs a hash with 128 leading zero or one bits.
 fn is_unresolved_slot(cx: &mut SymCx, slot: &SymExpr, entry: &SymExpr) -> bool {
     let Some(slot) = slot.as_const() else { return false };
-    may_be_folded_slot(slot)
+    slot >= U256::ONE << 128
         && cx.concrete_keccak_base(slot, STORAGE_LAYOUT_OFFSET_BITS).is_none()
         && !is_near_chain_root(cx, slot, entry)
-        && find_folded_slot(cx, slot, entry) != Some(true)
-}
-
-/// Searches `slot` among the values `entry` takes over the candidate keys of its symbolic keys and
-/// records the preimages of a match. Returns `None` when the search ran out of hashes.
-fn find_folded_slot(cx: &mut SymCx, slot: U256, entry: &SymExpr) -> Option<bool> {
-    if !may_be_folded_slot(slot)
-        || cx.concrete_keccak_base(slot, STORAGE_LAYOUT_OFFSET_BITS).is_some()
-    {
-        return Some(false);
-    }
-    if let Some(found) = cx.folded_slot_search(slot, entry) {
-        return found;
-    }
-    if is_near_chain_root(cx, slot, entry) {
-        return Some(false);
-    }
-    let Some(keys) = cx.folded_slot_keys(slot) else { return Some(false) };
-    let found = {
-        let mut preimages = BTreeMap::new();
-        let mut hashes = MAX_NESTED_MAPPING_HASHES;
-        match folded_slot_values(cx, entry, &keys, &mut preimages, &mut hashes) {
-            Some(values) if values.contains(&slot) => {
-                // A level's base may sit at a struct offset from the hash below it.
-                let mut level = slot;
-                while let Some((_, &(key, base))) = preimages
-                    .range(..=level)
-                    .next_back()
-                    .filter(|(hash, _)| level - **hash < U256::ONE << STORAGE_LAYOUT_OFFSET_BITS)
-                {
-                    record_mapping_preimage(cx, key, base);
-                    level = base;
-                }
-                Some(true)
-            }
-            Some(_) => Some(false),
-            None if hashes == 0 => None,
-            None => Some(false),
-        }
-    };
-    cx.record_folded_slot_search(slot, entry.clone(), found);
-    found
-}
-
-/// Returns the values of a mapping entry `keccak(key . slot) + offset` over the candidate keys of
-/// its symbolic keys, and the preimage of every hash on the way. Returns `None` once
-/// `hashes` runs out or for a chain that is not built from constant offsets on a constant root.
-fn folded_slot_values(
-    cx: &mut SymCx,
-    entry: &SymExpr,
-    keys: &[U256],
-    preimages: &mut BTreeMap<U256, (U256, U256)>,
-    hashes: &mut usize,
-) -> Option<Vec<U256>> {
-    if let Some(value) = entry.as_const() {
-        return Some(vec![value]);
-    }
-    let (base, offset) = entry.storage_layout_key(cx)?;
-    let offset =
-        offset.as_const().filter(|offset| *offset < U256::ONE << STORAGE_LAYOUT_OFFSET_BITS)?;
-    let bytes = base.keccak_preimage(cx, 64)?;
-    let key = SymExpr::from_bytes(cx, bytes[..32].iter().cloned());
-    let slot = SymExpr::from_bytes(cx, bytes[32..64].iter().cloned());
-    let slots = folded_slot_values(cx, &slot, keys, preimages, hashes)?;
-    let constant_key;
-    let keys = match key.as_const() {
-        Some(key) => {
-            constant_key = [key];
-            &constant_key[..]
-        }
-        None => keys,
-    };
-    let mut values = Vec::with_capacity(slots.len() * keys.len());
-    for &slot in &slots {
-        for &key in keys {
-            *hashes = hashes.checked_sub(1)?;
-            let (hash, _) = mapping_preimage(key, slot);
-            preimages.insert(hash, (key, slot));
-            values.push(hash.wrapping_add(offset));
-        }
-    }
-    Some(values)
 }
 
 /// Returns the condition under which a storage layout offset is too large to assume no aliasing.

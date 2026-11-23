@@ -1655,15 +1655,12 @@ Suite result: FAILED. 2 passed; 1 failed; 0 skipped; [ELAPSED]
 "#]]);
 }
 
-// The optimizer folds the inner mapping roots of `cells[7][9]`, `values[7][9]`,
-// `deepCells[7][8][9]`, `mids[7][8].cells[9]` and `root.children[7].children[8]`, and the entry of
-// `deepValues[7][8][9]`, into constants. Each is found among the values of the symbolic entry it
-// is compared with, so an entry written through symbolic keys still aliases them. The entry of
-// `wides[7].last` sits at a struct offset above `2^64` and is not searched. The folded root of an
-// etched store with no known layout is never found and stays a word equality.
+// The optimizer folds the inner mapping root of `cells[7][9]` into a constant. Compared inside a
+// preimage with the symbolic root of `cells[k1][k2]`, it may be that entry, so it stays a word
+// equality instead of a fixed slot and the write through `k1 = 7, k2 = 9` still aliases.
 #[forgetest_init]
-fn symbolic_folded_nested_mapping_root_aliases_symbolic_entry(prj: _, cmd: _) {
-    skip_unless_z3!("symbolic_folded_nested_mapping_root_aliases_symbolic_entry");
+fn symbolic_folded_nested_mapping_root_is_not_a_fixed_slot(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_folded_nested_mapping_root_is_not_a_fixed_slot");
 
     prj.update_config(|config| config.optimizer = Some(true));
     prj.add_test(
@@ -1676,7 +1673,6 @@ struct Cell {
 
 contract Store {
     mapping(uint256 => mapping(uint256 => Cell)) cells;
-    mapping(uint256 => mapping(uint256 => mapping(uint256 => uint256))) values;
 
     function setConstCell(uint256 id, uint256 value) external {
         cells[7][9].inner[id] = value;
@@ -1689,199 +1685,15 @@ contract Store {
     function setCell(uint256 k1, uint256 k2, uint256 id, uint256 value) external {
         cells[k1][k2].inner[id] = value;
     }
-
-    function setConstValue(uint256 id, uint256 value) external {
-        values[7][9][id] = value;
-    }
-
-    function getConstValue(uint256 id) external view returns (uint256) {
-        return values[7][9][id];
-    }
-
-    function setValue(uint256 k1, uint256 k2, uint256 id, uint256 value) external {
-        values[k1][k2][id] = value;
-    }
-}
-
-contract DeepCellStore {
-    mapping(uint256 => mapping(uint256 => mapping(uint256 => Cell))) deepCells;
-
-    function setConstDeepCell(uint256 id, uint256 value) external {
-        deepCells[7][8][9].inner[id] = value;
-    }
-
-    function getConstDeepCell(uint256 id) external view returns (uint256) {
-        return deepCells[7][8][9].inner[id];
-    }
-
-    function setDeepCell(uint256 k1, uint256 k2, uint256 k3, uint256 id, uint256 value) external {
-        deepCells[k1][k2][k3].inner[id] = value;
-    }
-}
-
-contract DeepValueStore {
-    mapping(uint256 => mapping(uint256 => mapping(uint256 => uint256))) deepValues;
-
-    function setConstDeepValue(uint256 value) external {
-        deepValues[7][8][9] = value;
-    }
-
-    function getConstDeepValue() external view returns (uint256) {
-        return deepValues[7][8][9];
-    }
-
-    function setDeepValue(uint256 k1, uint256 k2, uint256 k3, uint256 value) external {
-        deepValues[k1][k2][k3] = value;
-    }
-}
-
-struct Node {
-    uint256 value;
-    mapping(uint256 => Node) children;
-}
-
-struct Mid {
-    uint32 tag;
-    mapping(uint256 => Cell) cells;
-}
-
-contract MidStore {
-    mapping(uint256 => mapping(uint256 => Mid)) mids;
-
-    function setConst(uint256 id, uint256 value) external {
-        mids[7][8].cells[9].inner[id] = value;
-    }
-
-    function getConst(uint256 id) external view returns (uint256) {
-        return mids[7][8].cells[9].inner[id];
-    }
-
-    function set(uint256 k1, uint256 k2, uint256 k3, uint256 id, uint256 value) external {
-        mids[k1][k2].cells[k3].inner[id] = value;
-    }
-}
-
-contract TreeStore {
-    Node root;
-
-    function setConst(uint256 value) external {
-        root.children[7].children[8].children[9].value = value;
-    }
-
-    function getConst() external view returns (uint256) {
-        return root.children[7].children[8].children[9].value;
-    }
-
-    function set(uint256 k1, uint256 k2, uint256 k3, uint256 value) external {
-        root.children[k1].children[k2].children[k3].value = value;
-    }
-}
-
-struct Wide {
-    uint256[2 ** 64] items;
-    uint256 last;
-}
-
-contract WideStore {
-    mapping(uint256 => Wide) wides;
-
-    function setConst(uint256 value) external {
-        wides[7].last = value;
-    }
-
-    function getConst() external view returns (uint256) {
-        return wides[7].last;
-    }
-
-    function set(uint256 key, uint256 value) external {
-        wides[key].last = value;
-    }
-}
-
-contract EtchedCellStore {
-    mapping(uint256 => mapping(uint256 => Cell)) cells;
-
-    function setConstCell(uint256 id, uint256 value) external {
-        cells[3][5].inner[id] = value;
-    }
-
-    function getConstCell(uint256 id) external view returns (uint256) {
-        return cells[3][5].inner[id];
-    }
-
-    function setCell(uint256 k1, uint256 k2, uint256 id, uint256 value) external {
-        cells[k1][k2].inner[id] = value;
-    }
-}
-
-interface Vm {
-    function etch(address target, bytes calldata code) external;
 }
 
 contract SymbolicFoldedNestedRoot {
-    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
     Store store = new Store();
-    DeepCellStore deepCellStore = new DeepCellStore();
-    DeepValueStore deepValueStore = new DeepValueStore();
-    MidStore midStore = new MidStore();
-    TreeStore treeStore = new TreeStore();
-    WideStore wideStore = new WideStore();
-    EtchedCellStore etchedCellStore = EtchedCellStore(address(0xCE11));
-
-    constructor() {
-        vm.etch(address(etchedCellStore), abi.encodePacked(type(EtchedCellStore).runtimeCode, hex"00"));
-    }
 
     function checkStructMemberEntryAliases(uint256 k1, uint256 k2, uint256 id, uint256 a, uint256 b) public {
         store.setConstCell(id, a);
         store.setCell(k1, k2, id, b);
         assert(store.getConstCell(id) == a);
-    }
-
-    function checkNestedEntryAliases(uint256 k1, uint256 k2, uint256 id, uint256 a, uint256 b) public {
-        store.setConstValue(id, a);
-        store.setValue(k1, k2, id, b);
-        assert(store.getConstValue(id) == a);
-    }
-
-    function checkDeepStructMemberEntryAliases(uint256 k1, uint256 k2, uint256 k3, uint256 id, uint256 a, uint256 b)
-        public
-    {
-        deepCellStore.setConstDeepCell(id, a);
-        deepCellStore.setDeepCell(k1, k2, k3, id, b);
-        assert(deepCellStore.getConstDeepCell(id) == a);
-    }
-
-    function checkDeepEntryAliases(uint256 k1, uint256 k2, uint256 k3, uint256 a, uint256 b) public {
-        deepValueStore.setConstDeepValue(a);
-        deepValueStore.setDeepValue(k1, k2, k3, b);
-        assert(deepValueStore.getConstDeepValue() == a);
-    }
-
-    function checkMidStructEntryAliases(uint256 k1, uint256 k2, uint256 k3, uint256 id, uint256 a, uint256 b)
-        public
-    {
-        midStore.setConst(id, a);
-        midStore.set(k1, k2, k3, id, b);
-        assert(midStore.getConst(id) == a);
-    }
-
-    function checkRecursiveEntryAliases(uint256 k1, uint256 k2, uint256 k3, uint256 a, uint256 b) public {
-        treeStore.setConst(a);
-        treeStore.set(k1, k2, k3, b);
-        assert(treeStore.getConst() == a);
-    }
-
-    function checkWideOffsetEntryAliases(uint256 key, uint256 a, uint256 b) public {
-        wideStore.setConst(a);
-        wideStore.set(key, b);
-        assert(wideStore.getConst() == a);
-    }
-
-    function checkUnknownNestedCellAliases(uint256 k1, uint256 k2, uint256 id, uint256 a, uint256 b) public {
-        etchedCellStore.setConstCell(id, a);
-        etchedCellStore.setCell(k1, k2, id, b);
-        assert(etchedCellStore.getConstCell(id) == a);
     }
 }
 "#,
@@ -1891,78 +1703,8 @@ contract SymbolicFoldedNestedRoot {
         .failure()
         .stdout_eq(str![[r#"
 ...
-Ran 8 tests for test/SymbolicFoldedNestedRoot.t.sol:SymbolicFoldedNestedRoot
-[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [..]] checkDeepEntryAliases(uint256,uint256,uint256,uint256,uint256) ([METRICS])
-[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [..]] checkDeepStructMemberEntryAliases(uint256,uint256,uint256,uint256,uint256,uint256) ([METRICS])
-[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [..]] checkMidStructEntryAliases(uint256,uint256,uint256,uint256,uint256,uint256) ([METRICS])
-[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [..]] checkNestedEntryAliases(uint256,uint256,uint256,uint256,uint256) ([METRICS])
-[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [..]] checkRecursiveEntryAliases(uint256,uint256,uint256,uint256,uint256) ([METRICS])
+Ran 1 test for test/SymbolicFoldedNestedRoot.t.sol:SymbolicFoldedNestedRoot
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [..]] checkStructMemberEntryAliases(uint256,uint256,uint256,uint256,uint256) ([METRICS])
-[FAIL: incomplete symbolic execution (Error): solver error: solver model does not satisfy path constraints involving symbolic Keccak heuristic] checkUnknownNestedCellAliases(uint256,uint256,uint256,uint256,uint256) ([METRICS])
-[FAIL: incomplete symbolic execution (Error): solver error: solver model does not satisfy path constraints involving symbolic Keccak heuristic] checkWideOffsetEntryAliases(uint256,uint256,uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 8 failed; 0 skipped; [ELAPSED]
-...
-"#]]);
-}
-
-// With enough source literals the search for the folded entry `values[7][9][id]` among the values
-// of `values[k1][k2][id]` runs out of hashes, and the two slots stay a word equality.
-#[forgetest_init]
-fn symbolic_folded_mapping_entry_search_runs_out_of_hashes(prj: _, cmd: _) {
-    skip_unless_z3!("symbolic_folded_mapping_entry_search_runs_out_of_hashes");
-
-    prj.update_config(|config| config.optimizer = Some(true));
-    let branches: String = (1..=300)
-        .map(|i| format!("        if (i == {}) return {};\n", i * 7919, i * 104729))
-        .collect();
-    prj.add_source(
-        "Literals.sol",
-        &format!(
-            "contract Literals {{\n    function pick(uint256 i) external pure returns (uint256) {{\n{branches}        return 0;\n    }}\n}}\n"
-        ),
-    );
-    prj.add_test(
-        "SymbolicFoldedSearchBudget.t.sol",
-        r#"
-contract ValueStore {
-    mapping(uint256 => mapping(uint256 => mapping(uint256 => uint256))) values;
-
-    function setConstValue(uint256 id, uint256 value) external {
-        values[7][9][id] = value;
-    }
-
-    function getConstValue(uint256 id) external view returns (uint256) {
-        return values[7][9][id];
-    }
-
-    function setValue(uint256 k1, uint256 k2, uint256 id, uint256 value) external {
-        values[k1][k2][id] = value;
-    }
-}
-
-contract SymbolicFoldedSearchBudget {
-    ValueStore store = new ValueStore();
-
-    function checkNestedEntryAliases(uint256 k1, uint256 k2, uint256 id, uint256 a, uint256 b) public {
-        store.setConstValue(id, a);
-        store.setValue(k1, k2, id, b);
-        assert(store.getConstValue(id) == a);
-    }
-}
-"#,
-    );
-
-    assert_symbolic(cmd.args([
-        "test",
-        "--symbolic",
-        "--match-contract",
-        "SymbolicFoldedSearchBudget",
-    ]))
-    .failure()
-    .stdout_eq(str![[r#"
-...
-Ran 1 test for test/SymbolicFoldedSearchBudget.t.sol:SymbolicFoldedSearchBudget
-[FAIL: incomplete symbolic execution (Error): solver error: solver model does not satisfy path constraints involving symbolic Keccak heuristic] checkNestedEntryAliases(uint256,uint256,uint256,uint256,uint256) ([METRICS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
