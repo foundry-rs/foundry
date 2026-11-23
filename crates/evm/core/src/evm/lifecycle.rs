@@ -955,11 +955,10 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
         // which EIP-6780 SELFDESTRUCT would delete, here or when the running transaction resumes
         // their fork. Its warmth stays.
         let earlier = transaction != self.transactions;
-        if earlier {
-            for entry in forks.forks.values_mut() {
-                entry.context.created.values_mut().for_each(|in_tx| *in_tx = false);
-            }
-            forks.local.created.values_mut().for_each(|in_tx| *in_tx = false);
+        // Only the snapshot's active context is installed, and it carries the creations it
+        // recorded when that transaction last resumed it.
+        if earlier && let Some(context) = forks.context_mut(forks.active) {
+            context.created.values_mut().for_each(|in_tx| *in_tx = false);
         }
         let (replaced, logs) = if forks.active == self.forks.active {
             (None, evm.state().logs().to_vec())

@@ -9409,6 +9409,7 @@ interface Vm {
     function deal(address account, uint256 balance) external;
     function snapshotState() external returns (uint256);
     function revertToState(uint256 snapshotId) external returns (bool);
+    function rollFork(uint256 blockNumber) external;
 }
 
 contract Bomb {
@@ -9424,6 +9425,7 @@ contract PreviousCreationForkTest {
     uint256 first;
     uint256 onFirst;
     uint256 onSecond;
+    uint256 switchedBack;
 
     function deploy() internal {
         vm.prank(DEPLOYER);
@@ -9435,8 +9437,11 @@ contract PreviousCreationForkTest {
         deploy();
         vm.deal(CREATED, 42);
         onFirst = vm.snapshotState();
-        vm.createSelectFork("<url>", 1);
+        uint256 second = vm.createSelectFork("<url>", 1);
         onSecond = vm.snapshotState();
+        vm.selectFork(first);
+        switchedBack = vm.snapshotState();
+        vm.selectFork(second);
     }
 
     function boom() internal {
@@ -9461,6 +9466,12 @@ contract PreviousCreationForkTest {
         vm.selectFork(first);
         boom();
     }
+
+    function testForkCreatedInSetUpIsNotCreatedAfterSwitchBackRevertAndRoll() public {
+        require(vm.revertToState(switchedBack), "reverted");
+        vm.rollFork(block.number);
+        boom();
+    }
 }
 "#
         .replace("<url>", &handle.http_endpoint())
@@ -9473,6 +9484,7 @@ contract PreviousCreationForkTest {
 [PASS] testForkCreatedInSetUpIsNotCreated() ([GAS])
 [PASS] testForkCreatedInSetUpIsNotCreatedAfterRevert() ([GAS])
 [PASS] testForkCreatedInSetUpIsNotCreatedAfterRevertAndSwitch() ([GAS])
+[PASS] testForkCreatedInSetUpIsNotCreatedAfterSwitchBackRevertAndRoll() ([GAS])
 ...
 "#]];
     cmd.args(["test"]).assert_success().stdout_eq(output.clone());
