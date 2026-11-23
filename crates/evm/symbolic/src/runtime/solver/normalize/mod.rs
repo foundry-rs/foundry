@@ -2376,17 +2376,29 @@ impl ConstraintContext {
     }
 
     pub(super) fn mul_cannot_overflow_256(&self, left: &SymExpr, right: &SymExpr) -> bool {
+        let mut intervals = HashMap::default();
+        let mut remaining = MAX_LOCAL_ANALYSIS_NODES;
+        self.mul_cannot_overflow_256_cached(left, right, &mut intervals, &mut remaining)
+    }
+
+    /// Like [`Self::mul_cannot_overflow_256`], sharing the caller's interval cache and node
+    /// budget, so a proof nested inside interval analysis does not restart it.
+    fn mul_cannot_overflow_256_cached(
+        &self,
+        left: &SymExpr,
+        right: &SymExpr,
+        intervals: &mut HashMap<SymExpr, Option<WordInterval>>,
+        remaining: &mut usize,
+    ) -> bool {
         // `(a / d) * d <= a`, and the product is zero when `d == 0`, so it never wraps.
         if self.has_non_wrapping_product(left, right)
             || rounded_product_operands(left, right).is_some()
         {
             return true;
         }
-        let mut intervals = HashMap::default();
-        let mut remaining = MAX_LOCAL_ANALYSIS_NODES;
         if self
-            .interval_cached(left, &mut intervals, &mut remaining)
-            .zip(self.interval_cached(right, &mut intervals, &mut remaining))
+            .interval_cached(left, intervals, remaining)
+            .zip(self.interval_cached(right, intervals, remaining))
             .is_some_and(|(left, right)| left.max.checked_mul(right.max).is_some())
         {
             return true;

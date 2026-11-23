@@ -8372,6 +8372,155 @@ contract SymbolicCeilDivTest {
     }
 }
 
+// Rounding a quotient up covers its dividend: `ceil(n / d) * d >= n`, so shares previewed with
+// rounding up always pay for the requested assets. OpenZeppelin's `Math.ceilDiv` (MIT) rounds up as
+// `(a - 1) / b + 1` for a nonzero `a`; v4 branches on `a == 0` and v5 multiplies by `a > 0`.
+#[forgetest_init]
+fn symbolic_proves_ceil_multiple_covers_dividend(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_ceil_multiple_covers_dividend");
+
+    prj.add_test(
+        "SymbolicCeilMultiple.t.sol",
+        r#"
+library SafeCast {
+    function toUint(bool b) internal pure returns (uint256 u) {
+        assembly ("memory-safe") {
+            u := iszero(iszero(b))
+        }
+    }
+}
+
+library Math {
+    function ceilDiv(uint256 a, uint256 b) internal pure returns (uint256) {
+        return a == 0 ? 0 : (a - 1) / b + 1;
+    }
+
+    function ceilDivV5(uint256 a, uint256 b) internal pure returns (uint256) {
+        if (b == 0) revert();
+        unchecked {
+            return SafeCast.toUint(a > 0) * ((a - 1) / b + 1);
+        }
+    }
+}
+
+contract SymbolicCeilMultipleTest {
+    function checkCeilMultipleCoversDividend(uint256 a, uint256 b) public pure {
+        if (b == 0) return;
+        assert(((a + b - 1) / b) * b >= a);
+    }
+
+    function checkCeilDivMultipleCoversDividend(uint256 a, uint256 b) public pure {
+        if (b == 0) return;
+        assert(Math.ceilDiv(a, b) * b >= a);
+    }
+
+    function checkCeilDivV5MultipleCoversDividend(uint128 a, uint128 b) public pure {
+        if (b == 0) return;
+        unchecked {
+            assert(Math.ceilDivV5(a, b) * b >= a);
+        }
+    }
+
+    function checkSharesCoverAssets(uint128 assets, uint128 supply, uint128 total) public pure {
+        if (total == 0) return;
+        uint256 scaled = uint256(assets) * supply;
+        uint256 shares = (scaled + total - 1) / total;
+        assert(shares * total >= scaled);
+    }
+
+    function checkCeilTimesOtherValue(uint128 a, uint128 b, uint128 c) public pure {
+        if (b == 0 || c == 0) return;
+        assert(Math.ceilDiv(a, b) * c >= a);
+    }
+
+    // A wrapped `a + b - 1` rounds to a small multiple.
+    function checkWrappedCeil(uint256 a, uint256 b) public pure {
+        if (b == 0) return;
+        unchecked {
+            assert(((a + b - 1) / b) * b >= a);
+        }
+    }
+
+    // A wrapped multiple of `(a - 1) / b + 1` can fall to zero.
+    function checkWrappedCeilMultiple(uint256 a, uint256 b) public pure {
+        if (a == 0 || b == 0) return;
+        unchecked {
+            assert(((a - 1) / b + 1) * b >= a);
+        }
+    }
+
+    // Each rounding error feeds the next `ceilDiv`, so bounding it nests the proof.
+    function checkNestedCeilRoundingErrors(uint256 a, uint256 b) public pure {
+        if (b == 0) return;
+        uint256 x = a;
+        unchecked {
+            for (uint256 i; i < 24; ++i) {
+                x = ((x - 1) / b + 1) * b - x;
+            }
+        }
+        assert(x < 2 ** 255);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        // The optimizer folds the multiply guard's zero check of `ceilDiv(a, b)`, so the guard is
+        // not yet recognized and the checked product's overflow branch stays undecided.
+        cmd.forge_fuse().args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--match-contract",
+            "SymbolicCeilMultiple",
+        ]);
+        if optimized {
+            cmd.args(["--no-match-test", "checkCeilDivMultipleCoversDividend"]);
+        }
+        let output = cmd.assert_failure().get_output().stdout.clone();
+
+        // Checked `a + b - 1` leaves an unrelated underflow query.
+        let result = json_test_result(&output, "checkCeilMultipleCoversDividend(uint256,uint256)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}");
+
+        if !optimized {
+            let result =
+                json_test_result(&output, "checkCeilDivMultipleCoversDividend(uint256,uint256)");
+            assert_eq!(result["symbolic"]["status"], "pass");
+            assert_eq!(result["symbolic"]["solver"]["stats"]["smt_queries"], 0);
+        }
+
+        for signature in [
+            "checkCeilDivV5MultipleCoversDividend(uint128,uint128)",
+            "checkSharesCoverAssets(uint128,uint128,uint128)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "pass", "{signature} optimized={optimized}");
+            assert_eq!(
+                result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+                "{signature} optimized={optimized}"
+            );
+        }
+
+        for signature in [
+            "checkCeilTimesOtherValue(uint128,uint128,uint128)",
+            "checkWrappedCeil(uint256,uint256)",
+            "checkWrappedCeilMultiple(uint256,uint256)",
+            "checkNestedCeilRoundingErrors(uint256,uint256)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "{signature} optimized={optimized}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "{signature} optimized={optimized}"
+            );
+        }
+    }
+}
+
 // Uniswap V2's `getAmountOut` (GPL-3.0) divides `x * y` by `y + z`, which stays below `x` when
 // `x` and `z` are nonzero and the sum does not wrap, so a swap never drains the output reserve.
 #[forgetest_init]
