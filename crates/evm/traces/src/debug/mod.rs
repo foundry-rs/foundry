@@ -93,7 +93,7 @@ impl<'a> DebugStepsWalker<'a> {
     fn src_map(&self, step: usize) -> Option<(SourceElement, &SourceData)> {
         self.sources.find_source_mapping(
             self.contract_name,
-            self.node.trace.steps[step].pc as u32,
+            self.node.trace.steps[step].pc,
             self.node.trace.kind.is_any_create(),
         )
     }
@@ -172,10 +172,10 @@ impl<'a> DebugStepsWalker<'a> {
             })
             .unwrap_or_default();
 
-        self.node.trace.steps[start_idx].decoded = Some(Box::new(DecodedTraceStep::InternalCall(
+        *self.node.trace.steps[start_idx].decoded_mut() = DecodedTraceStep::InternalCall(
             DecodedInternalCall { func_name, args: inputs, return_data: outputs },
             self.current_step,
-        )));
+        );
     }
 
     fn process(&mut self) {
@@ -456,7 +456,6 @@ fn memory_range(memory: &[u8], start: usize, len: usize) -> Option<&[u8]> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::Bytes;
     use evm2::interpreter::InstrStop;
 
     fn trace_step(stack: Vec<U256>) -> CallTraceStep {
@@ -466,17 +465,13 @@ mod tests {
             stack: Some(stack.into_boxed_slice()),
             push_stack: None,
             memory: None,
-            returndata: Bytes::new(),
             gas_remaining: 0,
             gas_refund_counter: 0,
             gas_cost: 0,
-            state_gas_cost: None,
             state_gas_reservoir: None,
-            state_gas_spent: 0,
             storage_change: None,
             status: Some(InstrStop::Stop),
-            immediate_bytes: None,
-            decoded: None,
+            extra: None,
         }
     }
 
