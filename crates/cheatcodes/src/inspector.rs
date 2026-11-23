@@ -1940,10 +1940,6 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             || self.gas_metering.recording
             || self.core.arbitrary_storage.is_some()
             || self.deploy_code_depth.is_some()
-            // Any instruction can halt, which `step_end_hook` records for `expectRevert`.
-            || self.expected_revert.as_ref().is_some_and(|expected| {
-                matches!(expected.kind, ExpectedRevertKind::Default)
-            })
             || self.failure_trace.as_ref().is_some_and(|trace| !trace.paused)
         {
             return OpcodeSet::ALL;
@@ -1977,6 +1973,16 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         }
         if self.has_active_env_overrides() {
             steps = steps.union(opcodes([op::BASEFEE, op::GASPRICE, op::CHAINID, op::BLOBHASH]));
+        }
+        // `expectRevert` gives back the gas of a call that halts, which `step_end_hook` records.
+        // Only the instructions compiled code halts on are stepped, so expected calls keep
+        // running on the plain loop; other halts consume their gas.
+        if self
+            .expected_revert
+            .as_ref()
+            .is_some_and(|expected| matches!(expected.kind, ExpectedRevertKind::Default))
+        {
+            steps = steps.union(opcodes([op::INVALID, op::RETURNDATACOPY]));
         }
         if self.failure_provenance.is_some() {
             steps = steps.union(opcodes([op::REVERT, op::INVALID]));
