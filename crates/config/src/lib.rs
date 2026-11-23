@@ -1184,6 +1184,9 @@ impl Config {
                             key.starts_with(&format!("{}_", section.to_ascii_uppercase()))
                         }) {
                             key.replacen('_', ".", 1).into()
+                        } else if key == "CHAIN" {
+                            // `chain` is an alias of `chain_id`, so both must not reach serde.
+                            "CHAIN_ID".into()
                         } else {
                             key.into()
                         }
@@ -3886,6 +3889,27 @@ mod tests {
             assert!(Config::load().unwrap().fork_state_by_number);
             jail.set_env("FOUNDRY_FORK_STATE_BY_NUMBER", "invalid");
             assert!(Config::load().is_err());
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_chain_alias() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file("foundry.toml", "[profile.default]\nchain = 1\n")?;
+            let config = Config::load().unwrap();
+            assert_eq!(config.chain, Some(Chain::mainnet()));
+            assert_eq!(config.warnings, vec![]);
+
+            jail.create_file(
+                "foundry.toml",
+                "[profile.default]\nchain_id = 1\n\n[profile.ci]\nchain = 5\n",
+            )?;
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+            assert_eq!(Config::load().unwrap().chain, Some(Chain::goerli()));
+
+            jail.set_env("FOUNDRY_CHAIN", "10");
+            assert_eq!(Config::load().unwrap().chain, Some(Chain::optimism_mainnet()));
             Ok(())
         });
     }

@@ -498,6 +498,9 @@ fn rewrite_legacy_profile_keys(dict: &mut Dict, solc_env: Option<&Value>) {
     if let Some(v) = dict.remove("deny_warnings") {
         dict.entry("deny".to_string()).or_insert(v);
     }
+    if let Some(v) = dict.remove("chain") {
+        dict.entry("chain_id".to_string()).or_insert(v);
+    }
 }
 
 /// Drops the top-level `root` key from config file profiles.
