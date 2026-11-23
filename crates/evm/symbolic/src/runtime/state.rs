@@ -1067,15 +1067,19 @@ impl PathState {
                 self.persistent_accounts.insert(to);
             }
             // A failed frame replays these writes on a world that may not know the alias, so they
-            // follow the state.
-            self.persistent_writes.retain_mut(|write| match write {
-                PersistentWrite::Balance { address, .. } | PersistentWrite::Nonce(address, _)
-                    if *address == representative =>
+            // follow the state. A dropped write becomes a no-op in place, since frames replay from
+            // their index into the list.
+            for write in &mut self.persistent_writes {
+                if let PersistentWrite::Balance { address, .. } | PersistentWrite::Nonce(address, _) =
+                    write
+                    && *address == representative
                 {
-                    to.inspect(|to| *address = *to).is_some()
+                    match to {
+                        Some(to) => *address = to,
+                        None => *write = PersistentWrite::Nonce(representative, 0),
+                    }
                 }
-                _ => true,
-            });
+            }
             self.world.settle_symbolic_address(&word, representative, to);
             let frame = &mut self.frame;
             for frame_address in [

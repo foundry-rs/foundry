@@ -3735,6 +3735,21 @@ contract SymbolicFixedAddress is Test {
         if (who == address(0xB0B)) assert(who.balance != 5);
     }
 
+    function dealSelfThenFail(address who) external {
+        vm.deal(address(this), 7);
+        require(who == address(target));
+        address(target).call("");
+        revert();
+    }
+
+    // Fails: settling `who` inside the failed call drops the representative's earlier balance
+    // write, which must not hide the `vm.deal` that survives the revert.
+    function checkDealSurvivesDroppedWrite(address who) public {
+        vm.deal(who, 5);
+        try this.dealSelfThenFail(who) {} catch {}
+        if (who == address(target)) assert(address(this).balance != 7);
+    }
+
     // `vm.deal` reaches 0xB0B, but the earlier `vm.store` through the address did not.
     function checkStoreBeforeAccountKnown(address who) public {
         vm.assume(uint160(who) > 0x200);
@@ -3752,7 +3767,8 @@ contract SymbolicFixedAddress is Test {
         .failure()
         .stdout_eq(str![[r#"
 ...
-Ran 8 tests for test/SymbolicFixedAddress.t.sol:SymbolicFixedAddress
+Ran 9 tests for test/SymbolicFixedAddress.t.sol:SymbolicFixedAddress
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealSurvivesDroppedWrite(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealtInFailedCall(address) ([METRICS])
 [PASS] checkDealtSenderCannotOverpay(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealtSenderPays(address) ([METRICS])
@@ -3761,7 +3777,7 @@ Ran 8 tests for test/SymbolicFixedAddress.t.sol:SymbolicFixedAddress
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPersistentOnceFixed(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkSaltedCreate(uint8) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic address fixed to an account the run knew only after state was written through the address] checkStoreBeforeAccountKnown(address) ([METRICS])
-Suite result: FAILED. 1 passed; 7 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 1 passed; 8 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
