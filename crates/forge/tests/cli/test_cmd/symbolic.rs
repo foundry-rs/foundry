@@ -9143,7 +9143,8 @@ contract SymbolicDowncastShare {
 
 // Liquidations cap the repaid debt at `debt * closeFactor / 1e4`, rounded down or half up as in
 // Aave's `percentMul`, so the capped amount never exceeds the debt once the close factor is at
-// most 100%. A larger factor or a rounding addend of a whole unit can exceed it.
+// most 100% of a constant or symbolic maximum. A larger factor or a rounding addend of a whole
+// unit can exceed it.
 #[forgetest_init]
 fn symbolic_proves_liquidation_cap_bounded(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_liquidation_cap_bounded");
@@ -9181,6 +9182,16 @@ contract SymbolicLiquidationCap {
         assert(cap(debtToCover, uint256(debt) * closeFactor / PERCENTAGE_FACTOR) <= debt);
     }
 
+    function checkSymbolicMaxFactor(
+        uint128 debt,
+        uint256 debtToCover,
+        uint16 closeFactor,
+        uint16 maxFactor
+    ) public pure {
+        require(closeFactor <= maxFactor);
+        assert(cap(debtToCover, uint256(debt) * closeFactor / maxFactor) <= debt);
+    }
+
     function checkLargeCloseFactor(uint128 debt, uint256 debtToCover, uint16 closeFactor)
         public
         pure
@@ -9209,9 +9220,11 @@ contract SymbolicLiquidationCap {
             .get_output()
             .stdout
             .clone();
-        for signature in
-            ["checkHalfUpCap(uint128,uint256,uint16)", "checkTruncatedCap(uint128,uint256,uint16)"]
-        {
+        for signature in [
+            "checkHalfUpCap(uint128,uint256,uint16)",
+            "checkTruncatedCap(uint128,uint256,uint16)",
+            "checkSymbolicMaxFactor(uint128,uint256,uint16,uint16)",
+        ] {
             let result = json_test_result(&output, signature);
             assert_eq!(
                 result["symbolic"]["status"], "pass",
