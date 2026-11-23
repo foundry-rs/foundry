@@ -149,6 +149,7 @@ impl ConstraintContext {
     /// by `a != 0`, and `(x * y + c) / d <= x` once `y <= d`, `x * y` cannot wrap, and `c < d`.
     /// Another conjunct's cross-multiplied `x * k <= y * l` also decides `x <= y` once `k` is
     /// positive, `l <= k`, and `x * k` cannot wrap.
+    /// A shifted product `(x * y) >> k <= x` once `y <= 2**k`, even when `x * y` wraps.
     /// The shares `w * a / k + w * b / k <= w` once `a + b <= k`, and `n <= ceil(n / d) * d` for a
     /// nonzero `d` once the multiple cannot wrap.
     pub(super) fn division_comparison_value(&self, expr: &SymBoolExpr) -> Option<bool> {
@@ -328,18 +329,13 @@ impl ConstraintContext {
             }
             // `(x * y) >> k` is `x * y / 2**k`, as in Q96 and Q128 fixed-point math, so it is at
             // most `x` once `y <= 2**k`. A wrapped product only shrinks the dividend.
-            SymExprKind::BinOp(SymBinOp::Shr, value, shift) => {
-                let shift = shift.as_const().filter(|shift| *shift < U256::from(256))?;
-                let SymExprKind::BinOp(SymBinOp::Mul, left, right) = value.kind() else {
-                    return None;
-                };
-                let other = if left == large {
-                    right
-                } else if right == large {
-                    left
-                } else {
-                    return None;
-                };
+            SymExprKind::BinOp(SymBinOp::Shr, value, shift)
+                if let Some(shift) = shift.as_const().filter(|shift| *shift < U256::from(256))
+                    && let SymExprKind::BinOp(SymBinOp::Mul, left, right) = value.kind()
+                    && let Some(other) = [(left, right), (right, left)]
+                        .into_iter()
+                        .find_map(|(x, y)| (x == large).then_some(y)) =>
+            {
                 let scale = U256::ONE << shift.to::<usize>();
                 interval(other).is_some_and(|other| other.max <= scale).then_some(false)
             }

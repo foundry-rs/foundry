@@ -9142,7 +9142,8 @@ contract SymbolicDowncastShare {
 }
 
 // Q96 and Q128 fixed-point math scales an amount with `(x * y) >> k`, which is at most `x` once
-// `y <= 2**k`. A larger factor, or a bound on the other factor, proves nothing.
+// `y <= 2**k`, even when the product wraps. A larger factor, or a bound on the other factor,
+// proves nothing.
 #[forgetest_init]
 fn symbolic_proves_shifted_product_bounded(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_shifted_product_bounded");
@@ -9158,6 +9159,13 @@ contract SymbolicShiftedProduct {
     function checkQ128Fees(uint128 liquidity, uint256 growth) public pure {
         require(growth <= 2 ** 128);
         assert((uint256(liquidity) * growth) >> 128 <= liquidity);
+    }
+
+    function checkQ96ScaleWrapping(uint256 amount, uint256 price) public pure {
+        require(price <= 2 ** 96);
+        unchecked {
+            assert((amount * price) >> 96 <= amount);
+        }
     }
 
     function checkQ96ScaleAboveOne(uint128 amount, uint160 price) public pure {
@@ -9182,7 +9190,11 @@ contract SymbolicShiftedProduct {
             .stdout
             .clone();
 
-        for signature in ["checkQ96Scale(uint128,uint160)", "checkQ128Fees(uint128,uint256)"] {
+        for signature in [
+            "checkQ96Scale(uint128,uint160)",
+            "checkQ128Fees(uint128,uint256)",
+            "checkQ96ScaleWrapping(uint256,uint256)",
+        ] {
             let result = json_test_result(&output, signature);
             assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
         }
