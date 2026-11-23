@@ -702,6 +702,15 @@ contract ExpectRevertHaltGasTest is Test {
         assertGt(gasBefore - gasleft(), 1_000_000_000);
     }
 
+    /// A non-static call keeps consuming the gas of an expected halt, as on revm.
+    function testExpectRevertNonStaticHaltConsumesGas() public {
+        uint256 gasBefore = gasleft();
+        vm.expectRevert();
+        (bool success,) = address(halter).call("");
+        success;
+        assertGt(gasBefore - gasleft(), 1_000_000_000);
+    }
+
     /// Only the halts on the stepped instructions give gas back, also when another cheatcode
     /// steps every instruction.
     function testExpectRevertBadJumpConsumesGasWhenStepped() public {

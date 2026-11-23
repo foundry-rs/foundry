@@ -67,10 +67,11 @@ These compatibility differences affect execution, gas reports and Anvil library 
   storage follows the same lifetime, so it no longer leaks from `setUp` into a test through a fork.
   See [`ForkSwitch.t.sol`](../../testdata/default/cheats/ForkSwitch.t.sol).
 - **`vm.expectRevert` on a halt**: evm2 consumes a halted frame's gas before the cheatcodes see
-  it. When `vm.expectRevert` turns a halt on `INVALID` or `RETURNDATACOPY` into a success, the
-  cheatcodes give back the gas the call had left, as revm-based Foundry did, so `invalid()`,
-  pre-0.8 `assert` and out-of-bounds reads stay cheap. Other halts, such as bad jumps, undefined
-  opcodes, stack errors and out-of-gas, consume all the gas forwarded to the call.
+  it. When `vm.expectRevert` turns a halt on `INVALID` or `RETURNDATACOPY` in a static (`view`
+  or `pure`) call into a success, the cheatcodes give back the gas the call had left, as
+  revm-based Foundry did, so `invalid()`, pre-0.8 `assert` and out-of-bounds reads in such calls
+  stay cheap. Other halts, such as bad jumps, undefined opcodes, stack errors and out-of-gas, and
+  every halt in a non-static call or create, consume all the gas forwarded to the call.
 - **Monad isolated calls**: under `--network monad` with `isolate = true`, a slot that the test
   transaction warmed, for example with `vm.store`, is cold again in an isolated call, as on
   Ethereum. revm-based Foundry carried that warmth into the isolated call, so its first `SLOAD`

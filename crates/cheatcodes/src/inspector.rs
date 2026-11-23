@@ -2423,7 +2423,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         let halted_frame_gas = self
             .halted_frame_gas
             .take()
-            .filter(|&(depth, _)| depth == curr_depth)
+            // As on revm-based Foundry, only a static call gives back the gas of an expected halt.
+            .filter(|&(depth, _)| depth == curr_depth && call.is_static())
             .map(|(_, gas)| gas);
         self.replay_persistent_writes(interp, curr_depth, outcome.is_success());
         // Depth at which the caller resumes and applies the region snapshot correction.
