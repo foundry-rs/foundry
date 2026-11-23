@@ -656,3 +656,39 @@ contract ExpectRevertWithErrorTest is Test {
         }
     }
 }
+
+contract Halter {
+    fallback() external {
+        assembly {
+            invalid()
+        }
+    }
+}
+
+/// An expected halt gives back the gas its frame did not use, as an expected revert does.
+/// Ref: <https://linear.app/tempoxyz/issue/OSS-1438>
+contract ExpectRevertHaltGasTest is Test {
+    Halter halter;
+
+    function setUp() public {
+        halter = new Halter();
+    }
+
+    function testExpectRevertHaltReturnsUnusedGas() public {
+        for (uint256 i; i < 4; ++i) {
+            uint256 gasBefore = gasleft();
+            vm.expectRevert();
+            Reverter(address(halter)).revertWithoutReason();
+            assertLt(gasBefore - gasleft(), 100_000);
+        }
+    }
+
+    function testExpectRevertCountHaltReturnsUnusedGas() public {
+        uint256 gasBefore = gasleft();
+        vm.expectRevert(3);
+        for (uint256 i; i < 3; ++i) {
+            Reverter(address(halter)).revertWithoutReason();
+        }
+        assertLt(gasBefore - gasleft(), 100_000);
+    }
+}
