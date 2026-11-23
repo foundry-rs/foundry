@@ -888,16 +888,19 @@ impl Config {
         Self::from_provider(Self::figment_with_root(root.as_ref()))
     }
 
-    /// Loads the `Config` from the given root directory, allowing profile fallback.
+    /// Loads the configuration of the dependency at the given root directory, allowing profile
+    /// fallback.
     ///
-    /// Unlike [`load_with_root`](Self::load_with_root), if the selected profile (via
+    /// Environment variables other than `FOUNDRY_PROFILE`, including `FOUNDRY_CONFIG`, do not
+    /// apply; see [`FigmentProviders::Dependency`]. Unlike
+    /// [`load_with_root`](Self::load_with_root), if the selected profile (via
     /// `FOUNDRY_PROFILE`) does not exist in the config, this falls back to the default profile
-    /// instead of returning an error. This is useful for loading nested lib/dependency configs
-    /// that may not define all profiles the main project uses.
+    /// instead of returning an error, since dependencies may not define all profiles the main
+    /// project uses.
     #[track_caller]
     pub fn load_with_root_and_fallback(root: impl AsRef<Path>) -> Result<Self, ExtractConfigError> {
-        let figment = Self::figment_with_root(root.as_ref());
-        Self::from_figment_fallback(Figment::from(figment))
+        let figment = Self::with_root(root.as_ref()).to_figment(FigmentProviders::Dependency);
+        Self::from_figment_fallback(figment)
     }
 
     /// Attempts to extract a `Config` from `provider`, returning the result.
@@ -1155,48 +1158,53 @@ impl Config {
         // merge local foundry.toml file
         figment = Self::merge_toml_provider(
             figment,
-            TomlFileProvider::new(Some("FOUNDRY_CONFIG"), root.join(Self::FILE_NAME)),
+            TomlFileProvider::new(
+                (!providers.is_dependency()).then_some("FOUNDRY_CONFIG"),
+                root.join(Self::FILE_NAME),
+            ),
             profile.clone(),
         );
 
         // merge environment variables
-        figment = figment
-            .merge(
-                Env::prefixed("DAPP_")
-                    .ignore(&["REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
-                    .global()
-                    .legacy_labels(),
-            )
-            .merge(
-                Env::prefixed("DAPP_TEST_")
-                    .ignore(&["CACHE", "FUZZ_RUNS", "DEPTH", "FFI", "FS_PERMISSIONS"])
-                    .global()
-                    .legacy_labels(),
-            )
-            .merge(DappEnvCompatProvider)
-            .merge(EtherscanEnvProvider::default())
-            .merge(
-                Env::prefixed("FOUNDRY_")
-                    .ignore(&["PROFILE", "REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
-                    // `FOUNDRY_CHAIN` is an alias, so `FOUNDRY_CHAIN_ID` takes precedence.
-                    .filter(|key| key != "CHAIN" || Env::var("FOUNDRY_CHAIN_ID").is_none())
-                    .map(|key| {
-                        let key = key.as_str();
-                        if Self::STANDALONE_SECTIONS.iter().any(|section| {
-                            key.starts_with(&format!("{}_", section.to_ascii_uppercase()))
-                        }) {
-                            key.replacen('_', ".", 1).into()
-                        } else if key.eq_ignore_ascii_case("CHAIN") {
-                            // `chain` is an alias of `chain_id`, so both must not reach serde.
-                            "CHAIN_ID".into()
-                        } else {
-                            key.into()
-                        }
-                    })
-                    .global()
-                    .legacy_labels(),
-            )
-            .select(profile.clone());
+        if !providers.is_dependency() {
+            figment = figment
+                .merge(
+                    Env::prefixed("DAPP_")
+                        .ignore(&["REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
+                        .global()
+                        .legacy_labels(),
+                )
+                .merge(
+                    Env::prefixed("DAPP_TEST_")
+                        .ignore(&["CACHE", "FUZZ_RUNS", "DEPTH", "FFI", "FS_PERMISSIONS"])
+                        .global()
+                        .legacy_labels(),
+                )
+                .merge(DappEnvCompatProvider)
+                .merge(EtherscanEnvProvider::default())
+                .merge(
+                    Env::prefixed("FOUNDRY_")
+                        .ignore(&["PROFILE", "REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
+                        // `FOUNDRY_CHAIN` is an alias, so `FOUNDRY_CHAIN_ID` takes precedence.
+                        .filter(|key| key != "CHAIN" || Env::var("FOUNDRY_CHAIN_ID").is_none())
+                        .map(|key| {
+                            let key = key.as_str();
+                            if Self::STANDALONE_SECTIONS.iter().any(|section| {
+                                key.starts_with(&format!("{}_", section.to_ascii_uppercase()))
+                            }) {
+                                key.replacen('_', ".", 1).into()
+                            } else if key.eq_ignore_ascii_case("CHAIN") {
+                                // `chain` is an alias of `chain_id`, so both must not reach serde.
+                                "CHAIN_ID".into()
+                            } else {
+                                key.into()
+                            }
+                        })
+                        .global()
+                        .legacy_labels(),
+                )
+                .select(profile.clone());
+        }
 
         // only resolve remappings if all providers are requested
         if providers.is_all() {
@@ -3132,6 +3140,12 @@ pub enum FigmentProviders {
     ///
     /// This will exclude more expensive providers such as remappings.
     Anvil,
+    /// Only include the providers that describe a dependency's own configuration.
+    ///
+    /// This reads the `foundry.toml` in the dependency's root and the global `foundry.toml`. It
+    /// excludes remappings and environment variables other than `FOUNDRY_PROFILE`, including
+    /// `FOUNDRY_CONFIG`, since those configure the top-level project.
+    Dependency,
     /// Don't include any providers.
     None,
 }
@@ -3150,6 +3164,11 @@ impl FigmentProviders {
     /// Returns true if this is the anvil preset.
     pub const fn is_anvil(&self) -> bool {
         matches!(self, Self::Anvil)
+    }
+
+    /// Returns true if this is the dependency preset.
+    pub const fn is_dependency(&self) -> bool {
+        matches!(self, Self::Dependency)
     }
 
     /// Returns true if no providers should be included.

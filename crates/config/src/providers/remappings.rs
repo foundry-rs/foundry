@@ -1,6 +1,5 @@
 use crate::{
-    Config, FigmentProviders, Warning, foundry_toml_dir_entries, remappings_from_env_var,
-    remappings_from_newline,
+    Config, Warning, foundry_toml_dir_entries, remappings_from_env_var, remappings_from_newline,
 };
 use figment::{
     Error, Figment, Metadata, Profile, Provider,
@@ -691,8 +690,7 @@ impl RemappingsProvider<'_> {
 /// Returns the normalized library directories the dependency at `root` configures, as nested
 /// remapping discovery accepts them.
 pub fn dependency_library_paths(root: &Path) -> Vec<PathBuf> {
-    let figment = Config::with_root(root).to_figment(FigmentProviders::Cast);
-    let Ok(config) = Config::from_figment_fallback(figment) else { return Vec::new() };
+    let Ok(config) = Config::load_with_root_and_fallback(root) else { return Vec::new() };
     let canonical = dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     config
         .libs
@@ -714,8 +712,7 @@ fn contained_library_path(owner: &Path, canonical: &Path, lib: &Path) -> Option<
 }
 
 fn load_nested_config(root: &Path) -> Result<Option<CachedNestedConfig>, Error> {
-    let figment = Config::with_root(root).to_figment(FigmentProviders::Cast);
-    let Ok(config) = Config::from_figment_fallback(figment) else { return Ok(None) };
+    let Ok(config) = Config::load_with_root_and_fallback(root) else { return Ok(None) };
     let src = config.src.clone();
     let libs = config.libs.clone();
     let remappings = config.sanitized().remappings.into_iter().map(Remapping::from).collect();
@@ -2302,5 +2299,53 @@ mod tests {
             .map(|context| Remapping { context: Some(context.to_string()), ..discovered.clone() });
         remappings.extend(distinct.to_vec());
         assert_eq!(remappings.into_inner(), [vec![declared], distinct.to_vec()].concat());
+    }
+
+    #[test]
+    fn dependency_config_ignores_project_env_overrides() {
+        figment::Jail::expect_with(|jail| {
+            let temp = tempdir().unwrap();
+            let root = dunce::canonicalize(temp.path()).unwrap();
+            let dep = root.join("lib/dep");
+            fs::create_dir_all(dep.join("contracts")).unwrap();
+            fs::create_dir_all(dep.join("lib/x")).unwrap();
+            fs::create_dir_all(root.join("external")).unwrap();
+            fs::write(dep.join("contracts/D.sol"), "library D {}\n").unwrap();
+            fs::write(dep.join("lib/x/X.sol"), "library X {}\n").unwrap();
+            fs::write(root.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
+            fs::write(
+                dep.join(Config::FILE_NAME),
+                "[profile.default]\nsrc = \"contracts\"\nremappings = [\"@x/=lib/x/\"]\n",
+            )
+            .unwrap();
+            // An external config for the project, as passed with `FOUNDRY_CONFIG`.
+            let external = root.join("external").join(Config::FILE_NAME);
+            fs::write(
+                &external,
+                format!("[profile.default]\nlibs = [{:?}]\n", root.join("lib").display()),
+            )
+            .unwrap();
+
+            for (key, value) in [
+                ("FOUNDRY_CONFIG", external.display().to_string()),
+                ("FOUNDRY_ROOT", root.display().to_string()),
+                ("FOUNDRY_SRC", "src".to_string()),
+                ("DAPP_SRC", "src".to_string()),
+            ] {
+                jail.clear_env();
+                jail.set_env(key, value);
+                let config = Config::load_with_root(&root).unwrap();
+                assert_eq!(
+                    config
+                        .get_all_remappings()
+                        .map(|remapping| remapping.to_string())
+                        .collect::<Vec<_>>(),
+                    ["@x/=lib/dep/lib/x/", "dep/=lib/dep/contracts/", "x/=lib/dep/lib/x/"],
+                    "{key}"
+                );
+            }
+
+            Ok(())
+        });
     }
 }
