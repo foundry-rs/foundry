@@ -198,6 +198,10 @@ impl LazyAccountsProvider {
                 AutoswapConfig::new(crate::tempo::PATH_USD_ADDRESS, DEFAULT_SLIPPAGE_BPS)
                     .with_fallback(false),
             )
+            // Without a swap, MPP pays session gas in the session currency, which leaves a
+            // wallet holding exactly the deposit short. Pay it in pathUSD, the token autoswap
+            // spends.
+            .with_session_fee_token(crate::tempo::PATH_USD_ADDRESS)
             .with_session_store(Arc::new(store))
             .with_session_default_deposit(DEFAULT_MPP_SESSION_DEPOSIT)
             .with_session_top_up_amount(DEFAULT_MPP_SESSION_DEPOSIT)
