@@ -1186,7 +1186,7 @@ impl Config {
                             key.starts_with(&format!("{}_", section.to_ascii_uppercase()))
                         }) {
                             key.replacen('_', ".", 1).into()
-                        } else if key == "CHAIN" {
+                        } else if key.eq_ignore_ascii_case("CHAIN") {
                             // `chain` is an alias of `chain_id`, so both must not reach serde.
                             "CHAIN_ID".into()
                         } else {
@@ -3916,10 +3916,14 @@ mod tests {
             assert_eq!(Config::load().unwrap().chain, Some(Chain::from_id(137)));
 
             jail.clear_env();
+            jail.set_env("foundry_chain", "10");
+            assert_eq!(Config::load().unwrap().chain, Some(Chain::optimism_mainnet()));
+
+            jail.clear_env();
             jail.create_file("base.toml", "[profile.default]\nchain = 1\n")?;
             jail.create_file(
                 "foundry.toml",
-                "[profile.default]\nextends = { path = \"base.toml\", strategy = \"no-collision\" }\nchain_id = 10\n",
+                "[profile.default]\nextends = { path = \"base.toml\", strategy = \"no-collision\" }\nchain-id = 10\n",
             )?;
             assert!(Config::load().unwrap_err().to_string().contains("Key collision"));
 
@@ -3929,6 +3933,13 @@ mod tests {
                 "[profile.default]\nextends = { path = \"base.toml\", strategy = \"replace-arrays\" }\nchain = 5\n",
             )?;
             assert_eq!(Config::load().unwrap().chain, Some(Chain::goerli()));
+
+            jail.create_file("base.toml", "[profile.default]\nchain = 1\n")?;
+            jail.create_file(
+                "foundry.toml",
+                "[profile.default]\nextends = { path = \"base.toml\", strategy = \"replace-arrays\" }\nchain-id = 10\n",
+            )?;
+            assert_eq!(Config::load().unwrap().chain, Some(Chain::optimism_mainnet()));
             Ok(())
         });
     }

@@ -508,13 +508,26 @@ fn for_each_profile_dict(map: &mut Map<Profile, Dict>, mut f: impl FnMut(&mut Di
     }
 }
 
-/// Renames the `chain` alias to `chain_id`, keeping `chain_id` when both are set.
+/// Renames every spelling of `chain` and `chain_id`, such as `chain-id`, to `chain_id`, keeping a
+/// `chain_id` spelling over the `chain` alias when both are set.
 ///
-/// Serde rejects a config that holds both spellings, which happens whenever `chain` meets the
-/// `chain_id` of the default config or of another source.
+/// Serde rejects a config that holds both `chain` and `chain_id`, which happens whenever `chain`
+/// meets the `chain_id` of the default config or of another source.
 fn rename_chain_alias(dict: &mut Dict) {
-    if let Some(v) = dict.remove("chain") {
-        dict.entry("chain_id".to_string()).or_insert(v);
+    let (mut chain, mut chain_id) = (None, None);
+    dict.retain(|key, value| match key.to_snake_case().as_str() {
+        "chain" => {
+            chain = Some(value.clone());
+            false
+        }
+        "chain_id" => {
+            chain_id = Some(value.clone());
+            false
+        }
+        _ => true,
+    });
+    if let Some(value) = chain_id.or(chain) {
+        dict.insert("chain_id".to_string(), value);
     }
 }
 
