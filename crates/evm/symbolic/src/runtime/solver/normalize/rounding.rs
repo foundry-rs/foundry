@@ -219,7 +219,7 @@ impl ConstraintContext {
             && let Some(divisor) =
                 [(left, right), (right, left)].into_iter().find_map(|(ceiling, divisor)| {
                     let fits = if ceil_div_operands(ceiling) == Some((small, divisor)) {
-                        self.mul_cannot_overflow_256(ceiling, divisor)
+                        self.mul_cannot_overflow_256_cached(ceiling, divisor, intervals, remaining)
                             || self.sum_cannot_wrap(small, divisor, intervals, remaining)
                     } else {
                         ceil_sum_operands(ceiling) == Some((small, divisor))

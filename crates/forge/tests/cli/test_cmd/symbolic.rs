@@ -8448,6 +8448,18 @@ contract SymbolicCeilMultipleTest {
             assert(((a - 1) / b + 1) * b >= a);
         }
     }
+
+    // Each rounding error feeds the next `ceilDiv`, so bounding it nests the proof.
+    function checkNestedCeilRoundingErrors(uint256 a, uint256 b) public pure {
+        if (b == 0) return;
+        uint256 x = a;
+        unchecked {
+            for (uint256 i; i < 24; ++i) {
+                x = ((x - 1) / b + 1) * b - x;
+            }
+        }
+        assert(x < 2 ** 255);
+    }
 }
 "#,
     );
@@ -8494,6 +8506,7 @@ contract SymbolicCeilMultipleTest {
             "checkCeilTimesOtherValue(uint128,uint128,uint128)",
             "checkWrappedCeil(uint256,uint256)",
             "checkWrappedCeilMultiple(uint256,uint256)",
+            "checkNestedCeilRoundingErrors(uint256,uint256)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(
