@@ -147,9 +147,13 @@ Ran 4 test suites [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)
 async fn fork_create2_deployer_children_require_caller_access(prj: _, cmd: _) {
     let (api, handle) = spawn(NodeConfig::test().with_disable_default_create2_deployer(true)).await;
     prj.add_test("Create2Deployer.t.sol", CREATE2_DEPLOYER_ACCESS);
-    let mut run = |fork_url: bool| {
+    let mut run = |fork_url: bool, factory: Option<Address>| {
         cmd.forge_fuse();
         cmd.unset_env("FOUNDRY_ACCESS_REGRESSION_UNUSED");
+        match factory {
+            Some(factory) => cmd.env("FOUNDRY_ACCESS_REGRESSION_FACTORY", factory.to_string()),
+            None => cmd.unset_env("FOUNDRY_ACCESS_REGRESSION_FACTORY"),
+        };
         cmd.args(["test", "--evm-version", "prague", "--match-contract", "Create2DeployerTest"]);
         // Fork either from the command line or from inside the test.
         if fork_url {
@@ -183,14 +187,16 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
             if !linked_library {
                 std::fs::remove_file(library).unwrap();
             }
-            run(true);
-            run(false);
+            run(true, None);
+            run(false, None);
         }
     }
 
-    // Foundry installs the default factory even when another one is configured.
-    prj.update_config(|config| config.create2_deployer = Address::with_last_byte(0xde));
-    run(false);
+    // Foundry installs the default factory even when another one is configured, and both are
+    // transparent.
+    let factory = Address::with_last_byte(0xde);
+    prj.update_config(|config| config.create2_deployer = factory);
+    run(false, Some(factory));
 }
 
 const CHEATCODE_ACCESS_COMPATIBILITY: &str = r#"
@@ -678,7 +684,9 @@ interface Vm {
     function createSelectFork(string calldata urlOrAlias) external returns (uint256);
     function envOr(string calldata name, string calldata defaultValue) external view returns (string memory);
     function envOr(string calldata name, uint256 defaultValue) external view returns (uint256);
+    function envOr(string calldata name, address defaultValue) external view returns (address);
     function etch(address target, bytes calldata code) external;
+    function allowCheatcodes(address account) external;
     function addr(uint256 privateKey) external pure returns (address);
     function executeTransaction(bytes calldata rawTx) external returns (bytes memory);
     function getNonce(address account) external view returns (uint64);
@@ -712,6 +720,10 @@ contract DeployerRelay {
         (ok,) = CREATE2_FACTORY.call(abi.encodePacked(salt, type(ConstructorReader).creationCode));
     }
 
+    function deployDelegated(bytes32 salt) external returns (bool ok) {
+        (ok,) = CREATE2_FACTORY.delegatecall(abi.encodePacked(salt, type(ConstructorReader).creationCode));
+    }
+
     function deployAfterEnvChange(bytes32 salt) external returns (bool) {
         EnvChanger(address(this)).changeChainId();
         return deploy(salt);
@@ -721,11 +733,22 @@ contract DeployerRelay {
 contract Create2DeployerTest is UsesVm {
     address constant CREATE2_FACTORY = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
     address constant RELAY = address(0x1234);
+    address constant AUTHORIZED_RELAY = address(0x5678);
+    address constant PROXY = address(0x9012);
+    address factory;
 
     function setUp() public {
         string memory url = vm.envOr("FOUNDRY_ACCESS_REGRESSION_FORK_URL", string(""));
         if (bytes(url).length != 0) vm.createSelectFork(url);
         vm.etch(RELAY, type(DeployerRelay).runtimeCode);
+        vm.etch(AUTHORIZED_RELAY, type(DeployerRelay).runtimeCode);
+        vm.allowCheatcodes(AUTHORIZED_RELAY);
+        // The proxy runs the authorized relay's code in an account without access.
+        vm.etch(PROXY, abi.encodePacked(hex"ef0100", AUTHORIZED_RELAY));
+        factory = vm.envOr("FOUNDRY_ACCESS_REGRESSION_FACTORY", CREATE2_FACTORY);
+        if (factory != CREATE2_FACTORY) {
+            vm.etch(factory, hex"7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3");
+        }
     }
 
     function changeChainId() external {
@@ -744,10 +767,15 @@ contract Create2DeployerTest is UsesVm {
             (bool ok, bytes memory output) = RELAY.delegatecall(delegated[i]);
             require(ok && !abi.decode(output, (bool)), "delegated factory child read cheatcodes");
         }
-        (bool created,) = CREATE2_FACTORY.call(abi.encodePacked(bytes32(uint256(3)), type(ConstructorReader).creationCode));
+        // A delegated factory creates from the calling account, not from the account calling it.
+        require(DeployerRelay(AUTHORIZED_RELAY).deployDelegated(bytes32(uint256(6))), "authorized delegated factory child lost cheatcode access");
+        require(!DeployerRelay(PROXY).deployDelegated(bytes32(uint256(7))), "proxied factory child read cheatcodes");
+        (bool created,) = factory.call(abi.encodePacked(bytes32(uint256(3)), type(ConstructorReader).creationCode));
         require(created, "authorized factory child lost cheatcode access");
 
-        // A transaction to the factory does not reuse the authorization of an earlier call.
+        // A transaction to the factory does not reuse the authorization of an earlier call, even
+        // one that never reached its create.
+        CREATE2_FACTORY.call(hex"00");
         (bool ok,) = address(vm).call(abi.encodeCall(
             Vm.executeTransaction, (factoryTransaction(bytes32(uint256(4)), type(ConstructorReader).creationCode))
         ));
