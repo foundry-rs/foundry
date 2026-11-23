@@ -91,7 +91,7 @@ impl SymbolicExecutor {
         let target = target.address_operand(&mut self.cx);
         // A target the path fixes runs as that account. A guarded alias that holds state stands
         // for the fixed account, so it stays on the symbolic call path.
-        let target = state.fixed_address_word(&mut self.cx, target);
+        let target = self.fixed_address_word(state, target)?;
         let target_address = state.world.resolve_address(&target);
         let value = match (kind, target_address) {
             (CallKind::Call, Some(to))

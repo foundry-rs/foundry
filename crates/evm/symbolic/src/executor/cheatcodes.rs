@@ -849,13 +849,23 @@ impl SymbolicExecutor {
         target: &SymExpr,
         candidates: &[Address],
     ) -> Result<bool, SymbolicError> {
-        if candidates.len() > MAX_FREE_ADDRESS_ALIAS_CANDIDATES {
-            return Err(SymbolicError::Unsupported(
-                "symbolic cheatcode address with too many alias candidates",
-            ));
-        }
         // Only the low 160 bits name an account, also for a word passed as a plain integer.
         let address = target.clone().address_operand(&mut self.cx);
+        if candidates.len() > MAX_FREE_ADDRESS_ALIAS_CANDIDATES {
+            // A path that fixes the address only through the solver, such as with two bounds,
+            // needs no fork: record the value it implies, as the fork would.
+            let Some(value) = self.constrained_word_with_solver(state, &address)? else {
+                return Err(SymbolicError::Unsupported(
+                    "symbolic cheatcode address with too many alias candidates",
+                ));
+            };
+            let eq = SymBoolExpr::eq_word_const(&mut self.cx, &address, value);
+            state.constraints.push(eq);
+            if !candidates.contains(&word_to_address(value)) {
+                state.world.exclude_guarded_candidates(target, candidates);
+            }
+            return Ok(false);
+        }
         for &candidate in candidates {
             let eq = SymBoolExpr::eq_word_const(&mut self.cx, &address, address_word(candidate));
             let (eq_constraints, eq_sat) = self.constraints_with_condition(state, eq.clone())?;

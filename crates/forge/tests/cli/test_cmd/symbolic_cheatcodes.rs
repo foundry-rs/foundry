@@ -3387,6 +3387,42 @@ contract SymbolicPrankedAddress is Test {
         (bool ok, bytes memory data) = who.staticcall("");
         assert(!ok || data.length == 0);
     }
+
+    // A read through a word the path fixes still sees the balance `vm.deal` wrote through another
+    // word that may name the same account.
+    function checkDealtBalanceThroughOtherWord(address writer, uint256 raw) public {
+        vm.deal(writer, 5);
+        if (raw != 0xB0B) return;
+        assert(address(uint160(raw)).balance != 5);
+    }
+
+    // `BALANCE` ignores the high bits of the word.
+    function checkDealtBalanceThroughOtherDirtyWord(address writer, uint256 raw) public {
+        vm.deal(writer, 5);
+        if (raw != ((1 << 200) | 0xB0B)) return;
+        uint256 dealt;
+        assembly {
+            dealt := balance(raw)
+        }
+        assert(dealt != 5);
+    }
+
+    function checkEtchedCodeThroughOtherWord(address writer, uint256 raw) public {
+        vm.etch(writer, hex"00");
+        if (raw != 0xB0B) return;
+        assert(address(uint160(raw)).code.length == 0);
+    }
+
+    // The alias `vm.isPersistent` gave `raw` would hide the balance `writer` may hold for the
+    // account the path fixes `raw` to.
+    function checkDealtBalanceThroughOtherWordAfterIsPersistent(address writer, uint256 raw)
+        public
+    {
+        vm.isPersistent(address(uint160(raw)));
+        vm.deal(writer, 5);
+        if (raw != 0xB0B) return;
+        assert(address(uint160(raw)).balance != 5);
+    }
 }
 
 contract SymbolicPrankedMany is Test {
@@ -3424,6 +3460,19 @@ contract SymbolicPrankedMany is Test {
         }
         assert(!ok);
     }
+
+    function sender() public view returns (address) {
+        return msg.sender;
+    }
+
+    // A sender the path fixes only through two bounds does not fork over the known accounts.
+    function checkBoundedSenderDoesNotFork(address who) public {
+        address bob = address(0xB0B);
+        vm.assume(who >= bob);
+        vm.assume(who <= bob);
+        vm.prank(who);
+        assert(this.sender() == bob);
+    }
 }
 "#,
     );
@@ -3432,9 +3481,13 @@ contract SymbolicPrankedMany is Test {
         .failure()
         .stdout_eq(str![[r#"
 ...
-Ran 12 tests for test/SymbolicPrankedAddress.t.sol:SymbolicPrankedAddress
+Ran 16 tests for test/SymbolicPrankedAddress.t.sol:SymbolicPrankedAddress
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic address whose representative account holds state from before the run knew an account it may name] checkDealtBalanceBeforeDeployment(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealtBalanceOnceFixed(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealtBalanceThroughOtherDirtyWord(address,uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealtBalanceThroughOtherWord(address,uint256) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic address fixed to an account whose state another symbolic address may hold] checkDealtBalanceThroughOtherWordAfterIsPersistent(address,uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkEtchedCodeThroughOtherWord(address,uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic address whose representative account holds state from before the run knew an account it may name] checkPersistentBeforeDeployment(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPersistentOncePranked(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedCallRunsEtchedCode(address) ([METRICS])
@@ -3445,7 +3498,7 @@ Ran 12 tests for test/SymbolicPrankedAddress.t.sol:SymbolicPrankedAddress
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkWithdrawAfterMakePersistent(address) ([METRICS])
 [PASS] checkWithdrawToOtherSender(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkWithdrawToPrankedSender(address) ([METRICS])
-Suite result: FAILED. 1 passed; 11 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 1 passed; 15 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 
@@ -3458,11 +3511,12 @@ Suite result: FAILED. 1 passed; 11 failed; 0 skipped; [ELAPSED]
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 3 tests for test/SymbolicPrankedAddress.t.sol:SymbolicPrankedMany
+Ran 4 tests for test/SymbolicPrankedAddress.t.sol:SymbolicPrankedMany
+[PASS] checkBoundedSenderDoesNotFork(address) ([METRICS])
 [PASS] checkDirtySenderDoesNotFork(uint96) ([METRICS])
 [PASS] checkRejectedPrankDoesNotFork(address) ([METRICS])
 [PASS] checkShortPrankInputDoesNotFork(address) ([METRICS])
-Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

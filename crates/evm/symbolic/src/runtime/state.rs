@@ -982,7 +982,6 @@ impl PathState {
         executor: &ExecutorView<'_>,
         address_expr: SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
-        let address_expr = self.fixed_address_word(cx, address_expr);
         self.world.balance_word(cx, executor, address_expr)
     }
 
@@ -992,7 +991,6 @@ impl PathState {
         executor: &ExecutorView<'_>,
         address_expr: SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
-        let address_expr = self.fixed_address_word(cx, address_expr);
         self.world.extcode_size_word(cx, executor, address_expr)
     }
 
@@ -1002,7 +1000,6 @@ impl PathState {
         executor: &ExecutorView<'_>,
         address_expr: SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
-        let address_expr = self.fixed_address_word(cx, address_expr);
         self.world.extcode_hash_word(cx, executor, address_expr)
     }
 
@@ -1014,27 +1011,7 @@ impl PathState {
         offset: SymExpr,
         size: usize,
     ) -> Result<SymBytes, SymbolicError> {
-        let address_expr = self.fixed_address_word(cx, address_expr);
         self.world.extcode_bytes_word(cx, executor, address_expr, offset, size)
-    }
-
-    /// Returns the account the path constraints fix the address word `expr` to, unless the word
-    /// has an alias whose representative account holds state, which stands for that account. An
-    /// alias without state, such as one a read-only cheatcode gave the word, must not hide the
-    /// account. A cheatcode address still has to be named concretely.
-    pub(crate) fn fixed_address_word(&self, cx: &mut SymCx, expr: SymExpr) -> SymExpr {
-        if expr.as_const().is_some() || self.world.alias_holds_state(&expr) {
-            return expr;
-        }
-        match self.constrained_word(cx, &expr) {
-            Some(value)
-                if ![CHEATCODE_ADDRESS, SYMBOLIC_VM_COMPAT_ADDRESS]
-                    .contains(&word_to_address(value)) =>
-            {
-                SymExpr::constant(cx, value)
-            }
-            _ => expr,
-        }
     }
 
     pub(crate) fn address_or_symbolic_slot(&mut self, cx: &mut SymCx, expr: SymExpr) -> Address {
@@ -2614,6 +2591,24 @@ impl SymbolicWorld {
     pub(crate) fn alias_holds_state(&self, expr: &SymExpr) -> bool {
         self.alias_entry(expr)
             .is_some_and(|(_, representative)| self.representative_holds_state(representative))
+    }
+
+    /// Returns the aliased address words whose representative account holds state and is not
+    /// guarded against `address`, so the state may belong to `address`.
+    pub(crate) fn stateful_aliases_unguarded_against(
+        &self,
+        address: Address,
+    ) -> impl Iterator<Item = &SymExpr> {
+        self.symbolic_address_aliases
+            .iter()
+            .filter(move |(alias, representative)| {
+                self.representative_holds_state(**representative)
+                    && self
+                        .guarded_symbolic_addresses
+                        .get(*alias)
+                        .is_none_or(|guarded| !guarded.contains(&address))
+            })
+            .map(|(alias, _)| alias)
     }
 
     fn representative_holds_state(&self, representative: Address) -> bool {
