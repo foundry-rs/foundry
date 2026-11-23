@@ -8689,13 +8689,25 @@ contract SymbolicRoundTripUp {
         assert(MathLib.mulDivUp(shares, totalAssets, totalShares) <= assets);
     }
 
-    function checkOtherFactor(uint128 assets, uint128 totalAssets, uint128 totalShares, uint128 b)
-        public
-        pure
-    {
+    function checkRoundTripLeftAssociated(
+        uint128 assets,
+        uint128 totalAssets,
+        uint128 totalShares
+    ) public pure {
         require(totalAssets != 0 && totalShares != 0);
         uint256 shares = MathLib.mulDivDown(assets, totalShares, totalAssets);
-        assert(MathLib.mulDivUp(shares, b, totalShares) <= assets);
+        assert((shares * totalAssets + totalShares - 1) / totalShares <= assets);
+    }
+
+    function checkOtherDivisor(
+        uint128 assets,
+        uint128 totalAssets,
+        uint128 totalShares,
+        uint128 otherShares
+    ) public pure {
+        require(totalAssets != 0 && otherShares != 0);
+        uint256 shares = MathLib.mulDivDown(assets, totalShares, totalAssets);
+        assert(MathLib.mulDivUp(shares, totalAssets, otherShares) <= assets);
     }
 }
 "#,
@@ -8710,14 +8722,20 @@ contract SymbolicRoundTripUp {
             .stdout
             .clone();
 
-        let result = json_test_result(&output, "checkRoundTrip(uint128,uint128,uint128)");
-        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
-        assert_eq!(
-            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
-            "optimized={optimized}"
-        );
+        for test in [
+            "checkRoundTrip(uint128,uint128,uint128)",
+            "checkRoundTripLeftAssociated(uint128,uint128,uint128)",
+        ] {
+            let result = json_test_result(&output, test);
+            assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+            assert_eq!(
+                result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+                "optimized={optimized}: {test}"
+            );
+        }
 
-        let result = json_test_result(&output, "checkOtherFactor(uint128,uint128,uint128,uint128)");
+        let result =
+            json_test_result(&output, "checkOtherDivisor(uint128,uint128,uint128,uint128)");
         assert_eq!(
             result["symbolic"]["status"], "fail_counterexample",
             "optimized={optimized}: {result}"

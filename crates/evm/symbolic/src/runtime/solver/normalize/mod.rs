@@ -8,7 +8,8 @@ mod rounding;
 
 use mul_div::{
     checked_product_guard_operands, full_mul_div_operands, mul_high_operands,
-    normalize_mul_high_factor_cmp, normalize_quotient_offset_eq, word_division_operands,
+    normalize_mul_high_factor_cmp, normalize_quotient_offset_eq, rounded_down_dividend,
+    word_division_operands,
 };
 use polynomial::polynomial_identity;
 
@@ -1602,8 +1603,8 @@ impl ConstraintContext {
             }
             SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
                 // `(n / t) * t <= n`, and the product is zero when `t == 0`.
-                let cap = rounded_product_operands(left, right)
-                    .and_then(|(dividend, _)| self.interval_cached(dividend, intervals, remaining))
+                let cap = rounded_down_dividend(expr)
+                    .and_then(|dividend| self.interval_cached(dividend, intervals, remaining))
                     .map(|dividend| dividend.max);
                 let guarded = self.has_non_wrapping_product(left, right);
                 let product = self
@@ -1620,13 +1621,10 @@ impl ConstraintContext {
                                 .or_else(|| guarded.then_some(U256::MAX))?,
                         })
                     });
-                match (product, cap) {
-                    (Some(product), Some(cap)) => {
-                        Some(WordInterval { min: product.min.min(cap), max: product.max.min(cap) })
-                    }
-                    (None, Some(cap)) => Some(WordInterval { min: U256::ZERO, max: cap }),
-                    (product, None) => product,
-                }
+                let Some(cap) = cap else { return product };
+                product.map_or(Some(WordInterval { min: U256::ZERO, max: cap }), |product| {
+                    product.with_bounds(None, Some(cap))
+                })
             }
             SymExprKind::BinOp(SymBinOp::UDiv, numerator, denominator) => {
                 // Even an otherwise unbounded numerator is a uint256 word. Division by a

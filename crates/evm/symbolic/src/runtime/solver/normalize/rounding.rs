@@ -6,7 +6,7 @@
 use super::{
     ConstraintContext, HashMap, MAX_LOCAL_ANALYSIS_NODES, SymBinOp, SymBoolExpr, SymBoolExprKind,
     SymCmpOp, SymExpr, SymExprKind, U256, WordInterval, euclidean_sum_dividend,
-    word_division_operands,
+    rounded_down_dividend,
 };
 
 /// `anchor - below <= rounded <= anchor + above` over mathematical integers.
@@ -146,11 +146,11 @@ impl ConstraintContext {
     /// wrap. With a nonzero `y + z` that cannot wrap, `x * y / (y + z) <= x`, strictly for nonzero
     /// `x` and `z`. The Euclidean sum `(a / d) * d + a % d` is `a`, so each summand is at most the
     /// other's complement. With a nonzero divisor, `a / d <= (a - 1) / d + 1`, also when selected
-    /// by `a != 0`, and `(x * y + c) / d <= x` once `y <= d`, `x * y` cannot wrap, and `c < d`.
-    /// Another conjunct's cross-multiplied `x * k <= y * l` also decides `x <= y` once `k` is
-    /// positive, `l <= k`, and `x * k` cannot wrap.
-    /// The shares `w * a / k + w * b / k <= w` once `a + b <= k`, and `n <= ceil(n / d) * d` for a
-    /// nonzero `d` once the multiple cannot wrap.
+    /// by `a != 0`, and `(x * y + c) / d <= x` once `y <= d`, `x * y` cannot wrap, and `c < d`,
+    /// also with `x * y` rounded down to a multiple `(x * y / t) * t`. Another conjunct's
+    /// cross-multiplied `x * k <= y * l` also decides `x <= y` once `k` is positive, `l <= k`, and
+    /// `x * k` cannot wrap. The shares `w * a / k + w * b / k <= w` once `a + b <= k`, and
+    /// `n <= ceil(n / d) * d` for a nonzero `d` once the multiple cannot wrap.
     pub(super) fn division_comparison_value(&self, expr: &SymBoolExpr) -> Option<bool> {
         if let SymBoolExprKind::Not(inner) = expr.kind() {
             return self.division_comparison_value(inner).map(|value| !value);
@@ -554,13 +554,4 @@ fn ceil_sum_operands(ceiling: &SymExpr) -> Option<(&SymExpr, &SymExpr)> {
         return None;
     };
     (decrement.as_const() == Some(U256::ONE)).then_some((n, divisor))
-}
-
-/// Returns `n` for the rounded product `(n / t) * t`. The EVM `DIV` may still carry its guard
-/// selecting zero for `t == 0`.
-fn rounded_down_dividend(product: &SymExpr) -> Option<&SymExpr> {
-    let SymExprKind::BinOp(SymBinOp::Mul, left, right) = product.kind() else { return None };
-    [(left, right), (right, left)].into_iter().find_map(|(quotient, factor)| {
-        word_division_operands(quotient).and_then(|(n, t)| (t == factor).then_some(n))
-    })
 }
