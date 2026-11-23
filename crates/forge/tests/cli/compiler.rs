@@ -347,3 +347,45 @@ fn can_list_resolved_multiple_compiler_versions_verbose_json(prj: _, cmd: _) {
         .is_json(),
     );
 }
+
+#[forgetest]
+fn compiler_install_rejects_invalid_solar_pin(cmd: _) {
+    cmd.args(["compiler", "install", "solar:0.1.8"]).assert_failure().stderr_eq(str![[r#"
+error: invalid value 'solar:0.1.8' for '<COMPILER>...': expected a solc version such as `0.8.30`, `solar`, or `solar:<version>` naming a release 0.2.0 or later
+
+For more information, try '--help'.
+
+"#]]);
+}
+
+#[cfg(unix)]
+#[forgetest]
+fn can_install_list_and_remove_solar(cmd: _) {
+    let home = tempfile::tempdir().unwrap();
+    let home = home.path().to_str().unwrap();
+
+    cmd.env("HOME", home);
+    cmd.args(["compiler", "install", "solar:0.3.0"]).assert_success().stdout_eq(str![[r#"
+installing solar version "0.3.0"
+Successfully installed solar 0.3.0
+solar 0.3.0: [..]/.foundry/solar/0.3.0/solar
+
+"#]]);
+
+    cmd.forge_fuse().env("HOME", home);
+    cmd.args(["compiler", "list", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"{"solc":"{...}","solar":["0.3.0"]}"#]].is_json());
+
+    cmd.forge_fuse().env("HOME", home);
+    cmd.args(["compiler", "remove", "solar:0.3.0"]).assert_success().stdout_eq(str![[r#"
+Removed solar 0.3.0
+
+"#]]);
+
+    cmd.forge_fuse().env("HOME", home);
+    cmd.args(["compiler", "remove", "solar:0.3.0"]).assert_failure().stderr_eq(str![[r#"
+Error: solar 0.3.0 is not installed
+
+"#]]);
+}
