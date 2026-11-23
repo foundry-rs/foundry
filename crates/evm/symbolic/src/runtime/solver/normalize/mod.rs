@@ -931,8 +931,8 @@ impl ConstraintContext {
         if let SymExprKind::BinOp(SymBinOp::And, value, mask) = expr.kind()
             && let Some(bits) = mask.as_const().and_then(mask_low_bits)
             && (self.unsigned_bits(value) <= bits
-                // Bit widths miss that a share `x * w / type(uint16).max` of a uint16 `w` fits
-                // `x`'s width, as when downcasting it, but the interval sees it.
+                // Bit widths ignore a divisor, so a share `x * w / k` with `w`'s bound at most
+                // `k`'s minimum looks wider than `x`; its interval divides by `k`.
                 || self.interval(value).is_some_and(|range| range.max.bit_len() <= bits))
         {
             // `x & low_mask => x` when the current context proves `x` fits the mask.

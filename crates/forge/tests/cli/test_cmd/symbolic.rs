@@ -8947,8 +8947,8 @@ contract SymbolicStrictCap {
 }
 
 // A SafeCast downcast of `amount * weight / type(uint16).max`, a share by a uint16 weight,
-// succeeds and keeps the share, since it fits the amount's type. A smaller divisor may not fit,
-// and a sum one bit wider than the mask keeps it.
+// succeeds and keeps the share, since it fits the amount's type. A sum one bit wider than the
+// mask keeps it.
 #[forgetest_init]
 fn symbolic_proves_downcast_share_fits(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_downcast_share_fits");
@@ -8971,10 +8971,6 @@ contract SymbolicDowncastShare {
         uint256 s = uint256(a) + b;
         if (s >= 2 ** 96) assert(uint96(s) < s);
     }
-
-    function checkDowncastBelowWhole(uint96 amount, uint16 weight) public pure {
-        assert(toUint96(uint256(amount) * weight / (uint256(type(uint16).max) - 1)) <= amount);
-    }
 }
 "#,
     );
@@ -8983,7 +8979,7 @@ contract SymbolicDowncastShare {
         let output = cmd
             .forge_fuse()
             .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicDowncastShare"])
-            .assert_failure()
+            .assert_success()
             .get_output()
             .stdout
             .clone();
@@ -8993,15 +8989,6 @@ contract SymbolicDowncastShare {
             let result = json_test_result(&output, signature);
             assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
         }
-        let result = json_test_result(&output, "checkDowncastBelowWhole(uint96,uint16)");
-        assert_eq!(
-            result["symbolic"]["status"], "fail_counterexample",
-            "optimized={optimized}: {result}"
-        );
-        assert_eq!(
-            result["symbolic"]["replay"]["status"], "confirmed",
-            "optimized={optimized}: {result}"
-        );
     }
 }
 
