@@ -100,7 +100,7 @@ impl TomlFileProvider {
         }
 
         // Create a provider for the local config file
-        let local_provider = Toml::file(local_path.clone()).nested();
+        let local_provider = ChainAliasProvider(Toml::file(local_path.clone()).nested());
 
         // Parse the local config to check for extends field
         let local_path_str = local_path.to_string_lossy();
@@ -194,7 +194,7 @@ impl TomlFileProvider {
             // have the same shape across inherited files.
             let base_provider = NormalizeSymbolicProvider::new(
                 NormalizeTracingProvider::new(
-                    Toml::file(base_path).nested().legacy_labels(),
+                    ChainAliasProvider(Toml::file(base_path).nested()).legacy_labels(),
                     selected_profile.clone(),
                 ),
                 selected_profile.clone(),
@@ -467,17 +467,9 @@ impl<P: Provider> Provider for BackwardsCompatTomlProvider<P> {
             .or_else(|_| std::env::var("DAPP_SOLC_VERSION"))
             .map(Value::from)
             .ok();
-        for (profile, dict) in &mut map {
-            if profile.as_str().as_str() == Config::PROFILE_SECTION {
-                for value in dict.values_mut() {
-                    if let Value::Dict(_, dict) = value {
-                        rewrite_legacy_profile_keys(dict, solc_env.as_ref());
-                    }
-                }
-            } else if !Config::STANDALONE_SECTIONS.contains(&profile.as_ref()) {
-                rewrite_legacy_profile_keys(dict, solc_env.as_ref());
-            }
-        }
+        for_each_profile_dict(&mut map, |dict| {
+            rewrite_legacy_profile_keys(dict, solc_env.as_ref())
+        });
         normalize_legacy_labels(&mut map);
         Ok(map)
     }
@@ -498,6 +490,65 @@ fn rewrite_legacy_profile_keys(dict: &mut Dict, solc_env: Option<&Value>) {
     }
     if let Some(v) = dict.remove("deny_warnings") {
         dict.entry("deny".to_string()).or_insert(v);
+    }
+    rename_chain_alias(dict);
+}
+
+/// Calls `f` on every profile dictionary in a TOML provider's data.
+fn for_each_profile_dict(map: &mut Map<Profile, Dict>, mut f: impl FnMut(&mut Dict)) {
+    for (profile, dict) in map {
+        if profile.as_str().as_str() == Config::PROFILE_SECTION {
+            for value in dict.values_mut() {
+                if let Value::Dict(_, dict) = value {
+                    f(dict);
+                }
+            }
+        } else if !Config::STANDALONE_SECTIONS.contains(&profile.as_ref()) {
+            f(dict);
+        }
+    }
+}
+
+/// Renames every spelling of `chain` and `chain_id`, such as `chain-id`, to `chain_id`, keeping a
+/// `chain_id` spelling over the `chain` alias when both are set.
+///
+/// Serde rejects a config that holds both `chain` and `chain_id`, which happens whenever `chain`
+/// meets the `chain_id` of the default config or of another source.
+fn rename_chain_alias(dict: &mut Dict) {
+    let (mut chain, mut chain_id) = (None, None);
+    dict.retain(|key, value| match key.to_snake_case().as_str() {
+        "chain" => {
+            chain = Some(value.clone());
+            false
+        }
+        "chain_id" => {
+            chain_id = Some(value.clone());
+            false
+        }
+        _ => true,
+    });
+    if let Some(value) = chain_id.or(chain) {
+        dict.insert("chain_id".to_string(), value);
+    }
+}
+
+/// Renames the `chain` alias in a single config file, so files merged by `extends` override and
+/// collide on `chain_id` like any other key.
+struct ChainAliasProvider<P>(P);
+
+impl<P: Provider> Provider for ChainAliasProvider<P> {
+    fn metadata(&self) -> Metadata {
+        self.0.metadata()
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        let mut map = self.0.data()?;
+        for_each_profile_dict(&mut map, rename_chain_alias);
+        Ok(map)
+    }
+
+    fn profile(&self) -> Option<Profile> {
+        self.0.profile()
     }
 }
 
