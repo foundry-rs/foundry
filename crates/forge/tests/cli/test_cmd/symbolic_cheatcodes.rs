@@ -3217,6 +3217,14 @@ contract SymbolicFreeAddressWrites is Test {
         assert(!ok || a != address(vault) || address(vault).balance == 10);
     }
 
+    // Like Forge, persistence survives a state revert.
+    function checkIsPersistentAfterRevertToState(address a) public {
+        uint256 id = vm.snapshotState();
+        vm.makePersistent(a);
+        vm.revertToState(id);
+        assert(vm.isPersistent(a));
+    }
+
     // The address may name a persistent account, such as the sender.
     function checkIsPersistentSeesKnownAccounts(address a) public {
         assert(!vm.isPersistent(a));
@@ -3280,11 +3288,12 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 17 tests for test/SymbolicFreeAddressWrites.t.sol:SymbolicFreeAddressWrites
+Ran 18 tests for test/SymbolicFreeAddressWrites.t.sol:SymbolicFreeAddressWrites
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkCodeAfterIsPersistent(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealKeepsCode(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDerivedArgumentDecidesAddress(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDirtyWordKeepsGuard(uint256) ([METRICS])
+[PASS] checkIsPersistentAfterRevertToState(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkIsPersistentSeesKnownAccounts(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkLaterDealShowsThrough(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkLaterStoreShowsThrough(address) ([METRICS])
@@ -3298,7 +3307,7 @@ Ran 17 tests for test/SymbolicFreeAddressWrites.t.sol:SymbolicFreeAddressWrites
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkStoreMayTargetSetUpContract(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkSymbolicOffsetPrank(address,uint8) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkSymbolicSizeSetNonce(address,uint256) ([METRICS])
-Suite result: FAILED. 2 passed; 15 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 3 passed; 15 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

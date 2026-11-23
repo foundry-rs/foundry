@@ -2036,6 +2036,13 @@ impl SymbolicExecutor {
                 let exists = if let Some(account) = state.world.resolve_address(&word) {
                     let exists = state.persistent_accounts.contains(&account);
                     SymExpr::constant(&mut self.cx, U256::from(exists))
+                } else if state
+                    .persistent_accounts
+                    .contains(&word.representative_symbolic_address())
+                {
+                    // Like Forge, persistence survives `vm.revertToState`, which drops the alias
+                    // `vm.makePersistent` gave the word but not its persistent account.
+                    SymExpr::constant(&mut self.cx, U256::ONE)
                 } else {
                     // Only reads the address, so a free one takes no alias, which later reads
                     // would resolve to an empty account.
