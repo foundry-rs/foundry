@@ -9141,10 +9141,11 @@ contract SymbolicDowncastShare {
     }
 }
 
-// Unoptimized checked multiplication by a constant guards `x != 0 && x <= MAX / c`. With nonzero
-// factors that fit, intervals decide both conjuncts, so a scaled product such as Uniswap V2's
-// `reserveIn * amountOut * 1000` is proved without the solver. A zero factor still reaches its
-// counterexample.
+// Unoptimized checked multiplication by a constant normalizes to `x != 0 && x <= MAX / c`. With
+// nonzero factors that fit, intervals decide both conjuncts, so a scaled product such as Uniswap
+// V2's `reserveIn * amountOut * 1000` is proved without the solver. A nonzero factor that may not
+// fit leaves one conjunct undecided, and one that never fits decides it false; both still reach
+// the overflow.
 #[forgetest_init]
 fn symbolic_decides_unoptimized_constant_multiply_guard(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_decides_unoptimized_constant_multiply_guard");
@@ -9152,6 +9153,10 @@ fn symbolic_decides_unoptimized_constant_multiply_guard(prj: _, cmd: _) {
         "SymbolicConstantMultiplyGuard.t.sol",
         r#"
 contract SymbolicConstantMultiplyGuard {
+    function scale(uint256 value) external pure returns (uint256) {
+        return value * 1000;
+    }
+
     function checkScaledQuotient(uint112 reserveIn, uint112 amountOut, uint112 denominator)
         public
         pure
@@ -9161,13 +9166,20 @@ contract SymbolicConstantMultiplyGuard {
         assert(numerator / denominator <= numerator);
     }
 
-    function checkZeroFactor(uint112 reserveIn, uint112 amountOut, uint112 denominator)
-        public
-        pure
-    {
-        require(denominator != 0);
-        uint256 numerator = uint256(reserveIn) * amountOut * 1000;
-        assert(numerator != 0);
+    function checkLargeFactor(uint256 value) public view {
+        require(value != 0);
+        try this.scale(value) returns (uint256) {}
+        catch {
+            assert(false);
+        }
+    }
+
+    function checkOverflowingFactor(uint256 value) public view {
+        require(value > type(uint256).max / 1000);
+        try this.scale(value) returns (uint256) {}
+        catch {
+            assert(false);
+        }
     }
 }
 "#,
@@ -9193,15 +9205,17 @@ contract SymbolicConstantMultiplyGuard {
             result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
             "optimized={optimized}: {result}"
         );
-        let result = json_test_result(&output, "checkZeroFactor(uint112,uint112,uint112)");
-        assert_eq!(
-            result["symbolic"]["status"], "fail_counterexample",
-            "optimized={optimized}: {result}"
-        );
-        assert_eq!(
-            result["symbolic"]["replay"]["status"], "confirmed",
-            "optimized={optimized}: {result}"
-        );
+        for signature in ["checkLargeFactor(uint256)", "checkOverflowingFactor(uint256)"] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "{signature} optimized={optimized}: {result}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "{signature} optimized={optimized}: {result}"
+            );
+        }
     }
 }
 

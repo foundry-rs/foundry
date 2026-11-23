@@ -1014,7 +1014,19 @@ impl ConstraintContext {
                     None
                 }
             }
-            SymBoolExprKind::And(_) => None,
+            // Decides a conjunction such as unoptimized checked multiplication's
+            // `x != 0 && x <= MAX / c`.
+            SymBoolExprKind::And(terms) => {
+                let mut value = Some(true);
+                for term in terms.iter() {
+                    match self.bounded_bool_value(term) {
+                        Some(false) => return Some(false),
+                        Some(true) => {}
+                        None => value = None,
+                    }
+                }
+                value
+            }
         }
     }
 
@@ -1375,15 +1387,6 @@ impl ConstraintContext {
             SymBoolExprKind::Cmp(op, left, right) => {
                 self.unsigned_cmp_always_true(*op, left, right)
             }
-            // Every conjunct holds, as for unoptimized checked multiplication's
-            // `x != 0 && x <= MAX / c`.
-            SymBoolExprKind::And(terms) => {
-                terms.iter().all(|term| self.unsigned_bool_always_true(term))
-            }
-            // `x != 0` once `x` has a positive lower bound.
-            SymBoolExprKind::Not(inner) => inner.zero_check_operand().is_some_and(|value| {
-                self.interval(value).is_some_and(|range| !range.min.is_zero())
-            }),
             _ => false,
         }
     }
