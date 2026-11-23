@@ -1078,7 +1078,7 @@ dependencies = [
 [[package]]
 name = "alloy-transport-mpp"
 version = "0.2.0"
-source = "git+https://github.com/tempoxyz/mpp-rs?rev=fa51e6ae93197aadc16cb34d2ef97d6259ef9342#fa51e6ae93197aadc16cb34d2ef97d6259ef9342"
+source = "git+https://github.com/tempoxyz/mpp-rs?rev=fa567a699a70f58fd6852630db332f5443cef068#fa567a699a70f58fd6852630db332f5443cef068"
 dependencies = [
  "alloy-json-rpc",
  "alloy-pubsub",
@@ -7362,11 +7362,11 @@ dependencies = [
 
 [[package]]
 name = "hashlink"
-version = "0.11.1"
+version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "824e001ac4f3012dd16a264bec811403a67ca9deb6c102fc5049b32c4574b35f"
+checksum = "a596f1b20ed2cc5ecac41a164aaebc7258057060f06c0cf7a2ba3991ee7990fb"
 dependencies = [
- "hashbrown 0.16.1",
+ "hashbrown 0.17.1",
 ]
 
 [[package]]
@@ -8399,9 +8399,9 @@ dependencies = [
 
 [[package]]
 name = "libsqlite3-sys"
-version = "0.36.0"
+version = "0.39.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95b4103cffefa72eb8428cb6b47d6627161e51c2739fc5e3b734584157bc642a"
+checksum = "14a5f01b87b92705d07b433c06f96cbc764637d81a0bffb5734ce17cf0f9a2b3"
 dependencies = [
  "cc",
  "pkg-config",
@@ -8755,8 +8755,8 @@ dependencies = [
 
 [[package]]
 name = "mpp"
-version = "0.18.2"
-source = "git+https://github.com/tempoxyz/mpp-rs?rev=fa51e6ae93197aadc16cb34d2ef97d6259ef9342#fa51e6ae93197aadc16cb34d2ef97d6259ef9342"
+version = "0.19.0"
+source = "git+https://github.com/tempoxyz/mpp-rs?rev=fa567a699a70f58fd6852630db332f5443cef068#fa567a699a70f58fd6852630db332f5443cef068"
 dependencies = [
  "alloy",
  "async-stream",
@@ -8768,6 +8768,7 @@ dependencies = [
  "hex",
  "hmac 0.13.0",
  "http 1.5.0",
+ "libc",
  "p256 0.13.2",
  "reqwest 0.13.5",
  "rusqlite",
@@ -11802,9 +11803,9 @@ dependencies = [
 
 [[package]]
 name = "rusqlite"
-version = "0.38.0"
+version = "0.41.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1c93dd1c9683b438c392c492109cb702b8090b2bfc8fed6f6e4eb4523f17af3"
+checksum = "da9bba6f3506135e120a6586df05be18b48d18896600646a4bec8f993d91a594"
 dependencies = [
  "bitflags 2.13.2",
  "fallible-iterator",
