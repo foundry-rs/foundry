@@ -1448,8 +1448,10 @@ impl ConstraintContext {
         if !matches!(op, SymCmpOp::Ult | SymCmpOp::Ule) {
             return None;
         }
+        // A symbolic divisor is matched only in `n / d < k`, the shape a round trip such as
+        // `ceil(x / d) * d / m < k` leaves; the rewrite then also needs `d != 0`.
         if let Some((numerator, denominator)) = left.udiv_operands()
-            && denominator.as_const().is_some_and(|value| !value.is_zero())
+            && denominator.as_const().map_or(op == SymCmpOp::Ult, |value| !value.is_zero())
             && !right.contains_udiv()
         {
             return Some((numerator, denominator, right, true));
@@ -1472,6 +1474,18 @@ impl ConstraintContext {
     ) -> Option<SymBoolExpr> {
         let (numerator, denominator, threshold, quotient_on_left) =
             Self::udiv_comparison_operands(op, left, right)?;
+        // Folding gives `n / 0 == 0` but SMT gives all ones, so a symbolic divisor must be
+        // nonzero in context for `n / d < k` and `n < k * d` to agree.
+        // Rewriting one side of `p && !p` would also hide that contradiction from normalization,
+        // and the caller may be rewriting either side.
+        if denominator.as_const().is_none()
+            && (!self.interval(denominator).is_some_and(|range| !range.min.is_zero()) || {
+                let predicate = SymBoolExpr::cmp(cx, op, left.clone(), right.clone());
+                self.facts.contains(&predicate) || self.facts.contains(&predicate.not(cx))
+            })
+        {
+            return None;
+        }
         let increment_threshold =
             matches!((op, quotient_on_left), (SymCmpOp::Ule, true) | (SymCmpOp::Ult, false));
         let threshold = if increment_threshold {
