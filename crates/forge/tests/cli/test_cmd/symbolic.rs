@@ -9008,7 +9008,9 @@ contract SymbolicDivisorOrder {
 }
 
 // Rewards earned as `balance * (rewardPerToken - paid) / 1e18 + rewards` only grow with the index,
-// which takes ordering differences with a common subtrahend and sums with a common addend.
+// which takes ordering differences with a common subtrahend and sums with a common addend. A
+// checked sum does not wrap even for unbounded `rewards`, and an unchecked one does not when its
+// operands' ranges fit.
 #[forgetest_init]
 fn symbolic_orders_earned_rewards_by_index(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_orders_earned_rewards_by_index");
@@ -9016,7 +9018,7 @@ fn symbolic_orders_earned_rewards_by_index(prj: _, cmd: _) {
         "SymbolicEarnedOrder.t.sol",
         r#"
 contract SymbolicEarnedOrder {
-    function earned(uint128 balance, uint128 index, uint128 paid, uint128 rewards)
+    function earned(uint128 balance, uint128 index, uint128 paid, uint256 rewards)
         internal
         pure
         returns (uint256)
@@ -9029,10 +9031,17 @@ contract SymbolicEarnedOrder {
         uint128 index,
         uint128 later,
         uint128 paid,
-        uint128 rewards
+        uint256 rewards
     ) public pure {
         require(paid <= index && index <= later);
         assert(earned(balance, index, paid, rewards) <= earned(balance, later, paid, rewards));
+    }
+
+    function checkBoundedSum(uint128 b, uint128 x, uint128 y, uint128 c) public pure {
+        require(x <= y);
+        unchecked {
+            assert(c + uint256(b) * x / 1e18 <= c + uint256(b) * y / 1e18);
+        }
     }
 
     function checkWrappedDifference(uint128 x, uint128 y, uint128 p) public pure {
@@ -9040,6 +9049,11 @@ contract SymbolicEarnedOrder {
         unchecked {
             assert(uint256(x) - p <= uint256(y) - p);
         }
+    }
+
+    function checkUnorderedDifference(uint128 x, uint128 y, uint128 p) public pure {
+        require(p <= x && p <= y);
+        assert(uint256(x) - p <= uint256(y) - p);
     }
 
     function checkOtherSubtrahend(uint128 b, uint128 x, uint128 y, uint128 p, uint128 q)
@@ -9054,6 +9068,14 @@ contract SymbolicEarnedOrder {
         require(x <= y);
         unchecked {
             assert(c + uint256(b) * x / 1e18 <= c + uint256(b) * y / 1e18);
+        }
+    }
+
+    function checkGuardedSmallerSum(uint128 b, uint128 x, uint128 y, uint256 c) public pure {
+        require(x <= y);
+        uint256 s = c + uint256(b) * x / 1e18;
+        unchecked {
+            assert(s <= c + uint256(b) * y / 1e18);
         }
     }
 
@@ -9073,20 +9095,24 @@ contract SymbolicEarnedOrder {
             .stdout
             .clone();
 
-        let result = json_test_result(
-            &output,
-            "checkEarnedGrowsWithIndex(uint128,uint128,uint128,uint128,uint128)",
-        );
-        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
-        assert_eq!(
-            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
-            "optimized={optimized}"
-        );
+        for signature in [
+            "checkEarnedGrowsWithIndex(uint128,uint128,uint128,uint128,uint256)",
+            "checkBoundedSum(uint128,uint128,uint128,uint128)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "pass", "{signature} optimized={optimized}");
+            assert_eq!(
+                result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+                "{signature} optimized={optimized}"
+            );
+        }
 
         for signature in [
             "checkWrappedDifference(uint128,uint128,uint128)",
+            "checkUnorderedDifference(uint128,uint128,uint128)",
             "checkOtherSubtrahend(uint128,uint128,uint128,uint128,uint128)",
             "checkWrappedSum(uint128,uint128,uint128,uint256)",
+            "checkGuardedSmallerSum(uint128,uint128,uint128,uint256)",
             "checkOtherAddend(uint128,uint128,uint128,uint128)",
         ] {
             let result = json_test_result(&output, signature);
