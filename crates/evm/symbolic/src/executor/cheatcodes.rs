@@ -2036,13 +2036,6 @@ impl SymbolicExecutor {
                 let exists = if let Some(account) = state.world.resolve_address(&word) {
                     let exists = state.persistent_accounts.contains(&account);
                     SymExpr::constant(&mut self.cx, U256::from(exists))
-                } else if state
-                    .persistent_accounts
-                    .contains(&word.representative_symbolic_address())
-                {
-                    // Like Forge, persistence survives `vm.revertToState`, which drops the alias
-                    // `vm.makePersistent` gave the word but not its persistent account.
-                    SymExpr::constant(&mut self.cx, U256::ONE)
                 } else {
                     // Only reads the address, so a free one takes no alias, which later reads
                     // would resolve to an empty account.
@@ -2135,9 +2128,23 @@ impl SymbolicExecutor {
                     0,
                     "symbolic vm.revertToState snapshot",
                 )?;
+                // Like Forge, persistence survives the restore, so the aliases that name
+                // persistent accounts do too.
+                let persistent_aliases = state
+                    .persistent_accounts
+                    .iter()
+                    .filter_map(|&account| {
+                        state.world.symbolic_word_for_address(account).map(|word| (word, account))
+                    })
+                    .collect::<Vec<_>>();
                 let restored = state.world.restore_snapshot(id);
                 let success = restored.is_some();
                 if let Some((block, gas_price)) = restored {
+                    for (word, account) in persistent_aliases {
+                        if state.world.symbolic_word_for_address(account).is_none() {
+                            state.world.alias_symbolic_address(word, account);
+                        }
+                    }
                     state.block = block;
                     state.gas_price = gas_price;
                     state.persistent_writes.push(PersistentWrite::Restore);

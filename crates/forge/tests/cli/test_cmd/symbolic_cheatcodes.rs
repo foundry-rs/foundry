@@ -3225,6 +3225,15 @@ contract SymbolicFreeAddressWrites is Test {
         assert(vm.isPersistent(a));
     }
 
+    // After the revert, another address is persistent only where it was before or names `a`.
+    function checkOtherWordIsPersistentAfterRevertToState(address a, address b) public {
+        bool persistent = vm.isPersistent(b);
+        uint256 id = vm.snapshotState();
+        vm.makePersistent(a);
+        vm.revertToState(id);
+        assert(!vm.isPersistent(b) || persistent || b == a);
+    }
+
     // The address may name a persistent account, such as the sender.
     function checkIsPersistentSeesKnownAccounts(address a) public {
         assert(!vm.isPersistent(a));
@@ -3288,7 +3297,7 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 18 tests for test/SymbolicFreeAddressWrites.t.sol:SymbolicFreeAddressWrites
+Ran 19 tests for test/SymbolicFreeAddressWrites.t.sol:SymbolicFreeAddressWrites
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkCodeAfterIsPersistent(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealKeepsCode(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDerivedArgumentDecidesAddress(address) ([METRICS])
@@ -3300,6 +3309,7 @@ Ran 18 tests for test/SymbolicFreeAddressWrites.t.sol:SymbolicFreeAddressWrites
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkLoadAfterIsPersistent(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkNonceAfterIsPersistent(address) ([METRICS])
 [PASS] checkNonceReadsBackAfterIsPersistent(address) ([METRICS])
+[PASS] checkOtherWordIsPersistentAfterRevertToState(address,address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankAfterDeal(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankBeforeDeal(address) ([METRICS])
 [PASS] checkStorageReadsBackAfterIsPersistent(address) ([METRICS])
@@ -3307,7 +3317,7 @@ Ran 18 tests for test/SymbolicFreeAddressWrites.t.sol:SymbolicFreeAddressWrites
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkStoreMayTargetSetUpContract(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkSymbolicOffsetPrank(address,uint8) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkSymbolicSizeSetNonce(address,uint256) ([METRICS])
-Suite result: FAILED. 3 passed; 15 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 4 passed; 15 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
