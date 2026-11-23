@@ -9142,7 +9142,8 @@ contract SymbolicDowncastShare {
 }
 
 // A withdrawal pays out `balance * shares / supply`, at most the balance once `shares <= supply`,
-// so the payout fits the balance's type and a checked fee multiply on it cannot overflow. Shares
+// so the payout fits the balance's type and a checked fee multiply on it cannot overflow. A wrapped
+// product only shrinks the payout, and an elapsed `t - s` with `t <= s + d` is at most `d`. Shares
 // above the supply can pay out more than the balance, and without that order neither factor
 // bounds the payout.
 #[forgetest_init]
@@ -9166,9 +9167,37 @@ contract SymbolicPayoutShare {
         assert(uint256(balance) * shares / supply <= type(uint128).max);
     }
 
+    function checkWrappedPayoutFits(uint128 balance, uint256 shares, uint256 supply)
+        public
+        pure
+    {
+        require(supply != 0 && shares <= supply);
+        unchecked {
+            assert(balance * shares / supply <= type(uint128).max);
+        }
+    }
+
+    function checkVestedFits(uint128 total, uint256 start, uint256 time, uint256 duration)
+        public
+        pure
+    {
+        require(duration != 0 && start <= time && time <= start + duration);
+        assert(uint256(total) * (time - start) / duration <= type(uint128).max);
+    }
+
+    function checkVestedBeforeStart(uint128 total, uint256 start, uint256 time, uint256 duration)
+        public
+        pure
+    {
+        require(duration != 0 && time <= start + duration);
+        unchecked {
+            assert(uint256(total) * (time - start) / duration <= type(uint128).max);
+        }
+    }
+
     function checkSharesAboveSupply(uint128 balance, uint128 shares, uint128 supply) public pure {
         require(supply != 0 && shares <= uint256(supply) + 1);
-        assert(uint256(balance) * shares / supply <= balance);
+        assert(uint256(balance) * shares / supply <= type(uint128).max);
     }
 
     function checkUnorderedNarrowShares(uint256 balance, uint128 shares, uint128 supply)
@@ -9202,12 +9231,15 @@ contract SymbolicPayoutShare {
         for signature in [
             "checkFeeOnPayout(uint128,uint256,uint256,uint16)",
             "checkPayoutFits(uint128,uint128,uint128)",
+            "checkWrappedPayoutFits(uint128,uint256,uint256)",
+            "checkVestedFits(uint128,uint256,uint256,uint256)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
         }
 
         for signature in [
+            "checkVestedBeforeStart(uint128,uint256,uint256,uint256)",
             "checkSharesAboveSupply(uint128,uint128,uint128)",
             "checkUnorderedNarrowShares(uint256,uint128,uint128)",
             "checkUnorderedNarrowBalance(uint128,uint256,uint128)",

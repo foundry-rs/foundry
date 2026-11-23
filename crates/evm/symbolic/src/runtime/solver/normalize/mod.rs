@@ -1625,14 +1625,12 @@ impl ConstraintContext {
                     return None;
                 }
                 let mut max = numerator.max / denominator.min;
-                // A pro-rata share `x * y / d` with an asserted `y <= d` is at most `x`, and a
-                // wrapped product only shrinks the dividend.
+                // A pro-rata share `x * y / d` with `y <= d` is at most `x`, and a wrapped product
+                // only shrinks the dividend.
                 if let SymExprKind::BinOp(SymBinOp::Mul, left, right) = numerator_expr.kind()
                     && let Some(scaled) =
                         [(left, right), (right, left)].into_iter().find_map(|(scaled, factor)| {
-                            self.asserted_upper_bounds(factor)
-                                .contains(denominator_expr)
-                                .then_some(scaled)
+                            self.asserts_less_or_equal(factor, denominator_expr).then_some(scaled)
                         })
                     && let Some(scaled) = self.interval_cached(scaled, intervals, remaining)
                 {
