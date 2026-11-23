@@ -9142,8 +9142,9 @@ contract SymbolicDowncastShare {
 }
 
 // A collateral ratio `collateral * WAD / debt` of at least a minimum of 100% or more implies the
-// collateral covers the debt, since `collateral < debt` makes the ratio below `WAD`. A minimum
-// just under 100% does not, and collateral equal to the debt reaches a ratio of exactly `WAD`.
+// collateral covers the debt, since `collateral < debt` makes the ratio below `WAD`, even when a
+// nonzero scale wraps the product. A zero scale or a minimum just under 100% does not, and
+// collateral equal to the debt reaches a ratio of exactly `WAD`.
 #[forgetest_init]
 fn symbolic_proves_collateral_ratio_covers_debt(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_collateral_ratio_covers_debt");
@@ -9156,6 +9157,34 @@ contract SymbolicCollateralRatio {
     function checkRatioCoversDebt(uint128 collateral, uint128 debt, uint128 minRatio) public pure {
         require(debt != 0 && minRatio >= WAD);
         require(uint256(collateral) * WAD / debt >= minRatio);
+        assert(collateral >= debt);
+    }
+
+    function checkRatioAboveOneCoversDebt(uint128 collateral, uint128 debt, uint128 minRatio)
+        public
+        pure
+    {
+        require(debt != 0 && minRatio >= 15e17);
+        require(uint256(collateral) * WAD / debt >= minRatio);
+        assert(collateral >= debt);
+    }
+
+    function checkWrappingRatioCoversDebt(uint256 collateral, uint256 debt, uint256 scale)
+        public
+        pure
+    {
+        require(debt != 0 && scale != 0);
+        unchecked {
+            require(collateral * scale / debt >= scale);
+        }
+        assert(collateral >= debt);
+    }
+
+    function checkZeroScale(uint256 collateral, uint256 debt, uint256 scale) public pure {
+        require(debt != 0);
+        unchecked {
+            require(collateral * scale / debt >= scale);
+        }
         assert(collateral >= debt);
     }
 
@@ -9182,9 +9211,19 @@ contract SymbolicCollateralRatio {
             .get_output()
             .stdout
             .clone();
-        let result = json_test_result(&output, "checkRatioCoversDebt(uint128,uint128,uint128)");
-        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
         for signature in [
+            "checkRatioCoversDebt(uint128,uint128,uint128)",
+            "checkRatioAboveOneCoversDebt(uint128,uint128,uint128)",
+            "checkWrappingRatioCoversDebt(uint256,uint256,uint256)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "pass",
+                "{signature}, optimized={optimized}: {result}"
+            );
+        }
+        for signature in [
+            "checkZeroScale(uint256,uint256,uint256)",
             "checkMinimumBelowOne(uint128,uint128,uint128)",
             "checkCollateralEqualsDebt(uint128,uint128)",
         ] {

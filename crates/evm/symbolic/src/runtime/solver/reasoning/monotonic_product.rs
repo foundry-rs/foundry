@@ -30,9 +30,9 @@ pub(crate) fn product_monotonic_unsat_normalized(constraints: &[SymBoolExpr]) ->
             )
             || less_or_equal_comparison(constraint).is_some_and(|(left, right)| {
                 successor_product_exceeds(left, right, &facts, &bounds)
-                    || quotient_below_scale(right, left, &facts, &bounds)
+                    || quotient_below(right, left, &facts, &bounds)
                     || facts.less_or_equal.iter().any(|(small, large)| {
-                        *small == right && quotient_below_scale(large, left, &facts, &bounds)
+                        *small == right && quotient_below(large, left, &facts, &bounds)
                     })
             })
             || disequality(constraint).is_some_and(|(left, right)| {
@@ -760,12 +760,13 @@ fn successor_product_exceeds(
         })
 }
 
-/// Returns whether `quotient = x * scale / d` is below `scale` because `x < d`, refuting
-/// `scale <= quotient` as in a collateral ratio of at least one with collateral below debt.
-/// `x * scale < d * scale` even when the product wraps, and `d > x` makes `d` nonzero.
-fn quotient_below_scale(
+/// Returns whether `quotient = x * scale / d` is below `bound` because `x < d` and
+/// `0 < scale <= bound`, refuting `bound <= quotient` as in a collateral ratio of at least 100%
+/// with collateral below debt. `x * scale < d * scale` even when the product wraps, and `d > x`
+/// makes `d` nonzero.
+fn quotient_below(
     quotient: &SymExpr,
-    scale: &SymExpr,
+    bound: &SymExpr,
     facts: &OrderFacts<'_>,
     bounds: &ConstraintContext,
 ) -> bool {
@@ -773,10 +774,14 @@ fn quotient_below_scale(
         return false;
     };
     let Some((a, b)) = mul_operands(product) else { return false };
-    let Some(x) = (a == scale).then_some(b).or((b == scale).then_some(a)) else { return false };
-    (facts.positive.contains(scale)
-        || bounds.word_range(scale).is_some_and(|(min, _)| !min.is_zero()))
-        && facts.less_than.iter().any(|(small, large)| {
-            *large == divisor && (*small == x || expr_less_or_equal(x, small, facts, bounds))
-        })
+    [(a, b), (b, a)].into_iter().any(|(scale, x)| {
+        (facts.positive.contains(scale)
+            || bounds.word_range(scale).is_some_and(|(min, _)| !min.is_zero()))
+            && (expr_less_or_equal(scale, bound, facts, bounds)
+                || bounds
+                    .word_range(scale)
+                    .zip(bounds.word_range(bound))
+                    .is_some_and(|((_, scale), (bound, _))| scale <= bound))
+            && facts.less_than.contains(&(x, divisor))
+    })
 }
