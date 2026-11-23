@@ -9,7 +9,7 @@
 extern crate tracing;
 
 use crate::{cache::StorageCachingConfig, etherscan::EtherscanEnvProvider};
-use alloy_primitives::{Address, B256, U256, address, map::AddressHashMap};
+use alloy_primitives::{Address, B256, U256, address, keccak256, map::AddressHashMap};
 use eyre::{ContextCompat, WrapErr};
 use figment::{
     Error, Figment, Metadata, Profile, Provider,
@@ -1133,6 +1133,17 @@ impl Config {
     /// This will merge various providers, such as env,toml,remappings into the figment if
     /// requested.
     pub fn to_figment(&self, providers: FigmentProviders) -> Figment {
+        self.to_figment_with_profile(providers, Self::selected_profile(), true)
+    }
+
+    /// Returns the populated [Figment] for `profile` using the requested [FigmentProviders] preset,
+    /// with environment variables if `env` is set.
+    fn to_figment_with_profile(
+        &self,
+        providers: FigmentProviders,
+        profile: Profile,
+        env: bool,
+    ) -> Figment {
         // Note that `Figment::from` here is a method on `Figment` rather than the `From` impl below
 
         if providers.is_none() {
@@ -1140,7 +1151,6 @@ impl Config {
         }
 
         let root = self.root.as_path();
-        let profile = Self::selected_profile();
         let mut figment = Figment::default()
             .merge(DappHardhatDirProvider { root, detect_src: self.uses_default_src() });
 
@@ -1160,43 +1170,45 @@ impl Config {
         );
 
         // merge environment variables
-        figment = figment
-            .merge(
-                Env::prefixed("DAPP_")
-                    .ignore(&["REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
-                    .global()
-                    .legacy_labels(),
-            )
-            .merge(
-                Env::prefixed("DAPP_TEST_")
-                    .ignore(&["CACHE", "FUZZ_RUNS", "DEPTH", "FFI", "FS_PERMISSIONS"])
-                    .global()
-                    .legacy_labels(),
-            )
-            .merge(DappEnvCompatProvider)
-            .merge(EtherscanEnvProvider::default())
-            .merge(
-                Env::prefixed("FOUNDRY_")
-                    .ignore(&["PROFILE", "REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
-                    // `FOUNDRY_CHAIN` is an alias, so `FOUNDRY_CHAIN_ID` takes precedence.
-                    .filter(|key| key != "CHAIN" || Env::var("FOUNDRY_CHAIN_ID").is_none())
-                    .map(|key| {
-                        let key = key.as_str();
-                        if Self::STANDALONE_SECTIONS.iter().any(|section| {
-                            key.starts_with(&format!("{}_", section.to_ascii_uppercase()))
-                        }) {
-                            key.replacen('_', ".", 1).into()
-                        } else if key.eq_ignore_ascii_case("CHAIN") {
-                            // `chain` is an alias of `chain_id`, so both must not reach serde.
-                            "CHAIN_ID".into()
-                        } else {
-                            key.into()
-                        }
-                    })
-                    .global()
-                    .legacy_labels(),
-            )
-            .select(profile.clone());
+        if env {
+            figment = figment
+                .merge(
+                    Env::prefixed("DAPP_")
+                        .ignore(&["REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
+                        .global()
+                        .legacy_labels(),
+                )
+                .merge(
+                    Env::prefixed("DAPP_TEST_")
+                        .ignore(&["CACHE", "FUZZ_RUNS", "DEPTH", "FFI", "FS_PERMISSIONS"])
+                        .global()
+                        .legacy_labels(),
+                )
+                .merge(DappEnvCompatProvider)
+                .merge(EtherscanEnvProvider::default())
+                .merge(
+                    Env::prefixed("FOUNDRY_")
+                        .ignore(&["PROFILE", "REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
+                        // `FOUNDRY_CHAIN` is an alias, so `FOUNDRY_CHAIN_ID` takes precedence.
+                        .filter(|key| key != "CHAIN" || Env::var("FOUNDRY_CHAIN_ID").is_none())
+                        .map(|key| {
+                            let key = key.as_str();
+                            if Self::STANDALONE_SECTIONS.iter().any(|section| {
+                                key.starts_with(&format!("{}_", section.to_ascii_uppercase()))
+                            }) {
+                                key.replacen('_', ".", 1).into()
+                            } else if key.eq_ignore_ascii_case("CHAIN") {
+                                // `chain` is an alias of `chain_id`, so both must not reach serde.
+                                "CHAIN_ID".into()
+                            } else {
+                                key.into()
+                            }
+                        })
+                        .global()
+                        .legacy_labels(),
+                );
+        }
+        figment = figment.select(profile.clone());
 
         // only resolve remappings if all providers are requested
         if providers.is_all() {
@@ -1664,6 +1676,14 @@ impl Config {
                     coverage_cache.display()
                 ));
             }
+        }
+
+        let profile_cache = self.root.join(&self.cache_path).join("profiles");
+        if let Err(err) = fs::remove_dir_all(&profile_cache)
+            && err.kind() != io::ErrorKind::NotFound
+        {
+            warnings
+                .push(format!("failed to remove profile cache {}: {err}", profile_cache.display()));
         }
 
         let external_cache = self.root.join(&self.cache_path).join("external-compilers");
@@ -3104,6 +3124,68 @@ impl Config {
         }
 
         figment
+    }
+
+    /// Returns this config with the compiler, execution spec and library settings of `profile`.
+    /// `overrides` and environment variables apply to all of them except the EVM version, hardfork
+    /// and libraries.
+    pub fn with_profile_compiler_settings<T: Provider>(
+        &self,
+        profile: &str,
+        overrides: T,
+    ) -> Result<Self, ExtractConfigError> {
+        let profile = Profile::new(profile);
+        if !self.profiles.contains(&profile) {
+            return Err(ExtractConfigError::new(Error::from(format!(
+                "unknown profile `{profile}`"
+            ))));
+        }
+        let config = Self::with_root(&self.root);
+        let own = Self::from_figment(config.to_figment_with_profile(
+            FigmentProviders::All,
+            profile.clone(),
+            false,
+        ))?;
+        let other = Self::from_figment(
+            config
+                .to_figment_with_profile(FigmentProviders::All, profile.clone(), true)
+                .merge(overrides.rename(Self::selected_profile(), profile)),
+        )?;
+        Ok(Self {
+            solc: other.solc,
+            evm_version: own.evm_version,
+            hardfork: own.hardfork,
+            optimizer: other.optimizer,
+            optimizer_runs: other.optimizer_runs,
+            optimizer_details: other.optimizer_details,
+            model_checker: other.model_checker,
+            via_ir: other.via_ir,
+            via_ssa_cfg: other.via_ssa_cfg,
+            experimental: other.experimental,
+            use_literal_content: other.use_literal_content,
+            bytecode_hash: other.bytecode_hash,
+            cbor_metadata: other.cbor_metadata,
+            revert_strings: other.revert_strings,
+            vyper: other.vyper,
+            extra_args: other.extra_args,
+            libraries: own.libraries,
+            remappings: other.remappings,
+            additional_compiler_profiles: other.additional_compiler_profiles,
+            compilation_restrictions: other.compilation_restrictions,
+            ..self.clone()
+        })
+    }
+
+    /// Returns the cache dir of the build with this config's compiler settings.
+    pub fn profile_cache_path(&self) -> Result<PathBuf, SolcError> {
+        let settings = serde_json::to_vec(&(
+            self.compiler_settings()?,
+            &self.solc,
+            &self.additional_compiler_profiles,
+            &self.compilation_restrictions,
+            &self.remappings,
+        ))?;
+        Ok(self.root.join(&self.cache_path).join("profiles").join(keccak256(settings).to_string()))
     }
 }
 
@@ -4769,6 +4851,7 @@ mod tests {
                                 compute_units_per_second: Some(1000),
                             },
                             auth: None,
+                            profile: None,
                         })
                     ),
                 ]),
@@ -4795,6 +4878,7 @@ mod tests {
                                 compute_units_per_second: Some(1000),
                             },
                             auth: None,
+                            profile: None,
                         })
                     ),
                 ])
@@ -4843,6 +4927,7 @@ mod tests {
                                 compute_units_per_second: Some(1000)
                             },
                             auth: Some(RpcAuth::Env("Bearer ${_CONFIG_AUTH}".to_string())),
+                            profile: None,
                         })
                     ),
                 ]),
@@ -4870,6 +4955,7 @@ mod tests {
                                 compute_units_per_second: Some(1000)
                             },
                             auth: Some(RpcAuth::Raw("Bearer 123456".to_string())),
+                            profile: None,
                         })
                     ),
                 ])
@@ -9138,6 +9224,7 @@ mod tests {
                 sepolia = { url = "https://sepolia.example", retries = 2, auth = "token" }
                 optimism = { endpoints = ["https://op.example"], compute_units_per_second = 10 }
                 base = { endpoint = "https://base.example", timeout = 5 }
+                arbitrum = { endpoint = "https://arb.example", profile = "default" }
 
                 [etherscan]
                 mainnet = { key = "KEY", chainId = 1 }
@@ -10311,5 +10398,79 @@ mod tests {
             err.to_string(),
             "failed to extract foundry config:\nfoundry config error: could not determine project root: permission denied\n"
         );
+    }
+
+    #[test]
+    fn profile_compiler_settings_keep_profile_spec() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                evm_version = "cancun"
+                [profile.linea]
+                evm_version = "london"
+                hardfork = "london"
+                libraries = ["src/Lib.sol:Lib:0x0000000000000000000000000000000000000001"]
+            "#,
+            )?;
+            jail.set_env("FOUNDRY_EVM_VERSION", "shanghai");
+            jail.set_env("FOUNDRY_HARDFORK", "shanghai");
+            let config = Config::load().unwrap();
+            let overrides = Figment::new()
+                .merge(Serialized::default("evm_version", EvmVersion::Prague))
+                .merge(Serialized::default("hardfork", "prague"))
+                .merge(Serialized::default(
+                    "libraries",
+                    ["src/Lib.sol:Lib:0x0000000000000000000000000000000000000002"],
+                ))
+                .merge(Serialized::default("optimizer_runs", 2));
+            let profile = config.with_profile_compiler_settings("linea", overrides).unwrap();
+            assert_eq!(profile.evm_version, EvmVersion::London);
+            assert_eq!(
+                profile.hardfork,
+                Some(FoundryHardfork::Ethereum(foundry_evm_hardforks::EthereumHardfork::London))
+            );
+            assert_eq!(
+                profile.libraries,
+                ["src/Lib.sol:Lib:0x0000000000000000000000000000000000000001"]
+            );
+            assert_eq!(profile.optimizer_runs, Some(2));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn profile_cache_path_follows_compiler_inputs() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                [profile.same]
+                [profile.solc]
+                solc = "0.8.20"
+                [profile.additional]
+                additional_compiler_profiles = [{ name = "ir", via_ir = true }]
+                [profile.restricted]
+                compilation_restrictions = [{ paths = "src/**", min_optimizer_runs = 1 }]
+                [profile.remapped]
+                remappings = ["remapped/=lib/remapped/"]
+            "#,
+            )?;
+            let config = Config::load().unwrap();
+            let path = |profile| {
+                config
+                    .with_profile_compiler_settings(profile, Figment::new())
+                    .unwrap()
+                    .profile_cache_path()
+                    .unwrap()
+            };
+            assert_eq!(path("same"), path("default"));
+            for profile in ["solc", "additional", "restricted", "remapped"] {
+                assert_ne!(path(profile), path("default"), "{profile}");
+            }
+            Ok(())
+        });
     }
 }

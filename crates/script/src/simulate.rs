@@ -4,7 +4,7 @@ use super::{
     recovery::RecoveryStore,
     runner::ScriptRunner,
     sequence::{ScriptSequenceKind, SequenceData},
-    transaction::ScriptTransactionBuilder,
+    transaction::{ScriptTransactionBuilder, create2_deployment},
 };
 use crate::{
     ScriptArgs, ScriptConfig, ScriptResult,
@@ -20,7 +20,7 @@ use alloy_provider::Provider;
 use dialoguer::Confirm;
 use eyre::{Context, Result};
 use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
-use foundry_cheatcodes::Wallets;
+use foundry_cheatcodes::{ChainBuild, Wallets};
 use foundry_cli::utils::{has_different_gas_calc, now};
 use foundry_common::{
     ContractData, ContractsByArtifact, provider::fee::resolve_broadcast_eip1559_fees, shell,
@@ -96,6 +96,10 @@ async fn build_rpc_simulation_context<FEN: FoundryEvmNetwork>(
     execution_result: &ScriptResult<FEN::Network>,
 ) -> Result<(String, RpcSimulationContext<ScriptRunner<FEN>>)> {
     let mut script_config = script_config.clone();
+    if let Some(build) = script_config.chain_builds.get(&rpc).cloned() {
+        script_config.config.evm_version = build.profile.config.evm_version;
+        script_config.config.hardfork = build.profile.config.hardfork;
+    }
     script_config.select_rpc(rpc.clone()).await?;
     let runner = script_config._get_runner(None, false, false).await?;
     let decoder = build_trace_decoder_for_context(
@@ -162,6 +166,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
         decoder_for_rpc: impl Fn(&str) -> &'a CallTraceDecoder,
     ) -> Result<VecDeque<TransactionWithMetadata<FEN::Network>>> {
         let address_to_abi = self.build_address_to_abi_map();
+        let mut profile_contracts = HashMap::new();
         let transactions = self
             .execution_result
             .transactions
@@ -175,12 +180,26 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                 let to = tx.transaction.to();
                 let decoder = decoder_for_rpc(&rpc);
 
+                let (address_to_abi, known_contracts) =
+                    match self.script_config.chain_builds.get(&rpc) {
+                        Some(build) => {
+                            let (address_to_abi, contracts) =
+                                profile_contracts.entry(rpc.clone()).or_insert_with(|| {
+                                    (
+                                        self.profile_address_to_abi(&address_to_abi, &rpc, build),
+                                        build.artifacts.merged([&self.build_data.known_contracts]),
+                                    )
+                                });
+                            (&*address_to_abi, &*contracts)
+                        }
+                        None => (&address_to_abi, &self.build_data.known_contracts),
+                    };
                 let mut builder = ScriptTransactionBuilder::new(tx.transaction, rpc);
 
                 if to.is_some() {
                     builder.set_call(
-                        &address_to_abi,
-                        &self.build_data.known_contracts,
+                        address_to_abi,
+                        known_contracts,
                         decoder,
                         self.script_config.evm_opts.create2_deployer,
                     )?;
@@ -188,7 +207,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                     builder.set_create(
                         false,
                         tx.contract_address.unwrap_or_else(|| sender.create(nonce)),
-                        &self.build_data.known_contracts,
+                        known_contracts,
                     )?;
                 }
 
@@ -274,6 +293,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                         &result,
                         self.args.gas_estimate_multiplier,
                         &self.build_data,
+                        self.script_config.chain_builds.get(&rpc).map(|build| &build.artifacts),
                     )?
                     .build();
 
@@ -427,6 +447,41 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
             decoders.insert(rpc, decoder);
         }
         Ok(decoders)
+    }
+
+    /// Returns `contracts` with the contracts created on the profiled `rpc`, identified by their
+    /// recorded creation code in `build`.
+    fn profile_address_to_abi<'a>(
+        &'a self,
+        contracts: &BTreeMap<Address, &'a ContractData>,
+        rpc: &str,
+        build: &'a ChainBuild,
+    ) -> BTreeMap<Address, &'a ContractData> {
+        let mut contracts = contracts.clone();
+        let create2_deployer = self.script_config.evm_opts.create2_deployer;
+        for tx in self
+            .execution_result
+            .transactions
+            .iter()
+            .flatten()
+            .filter(|tx| tx.rpc.as_deref() == Some(rpc))
+        {
+            let Some(input) = tx.transaction.input() else { continue };
+            let creation = match tx.transaction.to() {
+                Some(to) if to == create2_deployer => create2_deployment(create2_deployer, input),
+                None => tx
+                    .contract_address
+                    .or_else(|| Some(tx.transaction.from()?.create(tx.transaction.nonce()?)))
+                    .map(|address| (address, input.as_ref())),
+                _ => None,
+            };
+            if let Some((address, code)) = creation
+                && let Some((_, data)) = build.artifacts.find_by_creation_code_prefix(code)
+            {
+                contracts.insert(address, data);
+            }
+        }
+        contracts
     }
 }
 

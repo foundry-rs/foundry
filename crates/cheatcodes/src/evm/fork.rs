@@ -416,6 +416,18 @@ fn create_fork_request<FEN: FoundryEvmNetwork>(
 
     let rpc_endpoint = ccx.state.core.config.rpc_endpoint(url_or_alias)?;
     let url = rpc_endpoint.url()?;
+    if let Some(builds) = &ccx.state.core.config.chain_builds
+        && ccx.state.core.config.rpc_endpoints.contains_key(url_or_alias)
+    {
+        let matches_build = match (&rpc_endpoint.profile, builds.get(&url)) {
+            (Some(profile), Some(build)) => build.profile.profiles.contains(profile),
+            (profile, build) => profile.is_none() && build.is_none(),
+        };
+        ensure!(
+            matches_build,
+            "the URL of `{url_or_alias}` does not match a profile build made when forge started"
+        );
+    }
     let mut evm_opts = ccx.state.core.config.evm_opts.clone();
     evm_opts.fork_block_number = block;
     evm_opts.fork_block_number_is_inferred = false;

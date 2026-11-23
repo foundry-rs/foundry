@@ -62,7 +62,7 @@ use foundry_evm::{
     hardforks::ExecutionSpec,
     inspectors::{
         CheatsConfig,
-        cheatcodes::{BroadcastableTransactions, Wallets},
+        cheatcodes::{BroadcastableTransactions, ChainBuild, Wallets},
     },
     opts::{EvmOpts, ExecutionSpecContext, ForkContext, resolve_execution_spec},
     traces::{InternalTraceMode, TraceRequirements, Traces},
@@ -70,7 +70,7 @@ use foundry_evm::{
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
 use foundry_wallets::{MultiWalletOpts, utils::maybe_get_keystore_path, wallet_multi::MultiWallet};
 use serde::Serialize;
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 use tempo_alloy::TempoNetwork;
 
 #[cfg(feature = "base")]
@@ -1184,6 +1184,8 @@ pub struct ScriptConfig<FEN: FoundryEvmNetwork> {
     pub batch: bool,
     /// Tempo transaction options applied to broadcast transactions.
     pub tempo: TempoOpts,
+    /// Profile builds by the URL of the `[rpc_endpoints]` entry naming the profile.
+    pub chain_builds: BTreeMap<String, Arc<ChainBuild>>,
 }
 
 impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
@@ -1221,6 +1223,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
             backend,
             batch,
             tempo,
+            chain_builds: BTreeMap::new(),
         })
     }
 
@@ -1360,6 +1363,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
                     cheats_config.blocked_cheatcodes =
                         library_deployments::rerun_unsafe_cheatcode_selectors();
                 }
+                cheats_config.chain_builds = Some(self.chain_builds.clone());
                 stack
                     .cheatcodes(cheats_config.into())
                     .wallets(script_wallets)

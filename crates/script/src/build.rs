@@ -19,11 +19,11 @@ use alloy_rpc_types::BlockId;
 use alloy_signer::Signer;
 use eyre::{ContextCompat, OptionExt, Result};
 use forge_script_sequence::ScriptSequence;
-use foundry_cheatcodes::Wallets;
+use foundry_cheatcodes::{ChainBuild, Wallets};
 use foundry_cli::opts::TempoOpts;
 use foundry_common::{
     ContractData, ContractsByArtifact, ContractsByArtifactBuilder,
-    compile::ProjectCompiler,
+    compile::{ProfileBuild, ProjectCompiler, compile_endpoint_profiles},
     external_compiler::is_builtin_compiler_source,
     fs::canonicalize_path,
     namespaced_storage,
@@ -39,6 +39,7 @@ use foundry_compilers::{
     info::ContractInfo,
     utils::source_files_iter,
 };
+use foundry_config::{Config, figment::Figment};
 use foundry_evm::{
     core::evm::FoundryEvmNetwork,
     traces::{CallTraceDecoder, debug::ContractSources},
@@ -47,6 +48,7 @@ use foundry_linking::Linker;
 use foundry_wallets::{MultiWalletOpts, wallet_browser::signer::BrowserSigner};
 use itertools::Itertools;
 use std::{
+    collections::BTreeMap,
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
@@ -62,6 +64,8 @@ pub struct BuildData {
     pub output: ProjectCompileOutput,
     /// ID of target contract artifact.
     pub target: ArtifactId,
+    /// Builds of the profiles named by `[rpc_endpoints]`.
+    pub profile_builds: Vec<Arc<ProfileBuild>>,
 }
 
 impl BuildData {
@@ -242,19 +246,27 @@ impl<FEN: FoundryEvmNetwork> PreprocessedState<FEN> {
         let sources_to_compile = source_files_iter(
             project.paths.sources.as_path(),
             MultiCompilerLanguage::FILE_EXTENSIONS,
-        );
+        )
+        .collect::<Vec<_>>();
 
-        let compiler = ProjectCompiler::new()
-            .allow_linked_libraries(script_config.config.allow_linked_libraries)
-            .external_compilers(&script_config.config)
-            .files(sources_to_compile)
-            .dynamic_test_linking(script_config.config.dynamic_test_linking);
-        let compiler = if is_builtin_compiler_source(&target_path) {
-            compiler.files([target_path.clone()])
-        } else {
-            compiler.target_files([target_path.clone()])
+        let compiler = |config: &Config| {
+            let compiler = ProjectCompiler::new()
+                .allow_linked_libraries(config.allow_linked_libraries)
+                .external_compilers(config)
+                .files(sources_to_compile.clone())
+                .dynamic_test_linking(config.dynamic_test_linking);
+            if is_builtin_compiler_source(&target_path) {
+                compiler.files([target_path.clone()])
+            } else {
+                compiler.target_files([target_path.clone()])
+            }
         };
-        let output = compiler.compile(&project)?;
+        let output = compiler(&script_config.config).compile(&project)?;
+        let overrides = Figment::new().merge(&args.build).merge(&args.evm).merge(&args);
+        let profile_builds = compile_endpoint_profiles(&script_config.config, overrides, compiler)?
+            .into_iter()
+            .map(Arc::new)
+            .collect();
 
         let mut target_id: Option<ArtifactId> = None;
 
@@ -297,7 +309,12 @@ impl<FEN: FoundryEvmNetwork> PreprocessedState<FEN> {
             script_config,
             script_wallets,
             browser_wallet,
-            build_data: BuildData { output, target, project_root: project.root().to_path_buf() },
+            build_data: BuildData {
+                output,
+                target,
+                project_root: project.root().to_path_buf(),
+                profile_builds,
+            },
         })
     }
 }
@@ -314,15 +331,26 @@ pub struct CompiledState<FEN: FoundryEvmNetwork> {
 impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
     /// Uses provided sender address to compute library addresses and link contracts with them.
     pub async fn link(self) -> Result<LinkedState<FEN>> {
-        let Self { args, script_config, script_wallets, browser_wallet, build_data } = self;
+        let Self { args, mut script_config, script_wallets, browser_wallet, build_data } = self;
 
+        script_config.chain_builds = chain_builds(&script_config.config, &build_data)?;
         let build_data = build_data.link(&script_config).await?;
+        if let Some(rpc) = &script_config.evm_opts.fork_url
+            && script_config.chain_builds.contains_key(rpc)
+            && build_data.predeploy_libraries.libraries_count() > 0
+        {
+            eyre::bail!(
+                "the `--rpc-url` endpoint names a profile, so libraries of the run build can't be deployed on it"
+            );
+        }
 
         Ok(LinkedState { args, script_config, script_wallets, browser_wallet, build_data })
     }
 
     /// Tries loading the resumed state from the cache files, skipping simulation stage.
     pub async fn resume(mut self) -> Result<BundledState<FEN>> {
+        self.script_config.chain_builds =
+            chain_builds(&self.script_config.config, &self.build_data)?;
         let endpoint = if self.args.multi {
             if self.args.evm.rpc.rpc_url.is_some() {
                 sh_warn!(
@@ -765,6 +793,30 @@ async fn configurable_account_signers_available<FEN: FoundryEvmNetwork>(
         }
     }
     Ok(true)
+}
+
+/// Returns the profile builds by endpoint URL, linked with the libraries their profiles configure.
+fn chain_builds(
+    config: &Config,
+    build_data: &BuildData,
+) -> Result<BTreeMap<String, Arc<ChainBuild>>> {
+    let builds = build_data
+        .profile_builds
+        .iter()
+        .map(|build| {
+            let linker =
+                Linker::new(build_data.project_root.clone(), build.output.artifact_ids().collect());
+            let artifacts = ContractsByArtifactBuilder::new(
+                linker
+                    .get_linked_artifacts(&build.config.libraries_with_remappings()?)?
+                    .iter()
+                    .map(|(id, artifact)| (id.clone(), artifact.into())),
+            )
+            .build();
+            Ok(ChainBuild { profile: build.clone(), artifacts })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    ChainBuild::by_endpoint(config, builds)
 }
 
 #[cfg(test)]

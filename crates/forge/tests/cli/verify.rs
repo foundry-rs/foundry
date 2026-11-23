@@ -21,7 +21,7 @@ use foundry_evm::traces::CallKind;
 use foundry_test_utils::{
     forgetest,
     rpc::spawn_rpc_proxy_recording_method,
-    str,
+    snapbox, str,
     util::{OutputExt, SOLC_VERSION, TestCommand, TestProject},
 };
 use std::{
@@ -1206,6 +1206,177 @@ contract Deploy is Script {
 Error: chain 31338: Not all (0 / 1) contracts were verified; no local artifact matches the creation code of Beta at 0x5FbDB2315678afecb367f032d93F642f64180aa3!
 
 "#]]);
+}
+
+// `--resume --verify` verifies deployments on a profiled endpoint against its profile build, with
+// the CLI compiler options applied, and other deployments against the run build.
+#[forgetest_init]
+async fn script_verify_resume_uses_endpoint_profile_build_on_fork(prj: _, cmd: _) {
+    prj.add_source(
+        "Alpha.sol",
+        r#"
+contract Alpha { uint256 public x = 1; }
+contract Beta { uint256 public y = 2; }
+contract Factory {
+    function deploy(bytes memory code) external returns (address result) {
+        assembly { result := create(0, add(code, 32), mload(code)) }
+    }
+}
+"#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+    prj.add_script(
+        "Deploy.s.sol",
+        r#"
+import "forge-std/Script.sol";
+import {Alpha, Beta, Factory} from "../src/Alpha.sol";
+contract Deploy is Script {
+    function run() external {
+        vm.startBroadcast();
+        new Alpha();
+        new Factory().deploy(type(Beta).creationCode);
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    prj.create_file(
+        "foundry.toml",
+        &format!(
+            r#"
+[profile.default]
+optimizer = false
+
+[profile.optimized]
+optimizer = true
+optimizer_runs = 1
+bytecode_hash = "none"
+
+[rpc_endpoints]
+profiled = {{ endpoint = "{}", profile = "optimized" }}
+"#,
+            handle.http_endpoint()
+        ),
+    );
+    let script = [
+        "script",
+        "script/Deploy.s.sol:Deploy",
+        "--rpc-url",
+        "profiled",
+        "--optimizer-runs",
+        "2",
+        "--broadcast",
+        "--private-key",
+        &pk,
+    ];
+    cmd.forge_fuse().args(script).assert_success();
+
+    // Records the optimizer and metadata settings of each submission.
+    let submissions = Arc::new(Mutex::new(Vec::new()));
+    let state = submissions.clone();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let verifier_url = format!("http://{}", listener.local_addr().unwrap());
+    let app = Router::new().fallback(move |uri: axum::http::Uri, body: String| {
+        let state = state.clone();
+        async move {
+            let encoded = if body.is_empty() { uri.query().unwrap_or_default() } else { &body };
+            let form = url::form_urlencoded::parse(encoded.as_bytes())
+                .into_owned()
+                .collect::<HashMap<_, _>>();
+            match form.get("action").map(String::as_str) {
+                Some("verifysourcecode") => {
+                    let input =
+                        serde_json::from_str::<serde_json::Value>(&form["sourceCode"]).unwrap();
+                    let settings = &input["settings"];
+                    let (optimizer, metadata) = (&settings["optimizer"], &settings["metadata"]);
+                    let name = &form["contractname"];
+                    state.lock().unwrap().push(format!("{name} {optimizer} {metadata}"));
+                    r#"{"status":"1","message":"OK","result":"guid"}"#
+                }
+                Some("checkverifystatus") => {
+                    r#"{"status":"1","message":"OK","result":"Pass - Verified"}"#
+                }
+                _ => r#"{"status":"0","message":"NOTOK","result":"Contract source code not verified"}"#,
+            }
+        }
+    });
+    let _server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    cmd.forge_fuse()
+        .args(script)
+        .args(["--resume", "--verify", "--verifier", "custom", "--verifier-url"])
+        .args([verifier_url.as_str(), "--verifier-api-key", "VALID_KEY"])
+        .assert_success()
+        .stderr_eq(str![[r#"
+
+Deployed contracts (chain 31337):
+  Alpha    0x5FbDB2315678afecb367f032d93F642f64180aa3
+  Factory  0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+  Beta     0xCafac3dD18aC6c6e92c921884f9E4176737C052c
+##
+Start verification for (3) contracts
+Start verifying contract `0x5FbDB2315678afecb367f032d93F642f64180aa3` deployed on anvil-hardhat
+EVM version: [..]
+Compiler version: [..]
+Optimizations:    2
+
+Verifying on custom...
+Submitting verification for [src/Alpha.sol:Alpha] 0x5FbDB2315678afecb367f032d93F642f64180aa3.
+Submitted contract for verification:
+	Response: `OK`
+	GUID: `guid`
+	URL: http://127.0.0.1:[..]/address/0x5fbdb2315678afecb367f032d93f642f64180aa3
+
+Waiting for custom verification result...
+Contract verification status:
+Response: `OK`
+Details: `Pass - Verified`
+Contract successfully verified
+Start verifying contract `0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512` deployed on anvil-hardhat
+EVM version: [..]
+Compiler version: [..]
+Optimizations:    2
+
+Verifying on custom...
+Submitting verification for [src/Alpha.sol:Factory] 0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512.
+Submitted contract for verification:
+	Response: `OK`
+	GUID: `guid`
+	URL: http://127.0.0.1:[..]/address/0xe7f1725e7734ce288f8367e1bb143e90bb3f0512
+
+Waiting for custom verification result...
+Contract verification status:
+Response: `OK`
+Details: `Pass - Verified`
+Contract successfully verified
+Start verifying contract `0xCafac3dD18aC6c6e92c921884f9E4176737C052c` deployed on anvil-hardhat
+EVM version: [..]
+Compiler version: [..]
+
+Verifying on custom...
+Submitting verification for [src/Alpha.sol:Beta] 0xCafac3dD18aC6c6e92c921884f9E4176737C052c.
+Submitted contract for verification:
+	Response: `OK`
+	GUID: `guid`
+	URL: http://127.0.0.1:[..]/address/0xcafac3dd18ac6c6e92c921884f9e4176737c052c
+
+Waiting for custom verification result...
+Contract verification status:
+Response: `OK`
+Details: `Pass - Verified`
+Contract successfully verified
+All (3) contracts were verified!
+
+"#]]);
+    snapbox::assert_data_eq!(
+        submissions.lock().unwrap().join("\n"),
+        str![[r#"
+src/Alpha.sol:Alpha {"enabled":true,"runs":2} {"useLiteralContent":false,"bytecodeHash":"none","appendCBOR":true}
+src/Alpha.sol:Factory {"enabled":true,"runs":2} {"useLiteralContent":false,"bytecodeHash":"none","appendCBOR":true}
+src/Alpha.sol:Beta {"enabled":false,"runs":200} {"useLiteralContent":false,"bytecodeHash":"ipfs","appendCBOR":true}
+"#]]
+    );
 }
 
 // The EVM permits ignored trailing bytes even without an ABI constructor. Such input must use

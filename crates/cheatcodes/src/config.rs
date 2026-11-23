@@ -1,7 +1,10 @@
 use super::Result;
 use crate::Vm::Rpc;
-use alloy_primitives::{U256, map::AddressHashMap};
-use foundry_common::{ContractsByArtifact, fs::normalize_path};
+use alloy_primitives::{Bytes, U256, map::AddressHashMap};
+use foundry_common::{
+    ContractData, ContractsByArtifact, compile::ProfileBuild, fs::normalize_path,
+    matches_contract_creation,
+};
 use foundry_compilers::{ArtifactId, ProjectPathsConfig, utils::canonicalize};
 use foundry_config::{
     Config, FsPermissions, ResolvedRpcEndpoint, ResolvedRpcEndpoints, RpcEndpoint, RpcEndpointUrl,
@@ -11,7 +14,9 @@ use foundry_evm_core::opts::EvmOpts;
 use foundry_evm_traces::identifier::ExternalIdentifierConfig;
 use itertools::Itertools;
 use std::{
+    collections::BTreeMap,
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
 
@@ -73,6 +78,9 @@ pub struct CheatsConfig {
     pub seed: Option<U256>,
     /// Whether to allow `expectRevert` to work for internal calls.
     pub internal_expect_revert: bool,
+    /// Profile builds by the URL of the `[rpc_endpoints]` entry naming the profile, if the
+    /// command builds them.
+    pub chain_builds: Option<BTreeMap<String, Arc<ChainBuild>>>,
 }
 
 impl CheatsConfig {
@@ -119,6 +127,7 @@ impl CheatsConfig {
             assertions_revert: config.assertions_revert,
             seed: config.fuzz.seed,
             internal_expect_revert: config.allow_internal_expect_revert,
+            chain_builds: None,
         }
     }
 
@@ -255,6 +264,16 @@ impl CheatsConfig {
         }
         Ok(urls)
     }
+
+    /// Returns the profile build used on forks of `url`.
+    pub fn chain_build(&self, url: &str) -> Option<&Arc<ChainBuild>> {
+        self.chain_builds.as_ref()?.get(url)
+    }
+
+    /// Returns whether any endpoint has a profile build.
+    pub fn has_chain_builds(&self) -> bool {
+        self.chain_builds.as_ref().is_some_and(|builds| !builds.is_empty())
+    }
 }
 
 impl Default for CheatsConfig {
@@ -284,6 +303,7 @@ impl Default for CheatsConfig {
             assertions_revert: true,
             seed: None,
             internal_expect_revert: false,
+            chain_builds: None,
         }
     }
 }
@@ -304,6 +324,82 @@ fn canonicalize_existing_ancestor(path: &Path) -> PathBuf {
         path.push(component);
     }
     path
+}
+
+/// Profile build used on forks of an `[rpc_endpoints]` entry naming the profile.
+#[derive(Debug)]
+pub struct ChainBuild {
+    /// The compiled profile build.
+    pub profile: Arc<ProfileBuild>,
+    /// Linked artifacts of the build.
+    pub artifacts: ContractsByArtifact,
+}
+
+impl ChainBuild {
+    /// Returns the build of the profile named by each `[rpc_endpoints]` entry of `config`, by the
+    /// entry's URL. Entries whose URL does not resolve are skipped, and forking them fails.
+    pub fn by_endpoint(
+        config: &Config,
+        builds: Vec<Self>,
+    ) -> eyre::Result<BTreeMap<String, Arc<Self>>> {
+        let mut by_url = BTreeMap::<_, (&String, &String, Arc<Self>)>::new();
+        for build in builds.into_iter().map(Arc::new) {
+            for (alias, endpoint) in config.rpc_endpoints.iter() {
+                if let Some(profile) = &endpoint.profile
+                    && build.profile.profiles.contains(profile)
+                    && let Ok(url) = endpoint.clone().resolve().url()
+                    && let Some((other, other_profile, _)) =
+                        by_url.insert(url, (alias, profile, build.clone()))
+                    && other_profile != profile
+                {
+                    eyre::bail!(
+                        "endpoints `{other}` and `{alias}` share a URL but name different profiles"
+                    );
+                }
+            }
+        }
+        for (alias, endpoint) in config.rpc_endpoints.iter() {
+            if endpoint.profile.is_none()
+                && let Ok(url) = endpoint.clone().resolve().url()
+                && let Some((other, ..)) = by_url.get(&url)
+            {
+                eyre::bail!(
+                    "endpoint `{alias}` names no profile, but shares its URL with `{other}`, which does"
+                );
+            }
+        }
+        Ok(by_url.into_iter().map(|(url, (.., build))| (url, build)).collect())
+    }
+
+    /// Returns the artifact matching `id` in this build.
+    pub(crate) fn artifact(&self, id: &ArtifactId) -> Option<&ContractData> {
+        self.artifacts
+            .iter()
+            .find(|(other, _)| {
+                other.source == id.source && other.profile == id.profile && other.name == id.name
+            })
+            .map(|(_, data)| data)
+    }
+
+    /// Returns `init_code` with this build's creation code if it creates an artifact of
+    /// `run_artifacts` that this build compiles differently.
+    pub fn init_code(
+        &self,
+        run_artifacts: &ContractsByArtifact,
+        init_code: &[u8],
+    ) -> Option<Result<Bytes, String>> {
+        let (id, data) =
+            run_artifacts.iter().find(|(_, data)| matches_contract_creation(data, init_code))?;
+        let code = data.bytecode()?;
+        let Some(build_code) = self.artifact(id).and_then(ContractData::bytecode) else {
+            return Some(Err(format!(
+                "no linked artifact for {} in the profile build",
+                id.identifier()
+            )));
+        };
+        (build_code != code)
+            .then(|| Ok([build_code.as_ref(), &init_code[code.len()..]].concat().into()))
+    }
 }
 
 #[cfg(test)]

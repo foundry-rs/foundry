@@ -287,6 +287,9 @@ pub struct RpcEndpoint {
 
     /// additional configuration
     pub config: RpcEndpointConfig,
+
+    /// Profile whose build is used on forks of this endpoint.
+    pub profile: Option<String>,
 }
 
 impl RpcEndpoint {
@@ -301,6 +304,7 @@ impl RpcEndpoint {
             extra_endpoints: self.extra_endpoints.into_iter().map(|e| e.resolve()).collect(),
             auth: self.auth.map(|auth| auth.resolve()),
             config: self.config,
+            profile: self.profile,
         }
     }
 }
@@ -325,7 +329,8 @@ impl Serialize for RpcEndpoint {
         let has_config = self.config.retries.is_some()
             || self.config.retry_backoff.is_some()
             || self.config.compute_units_per_second.is_some()
-            || self.auth.is_some();
+            || self.auth.is_some()
+            || self.profile.is_some();
 
         if !has_config && self.extra_endpoints.is_empty() {
             // serialize as plain endpoint string if there's no additional config
@@ -344,6 +349,7 @@ impl Serialize for RpcEndpoint {
             map.serialize_entry("retry_backoff", &self.config.retry_backoff)?;
             map.serialize_entry("compute_units_per_second", &self.config.compute_units_per_second)?;
             map.serialize_entry("auth", &self.auth)?;
+            map.serialize_entry("profile", &self.profile)?;
             map.end()
         }
     }
@@ -373,6 +379,7 @@ impl<'de> Deserialize<'de> for RpcEndpoint {
             retry_backoff: Option<u64>,
             compute_units_per_second: Option<u64>,
             auth: Option<RpcAuth>,
+            profile: Option<String>,
         }
 
         let RpcEndpointConfigInner {
@@ -382,6 +389,7 @@ impl<'de> Deserialize<'de> for RpcEndpoint {
             retry_backoff,
             compute_units_per_second,
             auth,
+            profile,
         } = serde_json::from_value(value).map_err(serde::de::Error::custom)?;
 
         let (primary, extra) = match (endpoint, endpoints) {
@@ -415,6 +423,7 @@ impl<'de> Deserialize<'de> for RpcEndpoint {
             endpoint: primary,
             extra_endpoints: extra,
             auth,
+            profile,
             config: RpcEndpointConfig { retries, retry_backoff, compute_units_per_second },
         })
     }
@@ -433,6 +442,7 @@ impl Default for RpcEndpoint {
             extra_endpoints: vec![],
             config: RpcEndpointConfig::default(),
             auth: None,
+            profile: None,
         }
     }
 }
@@ -445,6 +455,7 @@ pub struct ResolvedRpcEndpoint {
     pub extra_endpoints: Vec<Result<String, UnresolvedEnvVarError>>,
     pub auth: Option<Result<String, UnresolvedEnvVarError>>,
     pub config: RpcEndpointConfig,
+    pub profile: Option<String>,
 }
 
 impl ResolvedRpcEndpoint {
@@ -559,7 +570,8 @@ mod tests {
             "retries": 5,
             "retry_backoff": 250,
             "compute_units_per_second": 100,
-            "auth": "Bearer 123"
+            "auth": "Bearer 123",
+            "profile": "linea"
         }"#;
         let config: RpcEndpoint = serde_json::from_str(s).unwrap();
         assert_eq!(
@@ -573,7 +585,20 @@ mod tests {
                     compute_units_per_second: Some(100),
                 },
                 auth: Some(RpcAuth::Raw("Bearer 123".to_string())),
+                profile: Some("linea".to_string()),
             }
+        );
+        assert_eq!(
+            serde_json::from_str::<RpcEndpoint>(&serde_json::to_string(&config).unwrap()).unwrap(),
+            config
+        );
+
+        let s = r#"{ "endpoint": "http://localhost:8545", "profile": "linea" }"#;
+        let config: RpcEndpoint = serde_json::from_str(s).unwrap();
+        assert_eq!(config.profile.as_deref(), Some("linea"));
+        assert_eq!(
+            serde_json::from_str::<RpcEndpoint>(&serde_json::to_string(&config).unwrap()).unwrap(),
+            config
         );
 
         let s = "\"http://localhost:8545\"";
@@ -589,6 +614,7 @@ mod tests {
                     compute_units_per_second: None,
                 },
                 auth: None,
+                profile: None,
             }
         );
     }
@@ -616,6 +642,7 @@ mod tests {
                     compute_units_per_second: None,
                 },
                 auth: None,
+                profile: None,
             }
         );
 

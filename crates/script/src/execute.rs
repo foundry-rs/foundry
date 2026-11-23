@@ -356,6 +356,37 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
                 );
             }
         }
+        // Refuses broadcasts to profiled endpoints that embed a library address of the run build
+        // the profile does not link.
+        if !self.script_config.chain_builds.is_empty() {
+            let run_libraries = self
+                .build_data
+                .libraries
+                .libs
+                .values()
+                .flat_map(|libraries| libraries.values())
+                .map(|address| address.parse::<Address>())
+                .collect::<Result<Vec<_>, _>>()?;
+            for tx in self.execution_result.transactions.iter().flatten() {
+                if let Some(build) =
+                    tx.rpc.as_ref().and_then(|rpc| self.script_config.chain_builds.get(rpc))
+                    && let Some(input) = tx.transaction.input()
+                {
+                    let linked = build.profile.config.libraries_with_remappings()?;
+                    let linked = linked.libs.values().flat_map(|libraries| libraries.values());
+                    if run_libraries.iter().any(|address| {
+                        input.windows(20).any(|window| window == address.as_slice())
+                            && !linked.clone().any(|other| {
+                                other.parse::<Address>().is_ok_and(|other| other == *address)
+                            })
+                    }) {
+                        eyre::bail!(
+                            "a broadcast to a profiled endpoint uses a library of the run build that its profile does not link"
+                        );
+                    }
+                }
+            }
+        }
         if !silent {
             rpc_data.check_shanghai_support().await?;
         }

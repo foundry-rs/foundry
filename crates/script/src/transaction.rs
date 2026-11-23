@@ -41,16 +41,13 @@ impl<N: Network> ScriptTransactionBuilder<N> {
             self.transaction.contract_address = Some(to);
 
             if to == create2_deployer {
-                if let Some(input) = self.transaction.transaction.input()
-                    && input.len() >= 32
+                if let Some((address, _)) = self
+                    .transaction
+                    .transaction
+                    .input()
+                    .and_then(|input| create2_deployment(create2_deployer, input))
                 {
-                    let (salt, init_code) = input.split_at(32);
-
-                    self.set_create(
-                        true,
-                        create2_deployer.create2_from_code(B256::from_slice(salt), init_code),
-                        known_contracts,
-                    )?;
+                    self.set_create(true, address, known_contracts)?;
                 } else {
                     let input_len =
                         self.transaction.transaction.input().map_or(0, |input| input.len());
@@ -171,9 +168,20 @@ impl<N: Network> ScriptTransactionBuilder<N> {
         result: &ScriptResult<N>,
         gas_estimate_multiplier: u64,
         linked_build_data: &LinkedBuildData,
+        profile_contracts: Option<&ContractsByArtifact>,
     ) -> Result<Self> {
         let mut created_contracts =
             result.get_created_contracts(&linked_build_data.known_contracts);
+
+        if let Some(contracts) = profile_contracts {
+            for (created, profiled) in
+                created_contracts.iter_mut().zip(result.get_created_contracts(contracts))
+            {
+                if profiled.exact_artifact_match {
+                    *created = profiled;
+                }
+            }
+        }
 
         // Add the additional contracts created in this transaction, so we can verify them later.
         created_contracts.retain(|contract| {
@@ -205,6 +213,15 @@ impl<N: Network> From<TransactionWithMetadata<N>> for ScriptTransactionBuilder<N
     fn from(transaction: TransactionWithMetadata<N>) -> Self {
         Self { transaction }
     }
+}
+
+/// Returns the address and init code of the contract a call to the CREATE2 `deployer` with `input`
+/// creates.
+pub(crate) fn create2_deployment(deployer: Address, input: &[u8]) -> Option<(Address, &[u8])> {
+    (input.len() >= 32).then(|| {
+        let (salt, init_code) = input.split_at(32);
+        (deployer.create2_from_code(B256::from_slice(salt), init_code), init_code)
+    })
 }
 
 #[cfg(test)]

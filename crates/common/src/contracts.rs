@@ -109,7 +109,7 @@ impl From<CompactDeployedBytecode> for BytecodeData {
 }
 
 /// Container for commonly used contract data.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ContractData {
     /// Contract name.
     pub name: String,
@@ -536,6 +536,15 @@ impl ContractsByArtifact {
             }
         }
         (funcs, events, errors_abi)
+    }
+
+    /// Returns these contracts together with those of `others`.
+    pub fn merged<'a>(&self, others: impl IntoIterator<Item = &'a Self>) -> Self {
+        let mut map = (*self.0).clone();
+        for other in others {
+            map.extend(other.iter().map(|(id, contract)| (id.clone(), contract.clone())));
+        }
+        Self(Arc::new(map))
     }
 }
 

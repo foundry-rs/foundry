@@ -50,10 +50,11 @@ use foundry_evm_core::{
     backend::{LocalForkId, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
     evm::{
-        BlockEnvFor, EthEvmNetwork, EvmEnvFor, FoundryEvmFor, FoundryEvmNetwork, InterpreterFor,
-        MessageFor, MessageResultFor, PersistentWrite, SnapshotRestores, SpecFor,
+        BlockEnvFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, FoundryEvmFor, FoundryEvmNetwork,
+        InterpreterFor, MessageFor, MessageResultFor, PersistentWrite, SnapshotRestores, SpecFor,
         TransactionRequestFor, TxFor, TxResultFor, restore_access_warmth,
     },
+    opts::{ExecutionSpecContext, resolve_execution_spec},
     utils::opcodes,
 };
 use foundry_evm_traces::{
@@ -829,6 +830,9 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Automatic CREATE2 redirects: factory call depth, original issuing code, and whether the
     /// original create grants cheatcode access. The grant is resolved after caller overrides.
     pub pending_create2_redirects: Vec<(u16, Option<Address>, bool)>,
+
+    /// Spec of the run, restored for persistent accounts on forks of profiled endpoints.
+    run_spec: Option<SpecFor<FEN>>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -919,6 +923,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             unrun_create_depth: None,
             env_handoff_creator: None,
             pending_create2_redirects: Vec::new(),
+            run_spec: None,
         }
     }
 
@@ -3006,18 +3011,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     /// Determines whether the `DEFAULT_CREATE2_DEPLOYER` should be used for a CREATE message at
     /// `depth`.
     pub fn should_use_create2_factory(&mut self, depth: usize, message: &MessageFor<FEN>) -> bool {
-        // Match the synthetic `deployCode` create at the depth of the cheatcode call, as for
-        // native creates.
-        let depth = self.deploy_code_caller_depth(depth);
-        let target_depth = if let Some(prank) = &self.get_prank(depth) {
-            prank.depth
-        } else if let Some(broadcast) = &self.broadcast {
-            broadcast.depth
-        } else {
-            1
-        };
-
-        if depth != target_depth {
+        if !self.is_own_create_depth(depth) {
             return false;
         }
 
@@ -3815,6 +3809,60 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             }
             _ => self.dynamic_gas_limit = false,
         }
+    }
+
+    /// Returns the spec `message` runs with on forks of profiled endpoints: the spec of the
+    /// profile for frames of non-persistent accounts, except top-level creates, or the spec of
+    /// the run. Returns `None` on other forks, on forks without a remote, and in replayed
+    /// transactions.
+    pub fn profile_spec(
+        &mut self,
+        running: &EvmEnvFor<FEN>,
+        message: &MessageFor<FEN>,
+        backend: &dyn CheatcodesBackend<FEN>,
+    ) -> Option<SpecFor<FEN>> {
+        if self.in_replay {
+            return None;
+        }
+        let run_spec = *self.run_spec.get_or_insert(running.spec);
+        let db = backend.backend();
+        let profiled = if message.kind.is_create() {
+            message.depth > 0
+        } else {
+            !db.is_persistent(&message.code_address)
+        };
+        let fork = db.active_fork_info()?;
+        let build = self.core.config.chain_build(&fork.url)?;
+        if !profiled {
+            return Some(run_spec);
+        }
+        let context = fork.remote.as_ref()?.context();
+        let mut env = *running;
+        resolve_execution_spec::<EvmFactoryFor<FEN>>(
+            build.profile.config.evm_version,
+            build.profile.config.hardfork,
+            &mut env,
+            ExecutionSpecContext::Script {
+                source_chain_id: context.source_chain_id,
+                endpoint_hardfork: context.hardfork,
+            },
+            None,
+        );
+        Some(env.spec)
+    }
+
+    /// Returns whether a create at `depth` is at the depth of the prank, the broadcast or the
+    /// first call, matching a synthetic `deployCode` create at the depth of the cheatcode call.
+    pub fn is_own_create_depth(&self, depth: usize) -> bool {
+        let depth = self.deploy_code_caller_depth(depth);
+        let target_depth = if let Some(prank) = &self.get_prank(depth) {
+            prank.depth
+        } else if let Some(broadcast) = &self.broadcast {
+            broadcast.depth
+        } else {
+            1
+        };
+        depth == target_depth
     }
 }
 

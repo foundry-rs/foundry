@@ -563,7 +563,18 @@ enum RunContext {
 impl VerifyArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
     pub async fn run(self) -> Result<()> {
-        let context = self.resolve_context().await?;
+        self.run_with_config(None).await
+    }
+
+    /// Runs verification, with the resolved configuration of the build that produced the
+    /// deployment if given.
+    pub async fn run_with_config(self, config: Option<Config>) -> Result<()> {
+        let context = match config {
+            Some(config) => {
+                self.resolve_context_with_config(config.merge_inline_provider(&self)?).await?
+            }
+            None => self.resolve_context().await?,
+        };
         let config = context.config.clone();
         self.run_with_resolved_context(RunContext::Local(Box::new(context)), config).await
     }
@@ -808,7 +819,11 @@ impl VerifyArgs {
     /// Resolves [VerificationContext] object either from entered contract name or by trying to
     /// match bytecode located at given address.
     pub async fn resolve_context(&self) -> Result<VerificationContext> {
-        let mut config = self.load_config_with_dependencies()?;
+        self.resolve_context_with_config(self.load_config_with_dependencies()?).await
+    }
+
+    /// Resolves [VerificationContext] like [Self::resolve_context], with `config`.
+    async fn resolve_context_with_config(&self, mut config: Config) -> Result<VerificationContext> {
         config.libraries.extend(self.libraries.clone());
 
         let project = config.project()?;

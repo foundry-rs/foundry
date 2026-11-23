@@ -12,9 +12,10 @@ use alloy_primitives::{
 use evm2::{
     EvmFeatures, ExecutedTx, ExecutionError, Inspector, InspectorConfig, OpcodeSet,
     TxResultWithState,
+    bytecode::Bytecode,
     ethereum::intrinsic_and_floor_gas,
     evm::{DbResult, PendingState, PrewarmSet, State},
-    interpreter::{GasTracker, Host, InstrStop, MessageKind, op},
+    interpreter::{GasTracker, Host, InstrStop, MessageKind, derive_create_destination, op},
     registry::HandlerError,
 };
 use eyre::WrapErr;
@@ -510,8 +511,8 @@ pub struct InspectorStackInner {
     pub reverter: Option<Address>,
     /// LIFO stack tracking the effective address of traced calls delegated to the EVM provider.
     pending_call_traces: Vec<PendingCallTrace>,
-    /// Pending CREATE2 deployer validation error, returned after the create hooks of the other
-    /// inspectors so the trace stays balanced.
+    /// Pending CREATE2 deployer validation or profile build error, returned after the create hooks
+    /// of the other inspectors so the trace stays balanced.
     pending_create2_error: Option<Bytes>,
     /// Counter for CREATE2 salt in `--batch` CREATE rewrites.
     pub batch_create_counter: u64,
@@ -1347,13 +1348,26 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let pending =
             backend.backend().lifecycle().pending_env().map(|env| (env.spec, env.chain_id()));
         let requested = self.cheatcodes.as_deref().and_then(|cheats| cheats.execution_evm_version);
-        if pending.is_none() && requested.is_none() {
+        let profiled = self.cheatcodes.as_deref().is_some_and(|cheats| {
+            cheats.core.config.has_chain_builds()
+                && backend
+                    .backend()
+                    .active_fork_info()
+                    .is_some_and(|fork| cheats.core.config.chain_build(&fork.url).is_some())
+        });
+        if pending.is_none() && requested.is_none() && !profiled {
             return None;
         }
         let running = evm_env(interp.host());
         // Same precedence as the next transaction's environment: `vm.setEvmVersion` overrides
         // the pending spec.
         let (pending_spec, chain_id) = pending.unwrap_or((running.spec, running.chain_id()));
+        let requested = match self.cheatcodes.as_deref_mut() {
+            Some(cheats) if requested.is_none() && profiled => {
+                cheats.profile_spec(&running, message, &*backend)
+            }
+            _ => requested,
+        };
         let spec = requested.unwrap_or(pending_spec);
         if spec == running.spec && chain_id == running.chain_id() {
             return None;
@@ -2199,6 +2213,47 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             }
         }
     }
+
+    /// On forks of profiled endpoints, gives project contracts created by the script the profile
+    /// build's creation code. Returns false, with the error pending, if that fails.
+    fn apply_profile_init_code(
+        &mut self,
+        interp: &mut InterpreterFor<'_, '_, FEN>,
+        message: &mut MessageFor<FEN>,
+    ) -> bool {
+        if let Some(cheats) = self.cheatcodes.as_deref()
+            && cheats.core.config.has_chain_builds()
+            && cheats.is_own_create_depth(usize::from(message.depth))
+            && let Some(run_artifacts) = &cheats.core.config.artifact_lookup
+            && let Some(fork) = self.backend.backend().active_fork_info()
+            && let Some(build) = cheats.core.config.chain_build(&fork.url)
+            && let Some(init_code) =
+                build.init_code(run_artifacts, message.input.as_bytes(interp.memory()))
+        {
+            match init_code {
+                Ok(init_code) => {
+                    message.code = Bytecode::new_legacy(init_code.clone());
+                    message.input = init_code.clone().into();
+                    if message.kind == MessageKind::Create2 {
+                        message.destination = derive_create_destination(
+                            message.kind,
+                            &message.caller,
+                            &message.salt,
+                            &init_code,
+                            0,
+                        );
+                        message.call_target = message.destination;
+                        message.code_address = message.destination;
+                    }
+                }
+                Err(err) => {
+                    self.inner.pending_create2_error = Some(err.into_bytes().into());
+                    return false;
+                }
+            }
+        }
+        true
+    }
 }
 
 impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'_, FEN> {
@@ -2503,7 +2558,8 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         }
 
         // A CREATE redirected to the CREATE2 factory is observed as a call to the factory.
-        if self.redirect_create2(interp, message) {
+        let init_code_ok = self.apply_profile_init_code(interp, message);
+        if init_code_ok && self.redirect_create2(interp, message) {
             // The call hook suspends the step again, and `create_end` ends it through `call_end`.
             self.inner.suspended_stepped.pop();
             return self.call(interp, message);
@@ -2564,7 +2620,11 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         };
         let mut cheatcode_outcome = None;
         if let Some((cheats, backend, _)) = self.cheats_and_backend() {
+            let broadcast = if init_code_ok { None } else { cheats.broadcast.take() };
             cheatcode_outcome = cheats.create_hook(interp, message, backend);
+            if broadcast.is_some() {
+                cheats.broadcast = broadcast;
+            }
         }
 
         if let Some(trace_idx) = trace_idx
@@ -2599,8 +2659,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         message: &MessageFor<FEN>,
         result: &mut MessageResultFor<FEN>,
     ) {
-        // A frame handed off to a frame EVM already ran its end hooks there.
+        // A frame handed off to a frame EVM already ran its end hooks there, as a call to the
+        // factory if it is a redirected CREATE.
         if mem::take(&mut self.inner.env_handoff_ended) {
+            self.finish_create2_redirect(message, result);
             self.restore_cheat_stepped();
             return;
         }
