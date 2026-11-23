@@ -2315,7 +2315,7 @@ mod tests {
             fs::write(root.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
             fs::write(
                 dep.join(Config::FILE_NAME),
-                "[profile.default]\nsrc = \"contracts\"\nremappings = [\"@x/=lib/x/\"]\n",
+                "[profile.default]\nsrc = \"contracts\"\nremappings = [\"@x/=lib/x/\"]\nsolc = \"0.8.18\"\n",
             )
             .unwrap();
             // An external config for the project, as passed with `FOUNDRY_CONFIG`.
@@ -2331,6 +2331,8 @@ mod tests {
                 ("FOUNDRY_ROOT", root.display().to_string()),
                 ("FOUNDRY_SRC", "src".to_string()),
                 ("DAPP_SRC", "src".to_string()),
+                ("FOUNDRY_SOLC_VERSION", "0.8.26".to_string()),
+                ("DAPP_SOLC_VERSION", "0.8.26".to_string()),
             ] {
                 jail.clear_env();
                 jail.set_env(key, value);
@@ -2341,6 +2343,11 @@ mod tests {
                         .map(|remapping| remapping.to_string())
                         .collect::<Vec<_>>(),
                     ["@x/=lib/dep/lib/x/", "dep/=lib/dep/contracts/", "x/=lib/dep/lib/x/"],
+                    "{key}"
+                );
+                assert_eq!(
+                    Config::load_with_root_and_fallback(&dep).unwrap().solc,
+                    Some(crate::SolcReq::Version("0.8.18".parse().unwrap())),
                     "{key}"
                 );
             }

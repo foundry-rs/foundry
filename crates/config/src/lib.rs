@@ -1153,6 +1153,7 @@ impl Config {
                 figment,
                 TomlFileProvider::new(None, global_toml),
                 profile.clone(),
+                !providers.is_dependency(),
             );
         }
         // merge local foundry.toml file
@@ -1163,6 +1164,7 @@ impl Config {
                 root.join(Self::FILE_NAME),
             ),
             profile.clone(),
+            !providers.is_dependency(),
         );
 
         // merge environment variables
@@ -3035,10 +3037,14 @@ impl Config {
         }
     }
 
+    /// Merges `toml_provider` for `profile` into `figment`.
+    ///
+    /// If `solc_env` is set, `FOUNDRY_SOLC_VERSION` and `DAPP_SOLC_VERSION` override its `solc`.
     fn merge_toml_provider(
         mut figment: Figment,
         toml_provider: impl Provider,
         profile: Profile,
+        solc_env: bool,
     ) -> Figment {
         figment = figment.select(profile.clone());
 
@@ -3055,7 +3061,7 @@ impl Config {
         }
         // Apply key fixes before selecting profiles, while standalone sections and profile names
         // are still distinguishable.
-        let provider = BackwardsCompatTomlProvider(ForcedSnakeCaseData(toml_provider));
+        let provider = BackwardsCompatTomlProvider(ForcedSnakeCaseData(toml_provider), solc_env);
         let provider = &provider.strict_select(profiles);
         // Config files must not move the project root. Only profile merges drop `root`, since
         // standalone sections may use it as a key, e.g. an `[rpc_endpoints]` alias.
@@ -3280,6 +3286,7 @@ pub fn parse_with_profile<T: serde::de::DeserializeOwned>(
         Figment::new(),
         Toml::string(s).nested(),
         Config::DEFAULT_PROFILE,
+        true,
     );
     if figment.profiles().any(|p| p == Config::DEFAULT_PROFILE) {
         Ok(Some((Config::DEFAULT_PROFILE, figment.select(Config::DEFAULT_PROFILE).extract()?)))
@@ -7436,11 +7443,13 @@ mod tests {
                 Figment::from(Config::default()),
                 Toml::string(global).nested(),
                 Config::DEFAULT_PROFILE,
+                true,
             );
             Config::merge_toml_provider(
                 figment,
                 Toml::string(local).nested(),
                 Config::DEFAULT_PROFILE,
+                true,
             )
         };
 
