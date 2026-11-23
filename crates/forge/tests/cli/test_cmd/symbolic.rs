@@ -9338,6 +9338,32 @@ contract SymbolicPayoutMinusFee {
         net -= net * bps / 10000;
         assert(net <= balance);
     }
+
+    // A rebated fee `fee - fee / 3` is at most `fee`, but the deduction must keep the operand
+    // ranges, so the floor survives.
+    function checkRebatedFeesKeepFloor(uint56 balance, uint8 bps) public pure {
+        unchecked {
+            uint256 x = 1 ether + uint256(balance);
+            for (uint256 i; i < 4; ++i) {
+                uint256 fee = x * bps / 10000;
+                x -= fee - fee / 3;
+            }
+            assert(x > 0);
+        }
+    }
+
+    // Each step rechecks the fee multiply on the previous result, so that check must share the
+    // caller's interval cache instead of walking the chain again.
+    function checkRebatedFeesStayBounded(uint56 balance, uint8 bps) public pure {
+        unchecked {
+            uint256 x = 1 ether + uint256(balance);
+            for (uint256 i; i < 30; ++i) {
+                uint256 fee = x * bps / 10000;
+                x -= fee - fee / 3;
+            }
+            assert(x <= 1 ether + type(uint56).max);
+        }
+    }
 }
 "#,
     );
@@ -9353,6 +9379,8 @@ contract SymbolicPayoutMinusFee {
         for signature in [
             "checkPayoutAfterFee(uint128,uint128,uint128,uint16)",
             "checkRepeatedFees(uint128,uint128,uint128,uint16)",
+            "checkRebatedFeesKeepFloor(uint56,uint8)",
+            "checkRebatedFeesStayBounded(uint56,uint8)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");

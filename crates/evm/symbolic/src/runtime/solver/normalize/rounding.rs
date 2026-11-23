@@ -283,17 +283,24 @@ impl ConstraintContext {
                     } else {
                         return false;
                     };
-                    let Some(range) = interval(divisor).filter(|range| !range.min.is_zero()) else {
+                    let Some(range) = self
+                        .interval_cached(divisor, intervals, remaining)
+                        .filter(|range| !range.min.is_zero())
+                    else {
                         return false;
                     };
                     addend.is_none_or(|addend| {
                         matches!(addend.kind(), SymExprKind::BinOp(SymBinOp::Sub, value, one)
                             if value == divisor && one.as_const() == Some(U256::ONE))
-                            || interval(addend).is_some_and(|addend| addend.max < range.min)
+                            || self
+                                .interval_cached(addend, intervals, remaining)
+                                .is_some_and(|addend| addend.max < range.min)
                     }) && (other == divisor
-                        || interval(other).is_some_and(|other| other.max <= range.min)
+                        || self
+                            .interval_cached(other, intervals, remaining)
+                            .is_some_and(|other| other.max <= range.min)
                         || self.asserts_less_or_equal(other, divisor))
-                        && self.mul_cannot_overflow_256(left, right)
+                        && self.mul_cannot_overflow_256_cached(left, right, intervals, remaining)
                 };
                 // `round_down(n, t) <= n` (zero when `t == 0`), so dividing the rounded product
                 // is bounded by `n / d`. The EVM `DIV` may still carry its `t == 0` guard.
