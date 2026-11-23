@@ -333,7 +333,7 @@ impl ConstraintContext {
                 .any(|(quotient, factor)| {
                     quotient.udiv_operands().is_some_and(|(dividend, divisor)| {
                         dividend == large
-                            && (factor == divisor
+                            && (self.factor_within_divisor(factor, divisor)
                                 || interval(factor)
                                     .zip(interval(divisor))
                                     .is_some_and(|(factor, divisor)| factor.max <= divisor.min))

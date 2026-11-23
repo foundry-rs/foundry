@@ -1506,6 +1506,13 @@ impl ConstraintContext {
         self.order_facts.get(small).map_or(&[], Vec::as_slice)
     }
 
+    /// Returns whether `factor` is `divisor` or another conjunct asserts `factor <= divisor`, so
+    /// `(n / divisor) * factor <= (n / divisor) * divisor <= n`. A zero divisor forces a zero
+    /// factor.
+    fn factor_within_divisor(&self, factor: &SymExpr, divisor: &SymExpr) -> bool {
+        factor == divisor || self.asserted_upper_bounds(factor).contains(divisor)
+    }
+
     fn interval(&self, expr: &SymExpr) -> Option<WordInterval> {
         let mut intervals = HashMap::default();
         let mut remaining = MAX_LOCAL_ANALYSIS_NODES;
@@ -2390,9 +2397,14 @@ impl ConstraintContext {
         intervals: &mut HashMap<SymExpr, Option<WordInterval>>,
         remaining: &mut usize,
     ) -> bool {
-        // `(a / d) * d <= a`, and the product is zero when `d == 0`, so it never wraps.
+        // `(a / d) * k <= (a / d) * d <= a` once `k <= d`, and the product is zero when `d == 0`,
+        // so it never wraps.
         if self.has_non_wrapping_product(left, right)
-            || rounded_product_operands(left, right).is_some()
+            || [(left, right), (right, left)].into_iter().any(|(quotient, factor)| {
+                quotient
+                    .udiv_operands()
+                    .is_some_and(|(_, divisor)| self.factor_within_divisor(factor, divisor))
+            })
         {
             return true;
         }
