@@ -977,16 +977,18 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 "#]]);
 }
 
-// A constant slot below `2^128` read in assembly is a fixed slot, not a folded nested mapping
-// entry, so it is not searched against the layout's nested mappings and many candidate keys.
+// A constant slot whose top 128 bits are all zeros or all ones, read in assembly, is a fixed slot,
+// not a folded nested mapping entry, so it is not searched against the layout's nested mappings.
+// The 256 branches add enough candidate keys that the search would exhaust its budget. The default
+// profile is unoptimized, so solc pushes the owner slot whole instead of as `not(0x8b78c6d8)`.
 #[forgetest_init]
-fn symbolic_small_constant_slot_skips_folded_mapping_search(prj: _, cmd: _) {
-    skip_unless_z3!("symbolic_small_constant_slot_skips_folded_mapping_search");
+fn symbolic_non_hash_constant_slot_skips_folded_mapping_search(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_non_hash_constant_slot_skips_folded_mapping_search");
 
     let branches: String =
         (0..256).map(|i| format!("        if (x == {}) return {i};\n", 1000 + i)).collect();
     prj.add_test(
-        "SymbolicSmallConstantSlot.t.sol",
+        "SymbolicNonHashConstantSlot.t.sol",
         &format!(
             r#"
 contract ConstantSlotCounter {{
@@ -1011,12 +1013,24 @@ contract ConstantSlotCounter {{
         }}
     }}
 
+    function setOwner(address owner) external {{
+        assembly {{
+            sstore(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffff74873927, owner)
+        }}
+    }}
+
+    function getOwner() external view returns (address owner) {{
+        assembly {{
+            owner := sload(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffff74873927)
+        }}
+    }}
+
     function index(uint256 x) external pure returns (uint256) {{
 {branches}        return type(uint256).max;
     }}
 }}
 
-contract SymbolicSmallConstantSlot {{
+contract SymbolicNonHashConstantSlot {{
     ConstantSlotCounter counter = new ConstantSlotCounter();
 
     function checkAddSetsTotal(uint256 amount) public {{
@@ -1028,19 +1042,30 @@ contract SymbolicSmallConstantSlot {{
         counter.add(amount);
         assert(counter.total() != amount);
     }}
+
+    function checkSetOwnerSetsOwner(address owner) public {{
+        counter.setOwner(owner);
+        assert(counter.getOwner() == owner);
+    }}
 }}
 "#
         ),
     );
 
-    assert_symbolic(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicSmallConstantSlot"]))
-        .failure()
-        .stdout_eq(str![[r#"
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicNonHashConstantSlot",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/SymbolicSmallConstantSlot.t.sol:SymbolicSmallConstantSlot
-[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [..]] checkAddChangesTotal(uint256) ([METRICS])
+Ran 3 tests for test/SymbolicNonHashConstantSlot.t.sol:SymbolicNonHashConstantSlot
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkAddChangesTotal(uint256) ([METRICS])
 [PASS] checkAddSetsTotal(uint256) ([METRICS])
-Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
+[PASS] checkSetOwnerSetsOwner(address) ([METRICS])
+Suite result: FAILED. 2 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

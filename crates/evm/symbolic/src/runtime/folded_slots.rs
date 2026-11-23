@@ -114,8 +114,12 @@ impl FoldedSlots {
         deadline: Option<Instant>,
     ) -> bool {
         let max_offset = U256::ONE << STORAGE_LAYOUT_OFFSET_BITS;
-        // `keccak(..) + offset` below `2^128` needs a hash with 128 leading zero or one bits.
-        if slot < U256::ONE << 128
+        // With an offset below `2^64`, a slot whose top 128 bits are all zeros or all ones, such
+        // as solady's `_TOTAL_SUPPLY_SLOT` or `_OWNER_SLOT`, is `keccak(..) + offset` only for a
+        // hash with at least 127 leading zero or one bits, so it is a fixed slot.
+        let high = slot >> 128usize;
+        if high.is_zero()
+            || high == U256::MAX >> 128
             || self.searched.contains(&slot)
             || cx.concrete_keccak_base(slot, STORAGE_LAYOUT_OFFSET_BITS).is_some()
         {
