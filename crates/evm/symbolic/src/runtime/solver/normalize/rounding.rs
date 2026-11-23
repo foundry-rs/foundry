@@ -6,7 +6,7 @@
 use super::{
     ConstraintContext, HashMap, MAX_LOCAL_ANALYSIS_NODES, SymBinOp, SymBoolExpr, SymBoolExprKind,
     SymCmpOp, SymExpr, SymExprKind, U256, WordInterval, euclidean_sum_dividend,
-    rounded_product_operands,
+    word_division_operands,
 };
 
 /// `anchor - below <= rounded <= anchor + above` over mathematical integers.
@@ -147,7 +147,10 @@ impl ConstraintContext {
     /// `x` and `z`. The Euclidean sum `(a / d) * d + a % d` is `a`, so each summand is at most the
     /// other's complement. With a nonzero divisor, `a / d <= (a - 1) / d + 1`, also when selected
     /// by `a != 0`, and `(x * y + c) / d <= x` once `y <= d`, `x * y` cannot wrap, and `c < d`.
-    /// The shares `w * a / k + w * b / k <= w` once `a + b <= k`.
+    /// Another conjunct's cross-multiplied `x * k <= y * l` also decides `x <= y` once `k` is
+    /// positive, `l <= k`, and `x * k` cannot wrap.
+    /// The shares `w * a / k + w * b / k <= w` once `a + b <= k`, and `n <= ceil(n / d) * d` for a
+    /// nonzero `d` once the multiple cannot wrap.
     pub(super) fn division_comparison_value(&self, expr: &SymBoolExpr) -> Option<bool> {
         if let SymBoolExprKind::Not(inner) = expr.kind() {
             return self.division_comparison_value(inner).map(|value| !value);
@@ -155,7 +158,13 @@ impl ConstraintContext {
         let SymBoolExprKind::Cmp(op, left, right) = expr.kind() else { return None };
         let mut intervals = HashMap::default();
         let mut remaining = MAX_LOCAL_ANALYSIS_NODES;
-        if let Some(strict) = self.division_order(left, right, &mut intervals, &mut remaining) {
+        let mut order = |small, large| {
+            self.division_order(small, large, &mut intervals, &mut remaining).or_else(|| {
+                self.asserts_scaled_order(small, large, &mut intervals, &mut remaining)
+                    .then_some(false)
+            })
+        };
+        if let Some(strict) = order(left, right) {
             return match op {
                 SymCmpOp::Ule => Some(true),
                 SymCmpOp::Ugt => Some(false),
@@ -164,7 +173,7 @@ impl ConstraintContext {
                 _ => None,
             };
         }
-        if let Some(strict) = self.division_order(right, left, &mut intervals, &mut remaining) {
+        if let Some(strict) = order(right, left) {
             return match op {
                 SymCmpOp::Uge => Some(true),
                 SymCmpOp::Ult => Some(false),
@@ -202,6 +211,28 @@ impl ConstraintContext {
         {
             return Some(false);
         }
+        // `n <= ceil(n / d) * d` for a nonzero `d`, rounding up as `(n + d - 1) / d` or as
+        // OpenZeppelin's `ceilDiv`. Over the integers the multiple lies in `[n, n + d - 1]`, so it
+        // cannot wrap once `n + d` does not, from value ranges or a checked addition's `d <= ~n`
+        // guard. A checked product also covers `ceilDiv`, whose zero `n` makes the bound trivial.
+        if let SymExprKind::BinOp(SymBinOp::Mul, left, right) = large.kind()
+            && let Some(divisor) =
+                [(left, right), (right, left)].into_iter().find_map(|(ceiling, divisor)| {
+                    let fits = if ceil_div_operands(ceiling) == Some((small, divisor)) {
+                        self.mul_cannot_overflow_256_cached(ceiling, divisor, intervals, remaining)
+                            || self.sum_cannot_wrap(small, divisor, intervals, remaining)
+                    } else {
+                        ceil_sum_operands(ceiling) == Some((small, divisor))
+                            && self.sum_cannot_wrap(small, divisor, intervals, remaining)
+                    };
+                    fits.then_some(divisor)
+                })
+            && self
+                .interval_cached(divisor, intervals, remaining)
+                .is_some_and(|range| !range.min.is_zero())
+        {
+            return Some(false);
+        }
         let mut interval = |expr: &SymExpr| self.interval_cached(expr, intervals, remaining);
         let nonzero = |range: Option<WordInterval>| range.is_some_and(|range| !range.min.is_zero());
         match small.kind() {
@@ -218,25 +249,7 @@ impl ConstraintContext {
                 // `x / d <= (x - 1) / d + 1` for `d >= 1`, as in OpenZeppelin's `ceilDiv`: for
                 // `x >= 1` the quotients differ by at most one and the sum cannot wrap, and
                 // `0 / d` is zero. SMT's `x / 0` is all ones, so `d` must be nonzero.
-                let ceiling = match large.kind() {
-                    // OpenZeppelin v5 selects zero for `x == 0`, where `x / d` is zero too.
-                    SymExprKind::Ite(condition, value, zero)
-                        if zero.as_const() == Some(U256::ZERO)
-                            && let SymBoolExprKind::Not(inner) = condition.kind()
-                            && inner.zero_check_operand() == Some(dividend) =>
-                    {
-                        value
-                    }
-                    _ => large,
-                };
-                if let SymExprKind::BinOp(SymBinOp::Add, quotient, increment) = ceiling.kind()
-                    && increment.as_const() == Some(U256::ONE)
-                    && let Some((predecessor, other)) = quotient.udiv_operands()
-                    && other == divisor
-                    && let SymExprKind::BinOp(SymBinOp::Sub, value, decrement) = predecessor.kind()
-                    && decrement.as_const() == Some(U256::ONE)
-                    && value == dividend
-                {
+                if ceil_div_operands(large) == Some((dividend, divisor)) {
                     return nonzero(interval(divisor)).then_some(false);
                 }
                 // When `y + z` is nonzero and does not wrap, `x * y / (y + z) <= x`, strictly once
@@ -282,10 +295,13 @@ impl ConstraintContext {
                         && self.mul_cannot_overflow_256(left, right)
                 };
                 // `round_down(n, t) <= n` (zero when `t == 0`), so dividing the rounded product
-                // is bounded by `n / d`.
+                // is bounded by `n / d`. The EVM `DIV` may still carry its `t == 0` guard.
                 let peeled = match dividend.kind() {
                     SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
-                        rounded_product_operands(left, right).map(|(n, _)| n)
+                        [(left, right), (right, left)].into_iter().find_map(|(quotient, factor)| {
+                            word_division_operands(quotient)
+                                .and_then(|(n, t)| (t == factor).then_some(n))
+                        })
                     }
                     _ => None,
                 };
@@ -326,6 +342,47 @@ impl ConstraintContext {
                 .then_some(false),
             _ => None,
         }
+    }
+
+    /// Returns whether another conjunct asserts `small * k <= large * l` with `l <= k` and a
+    /// positive `k`, as in a cross-multiplied collateral check. When `small * k` does not wrap,
+    /// `small > large` would give `small * k > large * k >= large * l`, using `k > 0` and
+    /// `l <= k`, and a wrapped `large * l` is only smaller. The reverse, deciding a scaled fact
+    /// from `small <= large`, must never remove a conjunct, or the two could justify each other.
+    fn asserts_scaled_order(
+        &self,
+        small: &SymExpr,
+        large: &SymExpr,
+        intervals: &mut HashMap<SymExpr, Option<WordInterval>>,
+        remaining: &mut usize,
+    ) -> bool {
+        let factor = |product: &'_ SymExpr, operand: &SymExpr| match product.kind() {
+            SymExprKind::BinOp(SymBinOp::Mul, left, right) if left == operand => {
+                Some(right.clone())
+            }
+            SymExprKind::BinOp(SymBinOp::Mul, left, right) if right == operand => {
+                Some(left.clone())
+            }
+            _ => None,
+        };
+        self.facts.iter().any(|fact| {
+            let (scaled_small, scaled_large) = match fact.kind() {
+                SymBoolExprKind::Cmp(SymCmpOp::Ult | SymCmpOp::Ule, left, right) => (left, right),
+                SymBoolExprKind::Not(inner) => match inner.kind() {
+                    SymBoolExprKind::Cmp(SymCmpOp::Ult, left, right) => (right, left),
+                    _ => return false,
+                },
+                _ => return false,
+            };
+            let (Some(k), Some(l)) = (factor(scaled_small, small), factor(scaled_large, large))
+            else {
+                return false;
+            };
+            self.interval_cached(&k, intervals, remaining)
+                .zip(self.interval_cached(&l, intervals, remaining))
+                .is_some_and(|(k, l)| !k.min.is_zero() && l.max <= k.min)
+                && self.mul_cannot_overflow_256(small, &k)
+        })
     }
 
     /// Returns `w` for the shares `w * a / k` and `w * b / k` of a nonzero `k` once `a + b <= k`,
@@ -400,6 +457,27 @@ impl ConstraintContext {
         .then_some(found)
     }
 
+    /// Returns whether `a + b` cannot wrap, from value ranges or a checked addition's `b <= ~a`
+    /// guard.
+    fn sum_cannot_wrap(
+        &self,
+        a: &SymExpr,
+        b: &SymExpr,
+        intervals: &mut HashMap<SymExpr, Option<WordInterval>>,
+        remaining: &mut usize,
+    ) -> bool {
+        let complement = |x: &SymExpr, y: &SymExpr| {
+            self.asserted_upper_bounds(x)
+                .iter()
+                .any(|bound| matches!(bound.kind(), SymExprKind::Not(inner) if inner == y))
+        };
+        self.interval_cached(a, intervals, remaining)
+            .zip(self.interval_cached(b, intervals, remaining))
+            .is_some_and(|(a, b)| a.max.checked_add(b.max).is_some())
+            || complement(a, b)
+            || complement(b, a)
+    }
+
     /// Returns whether other conjuncts assert `small <= large`, including strict `<`. An elapsed
     /// `t - s` is at most `d` once `s <= t` and `t <= d + s`. A wrapped `d + s` would be below
     /// `s <= t`, so the two facts cannot both hold.
@@ -443,4 +521,44 @@ impl ConstraintContext {
         }
         None
     }
+}
+
+/// Returns `(n, d)` for OpenZeppelin's `ceilDiv`, `(n - 1) / d + 1`. v5 selects zero for `n == 0`.
+fn ceil_div_operands(ceiling: &SymExpr) -> Option<(&SymExpr, &SymExpr)> {
+    let (ceiling, selector) = match ceiling.kind() {
+        SymExprKind::Ite(condition, value, zero)
+            if zero.as_const() == Some(U256::ZERO)
+                && let SymBoolExprKind::Not(inner) = condition.kind()
+                && let Some(selector) = inner.zero_check_operand() =>
+        {
+            (value, Some(selector))
+        }
+        _ => (ceiling, None),
+    };
+    let SymExprKind::BinOp(SymBinOp::Add, quotient, increment) = ceiling.kind() else {
+        return None;
+    };
+    let (predecessor, divisor) = quotient.udiv_operands()?;
+    let SymExprKind::BinOp(SymBinOp::Sub, value, decrement) = predecessor.kind() else {
+        return None;
+    };
+    (increment.as_const() == Some(U256::ONE)
+        && decrement.as_const() == Some(U256::ONE)
+        && selector.is_none_or(|selector| selector == value))
+    .then_some((value, divisor))
+}
+
+/// Returns `(n, d)` for `n` rounded up as `(n + d - 1) / d`.
+fn ceil_sum_operands(ceiling: &SymExpr) -> Option<(&SymExpr, &SymExpr)> {
+    let (numerator, divisor) = ceiling.udiv_operands()?;
+    let SymExprKind::BinOp(SymBinOp::Sub, sum, decrement) = numerator.kind() else { return None };
+    let SymExprKind::BinOp(SymBinOp::Add, a, b) = sum.kind() else { return None };
+    let n = if b == divisor {
+        a
+    } else if a == divisor {
+        b
+    } else {
+        return None;
+    };
+    (decrement.as_const() == Some(U256::ONE)).then_some((n, divisor))
 }

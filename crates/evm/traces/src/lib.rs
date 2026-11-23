@@ -89,9 +89,9 @@ pub use evm2_inspectors::tracing::{
     CallTraceArena, FourByteInspector, GethTraceBuilder, ParityTraceBuilder, StackSnapshotType,
     TraceWriter, TracingInspector, TracingInspectorConfig,
     types::{
-        CallKind, CallLog, CallTrace, CallTraceNode, CallTraceStep, DecodedCallData,
-        DecodedCallLog, DecodedCallTrace, DecodedInternalCall, DecodedTraceStep, RecordedMemory,
-        StorageChange, StorageChangeReason, TraceMemberOrder,
+        CallKind, CallLog, CallTrace, CallTraceNode, CallTraceStep, CallTraceStepExtra,
+        DecodedCallData, DecodedCallLog, DecodedCallTrace, DecodedInternalCall, DecodedTraceStep,
+        RecordedMemory, SelfdestructTrace, StorageChange, StorageChangeReason, TraceMemberOrder,
     },
 };
 
@@ -234,8 +234,8 @@ impl SparsedTraceArena {
                         // we only remove decoded internal calls if they did not start/pause tracing
                         Some(TraceMemberOrder::Step(step_idx)) => {
                             // If this is an internal call beginning, track it in `internal_calls`
-                            if let Some(decoded) = &nodes[node_idx].trace.steps[step_idx].decoded
-                                && let DecodedTraceStep::InternalCall(_, end_step_idx) = &**decoded
+                            if let Some(DecodedTraceStep::InternalCall(_, end_step_idx)) =
+                                nodes[node_idx].trace.steps[step_idx].decoded()
                             {
                                 internal_calls.push((item_idx, remove, *end_step_idx));
                                 // we decide if we should remove it later
@@ -372,7 +372,7 @@ pub fn render_trace_arena(arena: &SparsedTraceArena) -> String {
 /// Prunes trace depth if depth is provided as an argument.
 pub fn prune_trace_depth(arena: &mut CallTraceArena, depth: usize) {
     for node in arena.nodes_mut() {
-        if node.trace.depth >= depth {
+        if usize::from(node.trace.depth) >= depth {
             node.ordering.clear();
         }
     }
@@ -390,7 +390,7 @@ pub fn trace_arena_at_depth(arena: &SparsedTraceArena, depth: usize) -> SparsedT
         }
         reachable[node_idx] = true;
         let node = &nodes[node_idx];
-        if node.trace.depth < depth {
+        if usize::from(node.trace.depth) < depth {
             pending.extend(node.ordering.iter().filter_map(|item| match item {
                 TraceMemberOrder::Call(child_idx) => Some(node.children[*child_idx]),
                 _ => None,
@@ -401,7 +401,7 @@ pub fn trace_arena_at_depth(arena: &SparsedTraceArena, depth: usize) -> SparsedT
     let mut remapped = vec![None; nodes.len()];
     for (next_idx, node) in nodes.iter_mut().filter(|node| reachable[node.idx]).enumerate() {
         remapped[node.idx] = Some(next_idx);
-        if node.trace.depth >= depth {
+        if usize::from(node.trace.depth) >= depth {
             node.ordering.clear();
             node.children.clear();
         } else {
@@ -463,7 +463,7 @@ pub fn render_trace_arena_inner(
         let needs_dedup = resolved.as_ref().nodes().iter().any(|node| {
             node.trace.steps.iter().any(|step| {
                 step.storage_change.is_some()
-                    && matches!(step.decoded.as_deref(), Some(DecodedTraceStep::Line(_)))
+                    && matches!(step.decoded(), Some(DecodedTraceStep::Line(_)))
             })
         });
         if needs_dedup {
@@ -471,7 +471,7 @@ pub fn render_trace_arena_inner(
             for node in resolved.to_mut().nodes_mut() {
                 for step in &mut node.trace.steps {
                     if step.storage_change.is_some()
-                        && matches!(step.decoded.as_deref(), Some(DecodedTraceStep::Line(_)))
+                        && matches!(step.decoded(), Some(DecodedTraceStep::Line(_)))
                     {
                         step.storage_change = None;
                     }
@@ -1000,13 +1000,10 @@ mod tests {
                 stack: None,
                 push_stack: None,
                 memory: None,
-                returndata: Bytes::new(),
                 gas_remaining: 0,
                 gas_refund_counter: 0,
                 gas_cost: 0,
-                state_gas_cost: None,
                 state_gas_reservoir: None,
-                state_gas_spent: 0,
                 storage_change: Some(Box::new(StorageChange {
                     key: U256::ONE,
                     value: U256::from(2),
@@ -1014,8 +1011,7 @@ mod tests {
                     reason: StorageChangeReason::SSTORE,
                 })),
                 status: Some(InstrStop::Stop),
-                immediate_bytes: None,
-                decoded: None,
+                extra: None,
             }],
             ..Default::default()
         };

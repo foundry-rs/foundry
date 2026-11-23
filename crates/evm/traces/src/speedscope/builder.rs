@@ -78,8 +78,7 @@ impl<'a> SpeedscopeBuilder<'a> {
     ) {
         let Some(step) = steps.get(step_idx) else { return };
 
-        if let Some(DecodedTraceStep::InternalCall(decoded, step_end_idx)) = step.decoded.as_deref()
-        {
+        if let Some(DecodedTraceStep::InternalCall(decoded, step_end_idx)) = step.decoded() {
             let frame_idx = self.frame_idx(&decoded.func_name);
             self.profile.open_frame(frame_idx, self.cumulative_gas);
             step_exits.push(StepExit { step_idx: *step_end_idx, frame_idx });
@@ -145,17 +144,13 @@ mod tests {
             stack: None,
             push_stack: None,
             memory: None,
-            returndata: Default::default(),
             gas_remaining: 0,
             gas_refund_counter: 0,
             gas_cost,
-            state_gas_cost: None,
             state_gas_reservoir: None,
-            state_gas_spent: 0,
             storage_change: None,
             status: Some(InstrStop::Stop),
-            immediate_bytes: None,
-            decoded: None,
+            extra: None,
         }
     }
 

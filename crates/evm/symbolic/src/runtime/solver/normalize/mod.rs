@@ -930,7 +930,10 @@ impl ConstraintContext {
         }
         if let SymExprKind::BinOp(SymBinOp::And, value, mask) = expr.kind()
             && let Some(bits) = mask.as_const().and_then(mask_low_bits)
-            && self.unsigned_bits(value) <= bits
+            && (self.unsigned_bits(value) <= bits
+                // Bit widths ignore a divisor, so a share `x * w / k` with `w`'s bound at most
+                // `k`'s minimum looks wider than `x`; its interval divides by `k`.
+                || self.interval(value).is_some_and(|range| range.max.bit_len() <= bits))
         {
             // `x & low_mask => x` when the current context proves `x` fits the mask.
             return value.clone();
@@ -2186,6 +2189,14 @@ impl ConstraintContext {
         if self.bounded_zero_check_operand(condition) == Some(operand) {
             return true;
         }
+        // `normalize_cmp_for_solver` rewrites the zero check `a - b == 0` to `a == b`, with a
+        // constant operand on the right, so either order can occur.
+        if let SymExprKind::BinOp(SymBinOp::Sub, a, b) = operand.kind()
+            && let SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) = condition.kind()
+            && ((left == a && right == b) || (left == b && right == a))
+        {
+            return true;
+        }
         // For a positive constant d, n / d == 0 iff n < d. Normalization
         // exposes this comparison before the Solidity multiplication guard.
         if let Some((numerator, denominator)) = operand.udiv_operands()
@@ -2365,17 +2376,29 @@ impl ConstraintContext {
     }
 
     pub(super) fn mul_cannot_overflow_256(&self, left: &SymExpr, right: &SymExpr) -> bool {
+        let mut intervals = HashMap::default();
+        let mut remaining = MAX_LOCAL_ANALYSIS_NODES;
+        self.mul_cannot_overflow_256_cached(left, right, &mut intervals, &mut remaining)
+    }
+
+    /// Like [`Self::mul_cannot_overflow_256`], sharing the caller's interval cache and node
+    /// budget, so a proof nested inside interval analysis does not restart it.
+    fn mul_cannot_overflow_256_cached(
+        &self,
+        left: &SymExpr,
+        right: &SymExpr,
+        intervals: &mut HashMap<SymExpr, Option<WordInterval>>,
+        remaining: &mut usize,
+    ) -> bool {
         // `(a / d) * d <= a`, and the product is zero when `d == 0`, so it never wraps.
         if self.has_non_wrapping_product(left, right)
             || rounded_product_operands(left, right).is_some()
         {
             return true;
         }
-        let mut intervals = HashMap::default();
-        let mut remaining = MAX_LOCAL_ANALYSIS_NODES;
         if self
-            .interval_cached(left, &mut intervals, &mut remaining)
-            .zip(self.interval_cached(right, &mut intervals, &mut remaining))
+            .interval_cached(left, intervals, remaining)
+            .zip(self.interval_cached(right, intervals, remaining))
             .is_some_and(|(left, right)| left.max.checked_mul(right.max).is_some())
         {
             return true;
