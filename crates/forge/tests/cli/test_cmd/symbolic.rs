@@ -9451,7 +9451,9 @@ contract SymbolicEarnedOrder {
 }
 
 // A balance scaled by an index that only grows stays at least the balance:
-// `principal * newIndex / oldIndex >= principal`.
+// `principal * newIndex / oldIndex >= principal`. Aave rounds `rayMul` half up, and
+// `scaled * index + HALF_RAY >= scaled * RAY` once `index >= RAY`, also with more addends that
+// cannot wrap the sum.
 #[forgetest_init]
 fn symbolic_proves_indexed_balance_growth(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_indexed_balance_growth");
@@ -9459,6 +9461,78 @@ fn symbolic_proves_indexed_balance_growth(prj: _, cmd: _) {
         "SymbolicIndexedBalance.t.sol",
         r#"
 contract SymbolicIndexedBalance {
+    uint256 internal constant RAY = 1e27;
+    uint256 internal constant HALF_RAY = 0.5e27;
+
+    uint128 internal scaledBalance;
+    uint128 internal liquidityIndex;
+
+    // Half-up `rayMul` as in Aave v3's `WadRayMath`.
+    function rayMul(uint256 a, uint256 b) internal pure returns (uint256 c) {
+        assembly {
+            if iszero(or(iszero(b), iszero(gt(a, div(sub(not(0), HALF_RAY), b))))) { revert(0, 0) }
+            c := div(add(mul(a, b), HALF_RAY), RAY)
+        }
+    }
+
+    function checkRayBalanceGrows(uint128 scaled, uint128 index) public {
+        require(index >= RAY);
+        scaledBalance = scaled;
+        liquidityIndex = index;
+        assert(rayMul(scaledBalance, liquidityIndex) >= scaledBalance);
+    }
+
+    function checkRayIndexBelowOne(uint128 scaled, uint128 index) public {
+        require(index >= RAY - 1);
+        scaledBalance = scaled;
+        liquidityIndex = index;
+        assert(rayMul(scaledBalance, liquidityIndex) >= scaledBalance);
+    }
+
+    function checkRayBalanceWithFee(uint128 scaled, uint128 index, uint64 fee) public pure {
+        require(index >= RAY);
+        unchecked {
+            assert(uint256(scaled) * index + fee + HALF_RAY >= uint256(scaled) * RAY);
+        }
+    }
+
+    function checkWrappingAddend(uint128 scaled, uint128 index, uint256 addend) public pure {
+        require(index >= RAY && addend != 0);
+        unchecked {
+            assert(uint256(scaled) * index + addend >= uint256(scaled) * RAY);
+        }
+    }
+
+    // Each sum reuses the previous two, so walking the sums as trees takes exponential time.
+    function checkSharedSums(uint8 a, uint8 b, uint256 low, uint256 high) public pure {
+        unchecked {
+            uint256 p = a;
+            uint256 q = b;
+            for (uint256 i = 0; i < 40; i++) {
+                (p, q) = (q, p + q);
+            }
+            require(low <= q && q <= high);
+            assert(low <= high);
+        }
+    }
+
+    // Each side reuses the previous one twice, once through a sum.
+    function checkSharedProducts(uint256 x, uint256 y, uint256 u, uint256 v, uint256 z)
+        public
+        pure
+    {
+        require(x <= 1 && y <= 1 && u <= 1 && v <= 1 && z <= 1 && u <= v);
+        unchecked {
+            uint256 l = x;
+            uint256 r = y;
+            for (uint256 i = 0; i < 40; i++) {
+                l = l * u;
+                r = (r + z) * v;
+            }
+            assert(l <= r);
+        }
+    }
+
     function checkBalanceGrows(uint128 principal, uint128 oldIndex, uint128 newIndex) public pure {
         require(oldIndex != 0 && oldIndex <= newIndex);
         assert(uint256(principal) * newIndex / oldIndex >= principal);
@@ -9503,14 +9577,24 @@ contract SymbolicIndexedBalance {
             .stdout
             .clone();
 
-        let result = json_test_result(&output, "checkBalanceGrows(uint128,uint128,uint128)");
-        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
-        assert_eq!(
-            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
-            "optimized={optimized}"
-        );
+        for signature in [
+            "checkBalanceGrows(uint128,uint128,uint128)",
+            "checkRayBalanceGrows(uint128,uint128)",
+            "checkRayBalanceWithFee(uint128,uint128,uint64)",
+            "checkSharedSums(uint8,uint8,uint256,uint256)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "pass", "{signature}, optimized={optimized}");
+            assert_eq!(
+                result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+                "{signature}, optimized={optimized}"
+            );
+        }
 
         for signature in [
+            "checkRayIndexBelowOne(uint128,uint128)",
+            "checkWrappingAddend(uint128,uint128,uint256)",
+            "checkSharedProducts(uint256,uint256,uint256,uint256,uint256)",
             "checkIndexShrank(uint128,uint128,uint128)",
             "checkWrappingProduct(uint256,uint256,uint256)",
             "checkOtherPrincipal(uint128,uint128,uint128,uint128)",
