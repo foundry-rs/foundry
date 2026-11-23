@@ -3116,6 +3116,22 @@ contract SymbolicFreeAddressWrites is Test {
         assert(uint256(vm.load(b, bytes32(uint256(1000)))) == x);
     }
 
+    // State written through a free address still reads back after `vm.isPersistent` takes it.
+    function checkNonceReadsBackAfterIsPersistent(address a) public {
+        vm.setNonceUnsafe(a, 5);
+        vm.isPersistent(a);
+        assert(vm.getNonce(a) == 5);
+    }
+
+    function checkStorageReadsBackAfterIsPersistent(address a) public {
+        vm.assume(a != address(this) && a != address(vm));
+        // Stores 7 at slot 0.
+        vm.etch(a, hex"6007600055");
+        vm.isPersistent(a);
+        (bool ok,) = a.call("");
+        assert(ok && uint256(vm.load(a, 0)) == 7);
+    }
+
     // Each test below fails concretely for `a == address(vault)`.
     function checkStoreMayTargetSetUpContract(address a) public {
         vm.store(a, 0, bytes32(uint256(7)));
@@ -3200,6 +3216,36 @@ contract SymbolicFreeAddressWrites is Test {
         (bool ok,) = address(vault).call{value: 5}("");
         assert(!ok || a != address(vault) || address(vault).balance == 10);
     }
+
+    // The address may name a persistent account, such as the sender.
+    function checkIsPersistentSeesKnownAccounts(address a) public {
+        assert(!vm.isPersistent(a));
+    }
+
+    // `vm.isPersistent` only reads the address, so later reads through it still see the
+    // account it may name.
+    function checkLoadAfterIsPersistent(address a) public {
+        vault.set(7);
+        vm.isPersistent(a);
+        uint256 value = uint256(vm.load(a, 0));
+        assert(a != address(vault) || value != 7);
+    }
+
+    function checkNonceAfterIsPersistent(address a) public {
+        vm.isPersistent(a);
+        uint256 nonce = vm.getNonce(a);
+        assert(a != address(vault) || nonce != 1);
+    }
+
+    function checkCodeAfterIsPersistent(address a) public {
+        vm.isPersistent(a);
+        bytes1 first;
+        assembly {
+            extcodecopy(a, 0, 0, 1)
+            first := mload(0)
+        }
+        assert(a != address(vault) || first != 0x60);
+    }
 }
 "#,
     );
@@ -3234,19 +3280,25 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 11 tests for test/SymbolicFreeAddressWrites.t.sol:SymbolicFreeAddressWrites
+Ran 17 tests for test/SymbolicFreeAddressWrites.t.sol:SymbolicFreeAddressWrites
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkCodeAfterIsPersistent(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealKeepsCode(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDerivedArgumentDecidesAddress(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDirtyWordKeepsGuard(uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkIsPersistentSeesKnownAccounts(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkLaterDealShowsThrough(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkLaterStoreShowsThrough(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkLoadAfterIsPersistent(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkNonceAfterIsPersistent(address) ([METRICS])
+[PASS] checkNonceReadsBackAfterIsPersistent(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankAfterDeal(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankBeforeDeal(address) ([METRICS])
+[PASS] checkStorageReadsBackAfterIsPersistent(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkStoreKeepsNonce(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkStoreMayTargetSetUpContract(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkSymbolicOffsetPrank(address,uint8) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkSymbolicSizeSetNonce(address,uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 11 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 2 passed; 15 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
@@ -3413,8 +3465,8 @@ contract SymbolicPrankedAddress is Test {
         assert(address(uint160(raw)).code.length == 0);
     }
 
-    // The alias `vm.isPersistent` gave `raw` would hide the balance `writer` may hold for the
-    // account the path fixes `raw` to.
+    // `vm.isPersistent` gives `raw` no alias, so the read still sees the balance `writer` may
+    // hold for the account the path fixes `raw` to.
     function checkDealtBalanceThroughOtherWordAfterIsPersistent(address writer, uint256 raw)
         public
     {
@@ -3486,7 +3538,7 @@ Ran 16 tests for test/SymbolicPrankedAddress.t.sol:SymbolicPrankedAddress
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealtBalanceOnceFixed(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealtBalanceThroughOtherDirtyWord(address,uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealtBalanceThroughOtherWord(address,uint256) ([METRICS])
-[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic address fixed to an account whose state another symbolic address may hold] checkDealtBalanceThroughOtherWordAfterIsPersistent(address,uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealtBalanceThroughOtherWordAfterIsPersistent(address,uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkEtchedCodeThroughOtherWord(address,uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic address whose representative account holds state from before the run knew an account it may name] checkPersistentBeforeDeployment(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPersistentOncePranked(address) ([METRICS])

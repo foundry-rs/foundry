@@ -2031,12 +2031,26 @@ impl SymbolicExecutor {
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
             isPersistentCall::SELECTOR => {
-                let account =
-                    read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 0)?;
-                let exists = SymExpr::constant(
-                    &mut self.cx,
-                    U256::from(state.persistent_accounts.contains(&account)),
-                );
+                let word = read_abi_address_word_arg(&mut self.cx, state, args_offset, 0)?
+                    .address_operand(&mut self.cx);
+                let exists = if let Some(account) = state.world.resolve_address(&word) {
+                    let exists = state.persistent_accounts.contains(&account);
+                    SymExpr::constant(&mut self.cx, U256::from(exists))
+                } else {
+                    // Only reads the address, so a free one takes no alias, which later reads
+                    // would resolve to an empty account.
+                    let mut accounts =
+                        state.persistent_accounts.iter().copied().collect::<Vec<_>>();
+                    accounts.sort_unstable();
+                    let conditions = accounts
+                        .into_iter()
+                        .map(|account| {
+                            state.world.symbolic_address_condition(&mut self.cx, &word, account)
+                        })
+                        .collect();
+                    let exists = SymBoolExpr::or(&mut self.cx, conditions);
+                    SymExpr::bool_word(&mut self.cx, exists)
+                };
                 Ok(CheatcodeOutcome::Continue(vec![exists]))
             }
             activeForkCall::SELECTOR => {
