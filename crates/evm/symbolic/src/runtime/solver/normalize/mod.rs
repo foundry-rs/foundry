@@ -1476,13 +1476,11 @@ impl ConstraintContext {
             Self::udiv_comparison_operands(op, left, right)?;
         // Folding gives `n / 0 == 0` but SMT gives all ones, so a symbolic divisor must be
         // nonzero in context for `n / d < k` and `n < k * d` to agree.
-        // Rewriting one side of `p && !p` would also hide that contradiction from normalization,
-        // and the caller may be rewriting either side.
+        // Another conjunct over the same quotient, such as `!p` or `z < n / d`, relates to this one
+        // through order reasoning or a syntactic contradiction that the rewrite would hide.
         if denominator.as_const().is_none()
-            && (!self.interval(denominator).is_some_and(|range| !range.min.is_zero()) || {
-                let predicate = SymBoolExpr::cmp(cx, op, left.clone(), right.clone());
-                self.facts.contains(&predicate) || self.facts.contains(&predicate.not(cx))
-            })
+            && (!self.interval(denominator).is_some_and(|range| !range.min.is_zero())
+                || self.facts.iter().any(|fact| fact.visit_bool(|expr| expr == left)))
         {
             return None;
         }

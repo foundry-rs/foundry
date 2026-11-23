@@ -9148,8 +9148,9 @@ contract SymbolicDowncastShare {
 }
 
 // An ERC4626 vault rounds `previewMint` up, so converting those assets back to shares never
-// returns fewer shares than were minted. Rounding down instead, demanding strictly more shares,
-// or a threshold whose product with the divisor wraps all fail.
+// returns fewer shares than were minted. A quotient compared against two bounds still chains
+// them. Rounding down instead, demanding strictly more shares, or a threshold whose product with
+// the divisor wraps all fail.
 #[forgetest_init]
 fn symbolic_proves_preview_mint_round_trip(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_preview_mint_round_trip");
@@ -9200,6 +9201,13 @@ contract SymbolicPreviewMint {
         assert(convertToShares(assets, totalAssets, totalSupply) >= shares);
     }
 
+    function checkQuotientOrder(uint256 n, uint128 d, uint128 k, uint256 z) public pure {
+        if (d == 0) return;
+        uint256 q = n / d;
+        if (q >= k || k > z) return;
+        assert(q <= z);
+    }
+
     function checkWrappedThreshold(uint256 n, uint256 d, uint256 k) public pure {
         require(d != 0 && k != 0 && d % 2 ** 128 == 0 && k % 2 ** 128 == 0);
         assert(n / d >= k);
@@ -9216,9 +9224,16 @@ contract SymbolicPreviewMint {
             .get_output()
             .stdout
             .clone();
-        let result =
-            json_test_result(&output, "checkPreviewMintRoundTrip(uint128,uint128,uint128)");
-        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        for signature in [
+            "checkPreviewMintRoundTrip(uint128,uint128,uint128)",
+            "checkQuotientOrder(uint256,uint128,uint128,uint256)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "pass",
+                "{signature}, optimized={optimized}: {result}"
+            );
+        }
         for signature in [
             "checkPreviewMintGainsShares(uint128,uint128,uint128)",
             "checkFlooredMintRoundTrip(uint128,uint128,uint128)",
