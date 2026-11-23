@@ -1033,7 +1033,7 @@ impl ConstraintContext {
         }
         // The wide shift is `a * b / 2**n` only for `n < 256`.
         if let Some((left, right, shift)) = wide_shift_quotient_operands(&expr)
-            && (shift.as_const().is_some()
+            && (shift.as_const().is_some_and(|shift| shift < U256::from(256))
                 || self.interval(shift).is_some_and(|range| range.max < U256::from(256)))
         {
             let denominator = shift_power(cx, shift);

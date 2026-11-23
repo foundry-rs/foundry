@@ -21,6 +21,9 @@ struct OrderFacts<'a> {
     /// `expr_less_or_equal` results under these facts and the bounds of the same constraints.
     /// Shared subterms would otherwise make the search take exponential time.
     less_or_equal_results: RefCell<HashMap<(SymExpr, SymExpr), bool>>,
+    /// `remainder_excludes_max` results by quotient. A nested rounded-up quotient with the same
+    /// denominator would otherwise reach the same quotient again through a denied fact.
+    remainder_excludes_max_results: RefCell<HashMap<SymExpr, bool>>,
 }
 
 impl<'a> OrderFacts<'a> {
@@ -718,7 +721,12 @@ fn remainder_excludes_max<'a>(
     facts: &OrderFacts<'a>,
     bounds: &ConstraintContext,
 ) -> bool {
-    bounds.mul_cannot_overflow_256(x, y)
+    if let Some(&result) = facts.remainder_excludes_max_results.borrow().get(quotient) {
+        return result;
+    }
+    // A quotient still being searched counts as unproven, which only declines.
+    facts.remainder_excludes_max_results.borrow_mut().insert(quotient.clone(), false);
+    let result = bounds.mul_cannot_overflow_256(x, y)
         || [x, y].into_iter().any(|factor| factor.as_const().is_some_and(|k| k.is_power_of_two()))
         || facts.denied.iter().any(|terms| {
             let [first, second] = terms else { return false };
@@ -733,7 +741,9 @@ fn remainder_excludes_max<'a>(
                     })
                 })
             })
-        })
+        });
+    facts.remainder_excludes_max_results.borrow_mut().insert(quotient.clone(), result);
+    result
 }
 
 /// Returns `q` for `q == MAX`, also spelled `~q == 0` (the normal form of `q + 1 < q`) or
