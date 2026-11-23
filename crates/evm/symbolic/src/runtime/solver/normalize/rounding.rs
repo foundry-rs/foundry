@@ -150,7 +150,8 @@ impl ConstraintContext {
     /// Another conjunct's cross-multiplied `x * k <= y * l` also decides `x <= y` once `k` is
     /// positive, `l <= k`, and `x * k` cannot wrap.
     /// The shares `w * a / k + w * b / k <= w` once `a + b <= k`, and `n <= ceil(n / d) * d` for a
-    /// nonzero `d` once the multiple cannot wrap.
+    /// nonzero `d` once the multiple cannot wrap. A difference `a - b` is at most `x` once `b <= a`
+    /// and `a <= x`.
     pub(super) fn division_comparison_value(&self, expr: &SymBoolExpr) -> Option<bool> {
         if let SymBoolExprKind::Not(inner) = expr.kind() {
             return self.division_comparison_value(inner).map(|value| !value);
@@ -340,6 +341,20 @@ impl ConstraintContext {
                     })
                 })
                 .then_some(false),
+            // A payout minus its fee, `a - b <= a <= large` once `b <= a`, which also keeps the
+            // subtraction from wrapping. Each recursion is charged to the budget, because cached
+            // intervals cost nothing and subtractions that share operands would otherwise be walked
+            // as a tree.
+            SymExprKind::BinOp(SymBinOp::Sub, a, b) => {
+                let mut order = |small, large| {
+                    *remaining = remaining.checked_sub(1)?;
+                    self.division_order(small, large, intervals, remaining)
+                };
+                if !self.asserts_less_or_equal(b, a) {
+                    order(b, a)?;
+                }
+                order(a, large)
+            }
             _ => None,
         }
     }
