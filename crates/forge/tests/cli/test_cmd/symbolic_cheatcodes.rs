@@ -3429,8 +3429,8 @@ contract SymbolicPrankedAddress is Test {
         assert(address(uint160(raw)).code.length == 0);
     }
 
-    // The alias `vm.isPersistent` gave `raw` would hide the balance `writer` may hold for the
-    // account the path fixes `raw` to.
+    // The alias `vm.isPersistent` gave `raw` ends once the path fixes `raw`, so it does not hide
+    // the balance `writer` may hold for that account.
     function checkDealtBalanceThroughOtherWordAfterIsPersistent(address writer, uint256 raw)
         public
     {
@@ -3502,7 +3502,7 @@ Ran 16 tests for test/SymbolicPrankedAddress.t.sol:SymbolicPrankedAddress
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealtBalanceOnceFixed(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealtBalanceThroughOtherDirtyWord(address,uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealtBalanceThroughOtherWord(address,uint256) ([METRICS])
-[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic address fixed to an account whose state another symbolic address may hold] checkDealtBalanceThroughOtherWordAfterIsPersistent(address,uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealtBalanceThroughOtherWordAfterIsPersistent(address,uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkEtchedCodeThroughOtherWord(address,uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPersistentBeforeDeployment(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPersistentOncePranked(address) ([METRICS])
