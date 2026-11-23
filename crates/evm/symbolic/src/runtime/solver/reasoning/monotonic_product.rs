@@ -310,6 +310,31 @@ fn expr_less_or_equal<'a>(
         {
             true
         }
+        // `c + x <= c + y` for `x <= y` when the larger sum does not wrap: its operands' ranges
+        // fit, or one operand is at most the other's complement, as a checked addition asserts.
+        (SymExprKind::BinOp(SymBinOp::Add, a, b), SymExprKind::BinOp(SymBinOp::Add, c, d))
+            if let Some((x, y)) = [(a, b), (b, a)].into_iter().find_map(|(common, x)| {
+                (common == c).then_some((x, d)).or((common == d).then_some((x, c)))
+            }) && (facts.less_or_equal.iter().any(|(small, large)| {
+                matches!(large.kind(), SymExprKind::Not(inner) if same_factors(small, inner, c, d))
+            }) || bounds
+                .word_range(c)
+                .zip(bounds.word_range(d))
+                .is_some_and(|((_, c), (_, d))| c.checked_add(d).is_some()))
+                && expr_less_or_equal(x, y, facts, bounds) =>
+        {
+            true
+        }
+        // `x - p <= y - p` for `p <= x <= y`, so neither difference wraps.
+        (SymExprKind::BinOp(SymBinOp::Sub, x, p), SymExprKind::BinOp(SymBinOp::Sub, y, q))
+            if p == q
+                && expr_less_or_equal(p, x, facts, bounds)
+                && expr_less_or_equal(x, y, facts, bounds) =>
+        {
+            true
+        }
+        // `~x <= ~y` for `y <= x`, as `~x` is `MAX - x`.
+        (SymExprKind::Not(x), SymExprKind::Not(y)) => expr_less_or_equal(y, x, facts, bounds),
         // A failed bounded proof falls through: later arms can still order non-wrapping products.
         (
             SymExprKind::BinOp(SymBinOp::Mul, left_a, left_b),
