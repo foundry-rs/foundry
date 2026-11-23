@@ -8883,6 +8883,69 @@ contract SymbolicVestingSchedule {
     }
 }
 
+// A repayment below the close-factor cap `debt * closeFactor / 1e4` is below the debt once the
+// close factor is at most 100%. With a bounded repayment the strict comparison normalizes to
+// `(repay + 1) * 1e4 <= debt * closeFactor`, refuted by `debt * closeFactor <= repay * 1e4`.
+#[forgetest_init]
+fn symbolic_proves_repayment_below_strict_cap(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_repayment_below_strict_cap");
+    prj.add_test(
+        "SymbolicStrictCap.t.sol",
+        r#"
+contract SymbolicStrictCap {
+    function capped(uint128 debt, uint128 repay, uint16 closeFactor) internal pure returns (uint256) {
+        uint256 maxRepay = uint256(debt) * closeFactor / 10_000;
+        return repay < maxRepay ? repay : maxRepay;
+    }
+
+    function checkRepaymentBelowDebt(uint128 debt, uint128 repay, uint16 closeFactor) public pure {
+        require(closeFactor <= 10_000);
+        assert(capped(debt, repay, closeFactor) <= debt);
+    }
+
+    function checkLargeCloseFactor(uint128 debt, uint128 repay, uint16 closeFactor) public pure {
+        require(closeFactor <= 10_001);
+        assert(capped(debt, repay, closeFactor) <= debt);
+    }
+
+    function checkOtherDebt(uint128 debt, uint128 other, uint128 repay, uint16 closeFactor)
+        public
+        pure
+    {
+        require(closeFactor <= 10_000);
+        assert(capped(debt, repay, closeFactor) <= other);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicStrictCap"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        let result = json_test_result(&output, "checkRepaymentBelowDebt(uint128,uint128,uint16)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        for signature in [
+            "checkLargeCloseFactor(uint128,uint128,uint16)",
+            "checkOtherDebt(uint128,uint128,uint128,uint16)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "{signature}, optimized={optimized}: {result}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "{signature}, optimized={optimized}: {result}"
+            );
+        }
+    }
+}
+
 // Fee splits and payment splitters floor each share `w * a / k`, and two shares with
 // `a + b <= k` sum to at most `w`, so their checked sum cannot overflow either. A wrapped
 // `a + b <= k` does not bound the shares.

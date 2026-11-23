@@ -24,6 +24,9 @@ pub(crate) fn product_monotonic_unsat_normalized(constraints: &[SymBoolExpr]) ->
             || wide_term_lower_bound(constraint, constraints, &bounds).is_some_and(
                 |(large, lower)| wide_term_below(large, lower, constraints, &facts, &bounds),
             )
+            || less_or_equal_comparison(constraint).is_some_and(|(left, right)| {
+                successor_product_exceeds(left, right, &facts, &bounds)
+            })
             || disequality(constraint).is_some_and(|(left, right)| {
                 expr_less_or_equal(left, right, &facts, &bounds)
                     && expr_less_or_equal(right, left, &facts, &bounds)
@@ -691,4 +694,26 @@ fn mul_operands(expr: &SymExpr) -> Option<(&SymExpr, &SymExpr)> {
         SymExprKind::BinOp(SymBinOp::Mul, left, right) => Some((left, right)),
         _ => None,
     }
+}
+
+/// Returns whether `x * y < (u + 1) * c`, refuting `(u + 1) * c <= x * y`, which is how a strict
+/// `u < x * y / c` normalizes. `x * y <= u * c < u * c + c` once `c` is nonzero and neither
+/// `u + 1` nor the larger product wraps, so `x * y` cannot wrap either.
+fn successor_product_exceeds(
+    successor_product: &SymExpr,
+    product: &SymExpr,
+    facts: &OrderFacts<'_>,
+    bounds: &ConstraintContext,
+) -> bool {
+    let (Some((successor, c)), Some((x, y))) =
+        (mul_operands(successor_product), mul_operands(product))
+    else {
+        return false;
+    };
+    c.as_const().is_some_and(|c| !c.is_zero())
+        && increment_operand(successor).is_some_and(|u| {
+            bounds.word_range(u).is_some_and(|(_, max)| max < U256::MAX)
+                && bounds.mul_cannot_overflow_256(successor, c)
+                && product_less_or_equal_known(x, y, u, c, facts, bounds)
+        })
 }
