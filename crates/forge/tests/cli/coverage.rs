@@ -3044,6 +3044,61 @@ contract AContract {
 "#]]);
 }
 
+// Solar compiles any enabled optimizer with `-Ogas` or `-Osize`, which folds away the always-true
+// `x == x` condition. `--ir-minimum` has no effect with Solar, so coverage stays unoptimized.
+#[forgetest]
+fn ir_minimum_ignored_with_solar(prj: _, cmd: _) {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    uint256 public y;
+
+    function f(uint256 x) public {
+        if (x == x) {
+            y = 2;
+        }
+    }
+}
+    "#,
+    );
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import "./AContract.sol";
+
+contract AContractTest is DSTest {
+    function test_f() public {
+        new AContract().f(1);
+    }
+}
+    "#,
+    );
+
+    let solar = prj.ensure_foundry_bin("solar");
+    cmd.args(["coverage", "--ir-minimum", "--optimize", "--use"])
+        .arg(&solar)
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+╭-------------------+---------------+---------------+---------------+---------------╮
+| File              | % Lines       | % Statements  | % Branches    | % Funcs       |
++===================================================================================+
+| src/AContract.sol | 100.00% (3/3) | 100.00% (2/2) | 100.00% (1/1) | 100.00% (1/1) |
+|-------------------+---------------+---------------+---------------+---------------|
+| Total             | 100.00% (3/3) | 100.00% (2/2) | 100.00% (1/1) | 100.00% (1/1) |
+╰-------------------+---------------+---------------+---------------+---------------╯
+
+"#]])
+        .stderr_eq(str![[r#"
+...
+Warning: `--ir-minimum` has no effect with Solar, so coverage runs unoptimized.
+...
+"#]]);
+}
+
 // `--keep-optimizer` keeps the optimizer, which folds away the always-true `x == x` condition.
 #[forgetest]
 fn keep_optimizer(prj: _, cmd: _) {

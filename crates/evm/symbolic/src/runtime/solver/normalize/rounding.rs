@@ -6,7 +6,7 @@
 use super::{
     ConstraintContext, HashMap, MAX_LOCAL_ANALYSIS_NODES, SymBinOp, SymBoolExpr, SymBoolExprKind,
     SymCmpOp, SymExpr, SymExprKind, U256, WordInterval, euclidean_sum_dividend,
-    rounded_product_operands,
+    word_division_operands,
 };
 
 /// `anchor - below <= rounded <= anchor + above` over mathematical integers.
@@ -147,6 +147,9 @@ impl ConstraintContext {
     /// `x` and `z`. The Euclidean sum `(a / d) * d + a % d` is `a`, so each summand is at most the
     /// other's complement. With a nonzero divisor, `a / d <= (a - 1) / d + 1`, also when selected
     /// by `a != 0`, and `(x * y + c) / d <= x` once `y <= d`, `x * y` cannot wrap, and `c < d`.
+    /// Another conjunct's cross-multiplied `x * k <= y * l` also decides `x <= y` once `k` is
+    /// positive, `l <= k`, and `x * k` cannot wrap.
+    /// The shares `w * a / k + w * b / k <= w` once `a + b <= k`.
     pub(super) fn division_comparison_value(&self, expr: &SymBoolExpr) -> Option<bool> {
         if let SymBoolExprKind::Not(inner) = expr.kind() {
             return self.division_comparison_value(inner).map(|value| !value);
@@ -154,7 +157,13 @@ impl ConstraintContext {
         let SymBoolExprKind::Cmp(op, left, right) = expr.kind() else { return None };
         let mut intervals = HashMap::default();
         let mut remaining = MAX_LOCAL_ANALYSIS_NODES;
-        if let Some(strict) = self.division_order(left, right, &mut intervals, &mut remaining) {
+        let mut order = |small, large| {
+            self.division_order(small, large, &mut intervals, &mut remaining).or_else(|| {
+                self.asserts_scaled_order(small, large, &mut intervals, &mut remaining)
+                    .then_some(false)
+            })
+        };
+        if let Some(strict) = order(left, right) {
             return match op {
                 SymCmpOp::Ule => Some(true),
                 SymCmpOp::Ugt => Some(false),
@@ -163,7 +172,7 @@ impl ConstraintContext {
                 _ => None,
             };
         }
-        if let Some(strict) = self.division_order(right, left, &mut intervals, &mut remaining) {
+        if let Some(strict) = order(right, left) {
             return match op {
                 SymCmpOp::Uge => Some(true),
                 SymCmpOp::Ult => Some(false),
@@ -188,9 +197,16 @@ impl ConstraintContext {
     ) -> Option<bool> {
         // The overflow rewrite turns a checked `a + b` into `~a < b` before `d != 0` resolves the
         // division guards, so a symbolic divisor's Euclidean sum is not folded to `x`. That sum is
-        // `x` and cannot wrap, so `b <= ~a`.
+        // `x` and cannot wrap, so `b <= ~a`. Two shares of one whole cannot wrap either.
         if let SymExprKind::Not(base) = large.kind()
-            && euclidean_sum_dividend(base, small).is_some()
+            && (euclidean_sum_dividend(base, small).is_some()
+                || self.shares_whole(base, small, None, intervals, remaining).is_some())
+        {
+            return Some(false);
+        }
+        // Two shares sum to at most their whole.
+        if let SymExprKind::BinOp(SymBinOp::Add, first, second) = small.kind()
+            && self.shares_whole(first, second, Some(large), intervals, remaining).is_some()
         {
             return Some(false);
         }
@@ -274,10 +290,13 @@ impl ConstraintContext {
                         && self.mul_cannot_overflow_256(left, right)
                 };
                 // `round_down(n, t) <= n` (zero when `t == 0`), so dividing the rounded product
-                // is bounded by `n / d`.
+                // is bounded by `n / d`. The EVM `DIV` may still carry its `t == 0` guard.
                 let peeled = match dividend.kind() {
                     SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
-                        rounded_product_operands(left, right).map(|(n, _)| n)
+                        [(left, right), (right, left)].into_iter().find_map(|(quotient, factor)| {
+                            word_division_operands(quotient)
+                                .and_then(|(n, t)| (t == factor).then_some(n))
+                        })
                     }
                     _ => None,
                 };
@@ -318,6 +337,114 @@ impl ConstraintContext {
                 .then_some(false),
             _ => None,
         }
+    }
+
+    /// Returns whether another conjunct asserts `small * k <= large * l` with `l <= k` and a
+    /// positive `k`, as in a cross-multiplied collateral check. When `small * k` does not wrap,
+    /// `small > large` would give `small * k > large * k >= large * l`, using `k > 0` and
+    /// `l <= k`, and a wrapped `large * l` is only smaller. The reverse, deciding a scaled fact
+    /// from `small <= large`, must never remove a conjunct, or the two could justify each other.
+    fn asserts_scaled_order(
+        &self,
+        small: &SymExpr,
+        large: &SymExpr,
+        intervals: &mut HashMap<SymExpr, Option<WordInterval>>,
+        remaining: &mut usize,
+    ) -> bool {
+        let factor = |product: &'_ SymExpr, operand: &SymExpr| match product.kind() {
+            SymExprKind::BinOp(SymBinOp::Mul, left, right) if left == operand => {
+                Some(right.clone())
+            }
+            SymExprKind::BinOp(SymBinOp::Mul, left, right) if right == operand => {
+                Some(left.clone())
+            }
+            _ => None,
+        };
+        self.facts.iter().any(|fact| {
+            let (scaled_small, scaled_large) = match fact.kind() {
+                SymBoolExprKind::Cmp(SymCmpOp::Ult | SymCmpOp::Ule, left, right) => (left, right),
+                SymBoolExprKind::Not(inner) => match inner.kind() {
+                    SymBoolExprKind::Cmp(SymCmpOp::Ult, left, right) => (right, left),
+                    _ => return false,
+                },
+                _ => return false,
+            };
+            let (Some(k), Some(l)) = (factor(scaled_small, small), factor(scaled_large, large))
+            else {
+                return false;
+            };
+            self.interval_cached(&k, intervals, remaining)
+                .zip(self.interval_cached(&l, intervals, remaining))
+                .is_some_and(|(k, l)| !k.min.is_zero() && l.max <= k.min)
+                && self.mul_cannot_overflow_256(small, &k)
+        })
+    }
+
+    /// Returns `w` for the shares `w * a / k` and `w * b / k` of a nonzero `k` once `a + b <= k`,
+    /// only matching `whole` when given. Their floors sum to at most `w * (a + b) / k <= w`, so the
+    /// sum cannot wrap, and a wrapped product only shrinks its share.
+    fn shares_whole<'a>(
+        &self,
+        first: &'a SymExpr,
+        second: &'a SymExpr,
+        whole: Option<&SymExpr>,
+        intervals: &mut HashMap<SymExpr, Option<WordInterval>>,
+        remaining: &mut usize,
+    ) -> Option<&'a SymExpr> {
+        let (first, divisor) = first.udiv_operands()?;
+        let (second, other_divisor) = second.udiv_operands()?;
+        if divisor != other_divisor {
+            return None;
+        }
+        let (SymExprKind::BinOp(SymBinOp::Mul, w1, a1), SymExprKind::BinOp(SymBinOp::Mul, w2, b2)) =
+            (first.kind(), second.kind())
+        else {
+            return None;
+        };
+        let (found, a, b) =
+            [(w1, a1, w2, b2), (w1, a1, b2, w2), (a1, w1, w2, b2), (a1, w1, b2, w2)]
+                .into_iter()
+                .find_map(|(found, a, other, b)| {
+                    (found == other && whole.is_none_or(|whole| whole == found))
+                        .then_some((found, a, b))
+                })?;
+        let min = self.interval_cached(divisor, intervals, remaining)?.min;
+        if min.is_zero() {
+            return None;
+        }
+        // Whether another conjunct asserts `x <= y`, including strict `<`.
+        let asserted = |accept: &dyn Fn(&SymExpr, &SymExpr) -> bool| {
+            self.facts.iter().any(|fact| match fact.kind() {
+                SymBoolExprKind::Cmp(SymCmpOp::Ult | SymCmpOp::Ule, left, right) => {
+                    accept(left, right)
+                }
+                SymBoolExprKind::Not(inner) => matches!(
+                    inner.kind(),
+                    SymBoolExprKind::Cmp(SymCmpOp::Ult, left, right) if accept(right, left)
+                ),
+                _ => false,
+            })
+        };
+        // `a + b` must not wrap for `a + b <= k` to hold over the integers: from value ranges, or
+        // from a checked addition's `b <= ~a` guard.
+        let sum_max = self
+            .interval_cached(a, intervals, remaining)
+            .and_then(|a| a.max.checked_add(self.interval_cached(b, intervals, remaining)?.max));
+        let complement =
+            |x: &SymExpr, y: &SymExpr| matches!(y.kind(), SymExprKind::Not(inner) if inner == x);
+        if sum_max.is_none()
+            && !asserted(&|x, y| (x == b && complement(a, y)) || (x == a && complement(b, y)))
+        {
+            return None;
+        }
+        let is_sum = |expr: &SymExpr| {
+            matches!(expr.kind(), SymExprKind::BinOp(SymBinOp::Add, x, y)
+                if (x == a && y == b) || (x == b && y == a))
+        };
+        (sum_max.is_some_and(|max| max <= min)
+            || is_sum(divisor)
+            || asserted(&|x, y| is_sum(x) && y == divisor))
+        .then_some(found)
     }
 
     /// Returns whether other conjuncts assert `small <= large`, including strict `<`. An elapsed

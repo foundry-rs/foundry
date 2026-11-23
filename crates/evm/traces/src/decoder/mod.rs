@@ -1070,6 +1070,7 @@ impl CallTraceDecoder {
             }
 
             node.trace.decoded = Some(Box::new(self.decode_function(&node.trace).await));
+            self.redact_raw_cheatcode_secrets(&mut node.trace);
             for log in &mut node.logs {
                 log.decoded =
                     Some(Box::new(self.decode_event_with_address(log.address, &log.raw_log).await));
@@ -1305,6 +1306,9 @@ impl CallTraceDecoder {
 
     /// Custom decoding for cheatcode inputs.
     fn decode_cheatcode_inputs(&self, func: &Function, data: &[u8]) -> Option<Vec<String>> {
+        if let Some(redacted) = self.redact_cheatcode_secret_inputs(func, data) {
+            return Some(redacted);
+        }
         match func.name.as_str() {
             "expectRevert" => {
                 let decoded =
@@ -1325,80 +1329,6 @@ impl CallTraceDecoder {
                         .chain(decoded.iter().skip(1).map(|value| self.format_value(value)))
                         .collect(),
                 )
-            }
-            "addr" | "createEd25519Key" | "createWallet" | "deriveKey" | "publicKeyEd25519" |
-            "publicKeyP256" | "rememberKey" | "rememberKeys" => {
-                // Redact private key in all cases
-                Some(vec!["<pk>".to_string()])
-            }
-            "broadcast" | "startBroadcast" => {
-                // Redact private key if defined
-                // broadcast(uint256) / startBroadcast(uint256)
-                (!func.inputs.is_empty() && func.inputs[0].ty == "uint256").then(|| vec!["<pk>".to_string()])
-            }
-            "getNonce" => {
-                // Redact private key if defined
-                // getNonce(Wallet)
-                (!func.inputs.is_empty() && func.inputs[0].ty == "tuple").then(|| vec!["<pk>".to_string()])
-            }
-            "sign" |
-            "signCompact" |
-            "signP256" |
-            "signKeychain" |
-            "signKeychainAdmin" |
-            "signConfigurableAccount" |
-            "signKeychainConfigurableAccount" => {
-                // Fail closed: when the arguments of a key-taking cheatcode cannot be
-                // decoded, redact everything instead of deferring to generic rendering.
-                let Ok(mut decoded) = func.abi_decode_input(&data[SELECTOR_LEN..]) else {
-                    return Some(vec!["<redacted>".to_string()]);
-                };
-
-                // Redact private key and replace in trace when the first parameter is a raw
-                // private key (uint256), a Wallet struct (tuple), or a list of owner keys
-                // (uint256[] or OwnerKey[]); digest-only and signer-address overloads carry no
-                // key material and are left as-is.
-                if !decoded.is_empty() &&
-                    matches!(
-                        func.inputs[0].ty.as_str(),
-                        "uint256" | "tuple" | "uint256[]" | "tuple[]"
-                    )
-                {
-                    decoded[0] = DynSolValue::String("<pk>".to_string());
-                }
-
-                Some(decoded.iter().map(|value| self.format_value(value)).collect())
-            }
-            "signWithNonceUnsafe" => {
-                let Ok(mut decoded) = func.abi_decode_input(&data[SELECTOR_LEN..]) else {
-                    return Some(vec!["<redacted>".to_string()]);
-                };
-                // Redact private key and nonce and replace in trace for
-                // signWithNonceUnsafe(uint256 privateKey, bytes32 digest, uint256 nonce).
-                // The nonce is the raw ECDSA k value: together with the digest and the
-                // returned signature it allows recovering the private key.
-                decoded[0] = DynSolValue::String("<pk>".to_string());
-                decoded[2] = DynSolValue::String("<nonce>".to_string());
-                Some(decoded.iter().map(|value| self.format_value(value)).collect())
-            }
-            "signEd25519" => {
-                let Ok(mut decoded) = func.abi_decode_input(&data[SELECTOR_LEN..]) else {
-                    return Some(vec!["<redacted>".to_string()]);
-                };
-                // Redact private key and replace in trace for
-                // signEd25519(bytes namespace, bytes message, bytes32 privateKey)
-                decoded[2] = DynSolValue::String("<pk>".to_string());
-                Some(decoded.iter().map(|value| self.format_value(value)).collect())
-            }
-            "signDelegation" | "signAndAttachDelegation" => {
-                let Ok(mut decoded) = func.abi_decode_input(&data[SELECTOR_LEN..]) else {
-                    return Some(vec!["<redacted>".to_string()]);
-                };
-                // Redact private key and replace in trace for
-                // signAndAttachDelegation(address implementation, uint256 privateKey)
-                // signDelegation(address implementation, uint256 privateKey)
-                decoded[1] = DynSolValue::String("<pk>".to_string());
-                Some(decoded.iter().map(format_token).collect())
             }
             "parseJson" |
             "parseJsonUint" |
@@ -1460,22 +1390,111 @@ impl CallTraceDecoder {
                     Some(decoded.iter().map(format_token).collect())
                 }
             }
-            "createFork" |
-            "createSelectFork" |
-            "rpc" => {
-                let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..]).ok()?;
+            "sign" | "signCompact" => {
+                // Digest-only and signer-address overloads carry no key material.
+                let decoded = func.abi_decode_input(data.get(SELECTOR_LEN..)?).ok()?;
+                Some(decoded.iter().map(|value| self.format_value(value)).collect())
+            }
+            "createFork" | "createSelectFork" | "rpc" => {
+                // RPC URLs are redacted above; aliases are shown as-is.
+                let decoded = func.abi_decode_input(data.get(SELECTOR_LEN..)?).ok()?;
+                (func.inputs.first()?.ty == "string")
+                    .then(|| decoded.iter().map(format_token).collect())
+            }
+            _ => None,
+        }
+    }
 
-                // Redact RPC URL except if referenced by an alias
-                if !decoded.is_empty() && func.inputs[0].ty == "string" {
-                    let url_or_alias = decoded[0].as_str().unwrap_or_default();
+    /// Redacts the inputs of cheatcode calls that carry secrets, such as private keys or RPC
+    /// URLs.
+    ///
+    /// Returns `None` when the call carries no secret. This is the single source of truth for
+    /// both the decoded arguments and [`Self::redact_raw_cheatcode_secrets`].
+    fn redact_cheatcode_secret_inputs(&self, func: &Function, data: &[u8]) -> Option<Vec<String>> {
+        match func.name.as_str() {
+            "addr" | "createEd25519Key" | "createWallet" | "deriveKey" | "publicKeyEd25519"
+            | "publicKeyP256" | "rememberKey" | "rememberKeys" => {
+                // Redact private key in all cases
+                Some(vec!["<pk>".to_string()])
+            }
+            "broadcast" | "startBroadcast" => {
+                // Redact private key if defined
+                // broadcast(uint256) / startBroadcast(uint256)
+                (!func.inputs.is_empty() && func.inputs[0].ty == "uint256")
+                    .then(|| vec!["<pk>".to_string()])
+            }
+            "getNonce" => {
+                // Redact private key if defined
+                // getNonce(Wallet)
+                (!func.inputs.is_empty() && func.inputs[0].ty == "tuple")
+                    .then(|| vec!["<pk>".to_string()])
+            }
+            "sign"
+            | "signCompact"
+            | "signP256"
+            | "signKeychain"
+            | "signKeychainAdmin"
+            | "signConfigurableAccount"
+            | "signKeychainConfigurableAccount"
+                if !matches!(
+                    func.inputs.first().map(|input| input.ty.as_str()),
+                    Some("bytes32" | "address")
+                ) =>
+            {
+                // Fail closed: when the arguments of a key-taking cheatcode cannot be
+                // decoded, redact everything instead of deferring to generic rendering.
+                let Ok(mut decoded) = func.abi_decode_input(&data[SELECTOR_LEN..]) else {
+                    return Some(vec!["<redacted>".to_string()]);
+                };
 
-                    if url_or_alias.starts_with("http") || url_or_alias.starts_with("ws") {
-                        decoded[0] = DynSolValue::String("<rpc url>".to_string());
-                    }
-                } else {
+                // Redact private key and replace in trace: the first parameter is a raw
+                // private key (uint256), a Wallet struct (tuple), or a list of owner keys
+                // (uint256[] or OwnerKey[]).
+                decoded[0] = DynSolValue::String("<pk>".to_string());
+                Some(decoded.iter().map(|value| self.format_value(value)).collect())
+            }
+            "signWithNonceUnsafe" => {
+                let Ok(mut decoded) = func.abi_decode_input(&data[SELECTOR_LEN..]) else {
+                    return Some(vec!["<redacted>".to_string()]);
+                };
+                // Redact private key and nonce and replace in trace for
+                // signWithNonceUnsafe(uint256 privateKey, bytes32 digest, uint256 nonce).
+                // The nonce is the raw ECDSA k value: together with the digest and the
+                // returned signature it allows recovering the private key.
+                decoded[0] = DynSolValue::String("<pk>".to_string());
+                decoded[2] = DynSolValue::String("<nonce>".to_string());
+                Some(decoded.iter().map(|value| self.format_value(value)).collect())
+            }
+            "signEd25519" => {
+                let Ok(mut decoded) = func.abi_decode_input(&data[SELECTOR_LEN..]) else {
+                    return Some(vec!["<redacted>".to_string()]);
+                };
+                // Redact private key and replace in trace for
+                // signEd25519(bytes namespace, bytes message, bytes32 privateKey)
+                decoded[2] = DynSolValue::String("<pk>".to_string());
+                Some(decoded.iter().map(|value| self.format_value(value)).collect())
+            }
+            "signDelegation" | "signAndAttachDelegation" => {
+                let Ok(mut decoded) = func.abi_decode_input(&data[SELECTOR_LEN..]) else {
+                    return Some(vec!["<redacted>".to_string()]);
+                };
+                // Redact private key and replace in trace for
+                // signAndAttachDelegation(address implementation, uint256 privateKey)
+                // signDelegation(address implementation, uint256 privateKey)
+                decoded[1] = DynSolValue::String("<pk>".to_string());
+                Some(decoded.iter().map(format_token).collect())
+            }
+            "createFork" | "createSelectFork" | "rpc" => {
+                // Redact RPC URL except if referenced by an alias.
+                let mut decoded = func.abi_decode_input(data.get(SELECTOR_LEN..)?).ok()?;
+                if func.inputs.first()?.ty != "string" {
                     return None;
                 }
-
+                let url_or_alias = decoded[0].as_str().unwrap_or_default();
+                if !url_or_alias.starts_with("http") && !url_or_alias.starts_with("ws") {
+                    return None;
+                }
+                decoded[0] = DynSolValue::String("<rpc url>".to_string());
                 Some(decoded.iter().map(format_token).collect())
             }
             _ => None,
@@ -1517,16 +1536,37 @@ impl CallTraceDecoder {
 
     /// Custom decoding for cheatcode outputs.
     fn decode_cheatcode_outputs(&self, func: &Function) -> Option<String> {
-        match func.name.as_str() {
-            s if s.starts_with("env") => Some("<env var value>"),
-            "createEd25519Key" | "createWallet" | "deriveKey" => Some("<pk>"),
-            "promptSecret" | "promptSecretUint" => Some("<secret>"),
-            "parseJson" if self.verbosity < 5 => Some("<encoded JSON value>"),
-            "readFile" if self.verbosity < 5 => Some("<file>"),
-            "rpcUrl" | "rpcUrls" | "rpcUrlStructs" => Some("<rpc url>"),
-            _ => None,
+        redact_cheatcode_secret_output(func)
+            .or(match func.name.as_str() {
+                "parseJson" if self.verbosity < 5 => Some("<encoded JSON value>"),
+                "readFile" if self.verbosity < 5 => Some("<file>"),
+                _ => None,
+            })
+            .map(Into::into)
+    }
+
+    /// Strips the raw calldata and return data of a cheatcode call that carries secrets, so that
+    /// serialized traces apply the same redaction as the decoded view.
+    ///
+    /// The selector is kept so the call can still be identified. Decode the trace before calling
+    /// this, since decoding it again afterwards cannot recover the stripped arguments.
+    pub fn redact_raw_cheatcode_secrets(&self, trace: &mut CallTrace) {
+        if trace.address != CHEATCODE_ADDRESS {
+            return;
         }
-        .map(Into::into)
+        let Some(selector) = trace.data.first_chunk::<SELECTOR_LEN>().copied() else { return };
+        let Some(funcs) = self.functions_for_selector(trace.address, &selector.into()) else {
+            return;
+        };
+        if funcs.iter().any(|func| self.redact_cheatcode_secret_inputs(func, &trace.data).is_some())
+        {
+            trace.data.truncate(SELECTOR_LEN);
+        }
+        // Like the decoded view, keep revert data so failed calls keep their diagnostics.
+        if trace.success && funcs.iter().any(|func| redact_cheatcode_secret_output(func).is_some())
+        {
+            trace.output.clear();
+        }
     }
 
     #[track_caller]
@@ -1961,6 +2001,18 @@ fn push_unique<T: Clone + PartialEq>(items: &mut Vec<T>, item: Cow<'_, T>) -> bo
     } else {
         items.push(item.into_owned());
         true
+    }
+}
+
+/// Returns the placeholder for the output of a cheatcode that returns secrets, such as
+/// environment variable values, private keys, or RPC URLs.
+fn redact_cheatcode_secret_output(func: &Function) -> Option<&'static str> {
+    match func.name.as_str() {
+        s if s.starts_with("env") => Some("<env var value>"),
+        "createEd25519Key" | "createWallet" | "deriveKey" => Some("<pk>"),
+        "promptSecret" | "promptSecretUint" => Some("<secret>"),
+        "rpcUrl" | "rpcUrls" | "rpcUrlStructs" => Some("<rpc url>"),
+        _ => None,
     }
 }
 
@@ -3305,6 +3357,29 @@ mod tests {
         assert_eq!(call_data.signature, "sign(uint256,bytes32)");
         assert_eq!(call_data.args[0], "\"<pk>\"");
         assert!(!call_data.args.join(",").contains(pk_hex));
+
+        // Raw calldata of key-taking overloads is stripped to the selector, while digest-only
+        // overloads keep theirs.
+        let mut trace = cheatcode_trace(call.abi_encode());
+        decoder.redact_raw_cheatcode_secrets(&mut trace);
+        assert_eq!(trace.data[..], Vm::sign_1Call::SELECTOR);
+        let data = Vm::sign_2Call { digest: B256::from(pk) }.abi_encode();
+        let mut trace = cheatcode_trace(data.clone());
+        decoder.redact_raw_cheatcode_secrets(&mut trace);
+        assert_eq!(trace.data[..], data[..]);
+
+        // Return data of secret-returning cheatcodes is cleared on success, while revert data
+        // keeps the failure diagnostic.
+        let env_call = Vm::envUint_0Call { name: "PRIVATE_KEY".to_string() }.abi_encode();
+        let mut trace = cheatcode_trace(env_call.clone());
+        trace.output = U256::from_be_bytes(pk).abi_encode().into();
+        decoder.redact_raw_cheatcode_secrets(&mut trace);
+        assert!(trace.output.is_empty());
+        let revert = b"environment variable \"PRIVATE_KEY\" not found".abi_encode();
+        let mut trace = CallTrace { success: false, ..cheatcode_trace(env_call) };
+        trace.output = revert.clone().into();
+        decoder.redact_raw_cheatcode_secrets(&mut trace);
+        assert_eq!(trace.output[..], revert[..]);
 
         // signEd25519 redacts the trailing private key argument.
         let call = Vm::signEd25519Call {
