@@ -7558,6 +7558,10 @@ contract FixedPointRoundTripTest {
         ("checkFullWidthOptIn", "checkFullWidthOptIn(address)"),
         ("checkFullWidthOptOut", "checkFullWidthOptOut(address)"),
     ] {
+        // Under isolation the pranked call bumps its sender's nonce, so the prank forks the
+        // sender over every known account and the full-width checks take over 1024 paths. A
+        // nonce bump deferred until a candidate's nonce is read would drop this budget and the
+        // test's timeout override in `.config/nextest.toml`.
         let output = cmd
             .forge_fuse()
             .args([
@@ -7567,6 +7571,8 @@ contract FixedPointRoundTripTest {
                 "--optimize",
                 "--symbolic-timeout",
                 "30",
+                "--symbolic-max-paths",
+                "2048",
                 "--match-test",
                 test,
             ])
@@ -8372,6 +8378,155 @@ contract SymbolicCeilDivTest {
     }
 }
 
+// Rounding a quotient up covers its dividend: `ceil(n / d) * d >= n`, so shares previewed with
+// rounding up always pay for the requested assets. OpenZeppelin's `Math.ceilDiv` (MIT) rounds up as
+// `(a - 1) / b + 1` for a nonzero `a`; v4 branches on `a == 0` and v5 multiplies by `a > 0`.
+#[forgetest_init]
+fn symbolic_proves_ceil_multiple_covers_dividend(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_ceil_multiple_covers_dividend");
+
+    prj.add_test(
+        "SymbolicCeilMultiple.t.sol",
+        r#"
+library SafeCast {
+    function toUint(bool b) internal pure returns (uint256 u) {
+        assembly ("memory-safe") {
+            u := iszero(iszero(b))
+        }
+    }
+}
+
+library Math {
+    function ceilDiv(uint256 a, uint256 b) internal pure returns (uint256) {
+        return a == 0 ? 0 : (a - 1) / b + 1;
+    }
+
+    function ceilDivV5(uint256 a, uint256 b) internal pure returns (uint256) {
+        if (b == 0) revert();
+        unchecked {
+            return SafeCast.toUint(a > 0) * ((a - 1) / b + 1);
+        }
+    }
+}
+
+contract SymbolicCeilMultipleTest {
+    function checkCeilMultipleCoversDividend(uint256 a, uint256 b) public pure {
+        if (b == 0) return;
+        assert(((a + b - 1) / b) * b >= a);
+    }
+
+    function checkCeilDivMultipleCoversDividend(uint256 a, uint256 b) public pure {
+        if (b == 0) return;
+        assert(Math.ceilDiv(a, b) * b >= a);
+    }
+
+    function checkCeilDivV5MultipleCoversDividend(uint128 a, uint128 b) public pure {
+        if (b == 0) return;
+        unchecked {
+            assert(Math.ceilDivV5(a, b) * b >= a);
+        }
+    }
+
+    function checkSharesCoverAssets(uint128 assets, uint128 supply, uint128 total) public pure {
+        if (total == 0) return;
+        uint256 scaled = uint256(assets) * supply;
+        uint256 shares = (scaled + total - 1) / total;
+        assert(shares * total >= scaled);
+    }
+
+    function checkCeilTimesOtherValue(uint128 a, uint128 b, uint128 c) public pure {
+        if (b == 0 || c == 0) return;
+        assert(Math.ceilDiv(a, b) * c >= a);
+    }
+
+    // A wrapped `a + b - 1` rounds to a small multiple.
+    function checkWrappedCeil(uint256 a, uint256 b) public pure {
+        if (b == 0) return;
+        unchecked {
+            assert(((a + b - 1) / b) * b >= a);
+        }
+    }
+
+    // A wrapped multiple of `(a - 1) / b + 1` can fall to zero.
+    function checkWrappedCeilMultiple(uint256 a, uint256 b) public pure {
+        if (a == 0 || b == 0) return;
+        unchecked {
+            assert(((a - 1) / b + 1) * b >= a);
+        }
+    }
+
+    // Each rounding error feeds the next `ceilDiv`, so bounding it nests the proof.
+    function checkNestedCeilRoundingErrors(uint256 a, uint256 b) public pure {
+        if (b == 0) return;
+        uint256 x = a;
+        unchecked {
+            for (uint256 i; i < 24; ++i) {
+                x = ((x - 1) / b + 1) * b - x;
+            }
+        }
+        assert(x < 2 ** 255);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        // The optimizer folds the multiply guard's zero check of `ceilDiv(a, b)`, so the guard is
+        // not yet recognized and the checked product's overflow branch stays undecided.
+        cmd.forge_fuse().args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--match-contract",
+            "SymbolicCeilMultiple",
+        ]);
+        if optimized {
+            cmd.args(["--no-match-test", "checkCeilDivMultipleCoversDividend"]);
+        }
+        let output = cmd.assert_failure().get_output().stdout.clone();
+
+        // Checked `a + b - 1` leaves an unrelated underflow query.
+        let result = json_test_result(&output, "checkCeilMultipleCoversDividend(uint256,uint256)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}");
+
+        if !optimized {
+            let result =
+                json_test_result(&output, "checkCeilDivMultipleCoversDividend(uint256,uint256)");
+            assert_eq!(result["symbolic"]["status"], "pass");
+            assert_eq!(result["symbolic"]["solver"]["stats"]["smt_queries"], 0);
+        }
+
+        for signature in [
+            "checkCeilDivV5MultipleCoversDividend(uint128,uint128)",
+            "checkSharesCoverAssets(uint128,uint128,uint128)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "pass", "{signature} optimized={optimized}");
+            assert_eq!(
+                result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+                "{signature} optimized={optimized}"
+            );
+        }
+
+        for signature in [
+            "checkCeilTimesOtherValue(uint128,uint128,uint128)",
+            "checkWrappedCeil(uint256,uint256)",
+            "checkWrappedCeilMultiple(uint256,uint256)",
+            "checkNestedCeilRoundingErrors(uint256,uint256)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "{signature} optimized={optimized}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "{signature} optimized={optimized}"
+            );
+        }
+    }
+}
+
 // Uniswap V2's `getAmountOut` (GPL-3.0) divides `x * y` by `y + z`, which stays below `x` when
 // `x` and `z` are nonzero and the sum does not wrap, so a swap never drains the output reserve.
 #[forgetest_init]
@@ -9007,6 +9162,115 @@ contract SymbolicVestingSchedule {
     }
 }
 
+// A repayment below the close-factor cap `debt * closeFactor / 1e4` is below the debt once the
+// close factor is at most 100%. With a bounded repayment the strict comparison normalizes to
+// `(repay + 1) * 1e4 <= debt * closeFactor`, refuted by `debt * closeFactor <= repay * 1e4`.
+#[forgetest_init]
+fn symbolic_proves_repayment_below_strict_cap(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_repayment_below_strict_cap");
+    prj.add_test(
+        "SymbolicStrictCap.t.sol",
+        r#"
+contract SymbolicStrictCap {
+    function capped(uint128 debt, uint128 repay, uint16 closeFactor) internal pure returns (uint256) {
+        uint256 maxRepay = uint256(debt) * closeFactor / 10_000;
+        return repay < maxRepay ? repay : maxRepay;
+    }
+
+    function checkRepaymentBelowDebt(uint128 debt, uint128 repay, uint16 closeFactor) public pure {
+        require(closeFactor <= 10_000);
+        assert(capped(debt, repay, closeFactor) <= debt);
+    }
+
+    function checkLargeCloseFactor(uint128 debt, uint128 repay, uint16 closeFactor) public pure {
+        require(closeFactor <= 10_001);
+        assert(capped(debt, repay, closeFactor) <= debt);
+    }
+
+    function checkOtherDebt(uint128 debt, uint128 other, uint128 repay, uint16 closeFactor)
+        public
+        pure
+    {
+        require(closeFactor <= 10_000);
+        assert(capped(debt, repay, closeFactor) <= other);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicStrictCap"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        let result = json_test_result(&output, "checkRepaymentBelowDebt(uint128,uint128,uint16)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        for signature in [
+            "checkLargeCloseFactor(uint128,uint128,uint16)",
+            "checkOtherDebt(uint128,uint128,uint128,uint16)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "{signature}, optimized={optimized}: {result}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "{signature}, optimized={optimized}: {result}"
+            );
+        }
+    }
+}
+
+// A SafeCast downcast of `amount * weight / type(uint16).max`, a share by a uint16 weight,
+// succeeds and keeps the share, since it fits the amount's type. A sum one bit wider than the
+// mask keeps it.
+#[forgetest_init]
+fn symbolic_proves_downcast_share_fits(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_downcast_share_fits");
+    prj.add_test(
+        "SymbolicDowncastShare.t.sol",
+        r#"
+contract SymbolicDowncastShare {
+    error Overflow();
+
+    function toUint96(uint256 value) internal pure returns (uint96) {
+        if (value > type(uint96).max) revert Overflow();
+        return uint96(value);
+    }
+
+    function checkDowncastShare(uint96 amount, uint16 weight) public pure {
+        assert(toUint96(uint256(amount) * weight / type(uint16).max) <= amount);
+    }
+
+    function checkWideSumKeepsMask(uint96 a, uint96 b) public pure {
+        uint256 s = uint256(a) + b;
+        if (s >= 2 ** 96) assert(uint96(s) < s);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicDowncastShare"])
+            .assert_success()
+            .get_output()
+            .stdout
+            .clone();
+        for signature in
+            ["checkDowncastShare(uint96,uint16)", "checkWideSumKeepsMask(uint96,uint96)"]
+        {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        }
+    }
+}
+
 // Fee splits and payment splitters floor each share `w * a / k`, and two shares with
 // `a + b <= k` sum to at most `w`, so their checked sum cannot overflow either. A wrapped
 // `a + b <= k` does not bound the shares.
@@ -9198,8 +9462,128 @@ contract SymbolicDivisorOrder {
     }
 }
 
+// Rewards earned as `balance * (rewardPerToken - paid) / 1e18 + rewards` only grow with the index,
+// which takes ordering differences with a common subtrahend and sums with a common addend. A
+// checked sum does not wrap even for unbounded `rewards`, and an unchecked one does not when its
+// operands' ranges fit.
+#[forgetest_init]
+fn symbolic_orders_earned_rewards_by_index(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_orders_earned_rewards_by_index");
+    prj.add_test(
+        "SymbolicEarnedOrder.t.sol",
+        r#"
+contract SymbolicEarnedOrder {
+    function earned(uint128 balance, uint128 index, uint128 paid, uint256 rewards)
+        internal
+        pure
+        returns (uint256)
+    {
+        return uint256(balance) * (uint256(index) - paid) / 1e18 + rewards;
+    }
+
+    function checkEarnedGrowsWithIndex(
+        uint128 balance,
+        uint128 index,
+        uint128 later,
+        uint128 paid,
+        uint256 rewards
+    ) public pure {
+        require(paid <= index && index <= later);
+        assert(earned(balance, index, paid, rewards) <= earned(balance, later, paid, rewards));
+    }
+
+    function checkBoundedSum(uint128 b, uint128 x, uint128 y, uint128 c) public pure {
+        require(x <= y);
+        unchecked {
+            assert(c + uint256(b) * x / 1e18 <= c + uint256(b) * y / 1e18);
+        }
+    }
+
+    function checkWrappedDifference(uint128 x, uint128 y, uint128 p) public pure {
+        require(x <= y);
+        unchecked {
+            assert(uint256(x) - p <= uint256(y) - p);
+        }
+    }
+
+    function checkUnorderedDifference(uint128 x, uint128 y, uint128 p) public pure {
+        require(p <= x && p <= y);
+        assert(uint256(x) - p <= uint256(y) - p);
+    }
+
+    function checkOtherSubtrahend(uint128 b, uint128 x, uint128 y, uint128 p, uint128 q)
+        public
+        pure
+    {
+        require(p <= x && q <= y && x <= y);
+        assert(uint256(b) * (uint256(x) - p) <= uint256(b) * (uint256(y) - q));
+    }
+
+    function checkWrappedSum(uint128 b, uint128 x, uint128 y, uint256 c) public pure {
+        require(x <= y);
+        unchecked {
+            assert(c + uint256(b) * x / 1e18 <= c + uint256(b) * y / 1e18);
+        }
+    }
+
+    function checkGuardedSmallerSum(uint128 b, uint128 x, uint128 y, uint256 c) public pure {
+        require(x <= y);
+        uint256 s = c + uint256(b) * x / 1e18;
+        unchecked {
+            assert(s <= c + uint256(b) * y / 1e18);
+        }
+    }
+
+    function checkOtherAddend(uint128 b, uint128 x, uint128 c, uint128 d) public pure {
+        assert(uint256(c) + uint256(b) * x / 1e18 <= uint256(d) + uint256(b) * x / 1e18);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicEarnedOrder"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+
+        for signature in [
+            "checkEarnedGrowsWithIndex(uint128,uint128,uint128,uint128,uint256)",
+            "checkBoundedSum(uint128,uint128,uint128,uint128)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "pass", "{signature} optimized={optimized}");
+            assert_eq!(
+                result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+                "{signature} optimized={optimized}"
+            );
+        }
+
+        for signature in [
+            "checkWrappedDifference(uint128,uint128,uint128)",
+            "checkUnorderedDifference(uint128,uint128,uint128)",
+            "checkOtherSubtrahend(uint128,uint128,uint128,uint128,uint128)",
+            "checkWrappedSum(uint128,uint128,uint128,uint256)",
+            "checkGuardedSmallerSum(uint128,uint128,uint128,uint256)",
+            "checkOtherAddend(uint128,uint128,uint128,uint128)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "{signature} optimized={optimized}"
+            );
+            assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "{signature}");
+        }
+    }
+}
+
 // A balance scaled by an index that only grows stays at least the balance:
-// `principal * newIndex / oldIndex >= principal`.
+// `principal * newIndex / oldIndex >= principal`. Aave rounds `rayMul` half up, and
+// `scaled * index + HALF_RAY >= scaled * RAY` once `index >= RAY`, also with more addends that
+// cannot wrap the sum.
 #[forgetest_init]
 fn symbolic_proves_indexed_balance_growth(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_indexed_balance_growth");
@@ -9207,6 +9591,78 @@ fn symbolic_proves_indexed_balance_growth(prj: _, cmd: _) {
         "SymbolicIndexedBalance.t.sol",
         r#"
 contract SymbolicIndexedBalance {
+    uint256 internal constant RAY = 1e27;
+    uint256 internal constant HALF_RAY = 0.5e27;
+
+    uint128 internal scaledBalance;
+    uint128 internal liquidityIndex;
+
+    // Half-up `rayMul` as in Aave v3's `WadRayMath`.
+    function rayMul(uint256 a, uint256 b) internal pure returns (uint256 c) {
+        assembly {
+            if iszero(or(iszero(b), iszero(gt(a, div(sub(not(0), HALF_RAY), b))))) { revert(0, 0) }
+            c := div(add(mul(a, b), HALF_RAY), RAY)
+        }
+    }
+
+    function checkRayBalanceGrows(uint128 scaled, uint128 index) public {
+        require(index >= RAY);
+        scaledBalance = scaled;
+        liquidityIndex = index;
+        assert(rayMul(scaledBalance, liquidityIndex) >= scaledBalance);
+    }
+
+    function checkRayIndexBelowOne(uint128 scaled, uint128 index) public {
+        require(index >= RAY - 1);
+        scaledBalance = scaled;
+        liquidityIndex = index;
+        assert(rayMul(scaledBalance, liquidityIndex) >= scaledBalance);
+    }
+
+    function checkRayBalanceWithFee(uint128 scaled, uint128 index, uint64 fee) public pure {
+        require(index >= RAY);
+        unchecked {
+            assert(uint256(scaled) * index + fee + HALF_RAY >= uint256(scaled) * RAY);
+        }
+    }
+
+    function checkWrappingAddend(uint128 scaled, uint128 index, uint256 addend) public pure {
+        require(index >= RAY && addend != 0);
+        unchecked {
+            assert(uint256(scaled) * index + addend >= uint256(scaled) * RAY);
+        }
+    }
+
+    // Each sum reuses the previous two, so walking the sums as trees takes exponential time.
+    function checkSharedSums(uint8 a, uint8 b, uint256 low, uint256 high) public pure {
+        unchecked {
+            uint256 p = a;
+            uint256 q = b;
+            for (uint256 i = 0; i < 40; i++) {
+                (p, q) = (q, p + q);
+            }
+            require(low <= q && q <= high);
+            assert(low <= high);
+        }
+    }
+
+    // Each side reuses the previous one twice, once through a sum.
+    function checkSharedProducts(uint256 x, uint256 y, uint256 u, uint256 v, uint256 z)
+        public
+        pure
+    {
+        require(x <= 1 && y <= 1 && u <= 1 && v <= 1 && z <= 1 && u <= v);
+        unchecked {
+            uint256 l = x;
+            uint256 r = y;
+            for (uint256 i = 0; i < 40; i++) {
+                l = l * u;
+                r = (r + z) * v;
+            }
+            assert(l <= r);
+        }
+    }
+
     function checkBalanceGrows(uint128 principal, uint128 oldIndex, uint128 newIndex) public pure {
         require(oldIndex != 0 && oldIndex <= newIndex);
         assert(uint256(principal) * newIndex / oldIndex >= principal);
@@ -9251,14 +9707,24 @@ contract SymbolicIndexedBalance {
             .stdout
             .clone();
 
-        let result = json_test_result(&output, "checkBalanceGrows(uint128,uint128,uint128)");
-        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
-        assert_eq!(
-            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
-            "optimized={optimized}"
-        );
+        for signature in [
+            "checkBalanceGrows(uint128,uint128,uint128)",
+            "checkRayBalanceGrows(uint128,uint128)",
+            "checkRayBalanceWithFee(uint128,uint128,uint64)",
+            "checkSharedSums(uint8,uint8,uint256,uint256)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "pass", "{signature}, optimized={optimized}");
+            assert_eq!(
+                result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+                "{signature}, optimized={optimized}"
+            );
+        }
 
         for signature in [
+            "checkRayIndexBelowOne(uint128,uint128)",
+            "checkWrappingAddend(uint128,uint128,uint256)",
+            "checkSharedProducts(uint256,uint256,uint256,uint256,uint256)",
             "checkIndexShrank(uint128,uint128,uint128)",
             "checkWrappingProduct(uint256,uint256,uint256)",
             "checkOtherPrincipal(uint128,uint128,uint128,uint128)",
@@ -9318,6 +9784,100 @@ contract SymbolicPriceRoundTrip {
             let result = json_test_result(&output, signature);
             assert_eq!(result["symbolic"]["status"], "fail_counterexample", "{signature}");
             assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "{signature}");
+        }
+    }
+}
+
+// Solidity guards a checked `(a - b) * c` with the zero check `a - b == 0`, which normalizes to
+// `a == b`, with a constant operand on the right. Recognizing that form in either order keeps a fee
+// on a difference bounded, such as a fee on the amount left after an earlier fee, on a profit, or
+// on the complement of a rate.
+#[forgetest_init]
+fn symbolic_bounds_fee_on_remainder(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_bounds_fee_on_remainder");
+    prj.add_test(
+        "SymbolicFeeOnRemainder.t.sol",
+        r#"
+contract SymbolicFeeOnRemainder {
+    function feeOnRemainder(uint256 amount, uint256 f1, uint256 f2)
+        external
+        pure
+        returns (uint256)
+    {
+        uint256 remainder = amount - amount * f1 / 10_000;
+        return remainder * f2 / 10_000;
+    }
+
+    function checkSecondFee(uint128 amount, uint16 f1, uint16 f2) public pure {
+        require(f1 <= 10_000 && f2 <= 10_000);
+        uint256 remainder = uint256(amount) - uint256(amount) * f1 / 10_000;
+        assert(remainder * f2 / 10_000 <= remainder);
+    }
+
+    function checkProfitFee(uint128 price, uint128 cost, uint16 bps) public pure {
+        require(cost <= price && bps <= 10_000);
+        uint256 profit = uint256(price) - cost;
+        assert(profit * bps / 10_000 <= profit);
+    }
+
+    function checkFeeOnComplement(uint16 bps, uint16 f) public pure {
+        require(bps <= 10_000 && f <= 10_000);
+        uint256 keep = 10_000 - uint256(bps);
+        assert(keep * f / 10_000 <= keep);
+    }
+
+    function checkRateTooLarge(uint128 amount, uint16 f1, uint16 f2) public pure {
+        require(f1 <= 10_000 && f2 <= 10_001);
+        uint256 remainder = uint256(amount) - uint256(amount) * f1 / 10_000;
+        assert(remainder * f2 / 10_000 <= remainder);
+    }
+
+    function checkOverflowStillReverts(uint128 amount, uint16 f1, uint256 f2) public view {
+        require(f1 <= 10_000);
+        try this.feeOnRemainder(amount, f1, f2) returns (uint256) {}
+        catch {
+            assert(false);
+        }
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicFeeOnRemainder"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+
+        for signature in [
+            "checkSecondFee(uint128,uint16,uint16)",
+            "checkProfitFee(uint128,uint128,uint16)",
+            "checkFeeOnComplement(uint16,uint16)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "pass", "{signature} optimized={optimized}");
+            assert_eq!(
+                result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+                "{signature} optimized={optimized}"
+            );
+        }
+
+        for signature in [
+            "checkRateTooLarge(uint128,uint16,uint16)",
+            "checkOverflowStillReverts(uint128,uint16,uint256)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "{signature} optimized={optimized}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "{signature} optimized={optimized}"
+            );
         }
     }
 }

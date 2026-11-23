@@ -330,7 +330,10 @@ impl CoverageArgs {
             project.paths.slash_paths();
         }
 
-        if settings.ir_minimum {
+        let solar = config.is_solar();
+        if settings.ir_minimum && solar {
+            sh_warn!("`--ir-minimum` has no effect with Solar, so coverage runs unoptimized.")?;
+        } else if settings.ir_minimum {
             sh_warn!(
                 "`--ir-minimum` enables `viaIR` with minimum optimization, \
                  which can result in inaccurate source mappings.\n\
@@ -353,7 +356,7 @@ impl CoverageArgs {
         }
 
         if !settings.keep_optimizer {
-            config.disable_optimizations(&mut project, settings.ir_minimum);
+            config.disable_optimizations(&mut project, settings.ir_minimum && !solar);
         }
 
         let files = (filter.args().path_pattern.is_some()

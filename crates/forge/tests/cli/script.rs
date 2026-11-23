@@ -11676,3 +11676,83 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
     }
     assert_eq!(receipts, 2);
 }
+
+// Raw trace data in JSON output applies the same cheatcode redaction as decoded traces.
+#[forgetest]
+fn script_json_redacts_raw_cheatcode_secrets(prj: _, cmd: _) {
+    prj.add_script(
+        "Deploy.s.sol",
+        r#"
+interface Vm {
+    function envUint(string calldata name) external view returns (uint256);
+    function startBroadcast(uint256 privateKey) external;
+    function stopBroadcast() external;
+}
+
+contract C {}
+
+contract Deploy {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run() external {
+        uint256 pk = vm.envUint("PRIVATE_KEY");
+        vm.startBroadcast(pk);
+        new C();
+        vm.stopBroadcast();
+    }
+}
+   "#,
+    );
+
+    cmd.env("PRIVATE_KEY", "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
+    let output: Value = serde_json::from_slice(
+        &cmd.args(["script", "script/Deploy.s.sol", "--tc", "Deploy", "--json"])
+            .assert_success()
+            .get_output()
+            .stdout,
+    )
+    .unwrap();
+    let execution =
+        output["traces"].as_array().unwrap().iter().find(|trace| trace[0] == "Execution").unwrap();
+    let vm_calls = execution[1]["arena"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|node| &node["trace"])
+        .filter(|trace| trace["decoded"]["label"] == "VM")
+        .map(|trace| {
+            serde_json::json!({
+                "call": trace["decoded"]["call_data"],
+                "return": trace["decoded"]["return_data"],
+                "data": trace["data"],
+                "output": trace["output"],
+            })
+        })
+        .collect::<Vec<_>>();
+    assert_data_eq!(
+        serde_json::to_string(&vm_calls).unwrap().is_json(),
+        str![[r#"
+[
+  {
+    "call": { "signature": "envUint(string)", "args": ["\"PRIVATE_KEY\""] },
+    "return": "<env var value>",
+    "data": "0xc1978d1f0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000b505249564154455f4b4559000000000000000000000000000000000000000000",
+    "output": "0x"
+  },
+  {
+    "call": { "signature": "startBroadcast(uint256)", "args": ["<pk>"] },
+    "return": null,
+    "data": "0xce817d47",
+    "output": "0x"
+  },
+  {
+    "call": { "signature": "stopBroadcast()", "args": [] },
+    "return": null,
+    "data": "0x76eadd36",
+    "output": "0x"
+  }
+]
+"#]]
+        .is_json(),
+    );
+}
