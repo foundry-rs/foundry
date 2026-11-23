@@ -1007,7 +1007,10 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         );
 
         let identified_contracts = has_invariants.then(|| {
-            load_contracts(setup.traces.iter().map(|(_, t)| &t.arena), &self.mcr.known_contracts)
+            load_contracts(
+                setup.traces.iter().map(|(_, t)| &t.arena),
+                &self.mcr.identifiable_contracts,
+            )
         });
 
         if let Some(replay) = &self.mcr.tcfg.symbolic_artifact_replay {
@@ -3114,7 +3117,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     .collect::<Vec<_>>();
                 let setup_contracts = load_contracts(
                     self.setup.traces.iter().map(|(_, trace)| &trace.arena),
-                    &self.cr.mcr.known_contracts,
+                    &self.cr.mcr.identifiable_contracts,
                 );
                 let mut evm = InvariantExecutor::new_with_fuzz_seed(
                     self.clone_executor(),

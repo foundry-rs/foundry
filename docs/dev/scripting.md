@@ -280,15 +280,17 @@ completion permits skipping an operation on another. With `--verify`, every sequ
 even after one fails, and the failures are returned together, each naming its chain.
 
 Endpoints that name a profile get a separate build of that profile's compiler settings, cached in
-`cache/profiles/<settings hash>`. `forge script` compiles every such build on each run, takes the
-profile's EVM version, hardfork and libraries without CLI or environment overrides, and maps the
-builds to endpoints by URL in `ChainBuild::by_endpoint` without contacting them. The cheatcodes look
+`cache/profiles/<settings hash>`. `forge script`, `forge test` and the commands that run tests
+through it compile every such build on each run, take the profile's EVM version, hardfork and
+libraries without CLI or environment overrides, and map the builds to endpoints by URL in
+`ChainBuild::by_endpoint` without contacting them. The cheatcodes look
 up the active fork's build by URL: the artifact cheatcodes read it, creates at the script's own
 depth get its creation code in `apply_profile_init_code`, and `Cheatcodes::profile_spec` gives
 frames of non-persistent accounts the profile's spec during the env handoff. Simulation runners take
 the profile's spec in `build_rpc_simulation_context`, transaction metadata and verification use the
 build of each RPC, and `--resume` rebuilds the builds from the current config and looks them up by
-URL.
+URL. Tests link profile builds with the run's libraries, except those the profile configures, and
+coverage compiles them without the cache and with its own optimizer settings.
 
 ## Known failure windows
 

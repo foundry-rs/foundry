@@ -540,6 +540,10 @@ impl ContractsByArtifact {
 
     /// Returns these contracts together with those of `others`.
     pub fn merged<'a>(&self, others: impl IntoIterator<Item = &'a Self>) -> Self {
+        let mut others = others.into_iter().peekable();
+        if others.peek().is_none() {
+            return self.clone();
+        }
         let mut map = (*self.0).clone();
         for other in others {
             map.extend(other.iter().map(|(id, contract)| (id.clone(), contract.clone())));

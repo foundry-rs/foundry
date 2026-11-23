@@ -100,6 +100,7 @@ mod transaction;
 mod verify;
 mod wallet_session;
 
+pub use build::link_profile_build;
 pub use wallet_session::ScriptWalletSessionArgs;
 
 // Loads project's figment and merges the build cli arguments into it

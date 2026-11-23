@@ -141,6 +141,7 @@ impl CheatsConfig {
             self.batch_rewrite_creates,
         );
         cloned.blocked_cheatcodes.clone_from(&self.blocked_cheatcodes);
+        cloned.chain_builds.clone_from(&self.chain_builds);
         cloned
     }
 
@@ -538,5 +539,11 @@ mod tests {
         // Two entries with the same settings resolve to this URL, so they apply.
         assert_eq!(settings("http://127.0.0.1:18431"), (Some(3), None));
         assert_eq!(settings("http://127.0.0.1:18432"), (None, None));
+    }
+
+    #[test]
+    fn clone_with_keeps_chain_builds() {
+        let cheats = CheatsConfig { chain_builds: Some(BTreeMap::new()), ..Default::default() };
+        assert!(cheats.clone_with(&Config::default(), Default::default()).chain_builds.is_some());
     }
 }

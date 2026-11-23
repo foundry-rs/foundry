@@ -1071,22 +1071,6 @@ Error: the `--rpc-url` endpoint names a profile, so libraries of the run build c
 
 "#]]);
 
-    // Tests fork profiled endpoints with the run build.
-    prj.add_test(
-        "ForkProfiled.t.sol",
-        r#"
-import "forge-std/Test.sol";
-import "../src/ProfileScript.sol";
-contract ForkProfiledTest is Test {
-    function test_fork_profiled() public {
-        vm.createSelectFork("second");
-        assertEq(address(new Plain(0)).code, type(Plain).runtimeCode);
-    }
-}
-"#,
-    );
-    cmd.forge_fuse().args(["test", "--mt", "test_fork_profiled"]).assert_success();
-
     prj.create_file("out/Stale.sol/Stale.json", "{}");
     for (sig, error) in [
         (
@@ -1521,4 +1505,186 @@ local = {{ endpoint = "{}", profile = "endpoint" }}
 Error: a broadcast to a profiled endpoint uses a library of the run build that its profile does not link
 
 "#]]);
+}
+
+#[forgetest_init]
+async fn uses_endpoint_profile_builds_in_test_forks(prj: _, cmd: _) {
+    let first_lib = Address::repeat_byte(0x11);
+    let second_lib = Address::repeat_byte(0x22);
+    let (_, first) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(31338u64))
+            .with_hardfork(Some("paris".parse().unwrap())),
+    )
+    .await;
+    let (_, second) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(31339u64))
+            .with_hardfork(Some("prague".parse().unwrap())),
+    )
+    .await;
+    prj.add_source(
+        "Profiled.sol",
+        r#"
+library Lib { function value() external pure returns (uint256) { return 1; } }
+contract UsesLib { function value() external pure returns (uint256) { return Lib.value(); } }
+library AutoLib { function value() external pure returns (uint256) { return 2; } }
+contract UsesAutoLib {
+    uint256 x;
+    constructor(uint256 x_) { x = x_; }
+    function value() external view returns (uint256) { return AutoLib.value() + x; }
+}
+contract Creator {
+    function created(bytes memory initCode) external returns (bool ok) {
+        assembly { ok := iszero(iszero(create(0, add(initCode, 0x20), mload(initCode)))) }
+    }
+    function bls() external view returns (bool ok) {
+        (ok,) = address(0x0b).staticcall("");
+    }
+}
+contract ForkOnly {
+    uint256 immutable seven;
+    constructor() { seven = 7; }
+    function ping() external view returns (uint256) { return seven; }
+}
+contract ProfileHandler {
+    uint256 public count;
+    function hit() external { count++; }
+}
+bytes constant TSTORE = hex"600160005d00";
+"#,
+    );
+    prj.add_test(
+        "ProfileFork.t.sol",
+        r#"
+import "forge-std/Test.sol";
+import "../src/Profiled.sol";
+contract ProfileForkTest is Test {
+    function test_fork_profile() public {
+        bytes memory runCode = address(new UsesLib()).code;
+        assertFalse(new Creator().created{gas: 1e6}(TSTORE));
+        vm.createSelectFork("second");
+        assertTrue(new Creator().created{gas: 1e6}(TSTORE));
+        assertTrue(new Creator().bls());
+        UsesLib usesLib = new UsesLib();
+        bytes memory code = address(usesLib).code;
+        assertEq(code, vm.getDeployedCode("Profiled.sol:UsesLib"));
+        assertNotEq(code, runCode);
+        vm.expectRevert();
+        usesLib.value();
+        assertEq(new UsesAutoLib(1).value(), 3);
+        vm.setEvmVersion("shanghai");
+        assertFalse(new Creator().created{gas: 1e6}(TSTORE));
+        vm.createSelectFork("first");
+        assertEq(new ForkOnly().ping(), 7);
+    }
+
+    function test_fork_unset_profile() public {
+        vm.setEnv("UNSET_PROFILE_RPC_URL", vm.rpcUrl("first"));
+        vm.createSelectFork("unset");
+    }
+}
+contract ProfileInvariantTest is Test {
+    ProfileHandler handler;
+
+    function setUp() public {
+        vm.createSelectFork("first");
+        handler = new ProfileHandler();
+        targetContract(address(handler));
+    }
+
+    /// forge-config: default.invariant.runs = 1
+    /// forge-config: default.invariant.depth = 1
+    function invariant_profile_target() public view {
+        assertLe(handler.count(), 1);
+    }
+}
+"#,
+    );
+    prj.create_file(
+        "foundry.toml",
+        &format!(
+            r#"
+[profile.default]
+evm_version = "shanghai"
+
+[profile.first]
+evm_version = "paris"
+optimizer = true
+libraries = ["src/Profiled.sol:Lib:{first_lib}"]
+
+[profile.second]
+evm_version = "cancun"
+libraries = ["src/Profiled.sol:Lib:{second_lib}"]
+
+[rpc_endpoints]
+first = {{ endpoint = "{}", profile = "first" }}
+second = {{ endpoint = "{}", profile = "second" }}
+unset = {{ endpoint = "${{UNSET_PROFILE_RPC_URL}}", profile = "second" }}
+"#,
+            first.http_endpoint(),
+            second.http_endpoint()
+        ),
+    );
+
+    // Traces identify contracts of the profile builds.
+    cmd.args(["test", "--mt", "test_fork_profile"]).assert_success();
+    cmd.forge_fuse()
+        .args(["test", "--mt", "test_fork_profile", "-vvvv"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+    ├─ [..] VM::deployCode("src/Profiled.sol:UsesAutoLib", [..])
+    │   ├─ [..] → new UsesAutoLib@[..]
+...
+    ├─ [..] UsesAutoLib::value() [staticcall]
+    │   ├─ [..] AutoLib::value() [delegatecall]
+...
+    ├─ [..] VM::deployCode("src/Profiled.sol:ForkOnly")
+    │   ├─ [..] → new ForkOnly@[..]
+    │   │   └─ ← [Return] 150 bytes of code
+    │   └─ ← [Return] ForkOnly: [[..]]
+    ├─ [..] ForkOnly::ping() [staticcall]
+    │   └─ ← [Return] 7
+...
+"#]]);
+
+    // Invariant campaigns identify targets created from profile builds.
+    cmd.forge_fuse().args(["test", "--mc", "ProfileInvariantTest"]).assert_success();
+
+    cmd.forge_fuse()
+        .args(["test", "--mt", "test_fork_unset_profile"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: vm.createSelectFork: the URL of `unset` does not match a profile build made when forge started] test_fork_unset_profile() ([GAS])
+...
+"#]]);
+
+    // Coverage credits code that only runs from profile builds, and keeps the path filter.
+    prj.add_test("Unmatched.t.sol", "contract Unmatched { function test_unmatched() public {} }");
+    cmd.forge_fuse()
+        .args(["coverage", "--match-path", "test/ProfileFork.t.sol", "--mt", "test_fork_profile"])
+        .args(["--report", "lcov"])
+        .assert_success();
+    let lcov = std::fs::read_to_string(prj.root().join("lcov.info")).unwrap();
+    assert!(lcov.contains("FNDA:1,ForkOnly.constructor"), "{lcov}");
+    assert!(lcov.contains("FNDA:1,UsesAutoLib.constructor"), "{lcov}");
+    assert!(lcov.contains("FNDA:1,ForkOnly.ping"), "{lcov}");
+    assert!(!lcov.contains("Unmatched"), "{lcov}");
+    // The coverage build of the `first` profile has the optimizer off.
+    let enabled = std::fs::read_dir(prj.root().join("cache/profiles"))
+        .unwrap()
+        .filter_map(|dir| {
+            let artifact =
+                dir.unwrap().path().join("coverage/artifacts/Profiled.sol/ForkOnly.json");
+            std::fs::read_to_string(artifact).ok()
+        })
+        .map(|json| {
+            serde_json::from_str::<Value>(&json).unwrap()["metadata"]["settings"]["optimizer"]
+                ["enabled"]
+                .clone()
+        })
+        .collect::<Vec<_>>();
+    assert!(!enabled.is_empty() && enabled.iter().all(|enabled| enabled == false), "{enabled:?}");
 }

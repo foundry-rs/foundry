@@ -2527,3 +2527,53 @@ contract CounterInvariantTest {
     );
     assert_eq!(run(&["--mutation-timeout", "5"]), unbounded);
 }
+
+#[forgetest_init]
+async fn mutation_uses_endpoint_profile_builds_on_forks(prj: _, cmd: _) {
+    let (_, node) = spawn(NodeConfig::test()).await;
+    prj.add_source(
+        "ProfileCounter.sol",
+        r#"
+contract ProfileCounter {
+    function value() external pure returns (uint256) { return 1; }
+    function unused() external pure returns (uint256) { return 2; }
+    function fail() external pure { revert("message"); }
+}
+"#,
+    );
+    prj.add_test(
+        "ProfileCounter.t.sol",
+        r#"
+import "forge-std/Test.sol";
+import "../src/ProfileCounter.sol";
+contract ProfileCounterTest is Test {
+    function test_fork_value() public {
+        vm.createSelectFork("profiled");
+        ProfileCounter counter = new ProfileCounter();
+        assertNotEq(address(counter).code, type(ProfileCounter).runtimeCode);
+        assertEq(counter.value(), 1);
+        (, bytes memory data) = address(counter).call(abi.encodeCall(ProfileCounter.fail, ()));
+        assertEq(data.length, 0);
+    }
+}
+"#,
+    );
+    prj.create_file(
+        "foundry.toml",
+        &format!(
+            r#"
+[profile.other]
+optimizer = true
+[rpc_endpoints]
+profiled = {{ endpoint = "{}", profile = "other" }}
+"#,
+            node.http_endpoint()
+        ),
+    );
+    // CLI compiler options apply to the profile builds of the run and of the mutants.
+    cmd.args(["test", "--mutate", "src/ProfileCounter.sol", "--mutation-jobs", "1"])
+        .args(["--match-contract", "ProfileCounterTest", "--revert-strings", "strip", "--json"])
+        .assert_json_stdout(str![[r#"
+{"summary":{"total":4,"killed":1,"survived":3,"invalid":0,"skipped":0,"timed_out":0,"mutation_score":25.0,"duration_secs":"{...}"},"survived_mutants":{"src/ProfileCounter.sol":[{"line":6,"column":55,"original":"{ return 2; }","mutant":"{ return 0; }"},{"line":6,"column":55,"original":"{ return 2; }","mutant":"{ return 1; }"},{"line":7,"column":35,"original":"{ revert(\"message\"); }","mutant":"{}"}]}}
+"#]]);
+}

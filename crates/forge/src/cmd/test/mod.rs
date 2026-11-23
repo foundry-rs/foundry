@@ -41,7 +41,9 @@ use foundry_cli::{
 };
 use foundry_common::{
     ContractsByArtifact, EmptyTestFilter, TestFilter, TestFunctionExt, TestFunctionKind,
-    compile::{ProjectCompiler, compile_abi_project_cached},
+    compile::{
+        ProfileBuild, ProjectCompiler, compile_abi_project_cached, compile_endpoint_profiles,
+    },
     external_compiler::is_external_artifact,
     fs,
     fs::canonicalize_path,
@@ -307,6 +309,7 @@ pub(crate) struct TestExecutionOptions {
     pub(crate) replay_symbolic_artifact: Option<SymbolicArtifactReplayConfig>,
     pub(crate) inline_config: Arc<InlineConfig>,
     pub(crate) selected_sources: BTreeSet<PathBuf>,
+    pub(crate) profile_builds: Vec<Arc<ProfileBuild>>,
 }
 
 impl TestExecutionOptions {
@@ -319,6 +322,7 @@ impl TestExecutionOptions {
             replay_symbolic_artifact: None,
             inline_config,
             selected_sources: BTreeSet::new(),
+            profile_builds: Default::default(),
         }
     }
 
@@ -366,6 +370,7 @@ struct CompiledTestProject {
     inline_config: Arc<InlineConfig>,
     replay_symbolic_artifact: Option<SymbolicArtifactReplayConfig>,
     selected_sources: BTreeSet<PathBuf>,
+    profile_builds: Vec<Arc<ProfileBuild>>,
     /// Keeps the brutalized copy of the project alive while its tests run.
     _brutalized_workspace: Option<TempDir>,
 }
@@ -1684,6 +1689,7 @@ impl TestArgs {
             TestExecutionOptions {
                 replay_symbolic_artifact: compiled.replay_symbolic_artifact,
                 selected_sources: compiled.selected_sources,
+                profile_builds: compiled.profile_builds,
                 ..TestExecutionOptions::default_run(compiled.inline_config)
             },
         )
@@ -1759,15 +1765,15 @@ impl TestArgs {
         }
         trace!(target: "forge::test", ?filter, "using filter");
 
-        let compiler = || {
+        let compiler = |config: &Config| {
             ProjectCompiler::new()
                 .allow_linked_libraries(config.allow_linked_libraries || self.list)
-                .external_compilers(&config)
+                .external_compilers(config)
                 .dynamic_test_linking(config.dynamic_test_linking)
                 .quiet(shell::is_json() || self.junit)
         };
-        let (output, selected_sources, inline_config) = if self.list {
-            let compiler = compiler().external_artifacts(false);
+        let (output, selected_sources, inline_config, profile_builds) = if self.list {
+            let compiler = compiler(&config).external_artifacts(false);
             // Only the ABI is needed to list tests, so skip the full compile when possible.
             let compiler = if filter.args().path_pattern.is_some()
                 && config.extra_output.is_empty()
@@ -1786,23 +1792,26 @@ impl TestArgs {
             // Listing must not replace full artifacts with ABI-only ones, which later cached
             // builds would treat as fresh.
             let mut project = config.create_project(config.cache, true)?;
-            (compile_abi_project_cached(&mut project, compiler)?, BTreeSet::new(), None)
+            let output = compile_abi_project_cached(&mut project, compiler)?;
+            (output, BTreeSet::new(), None, Vec::new())
         } else {
             let (files, inline_config) =
                 self.get_sources_to_compile(&config, &filter, replay_symbolic_artifact.as_ref())?;
-            let compile = |files: &BTreeSet<PathBuf>| {
-                let compiler = if filter.is_empty() {
-                    compiler()
+            let with_fallback = |compiler: ProjectCompiler| {
+                if filter.is_empty() {
+                    compiler
                 } else {
-                    compiler().source_order_fallback(
+                    compiler.source_order_fallback(
                         source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
                             .chain(source_files_iter(
                                 &config.test,
                                 MultiCompilerLanguage::FILE_EXTENSIONS,
                             )),
                     )
-                };
-                compiler.files(files.iter().cloned()).compile(&project)
+                }
+            };
+            let compile = |files: &BTreeSet<PathBuf>| {
+                with_fallback(compiler(&config)).files(files.iter().cloned()).compile(&project)
             };
             let mut output = compile(&files);
             let mut reresolved = false;
@@ -1893,7 +1902,14 @@ impl TestArgs {
             } else {
                 output?
             };
-            (output, files, inline_config)
+            let profile_builds =
+                compile_endpoint_profiles(&config, self.profile_overrides(), None, |config| {
+                    with_fallback(compiler(config)).files(files.clone())
+                })?
+                .into_iter()
+                .map(Arc::new)
+                .collect();
+            (output, files, inline_config, profile_builds)
         };
         let inline_config = match inline_config {
             Some(inline_config) => inline_config,
@@ -1909,6 +1925,7 @@ impl TestArgs {
             inline_config,
             replay_symbolic_artifact,
             selected_sources,
+            profile_builds,
             _brutalized_workspace: brutalized_workspace,
         })
     }
@@ -1917,8 +1934,15 @@ impl TestArgs {
         &mut self,
         corpus_dir: &Path,
     ) -> Result<FuzzMinimizeReplaySession> {
-        let CompiledTestProject { mut config, mut evm_opts, output, filter, inline_config, .. } =
-            self.compile_project().await?;
+        let CompiledTestProject {
+            mut config,
+            mut evm_opts,
+            output,
+            filter,
+            inline_config,
+            profile_builds,
+            ..
+        } = self.compile_project().await?;
 
         if config.fuzz.run == Some(0) {
             bail!("`fuzz.run` must be greater than 0");
@@ -1939,6 +1963,7 @@ impl TestArgs {
             std::iter::once(default_pass).chain(override_passes)
         {
             let execution = TestExecutionOptions {
+                profile_builds: profile_builds.clone(),
                 multi_network,
                 ..TestExecutionOptions::default_run(inline_config.clone())
             };
@@ -2194,6 +2219,7 @@ impl TestArgs {
                         })
                         .collect::<Vec<_>>();
                     let mutation_config = MutationRunConfig {
+                        profile_overrides: self.profile_overrides(),
                         mutate_paths: mutate.clone(),
                         mutate_path_pattern: self.mutate_path.clone(),
                         mutate_contract_pattern: self.mutate_contract.clone(),
@@ -2345,6 +2371,7 @@ impl TestArgs {
             .with_fuzz_input(execution.fuzz_input)
             .with_symbolic_artifact_replay(execution.replay_symbolic_artifact)
             .with_create2_deployer_available(create2_deployer_available)
+            .with_profile_builds(execution.profile_builds)
             .build::<FEN, MultiCompiler>(output, evm_env, tx, evm_opts, backend, executor_builder)
     }
 
@@ -2494,7 +2521,7 @@ impl TestArgs {
             {
                 sh_println!("{}", serde_json::to_string(&BTreeMap::<String, SuiteResult>::new())?)?;
             }
-            return Ok(TestOutcome::empty(Some(runner.known_contracts.clone()), false));
+            return Ok(TestOutcome::empty(Some(runner.identifiable_contracts.clone()), false));
         }
 
         let debug_selection_term = Term::stderr();
@@ -2597,7 +2624,7 @@ impl TestArgs {
             }
 
             return Ok(TestOutcome::new(
-                Some(runner.known_contracts),
+                Some(runner.identifiable_contracts),
                 results,
                 self.allow_failure,
                 fuzz_seed,
@@ -2611,6 +2638,7 @@ impl TestArgs {
             .flatten()
             .map(Into::into);
         let known_contracts = runner.known_contracts.clone();
+        let identifiable_contracts = runner.identifiable_contracts.clone();
         let libraries = runner.libraries.clone();
 
         // Capture multi-pass state before moving `runner` into the spawn task.
@@ -2632,7 +2660,7 @@ impl TestArgs {
         });
 
         // Set up trace identifiers.
-        let mut identifier = TraceIdentifiers::new().with_local(&known_contracts);
+        let mut identifier = TraceIdentifiers::new().with_local(&identifiable_contracts);
 
         // Avoid using external identifiers for gas report as we decode more traces and this will be
         // expensive. Also skip external identifiers for local tests (no remote chain) to avoid
@@ -2644,7 +2672,7 @@ impl TestArgs {
         // Build the trace decoder.
         let mut builder = CallTraceDecoderBuilder::new()
             .with_tracing_config(tracing)
-            .with_known_contracts(&known_contracts)
+            .with_known_contracts(&identifiable_contracts)
             .with_networks(networks)
             .with_chain_id(remote_chain.map(|c| c.id()))
             .with_hardfork(resolved_hardfork);
@@ -2777,7 +2805,7 @@ impl TestArgs {
                         if self.debug && !result.debug_bytecodes.is_empty() {
                             let mut local_identifier = TraceIdentifiers::new()
                                 .with_local_and_bytecodes(
-                                    &known_contracts,
+                                    &identifiable_contracts,
                                     &result.debug_bytecodes,
                                 );
                             decoder.identify(arena, &mut local_identifier);
@@ -2928,7 +2956,7 @@ impl TestArgs {
         match handle.await {
             Ok(result) => {
                 let runner = result?;
-                outcome.known_contracts = Some(runner.known_contracts);
+                outcome.known_contracts = Some(runner.identifiable_contracts);
             }
             Err(e) => match e.try_into_panic() {
                 Ok(payload) => std::panic::resume_unwind(payload),
@@ -3050,6 +3078,11 @@ impl TestArgs {
             let config = self.load_config()?;
             Ok([config.src, config.test])
         })
+    }
+
+    /// Returns the CLI overrides applied to endpoint profiles.
+    pub(crate) fn profile_overrides(&self) -> figment::Figment {
+        figment::Figment::new().merge(&self.build).merge(&self.evm).merge(self)
     }
 }
 

@@ -18,7 +18,9 @@ use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_cli::utils::{FoundryPathExt, LoadConfig, STATIC_FUZZ_SEED};
 use foundry_common::{
-    ContractsByArtifactBuilder, TestFilter, compile::ProjectCompiler, errors::convert_solar_errors,
+    ContractsByArtifactBuilder, TestFilter,
+    compile::{ProfileBuild, ProjectCompiler, compile_endpoint_profiles},
+    errors::convert_solar_errors,
     version::SHORT_VERSION,
 };
 use foundry_compilers::{
@@ -229,10 +231,36 @@ impl CoverageArgs {
         let settings = self.resolve(&config.coverage);
         let filter = self.test.filter(&config)?;
 
+        let files = (filter.args().path_pattern.is_some()
+            || filter.args().path_pattern_inverse.is_some())
+        .then(|| {
+            source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
+                .chain(
+                    source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS)
+                        // Preserve path-filter behavior for conventional test files while still
+                        // scanning non-test fixtures under the test root.
+                        .filter(|path| !path.is_sol_test() || filter.matches_path(path)),
+                )
+                // Coverage reports include scripts even though they are not test targets.
+                .chain(source_files_iter(&config.script, MultiCompilerLanguage::FILE_EXTENSIONS))
+                .collect::<BTreeSet<_>>()
+        });
         let (paths, mut output) = {
-            let (project, output) = Self::build(&config, &filter, &settings)?;
+            let (project, output) = Self::build(&config, files.as_ref(), &settings)?;
             (project.paths, output)
         };
+        let mut profile_builds = compile_endpoint_profiles(
+            &config,
+            self.test.profile_overrides(),
+            Some((!settings.keep_optimizer).then_some(settings.ir_minimum)),
+            |config| Self::compiler(config, files.as_ref()),
+        )?
+        .into_iter()
+        .map(|build| ProfileBuild {
+            output: build.output.with_stripped_file_prefixes(&paths.root),
+            ..build
+        })
+        .collect::<Vec<_>>();
 
         if settings.report_file.is_some() && settings.file_report_count() > 1 {
             sh_warn!(
@@ -244,7 +272,14 @@ impl CoverageArgs {
         let mut reporters = settings.reporters(&paths.root);
 
         sh_println!("Analysing contracts...")?;
-        let report = Self::prepare(&settings, &reporters, &paths, &mut output)?;
+        let mut report = CoverageReport::default();
+        Self::prepare(&settings, &reporters, &paths, &mut output, &mut report)?;
+        let mut prepared = HashSet::new();
+        for build in &mut profile_builds {
+            if prepared.insert(build.artifacts_dir.clone()) {
+                Self::prepare(&settings, &reporters, &paths, &mut build.output, &mut report)?;
+            }
+        }
 
         sh_println!("Running tests...")?;
         self.collect(
@@ -252,6 +287,7 @@ impl CoverageArgs {
             &mut reporters,
             &paths.root,
             &output,
+            profile_builds,
             report,
             config,
             evm_opts,
@@ -292,7 +328,7 @@ impl CoverageArgs {
     /// Builds the project.
     fn build(
         config: &Config,
-        filter: &ProjectPathsAwareFilter,
+        files: Option<&BTreeSet<PathBuf>>,
         settings: &CoverageSettings,
     ) -> Result<(Project, ProjectCompileOutput)> {
         let mut project = config.ephemeral_project()?;
@@ -359,37 +395,13 @@ impl CoverageArgs {
             config.disable_optimizations(&mut project, settings.ir_minimum && !solar);
         }
 
-        let files = (filter.args().path_pattern.is_some()
-            || filter.args().path_pattern_inverse.is_some())
-        .then(|| {
-            source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
-                .chain(
-                    source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS)
-                        // Preserve path-filter behavior for conventional test files while still
-                        // scanning non-test fixtures under the test root.
-                        .filter(|path| !path.is_sol_test() || filter.matches_path(path)),
-                )
-                // Coverage reports include scripts even though they are not test targets.
-                .chain(source_files_iter(&config.script, MultiCompilerLanguage::FILE_EXTENSIONS))
-                .collect::<BTreeSet<_>>()
-        });
-        let compile = |project: &Project| {
-            let mut compiler = ProjectCompiler::new()
-                .allow_linked_libraries(config.allow_linked_libraries)
-                .external_compilers(config)
-                .external_artifacts(false)
-                .dynamic_test_linking(config.dynamic_test_linking);
-            if let Some(files) = &files {
-                compiler = compiler.files(files.iter().cloned());
-            }
-            compiler.compile(project)
-        };
+        let compile = |project: &Project| Self::compiler(config, files).compile(project);
         // Coverage needs complete build contexts, including sources without contract artifacts.
         // Invalidate the owned cache as a whole on edits so source IDs, artifact names, and
         // build-info files all belong to the same compilation.
         let cached_output = (|| -> Result<Option<ProjectCompileOutput>> {
             let Some((path, _)) = &cache else { return Ok(None) };
-            let mut sources = if let Some(files) = &files
+            let mut sources = if let Some(files) = files
                 && !files.is_empty()
             {
                 Source::read_all(files)?
@@ -490,16 +502,15 @@ impl CoverageArgs {
         Ok((project, output))
     }
 
-    /// Builds the coverage report.
+    /// Adds the sources and coverage items of `output` to the coverage report.
     #[instrument(name = "Coverage::prepare", skip_all)]
     fn prepare(
         settings: &CoverageSettings,
         reporters: &[Box<dyn CoverageReporter>],
         project_paths: &ProjectPathsConfig,
         output: &mut ProjectCompileOutput,
-    ) -> Result<CoverageReport> {
-        let mut report = CoverageReport::default();
-
+        report: &mut CoverageReport,
+    ) -> Result<()> {
         output.parser_mut().solc_mut().compiler_mut().enter_mut(|compiler| {
             if compiler.gcx().stage() < Some(solar::config::CompilerStage::Lowering) {
                 let _ = compiler.lower_asts();
@@ -590,7 +601,7 @@ impl CoverageArgs {
             }));
         }
 
-        Ok(report)
+        Ok(())
     }
 
     /// Runs tests, collects coverage data and generates the final report.
@@ -602,12 +613,14 @@ impl CoverageArgs {
         reporters: &mut [Box<dyn CoverageReporter>],
         project_root: &Path,
         output: &ProjectCompileOutput,
+        profile_builds: Vec<ProfileBuild>,
         mut report: CoverageReport,
         config: Config,
         evm_opts: EvmOpts,
         filter: ProjectPathsAwareFilter,
     ) -> Result<()> {
         let inline_config = Arc::new(InlineConfig::new_parsed(output, &config)?);
+        let profile_builds = profile_builds.into_iter().map(Arc::new).collect::<Vec<_>>();
         let outcome = self
             .test
             .run_tests(
@@ -616,7 +629,10 @@ impl CoverageArgs {
                 evm_opts,
                 output,
                 &filter,
-                TestExecutionOptions::coverage(inline_config),
+                TestExecutionOptions {
+                    profile_builds: profile_builds.clone(),
+                    ..TestExecutionOptions::coverage(inline_config)
+                },
             )
             .await?;
 
@@ -624,7 +640,10 @@ impl CoverageArgs {
         // Linking removes library references. Match runtime against the compiler artifacts to
         // retain those offsets, while keeping linked bytecode for creation matching.
         let runtime_contracts = ContractsByArtifactBuilder::new(
-            output.artifact_ids().map(|(id, artifact)| (id, artifact.into())),
+            output
+                .artifact_ids()
+                .chain(profile_builds.iter().flat_map(|build| build.output.artifact_ids()))
+                .map(|(id, artifact)| (id, artifact.into())),
         )
         .build();
         let mut resolved_hit_maps = ResolvedHitMaps::default();
@@ -761,6 +780,19 @@ impl CoverageArgs {
 
     pub const fn watch(&self) -> &WatchArgs {
         &self.test.watch
+    }
+
+    /// Returns the compiler of the project and of its endpoint profiles.
+    fn compiler(config: &Config, files: Option<&BTreeSet<PathBuf>>) -> ProjectCompiler {
+        let compiler = ProjectCompiler::new()
+            .allow_linked_libraries(config.allow_linked_libraries)
+            .external_compilers(config)
+            .external_artifacts(false)
+            .dynamic_test_linking(config.dynamic_test_linking);
+        match files {
+            Some(files) => compiler.files(files.iter().cloned()),
+            None => compiler,
+        }
     }
 }
 

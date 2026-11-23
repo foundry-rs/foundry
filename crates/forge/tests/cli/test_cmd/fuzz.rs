@@ -7258,3 +7258,57 @@ Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing te
 "#]],
     );
 }
+
+#[forgetest_init]
+async fn forge_fuzz_cmin_uses_endpoint_profile_builds_on_forks(prj: _, cmd: _) {
+    let (_, node) = spawn(NodeConfig::test()).await;
+    prj.add_test(
+        "ForgeFuzzCminProfile.t.sol",
+        r#"
+import "forge-std/Test.sol";
+contract Probe {}
+contract ForgeFuzzCminProfileTest is Test {
+    uint256 value;
+
+    function testFuzz_profile(uint256 input) public {
+        vm.createSelectFork("profiled");
+        if (keccak256(address(new Probe()).code) != keccak256(type(Probe).runtimeCode)) {
+            if (input == 1) {
+                value = 1;
+            }
+            if (input == 2) {
+                value = 2;
+            }
+        }
+    }
+}
+"#,
+    );
+    prj.create_file(
+        "foundry.toml",
+        &format!(
+            r#"
+[profile.other]
+optimizer = true
+[rpc_endpoints]
+profiled = {{ endpoint = "{}", profile = "other" }}
+"#,
+            node.http_endpoint()
+        ),
+    );
+    cmd.args(["build", "-q"]).assert_success();
+
+    let abi =
+        artifact_abi(prj.root(), "out/ForgeFuzzCminProfile.t.sol/ForgeFuzzCminProfileTest.json");
+    let corpus = prj.root().join("corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    for (index, input) in [1, 2].into_iter().enumerate() {
+        let name = format!("00000000-0000-0000-0000-00000000000{index}-{index}.json");
+        write_corpus_entry(&corpus, &name, &calldata_for(&abi, "testFuzz_profile", input));
+    }
+    cmd.forge_fuse()
+        .args(["fuzz", "cmin", "--mc", "ForgeFuzzCminProfileTest", "--mt", "testFuzz_profile"])
+        .args(["corpus", "--corpus-out", "min-corpus"])
+        .assert_success();
+    assert_eq!(regular_file_count(&prj.root().join("min-corpus")), 2);
+}

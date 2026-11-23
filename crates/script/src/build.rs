@@ -263,10 +263,11 @@ impl<FEN: FoundryEvmNetwork> PreprocessedState<FEN> {
         };
         let output = compiler(&script_config.config).compile(&project)?;
         let overrides = Figment::new().merge(&args.build).merge(&args.evm).merge(&args);
-        let profile_builds = compile_endpoint_profiles(&script_config.config, overrides, compiler)?
-            .into_iter()
-            .map(Arc::new)
-            .collect();
+        let profile_builds =
+            compile_endpoint_profiles(&script_config.config, overrides, None, compiler)?
+                .into_iter()
+                .map(Arc::new)
+                .collect();
 
         let mut target_id: Option<ArtifactId> = None;
 
@@ -806,17 +807,30 @@ fn chain_builds(
         .map(|build| {
             let linker =
                 Linker::new(build_data.project_root.clone(), build.output.artifact_ids().collect());
-            let artifacts = ContractsByArtifactBuilder::new(
-                linker
-                    .get_linked_artifacts(&build.config.libraries_with_remappings()?)?
-                    .iter()
-                    .map(|(id, artifact)| (id.clone(), artifact.into())),
-            )
-            .build();
-            Ok(ChainBuild { profile: build.clone(), artifacts })
+            link_profile_build(&linker, build, Libraries::default())
         })
         .collect::<Result<Vec<_>>>()?;
     ChainBuild::by_endpoint(config, builds)
+}
+
+/// Links the artifacts of `linker` with `libraries` and the libraries the profile of `build`
+/// configures.
+pub fn link_profile_build(
+    linker: &Linker<'_>,
+    build: &Arc<ProfileBuild>,
+    mut libraries: Libraries,
+) -> Result<ChainBuild> {
+    for (file, libs) in build.config.libraries_with_remappings()?.libs {
+        libraries.libs.entry(file).or_default().extend(libs);
+    }
+    let artifacts = ContractsByArtifactBuilder::new(
+        linker
+            .get_linked_artifacts(&libraries)?
+            .iter()
+            .map(|(id, artifact)| (id.clone(), artifact.into())),
+    )
+    .build();
+    Ok(ChainBuild { profile: build.clone(), artifacts })
 }
 
 #[cfg(test)]

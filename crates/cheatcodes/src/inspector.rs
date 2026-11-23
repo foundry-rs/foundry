@@ -2,7 +2,8 @@
 
 use crate::{
     Cheatcode, CheatcodesBackend, CheatcodesCore, CheatsConfig, CheatsCtxt, Error, Result,
-    Vm::{self, AccountAccess},
+    Vm::{self, AccountAccess, ForgeContext},
+    env::current_execution_context,
     evm::{
         GasRecord, RecordAccess, append_storage_access, mark_account_accesses_reverted,
         merge_recorded_frame,
@@ -3842,9 +3843,13 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             build.profile.config.evm_version,
             build.profile.config.hardfork,
             &mut env,
-            ExecutionSpecContext::Script {
-                source_chain_id: context.source_chain_id,
-                endpoint_hardfork: context.hardfork,
+            if current_execution_context() == Some(ForgeContext::ScriptGroup) {
+                ExecutionSpecContext::Script {
+                    source_chain_id: context.source_chain_id,
+                    endpoint_hardfork: context.hardfork,
+                }
+            } else {
+                ExecutionSpecContext::fork(context.source_chain_id, context.hardfork)
             },
             None,
         );

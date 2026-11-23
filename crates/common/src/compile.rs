@@ -1351,10 +1351,13 @@ pub struct ProfileBuild {
 }
 
 /// Compiles each distinct set of compiler settings among the profiles named by `[rpc_endpoints]`
-/// once, with `overrides` applied, and caches it by those settings.
+/// once, with `overrides` applied, and caches it by those settings. With `coverage`, the builds are
+/// compiled without the cache, and `Some(ir_minimum)` disables optimizations as for a coverage
+/// build, keeping `viaIR` at minimum optimization if `ir_minimum` is `true`.
 pub fn compile_endpoint_profiles(
     config: &Config,
     overrides: impl Provider + Clone,
+    coverage: Option<Option<bool>>,
     compiler: impl Fn(&Config) -> ProjectCompiler,
 ) -> Result<Vec<ProfileBuild>> {
     let profiles = config
@@ -1367,7 +1370,10 @@ pub fn compile_endpoint_profiles(
         let config = config
             .with_profile_compiler_settings(profile, overrides.clone())
             .wrap_err_with(|| format!("failed to load profile `{profile}` of `[rpc_endpoints]`"))?;
-        let cache_path = config.profile_cache_path()?;
+        let mut cache_path = config.profile_cache_path()?;
+        if coverage.is_some() {
+            cache_path = cache_path.join("coverage");
+        }
         let artifacts_dir = cache_path.join("artifacts");
         if let Some(build) = builds.iter_mut().find(|build| {
             build.artifacts_dir == artifacts_dir
@@ -1377,23 +1383,32 @@ pub fn compile_endpoint_profiles(
             build.profiles.push(profile.to_string());
             continue;
         }
-        let (artifacts_dir, output) =
-            match builds.iter().find(|build| build.artifacts_dir == artifacts_dir) {
-                Some(build) => (artifacts_dir, build.output.clone()),
-                None => {
-                    let mut project = config.create_project_with_compiler(
-                        || config.compiler(),
-                        config.cache && !config.force,
-                        false,
-                    )?;
-                    project.paths.cache = cache_path.join(SOLIDITY_FILES_CACHE_FILENAME);
-                    project.paths.artifacts = artifacts_dir;
-                    project.paths.build_infos = cache_path.join("build-info");
-                    project.paths.slash_paths();
-                    let output = compiler(&config).compile(&project)?;
-                    (project.paths.artifacts, output)
+        let (artifacts_dir, output) = match builds
+            .iter()
+            .find(|build| build.artifacts_dir == artifacts_dir)
+        {
+            Some(build) => (artifacts_dir, build.output.clone()),
+            None => {
+                let mut project = config.create_project_with_compiler(
+                    || config.compiler(),
+                    config.cache && !config.force,
+                    false,
+                )?;
+                if let Some(ir_minimum) = coverage {
+                    if let Some(ir_minimum) = ir_minimum {
+                        config
+                            .disable_optimizations(&mut project, ir_minimum && !config.is_solar());
+                    }
+                    project.cached = false;
                 }
-            };
+                project.paths.cache = cache_path.join(SOLIDITY_FILES_CACHE_FILENAME);
+                project.paths.artifacts = artifacts_dir;
+                project.paths.build_infos = cache_path.join("build-info");
+                project.paths.slash_paths();
+                let output = compiler(&config).compile(&project)?;
+                (project.paths.artifacts, output)
+            }
+        };
         builds.push(ProfileBuild {
             profiles: vec![profile.to_string()],
             config,
@@ -1602,12 +1617,16 @@ third = { endpoint = "http://127.0.0.1:3", profile = "third" }
             )?;
             let config = Config::load().unwrap();
             let count = std::cell::Cell::new(0);
-            let builds =
-                compile_endpoint_profiles(&config, foundry_config::figment::Figment::new(), |_| {
+            let builds = compile_endpoint_profiles(
+                &config,
+                foundry_config::figment::Figment::new(),
+                None,
+                |_| {
                     count.set(count.get() + 1);
                     ProjectCompiler::new().quiet(true)
-                })
-                .unwrap();
+                },
+            )
+            .unwrap();
             assert_eq!(count.get(), 1);
             assert_eq!(builds.len(), 2);
             assert_eq!(builds[0].profiles, ["first", "third"]);
@@ -1637,11 +1656,13 @@ second = { endpoint = "http://127.0.0.1:2", profile = "second" }
 "#,
             )?;
             let config = Config::load().unwrap();
-            let builds =
-                compile_endpoint_profiles(&config, foundry_config::figment::Figment::new(), |_| {
-                    ProjectCompiler::new().quiet(true)
-                })
-                .unwrap();
+            let builds = compile_endpoint_profiles(
+                &config,
+                foundry_config::figment::Figment::new(),
+                None,
+                |_| ProjectCompiler::new().quiet(true),
+            )
+            .unwrap();
             assert_eq!(builds.len(), 2);
             assert_eq!(builds[0].artifacts_dir, builds[1].artifacts_dir);
             assert_ne!(builds[0].config.libraries, builds[1].config.libraries);

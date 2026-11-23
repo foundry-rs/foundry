@@ -16,8 +16,8 @@ use eyre::Result;
 use foundry_cli::opts::configure_pcx_from_compile_output;
 use foundry_common::{
     ContractsByArtifact, ContractsByArtifactBuilder, EmptyTestFilter, LIBRARY_DEPLOYER,
-    TestFunctionKind, external_compiler::external_artifact_is_test_eligible, get_contract_name,
-    namespaced_storage,
+    TestFunctionKind, compile::ProfileBuild, external_compiler::external_artifact_is_test_eligible,
+    get_contract_name, namespaced_storage,
 };
 use foundry_compilers::{
     Artifact, ArtifactId, Compiler, ProjectCompileOutput,
@@ -33,12 +33,13 @@ use foundry_evm::{
         BaseCounterExample, BasicTxDetails,
         strategies::{EnumBounds, LiteralsDictionary},
     },
-    inspectors::{CheatsConfig, EdgeIndexMap},
+    inspectors::{CheatsConfig, EdgeIndexMap, cheatcodes::ChainBuild},
     opts::{EvmOpts, ExecutionSpecContext, resolve_execution_spec},
     traces::{InternalTraceMode, TraceRequirements},
 };
 use foundry_evm_networks::NetworkVariant;
 
+use forge_script::link_profile_build;
 use foundry_linking::{DetailedLinkOutput, LinkOutput, Linker, LinkerError, Resolver};
 use rayon::prelude::*;
 use std::{
@@ -68,6 +69,8 @@ pub struct MultiContractRunner<FEN: FoundryEvmNetwork> {
     pub contracts: DeployableContracts,
     /// Known contracts linked with computed library addresses.
     pub known_contracts: ContractsByArtifact,
+    /// Known contracts with those of the profile builds, to identify deployed code.
+    pub identifiable_contracts: ContractsByArtifact,
     /// Revert decoder. Contains all known errors and their selectors.
     pub revert_decoder: RevertDecoder,
     /// Libraries to deploy.
@@ -516,6 +519,8 @@ pub struct TestRunnerConfig<FEN: FoundryEvmNetwork> {
 
     /// When set, run only the matching test and replay this artifact's concrete payload.
     pub symbolic_artifact_replay: Option<SymbolicArtifactReplayConfig>,
+    /// Profile builds by the URL of the `[rpc_endpoints]` entry naming the profile.
+    pub chain_builds: BTreeMap<String, Arc<ChainBuild>>,
 }
 
 impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
@@ -581,6 +586,7 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
             false,
         );
         cheats_config.isolate = self.isolation;
+        cheats_config.chain_builds = Some(self.chain_builds.clone());
         let cheats_config = Arc::new(cheats_config);
         let mut executor = self
             .executor_builder
@@ -659,6 +665,8 @@ pub struct MultiContractRunnerBuilder {
     pub symbolic_artifact_replay: Option<SymbolicArtifactReplayConfig>,
     /// Whether the configured CREATE2 deployer is available in the execution environment.
     pub create2_deployer_available: Option<bool>,
+    /// Builds of the profiles named by `[rpc_endpoints]`.
+    pub profile_builds: Vec<Arc<ProfileBuild>>,
 }
 
 impl MultiContractRunnerBuilder {
@@ -693,11 +701,17 @@ impl MultiContractRunnerBuilder {
             fuzz_input: None,
             symbolic_artifact_replay: None,
             create2_deployer_available: None,
+            profile_builds: Default::default(),
         }
     }
 
     pub const fn with_create2_deployer_available(mut self, available: bool) -> Self {
         self.create2_deployer_available = Some(available);
+        self
+    }
+
+    pub fn with_profile_builds(mut self, profile_builds: Vec<Arc<ProfileBuild>>) -> Self {
+        self.profile_builds = profile_builds;
         self
     }
 
@@ -858,6 +872,18 @@ impl MultiContractRunnerBuilder {
 
         let linked_contracts = linker
             .get_linked_artifacts_cow_with_artifact_libraries(&libraries, &artifact_libraries)?;
+
+        // Links profile builds with the run's libraries, except those the profile configures.
+        let profile_builds = self
+            .profile_builds
+            .iter()
+            .map(|build| {
+                let contracts =
+                    build.output.artifact_ids().map(|(id, v)| (artifact_id(id), v)).collect();
+                link_profile_build(&Linker::new(root, contracts), build, libraries.clone())
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let chain_builds = ChainBuild::by_endpoint(&self.config, profile_builds)?;
         let inline_config = self.inline_config;
 
         // Collect every deployable test contract: a test contract with a default constructor.
@@ -937,6 +963,8 @@ impl MultiContractRunnerBuilder {
         let known_contracts = ContractsByArtifactBuilder::new(linked_contracts)
             .with_storage_layouts(storage_layouts)
             .build();
+        let identifiable_contracts =
+            known_contracts.merged(chain_builds.values().map(|build| &build.artifacts));
         let analysis = Arc::new(analysis);
 
         // Enum variant counts used to constrain fuzzed enum inputs to valid values.
@@ -973,6 +1001,7 @@ impl MultiContractRunnerBuilder {
             contracts: deployable_contracts,
             revert_decoder,
             known_contracts,
+            identifiable_contracts,
             libs_to_deploy,
             library_addresses,
             library_deployment,
@@ -1006,6 +1035,7 @@ impl MultiContractRunnerBuilder {
                 fuzz_failure_replay: self.fuzz_failure_replay,
                 fuzz_input: self.fuzz_input,
                 symbolic_artifact_replay: self.symbolic_artifact_replay,
+                chain_builds,
                 config: self.config,
             },
 

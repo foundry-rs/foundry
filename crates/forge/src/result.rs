@@ -63,7 +63,7 @@ pub struct TestOutcome {
     pub last_run_decoder: Option<CallTraceDecoder>,
     /// The gas report, if requested.
     pub gas_report: Option<GasReport>,
-    /// Known contracts from the test run (used for coverage).
+    /// Known contracts from the test run, with those of the profile builds (used for coverage).
     pub known_contracts: Option<ContractsByArtifact>,
     /// The fuzz seed used for the test run.
     pub fuzz_seed: Option<U256>,
