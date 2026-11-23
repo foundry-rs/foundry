@@ -397,6 +397,13 @@ fn expr_less_or_equal<'a>(
         {
             true
         }
+        // A constant bounds any word whose interval it caps, such as a signed price below a
+        // constant once it is known to be positive.
+        (_, SymExprKind::Const(bound))
+            if bounds.word_range(left).is_some_and(|(_, max)| max <= *bound) =>
+        {
+            true
+        }
         // `left <= round(a * b / d) <= round'(a' * b' / d) <= right`.
         _ if let Some(upper) = quotient_upper_bound(left, facts, bounds)
             && let Some(lower) = quotient_lower_bound(right, facts, bounds) =>
