@@ -666,7 +666,6 @@ contract Halter {
 }
 
 /// An expected halt gives back the gas its frame did not use, as an expected revert does.
-/// Ref: <https://linear.app/tempoxyz/issue/OSS-1438>
 contract ExpectRevertHaltGasTest is Test {
     Halter halter;
 
