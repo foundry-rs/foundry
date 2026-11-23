@@ -147,6 +147,8 @@ impl ConstraintContext {
     /// `x` and `z`. The Euclidean sum `(a / d) * d + a % d` is `a`, so each summand is at most the
     /// other's complement. With a nonzero divisor, `a / d <= (a - 1) / d + 1`, also when selected
     /// by `a != 0`, and `(x * y + c) / d <= x` once `y <= d`, `x * y` cannot wrap, and `c < d`.
+    /// A nonzero `d` also gives `f * y / d <= x` once `y <= d` and `f` is itself proved at most
+    /// `x`.
     /// Another conjunct's cross-multiplied `x * k <= y * l` also decides `x <= y` once `k` is
     /// positive, `l <= k`, and `x * k` cannot wrap.
     /// The shares `w * a / k + w * b / k <= w` once `a + b <= k`, and `n <= ceil(n / d) * d` for a
@@ -233,37 +235,9 @@ impl ConstraintContext {
         {
             return Some(false);
         }
-        // A factor that is itself at most `x`, like a fee `x * a / k` split into shares, keeps
-        // `(f * y) / d <= f <= x` once `y <= d`, since `f * y <= f * d` and a wrapped product only
-        // shrinks the dividend. `UDiv` by zero is all ones, so `d` must be nonzero.
-        if let Some((dividend, divisor)) = small.udiv_operands()
-            && let SymExprKind::BinOp(SymBinOp::Mul, left, right) = dividend.kind()
-            && left != large
-            && right != large
-            && let Some(divisor) = self
-                .interval_cached(divisor, intervals, remaining)
-                .filter(|divisor| !divisor.min.is_zero())
-        {
-            // Cached intervals cost no budget, so charge each recursion to bound shared DAGs, such
-            // as repeated squaring.
-            let orders = if left == right { 1 } else { 2 };
-            for (factor, other) in [(left, right), (right, left)].into_iter().take(orders) {
-                if *remaining == 0 {
-                    break;
-                }
-                *remaining -= 1;
-                if self
-                    .interval_cached(other, intervals, remaining)
-                    .is_some_and(|other| other.max <= divisor.min)
-                    && self.division_order(factor, large, intervals, remaining).is_some()
-                {
-                    return Some(false);
-                }
-            }
-        }
         let mut interval = |expr: &SymExpr| self.interval_cached(expr, intervals, remaining);
         let nonzero = |range: Option<WordInterval>| range.is_some_and(|range| !range.min.is_zero());
-        match small.kind() {
+        let order = match small.kind() {
             SymExprKind::BinOp(SymBinOp::URem, dividend, divisor) => {
                 if dividend == large {
                     return Some(false);
@@ -369,7 +343,40 @@ impl ConstraintContext {
                 })
                 .then_some(false),
             _ => None,
+        };
+        if order.is_some() {
+            return order;
         }
+        // A factor that is itself at most `x`, like a fee `x * a / k` split into shares, keeps
+        // `(f * y) / d <= f <= x` once `y <= d`, since `f * y <= f * d` and a wrapped product only
+        // shrinks the dividend. `UDiv` by zero is all ones, so `d` must be nonzero. This runs after
+        // the cheaper rules, and each recursion is charged to the budget, because cached intervals
+        // are free and chained products that share factors would otherwise be walked as a tree. A
+        // failed search stops at half the budget, leaving the rest to the caller's other orders.
+        let (dividend, divisor) = small.udiv_operands()?;
+        let SymExprKind::BinOp(SymBinOp::Mul, left, right) = dividend.kind() else { return None };
+        if left == large || right == large {
+            return None;
+        }
+        let range = self.interval_cached(divisor, intervals, remaining)?;
+        if range.min.is_zero() {
+            return None;
+        }
+        for (factor, other) in [(left, right), (right, left)] {
+            if *remaining > MAX_LOCAL_ANALYSIS_NODES / 2
+                && (other == divisor
+                    || self
+                        .interval_cached(other, intervals, remaining)
+                        .is_some_and(|other| other.max <= range.min)
+                    || self.asserts_less_or_equal(other, divisor))
+            {
+                *remaining -= 1;
+                if let Some(strict) = self.division_order(factor, large, intervals, remaining) {
+                    return Some(strict);
+                }
+            }
+        }
+        None
     }
 
     /// Returns whether another conjunct asserts `small * k <= large * l` with `l <= k` and a

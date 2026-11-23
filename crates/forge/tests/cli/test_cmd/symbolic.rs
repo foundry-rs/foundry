@@ -9169,6 +9169,17 @@ contract SymbolicChainedShare {
         assert(fee * shareBps / 10000 <= amount);
     }
 
+    function checkSymbolicDenominator(uint64 amount, uint64 feeBps, uint64 shareBps, uint64 denom)
+        public
+        pure
+    {
+        require(denom > 0 && feeBps <= denom && shareBps <= denom);
+        uint256 fee = uint256(amount) * feeBps / denom;
+        assert(fee * shareBps / denom <= amount);
+    }
+
+    // Guards the search budget rather than the proof: every level shares both factors, so 30
+    // levels would take about 2^30 recursions if each one were not charged.
     function checkSharedProducts(uint256 x, uint256 y) public pure {
         require(x < 1e17 && y < 1e17);
         (x, y) = (x * y / 1e18, x * y / 1e17);
@@ -9215,9 +9226,11 @@ contract SymbolicChainedShare {
             .get_output()
             .stdout
             .clone();
-        for signature in
-            ["checkProtocolCut(uint128,uint16,uint16)", "checkSharedProducts(uint256,uint256)"]
-        {
+        for signature in [
+            "checkProtocolCut(uint128,uint16,uint16)",
+            "checkSymbolicDenominator(uint64,uint64,uint64,uint64)",
+            "checkSharedProducts(uint256,uint256)",
+        ] {
             let result = json_test_result(&output, signature);
             assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
         }
