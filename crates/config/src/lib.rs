@@ -1178,12 +1178,17 @@ impl Config {
             .merge(
                 Env::prefixed("FOUNDRY_")
                     .ignore(&["PROFILE", "REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
+                    // `FOUNDRY_CHAIN` is an alias, so `FOUNDRY_CHAIN_ID` takes precedence.
+                    .filter(|key| key != "CHAIN" || Env::var("FOUNDRY_CHAIN_ID").is_none())
                     .map(|key| {
                         let key = key.as_str();
                         if Self::STANDALONE_SECTIONS.iter().any(|section| {
                             key.starts_with(&format!("{}_", section.to_ascii_uppercase()))
                         }) {
                             key.replacen('_', ".", 1).into()
+                        } else if key.eq_ignore_ascii_case("CHAIN") {
+                            // `chain` is an alias of `chain_id`, so both must not reach serde.
+                            "CHAIN_ID".into()
                         } else {
                             key.into()
                         }
@@ -3886,6 +3891,55 @@ mod tests {
             assert!(Config::load().unwrap().fork_state_by_number);
             jail.set_env("FOUNDRY_FORK_STATE_BY_NUMBER", "invalid");
             assert!(Config::load().is_err());
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_chain_alias() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file("foundry.toml", "[profile.default]\nchain = 1\n")?;
+            let config = Config::load().unwrap();
+            assert_eq!(config.chain, Some(Chain::mainnet()));
+            assert_eq!(config.warnings, vec![]);
+
+            jail.create_file(
+                "foundry.toml",
+                "[profile.default]\nchain_id = 1\n\n[profile.ci]\nchain = 5\n",
+            )?;
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+            assert_eq!(Config::load().unwrap().chain, Some(Chain::goerli()));
+
+            jail.set_env("FOUNDRY_CHAIN", "10");
+            assert_eq!(Config::load().unwrap().chain, Some(Chain::optimism_mainnet()));
+            jail.set_env("FOUNDRY_CHAIN_ID", "137");
+            assert_eq!(Config::load().unwrap().chain, Some(Chain::from_id(137)));
+
+            jail.clear_env();
+            jail.set_env("foundry_chain", "10");
+            assert_eq!(Config::load().unwrap().chain, Some(Chain::optimism_mainnet()));
+
+            jail.clear_env();
+            jail.create_file("base.toml", "[profile.default]\nchain = 1\n")?;
+            jail.create_file(
+                "foundry.toml",
+                "[profile.default]\nextends = { path = \"base.toml\", strategy = \"no-collision\" }\nchain-id = 10\n",
+            )?;
+            assert!(Config::load().unwrap_err().to_string().contains("Key collision"));
+
+            jail.create_file("base.toml", "[profile.default]\nchain_id = 1\n")?;
+            jail.create_file(
+                "foundry.toml",
+                "[profile.default]\nextends = { path = \"base.toml\", strategy = \"replace-arrays\" }\nchain = 5\n",
+            )?;
+            assert_eq!(Config::load().unwrap().chain, Some(Chain::goerli()));
+
+            jail.create_file("base.toml", "[profile.default]\nchain = 1\n")?;
+            jail.create_file(
+                "foundry.toml",
+                "[profile.default]\nextends = { path = \"base.toml\", strategy = \"replace-arrays\" }\nchain-id = 10\n",
+            )?;
+            assert_eq!(Config::load().unwrap().chain, Some(Chain::optimism_mainnet()));
             Ok(())
         });
     }
