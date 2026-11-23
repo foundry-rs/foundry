@@ -66,14 +66,6 @@ These compatibility differences affect execution, gas reports and Anvil library 
   call that switches forks can replace the outer transaction's warmth with its own. Transient
   storage follows the same lifetime, so it no longer leaks from `setUp` into a test through a fork.
   See [`ForkSwitch.t.sol`](../../testdata/default/cheats/ForkSwitch.t.sol).
-- **`vm.expectRevert` on a halt**: a call that halts spends all the gas forwarded to it, even when
-  `vm.expectRevert` turns the halt into a success. revm returned the unspent gas to the caller, so
-  a test that only ran `vm.expectRevert(); target.invalidOpcode();` reported 8,264 gas instead of
-  1,056,944,039, and kept its gas for later work. As with traces, this affects every halting call
-  except a non-static call the test makes directly with `isolate = true`, which revm already
-  charged in full. A test that does more than 1/64 of
-  the gas limit after such a call now fails with `OutOfGas` unless the call forwards a fixed amount,
-  as in `target.invalidOpcode{gas: 100_000}()`.
 - **Monad isolated calls**: under `--network monad` with `isolate = true`, a slot that the test
   transaction warmed, for example with `vm.store`, is cold again in an isolated call, as on
   Ethereum. revm-based Foundry carried that warmth into the isolated call, so its first `SLOAD`

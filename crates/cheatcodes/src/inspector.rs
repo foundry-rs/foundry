@@ -2862,6 +2862,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     ) {
         let curr_depth = usize::from(call.depth);
         let frame_ran = self.unrun_create_depth.take() != Some(curr_depth);
+        // An expected halting create keeps consuming its gas, as on revm; drop its record so a
+        // later call at this depth does not take it.
+        self.halted_frame_gas = None;
         self.replay_persistent_writes(interp, curr_depth, outcome.is_success());
         // Depth at which the caller resumes and applies the region snapshot correction.
         let isolated_snapshot_gas_used = self.gas_metering.take_isolated_snapshot_gas_used(

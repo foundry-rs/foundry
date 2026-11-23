@@ -691,4 +691,23 @@ contract ExpectRevertHaltGasTest is Test {
         }
         assertLt(gasBefore - gasleft(), 100_000);
     }
+
+    /// An expected halting create keeps consuming its gas, so it does not give gas to a later
+    /// failing precompile call at the same depth.
+    function testExpectRevertCreateHaltConsumesGas() public {
+        uint256 gasBefore = gasleft();
+        vm.expectRevert(2);
+        new HaltingConstructor();
+        (bool success,) = address(0x09).call(hex"00");
+        success;
+        assertGt(gasBefore - gasleft(), 1_000_000_000);
+    }
+}
+
+contract HaltingConstructor {
+    constructor() {
+        assembly {
+            invalid()
+        }
+    }
 }
