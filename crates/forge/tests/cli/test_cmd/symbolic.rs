@@ -9142,8 +9142,8 @@ contract SymbolicDowncastShare {
 }
 
 // Reward accrual scales the delta `rewardPerToken - paid`, at most the full index once
-// `paid <= rewardPerToken`, so the accrued amount is at most `balance * rewardPerToken / WAD`. A
-// delta taken from another index is not bounded by it.
+// `paid <= rewardPerToken`, so the accrued amount is at most `balance * rewardPerToken / WAD`, as
+// is a delta of an earlier index. A delta of an unrelated index, or one that wraps, is not.
 #[forgetest_init]
 fn symbolic_proves_accrued_delta_bounded(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_accrued_delta_bounded");
@@ -9162,6 +9162,17 @@ contract SymbolicAccruedDelta {
         assert(earned <= uint256(balance) * rewardPerToken / WAD);
     }
 
+    function checkEarnedBelowLaterIndex(
+        uint128 balance,
+        uint128 rewardPerToken,
+        uint128 last,
+        uint128 paid
+    ) public pure {
+        require(paid <= last && last <= rewardPerToken);
+        uint256 earned = uint256(balance) * (uint256(last) - paid) / WAD;
+        assert(earned <= uint256(balance) * rewardPerToken / WAD);
+    }
+
     function checkOtherIndex(uint128 balance, uint128 rewardPerToken, uint128 other, uint128 paid)
         public
         pure
@@ -9169,6 +9180,12 @@ contract SymbolicAccruedDelta {
         require(paid <= other);
         uint256 earned = uint256(balance) * (uint256(other) - paid) / WAD;
         assert(earned <= uint256(balance) * rewardPerToken / WAD);
+    }
+
+    function checkWrappedDelta(uint128 x, uint128 e) public pure {
+        unchecked {
+            assert((uint256(x) - e) / 7 <= uint256(x) / 7);
+        }
     }
 }
 "#,
@@ -9182,17 +9199,31 @@ contract SymbolicAccruedDelta {
             .get_output()
             .stdout
             .clone();
-        let result = json_test_result(&output, "checkEarnedBelowAccrual(uint128,uint128,uint128)");
-        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
-        let result = json_test_result(&output, "checkOtherIndex(uint128,uint128,uint128,uint128)");
-        assert_eq!(
-            result["symbolic"]["status"], "fail_counterexample",
-            "optimized={optimized}: {result}"
-        );
-        assert_eq!(
-            result["symbolic"]["replay"]["status"], "confirmed",
-            "optimized={optimized}: {result}"
-        );
+        for signature in [
+            "checkEarnedBelowAccrual(uint128,uint128,uint128)",
+            "checkEarnedBelowLaterIndex(uint128,uint128,uint128,uint128)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+            assert_eq!(
+                result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+                "optimized={optimized}: {result}"
+            );
+        }
+        for signature in [
+            "checkOtherIndex(uint128,uint128,uint128,uint128)",
+            "checkWrappedDelta(uint128,uint128)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "optimized={optimized}: {result}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "optimized={optimized}: {result}"
+            );
+        }
     }
 }
 
