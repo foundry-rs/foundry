@@ -142,11 +142,11 @@ impl ConstraintContext {
     /// Decides a comparison between a division result and one of its operands.
     ///
     /// With a nonzero divisor, `a % d < d` and `a / d <= a`. For every divisor, `a % d <= a` and
-    /// `(a / d) * k <= a` once `k <= d`, and `x * y / k <= x` once `y <= k` and `x * y` cannot
-    /// wrap. With a nonzero `y + z` that cannot wrap, `x * y / (y + z) <= x`, strictly for nonzero
-    /// `x` and `z`. The Euclidean sum `(a / d) * d + a % d` is `a`, so each summand is at most the
-    /// other's complement. With a nonzero divisor, `a / d <= (a - 1) / d + 1`, also when selected
-    /// by `a != 0`, and `(x * y + c) / d <= x` once `y <= d`, `x * y` cannot wrap, and `c < d`,
+    /// `(a / d) * k <= a` once `k <= d`. With a nonzero `k`, `x * y / k <= x` once `y <= k`, even
+    /// if `x * y` wraps. With a nonzero `y + z` that cannot wrap, `x * y / (y + z) <= x`, strictly
+    /// for nonzero `x` and `z`. The Euclidean sum `(a / d) * d + a % d` is `a`, so each summand is
+    /// at most the other's complement. With a nonzero divisor, `a / d <= (a - 1) / d + 1`, also
+    /// when selected by `a != 0`, and `(x * y + c) / d <= x` once `y <= d` and `c < d`,
     /// also with `x` replaced by a factor proved at most `x`.
     /// Another conjunct's cross-multiplied `x * k <= y * l` also decides `x <= y` once `k` is
     /// positive, `l <= k`, and `x * k` cannot wrap.
@@ -296,10 +296,10 @@ impl ConstraintContext {
                     return Some(nonzero(interval(large)) && !rest.min.is_zero());
                 }
                 // Rounding up adds at most `d - 1`, so `(x * y + c) / d <= x` still holds once
-                // `c <= d - 1`; a wrapped sum only shrinks the dividend. The quotient is at most
-                // the scaled factor, so the factor may also be one proved at most `x`, like a fee
-                // `x * a / k` split into shares. Each recursion is charged to the budget, because
-                // cached intervals are free and chained products that share factors would
+                // `c <= d - 1`; a wrapped product or sum only shrinks the dividend. The quotient is
+                // at most the scaled factor, so the factor may also be one proved at most `x`, like
+                // a fee `x * a / k` split into shares. Each recursion is charged to the budget,
+                // because cached intervals are free and chained products that share factors would
                 // otherwise be walked as a tree. A failed search stops at half the budget.
                 let mut bounded = |dividend: &SymExpr, addend: Option<&SymExpr>| {
                     let SymExprKind::BinOp(SymBinOp::Mul, left, right) = dividend.kind() else {
@@ -315,19 +315,14 @@ impl ConstraintContext {
                                 .interval_cached(addend, intervals, remaining)
                                 .is_some_and(|addend| addend.max < range.min)
                     });
+                    if !addend_fits {
+                        return None;
+                    }
                     let factors = [(left, right), (right, left)].map(|(factor, other)| {
                         self.factor_within_divisor(other, divisor, intervals, remaining)
                             .then_some(factor)
                     });
-                    let direct = factors.contains(&Some(large));
-                    let open = *remaining > MAX_LOCAL_ANALYSIS_NODES / 2;
-                    if !addend_fits
-                        || !(direct || (open && factors.iter().any(Option::is_some)))
-                        || !self.mul_cannot_overflow_256(left, right)
-                    {
-                        return None;
-                    }
-                    if direct {
+                    if factors.contains(&Some(large)) {
                         return Some(false);
                     }
                     factors.into_iter().flatten().find_map(|factor| {
