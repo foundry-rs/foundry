@@ -151,7 +151,8 @@ impl ConstraintContext {
     /// Another conjunct's cross-multiplied `x * k <= y * l` also decides `x <= y` once `k` is
     /// positive, `l <= k`, and `x * k` cannot wrap.
     /// The shares `w * a / k + w * b / k <= w` once `a + b <= k`, and `n <= ceil(n / d) * d` for a
-    /// nonzero `d` once the multiple cannot wrap.
+    /// nonzero `d` once the multiple cannot wrap. With a nonzero `d` and an `n + d` that cannot
+    /// wrap, `n / d <= (n + d - 1) / d <= n / d + 1`.
     /// A weighted average `(p * u + q * v) / k` with `u + v <= k` is at most a bound on `p` and
     /// `q`.
     pub(super) fn division_comparison_value(&self, expr: &SymBoolExpr) -> Option<bool> {
@@ -256,6 +257,26 @@ impl ConstraintContext {
             && self
                 .interval_cached(divisor, intervals, remaining)
                 .is_some_and(|range| !range.min.is_zero())
+        {
+            return Some(false);
+        }
+        // With `n = q * d + r` and `r < d`, `(n + d - 1) / d` is `q` or `q + 1`, so it lies between
+        // `n / d` and `n / d + 1`. A wrapped `n + d` breaks the lower bound and lets `n / d + 1`
+        // wrap at `n = MAX`, `d = 1`. A zero `d` makes both quotients all ones, which breaks the
+        // upper bound.
+        let ceiling = match large.kind() {
+            SymExprKind::BinOp(SymBinOp::Add, quotient, one)
+                if one.as_const() == Some(U256::ONE) =>
+            {
+                quotient.udiv_operands().filter(|&floor| ceil_sum_operands(small) == Some(floor))
+            }
+            _ => ceil_sum_operands(large).filter(|&floor| small.udiv_operands() == Some(floor)),
+        };
+        if let Some((n, d)) = ceiling
+            && self
+                .interval_cached(d, intervals, remaining)
+                .is_some_and(|range| !range.min.is_zero())
+            && self.sum_cannot_wrap(n, d, intervals, remaining)
         {
             return Some(false);
         }
