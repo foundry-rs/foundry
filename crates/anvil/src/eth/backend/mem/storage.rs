@@ -681,8 +681,8 @@ impl<N: Network> MinedTransaction<N> {
                 let (from, to, value) = if node.is_selfdestruct() {
                     (
                         node.trace.address,
-                        node.trace.selfdestruct_refund_target.unwrap_or_default(),
-                        node.trace.selfdestruct_transferred_value.unwrap_or_default(),
+                        node.trace.selfdestruct_refund_target().unwrap_or_default(),
+                        node.trace.selfdestruct_transferred_value().unwrap_or_default(),
                     )
                 } else {
                     (node.trace.caller, node.trace.address, node.trace.value)
