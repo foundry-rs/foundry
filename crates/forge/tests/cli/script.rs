@@ -11756,3 +11756,47 @@ contract Deploy {
         .is_json(),
     );
 }
+
+// `--skip-simulation` keeps `--json` stdout to JSON lines.
+#[forgetest]
+async fn script_json_skip_simulation_fork(prj: _, cmd: _) {
+    prj.add_script(
+        "Foo",
+        r#"
+interface Vm {
+    function startBroadcast() external;
+}
+
+contract SimpleScript {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run() external {
+        vm.startBroadcast();
+        (bool success, ) = address(0).call("");
+        success;
+    }
+}
+   "#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    cmd.args([
+        "script",
+        "SimpleScript",
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--sender",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--skip-simulation",
+        "--json",
+    ])
+    .assert_success()
+    .stdout_eq(
+        str![[r#"
+{"success":true,"...":"{...}"}
+{"status":"success","transactions":"[..]/broadcast/Foo.sol/31337/dry-run/run-latest.json","sensitive":"[..]/cache/Foo.sol/31337/dry-run/run-latest.json"}
+
+"#]]
+        .is_jsonlines(),
+    );
+}
