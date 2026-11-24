@@ -9247,7 +9247,10 @@ contract SymbolicVestingSchedule {
 
 // A repayment below the close-factor cap `debt * closeFactor / 1e4` is below the debt once the
 // close factor is at most 100%. With a bounded repayment the strict comparison normalizes to
-// `(repay + 1) * 1e4 <= debt * closeFactor`, refuted by `debt * closeFactor <= repay * 1e4`.
+// `(repay + 1) * 1e4 <= debt * closeFactor`, refuted by `debt * closeFactor <= repay * 1e4`. An
+// unbounded repayment keeps the quotient, which is still at most the debt when rounded down or
+// half up as in Aave's `percentMul`, for a constant or symbolic maximum factor, and when an
+// unchecked product wraps. A larger factor or a rounding addend of a whole unit can exceed it.
 #[forgetest_init]
 fn symbolic_proves_repayment_below_strict_cap(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_repayment_below_strict_cap");
@@ -9255,6 +9258,26 @@ fn symbolic_proves_repayment_below_strict_cap(prj: _, cmd: _) {
         "SymbolicStrictCap.t.sol",
         r#"
 contract SymbolicStrictCap {
+    uint256 internal constant PERCENTAGE_FACTOR = 1e4;
+    uint256 internal constant HALF_PERCENTAGE_FACTOR = 0.5e4;
+
+    // Half-up `percentMul` as in Aave v3's `PercentageMath`.
+    function percentMul(uint256 value, uint256 percentage) internal pure returns (uint256 result) {
+        assembly {
+            if iszero(
+                or(
+                    iszero(percentage),
+                    iszero(gt(value, div(sub(not(0), HALF_PERCENTAGE_FACTOR), percentage)))
+                )
+            ) { revert(0, 0) }
+            result := div(add(mul(value, percentage), HALF_PERCENTAGE_FACTOR), PERCENTAGE_FACTOR)
+        }
+    }
+
+    function cap(uint256 repay, uint256 maxRepay) internal pure returns (uint256) {
+        return repay > maxRepay ? maxRepay : repay;
+    }
+
     function capped(uint128 debt, uint128 repay, uint16 closeFactor) internal pure returns (uint256) {
         uint256 maxRepay = uint256(debt) * closeFactor / 10_000;
         return repay < maxRepay ? repay : maxRepay;
@@ -9277,6 +9300,41 @@ contract SymbolicStrictCap {
         require(closeFactor <= 10_000);
         assert(capped(debt, repay, closeFactor) <= other);
     }
+
+    function checkHalfUpCap(uint128 debt, uint256 repay, uint16 closeFactor) public pure {
+        require(closeFactor <= PERCENTAGE_FACTOR);
+        assert(cap(repay, percentMul(debt, closeFactor)) <= debt);
+    }
+
+    function checkTruncatedCap(uint128 debt, uint256 repay, uint16 closeFactor) public pure {
+        require(closeFactor <= PERCENTAGE_FACTOR);
+        assert(cap(repay, uint256(debt) * closeFactor / PERCENTAGE_FACTOR) <= debt);
+    }
+
+    function checkSymbolicMaxFactor(
+        uint128 debt,
+        uint256 repay,
+        uint16 closeFactor,
+        uint16 maxFactor
+    ) public pure {
+        require(closeFactor <= maxFactor);
+        assert(cap(repay, uint256(debt) * closeFactor / maxFactor) <= debt);
+    }
+
+    function checkWrappedCap(uint256 debt, uint256 repay, uint16 closeFactor) public pure {
+        require(closeFactor <= PERCENTAGE_FACTOR);
+        uint256 maxRepay;
+        unchecked {
+            maxRepay = debt * closeFactor / PERCENTAGE_FACTOR;
+        }
+        assert(cap(repay, maxRepay) <= debt);
+    }
+
+    function checkWholeUnitAddend(uint128 debt, uint256 repay, uint16 closeFactor) public pure {
+        require(closeFactor <= PERCENTAGE_FACTOR);
+        uint256 rounded = (uint256(debt) * closeFactor + PERCENTAGE_FACTOR) / PERCENTAGE_FACTOR;
+        assert(cap(repay, rounded) <= debt);
+    }
 }
 "#,
     );
@@ -9289,11 +9347,23 @@ contract SymbolicStrictCap {
             .get_output()
             .stdout
             .clone();
-        let result = json_test_result(&output, "checkRepaymentBelowDebt(uint128,uint128,uint16)");
-        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        for signature in [
+            "checkRepaymentBelowDebt(uint128,uint128,uint16)",
+            "checkHalfUpCap(uint128,uint256,uint16)",
+            "checkTruncatedCap(uint128,uint256,uint16)",
+            "checkSymbolicMaxFactor(uint128,uint256,uint16,uint16)",
+            "checkWrappedCap(uint256,uint256,uint16)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "pass",
+                "{signature}, optimized={optimized}: {result}"
+            );
+        }
         for signature in [
             "checkLargeCloseFactor(uint128,uint128,uint16)",
             "checkOtherDebt(uint128,uint128,uint128,uint16)",
+            "checkWholeUnitAddend(uint128,uint256,uint16)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(
@@ -9440,6 +9510,84 @@ contract SymbolicAccruedDelta {
     }
 }
 
+// Unoptimized checked multiplication by a constant normalizes to `x != 0 && x <= MAX / c`. With
+// nonzero factors that fit, intervals decide both conjuncts, so a scaled product such as Uniswap
+// V2's `reserveIn * amountOut * 1000` is proved without the solver. A nonzero factor that may not
+// fit leaves one conjunct undecided, and one that never fits decides it false; both still reach
+// the overflow.
+#[forgetest_init]
+fn symbolic_decides_unoptimized_constant_multiply_guard(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_decides_unoptimized_constant_multiply_guard");
+    prj.add_test(
+        "SymbolicConstantMultiplyGuard.t.sol",
+        r#"
+contract SymbolicConstantMultiplyGuard {
+    function scale(uint256 value) external pure returns (uint256) {
+        return value * 1000;
+    }
+
+    function checkScaledQuotient(uint112 reserveIn, uint112 amountOut, uint112 denominator)
+        public
+        pure
+    {
+        require(reserveIn != 0 && amountOut != 0 && denominator != 0);
+        uint256 numerator = uint256(reserveIn) * amountOut * 1000;
+        assert(numerator / denominator <= numerator);
+    }
+
+    function checkLargeFactor(uint256 value) public view {
+        require(value != 0);
+        try this.scale(value) returns (uint256) {}
+        catch {
+            assert(false);
+        }
+    }
+
+    function checkOverflowingFactor(uint256 value) public view {
+        require(value > type(uint256).max / 1000);
+        try this.scale(value) returns (uint256) {}
+        catch {
+            assert(false);
+        }
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args([
+                "test",
+                "--symbolic",
+                "--json",
+                "--match-contract",
+                "SymbolicConstantMultiplyGuard",
+            ])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        let result = json_test_result(&output, "checkScaledQuotient(uint112,uint112,uint112)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        assert_eq!(
+            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+            "optimized={optimized}: {result}"
+        );
+        for signature in ["checkLargeFactor(uint256)", "checkOverflowingFactor(uint256)"] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "{signature} optimized={optimized}: {result}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "{signature} optimized={optimized}: {result}"
+            );
+        }
+    }
+}
+
 // An ERC4626 vault rounds `previewMint` up, so converting those assets back to shares never
 // returns fewer shares than were minted. A quotient bounded by a threshold still orders against
 // other bounds and quotients by the same divisor. Rounding down instead, demanding strictly more
@@ -9554,6 +9702,74 @@ contract SymbolicPreviewMint {
             assert_eq!(
                 result["symbolic"]["replay"]["status"], "confirmed",
                 "{signature}, optimized={optimized}: {result}"
+            );
+        }
+    }
+}
+
+// Utilization and remaining-share ratios scale `(total - used) * WAD / total`, which stays at
+// most `WAD` once `used <= total`. A remainder of an unrelated amount, or one that wraps, is not
+// bounded by the total.
+#[forgetest_init]
+fn symbolic_proves_remaining_ratio_bounded(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_remaining_ratio_bounded");
+    prj.add_test(
+        "SymbolicRemainingRatio.t.sol",
+        r#"
+contract SymbolicRemainingRatio {
+    uint256 internal constant WAD = 1e18;
+
+    // Solmate's `FixedPointMathLib.mulDivDown` (MIT).
+    function mulDivDown(uint256 x, uint256 y, uint256 denominator) internal pure returns (uint256 z) {
+        assembly {
+            if iszero(mul(denominator, iszero(mul(y, gt(x, div(not(0), y)))))) { revert(0, 0) }
+            z := div(mul(x, y), denominator)
+        }
+    }
+
+    function checkRemainingRatio(uint256 total, uint256 used) public pure {
+        require(used <= total);
+        assert(mulDivDown(total - used, WAD, total) <= WAD);
+    }
+
+    function checkUnrelatedRemainder(uint256 total, uint256 cap, uint256 used) public pure {
+        require(used <= cap);
+        assert(mulDivDown(cap - used, WAD, total) <= WAD);
+    }
+
+    function checkWrappedRemainder(uint256 total, uint256 used) public pure {
+        uint256 remaining;
+        unchecked {
+            remaining = total - used;
+        }
+        assert(mulDivDown(remaining, WAD, total) <= WAD);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicRemainingRatio"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        let result = json_test_result(&output, "checkRemainingRatio(uint256,uint256)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        for signature in [
+            "checkUnrelatedRemainder(uint256,uint256,uint256)",
+            "checkWrappedRemainder(uint256,uint256)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "optimized={optimized} {signature}: {result}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "optimized={optimized} {signature}: {result}"
             );
         }
     }
@@ -9767,6 +9983,88 @@ contract SymbolicSignedPrice {
             "checkCapAboveScale(uint128,int256)",
             "checkSmallestAnswer(int256)",
             "checkNegativeFloorCap(int256,uint256)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "{signature}, optimized={optimized}: {result}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "{signature}, optimized={optimized}: {result}"
+            );
+        }
+    }
+}
+
+// Synthetix and MasterChef reward accrual scale a staked balance by a per-token rate
+// `reward * 1e18 / supply`. With the balance at most the supply, `balance * rate` cannot overflow
+// and stays within `reward * 1e18`. A balance one above the supply, or a rate over another
+// supply, breaks the bound, and the latter product can overflow.
+#[forgetest_init]
+fn symbolic_proves_balance_times_per_token_rate(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_balance_times_per_token_rate");
+    prj.add_test(
+        "SymbolicRewardAccrual.t.sol",
+        r#"
+contract SymbolicRewardAccrual {
+    function rewardPerToken(uint256 reward, uint256 supply) internal pure returns (uint256) {
+        return reward * 1e18 / supply;
+    }
+
+    function checkAccruedWithinReward(uint128 balance, uint128 supply, uint128 reward) public pure {
+        if (supply == 0 || balance > supply) return;
+        assert(uint256(balance) * rewardPerToken(reward, supply) <= uint256(reward) * 1e18);
+    }
+
+    function checkBalanceAboveSupply(uint128 balance, uint128 supply, uint128 reward) public pure {
+        if (supply == 0 || balance > uint256(supply) + 1) return;
+        assert(uint256(balance) * rewardPerToken(reward, supply) <= uint256(reward) * 1e18);
+    }
+
+    function checkOtherSupply(uint128 balance, uint128 supply, uint128 other, uint128 reward)
+        public
+        pure
+    {
+        if (other == 0 || balance > supply) return;
+        assert(uint256(balance) * rewardPerToken(reward, other) <= uint256(reward) * 1e18);
+    }
+
+    function earned(uint128 balance, uint128 supply, uint128 reward)
+        external
+        pure
+        returns (uint256)
+    {
+        return uint256(balance) * rewardPerToken(reward, supply);
+    }
+
+    function checkEarnedOverflowsOverOtherSupply(
+        uint128 balance,
+        uint128 supply,
+        uint128 other,
+        uint128 reward
+    ) public view {
+        if (other == 0 || balance > supply) return;
+        try this.earned(balance, other, reward) {} catch { assert(false); }
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicRewardAccrual"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        let result = json_test_result(&output, "checkAccruedWithinReward(uint128,uint128,uint128)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        for signature in [
+            "checkBalanceAboveSupply(uint128,uint128,uint128)",
+            "checkOtherSupply(uint128,uint128,uint128,uint128)",
+            "checkEarnedOverflowsOverOtherSupply(uint128,uint128,uint128,uint128)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(

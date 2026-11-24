@@ -307,16 +307,19 @@ impl ConstraintContext {
                     } else {
                         return false;
                     };
-                    let Some(range) = interval(divisor).filter(|range| !range.min.is_zero()) else {
+                    let Some(range) = self
+                        .interval_cached(divisor, intervals, remaining)
+                        .filter(|range| !range.min.is_zero())
+                    else {
                         return false;
                     };
                     addend.is_none_or(|addend| {
                         matches!(addend.kind(), SymExprKind::BinOp(SymBinOp::Sub, value, one)
                             if value == divisor && one.as_const() == Some(U256::ONE))
-                            || interval(addend).is_some_and(|addend| addend.max < range.min)
-                    }) && (other == divisor
-                        || interval(other).is_some_and(|other| other.max <= range.min)
-                        || self.asserts_less_or_equal(other, divisor))
+                            || self
+                                .interval_cached(addend, intervals, remaining)
+                                .is_some_and(|addend| addend.max < range.min)
+                    }) && self.factor_within_divisor(other, divisor, intervals, remaining)
                         && self.mul_cannot_overflow_256(left, right)
                 };
                 // `round_down(n, t) <= n` (zero when `t == 0`), so dividing the rounded product
@@ -351,17 +354,13 @@ impl ConstraintContext {
                     || bounded(dividend, None))
                 .then_some(false)
             }
-            // `(x / d) * k <= (x / d) * d <= x` once `k <= d`, so the product cannot wrap; a zero
-            // `d` forces a zero product.
+            // `(x / d) * k <= x` once `k <= d`.
             SymExprKind::BinOp(SymBinOp::Mul, left, right) => [(left, right), (right, left)]
                 .into_iter()
                 .any(|(quotient, factor)| {
                     quotient.udiv_operands().is_some_and(|(dividend, divisor)| {
                         dividend == large
-                            && (factor == divisor
-                                || interval(factor)
-                                    .zip(interval(divisor))
-                                    .is_some_and(|(factor, divisor)| factor.max <= divisor.min))
+                            && self.factor_within_divisor(factor, divisor, intervals, remaining)
                     })
                 })
                 .then_some(false),
@@ -569,23 +568,26 @@ impl ConstraintContext {
             || complement(b, a)
     }
 
-    /// Returns whether other conjuncts assert `small <= large`, including strict `<`. An elapsed
-    /// `t - s` is at most `d` once `s <= t` and `t <= d + s`. A wrapped `d + s` would be below
-    /// `s <= t`, so the two facts cannot both hold.
+    /// Returns whether other conjuncts assert `small <= large`, including strict `<`. Once
+    /// `s <= t`, a difference `t - s` cannot wrap, so it is at most `t`, and at most `d` once
+    /// `t <= d + s`. A wrapped `d + s` would be below `s <= t`, so the two facts cannot both hold.
     pub(super) fn asserts_less_or_equal(&self, small: &SymExpr, large: &SymExpr) -> bool {
         if self.asserted_upper_bounds(small).contains(large) {
             return true;
         }
         let SymExprKind::BinOp(SymBinOp::Sub, end, start) = small.kind() else { return false };
         self.asserted_upper_bounds(start).contains(end)
-            && self.asserted_upper_bounds(end).iter().any(|sum| {
-                matches!(sum.kind(), SymExprKind::BinOp(SymBinOp::Add, a, b)
-                    if (a == large && b == start) || (a == start && b == large))
-            })
+            && (end == large
+                || self.asserted_upper_bounds(end).iter().any(|sum| {
+                    matches!(sum.kind(), SymExprKind::BinOp(SymBinOp::Add, a, b)
+                        if (a == large && b == start) || (a == start && b == large))
+                }))
     }
 
-    /// Returns whether `factor <= divisor`, by equality, another conjunct, or value ranges.
-    fn factor_within_divisor(
+    /// Returns whether `factor <= divisor`, by equality, another conjunct, or value ranges, so
+    /// `(n / divisor) * factor <= (n / divisor) * divisor <= n`. SMT's `n / 0` is all ones, but a
+    /// zero divisor then forces a zero factor and product.
+    pub(super) fn factor_within_divisor(
         &self,
         factor: &SymExpr,
         divisor: &SymExpr,

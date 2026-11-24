@@ -1021,7 +1021,19 @@ impl ConstraintContext {
                     None
                 }
             }
-            SymBoolExprKind::And(_) => None,
+            // Decides a conjunction such as unoptimized checked multiplication's
+            // `x != 0 && x <= MAX / c`.
+            SymBoolExprKind::And(terms) => {
+                let mut value = Some(true);
+                for term in terms.iter() {
+                    match self.bounded_bool_value(term) {
+                        Some(false) => return Some(false),
+                        Some(true) => {}
+                        None => value = None,
+                    }
+                }
+                value
+            }
         }
     }
 
@@ -2464,9 +2476,13 @@ impl ConstraintContext {
         intervals: &mut HashMap<SymExpr, Option<WordInterval>>,
         remaining: &mut usize,
     ) -> bool {
-        // `(a / d) * d <= a`, and the product is zero when `d == 0`, so it never wraps.
+        // `(a / d) * k <= a` once `k <= d`, so it never wraps.
         if self.has_non_wrapping_product(left, right)
-            || rounded_product_operands(left, right).is_some()
+            || [(left, right), (right, left)].into_iter().any(|(quotient, factor)| {
+                quotient.udiv_operands().is_some_and(|(_, divisor)| {
+                    self.factor_within_divisor(factor, divisor, intervals, remaining)
+                })
+            })
         {
             return true;
         }
