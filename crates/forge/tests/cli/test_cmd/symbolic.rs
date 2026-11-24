@@ -8991,6 +8991,17 @@ contract SymbolicWeightedAverage {
         }
     }
 
+    // A narrowing cast masks the complement, which only lowers it.
+    function checkMaskedComplement(uint128 p, uint128 q, uint256 u, uint256 k, uint128 cap)
+        public
+        pure
+    {
+        require(u <= k && k != 0 && p <= cap && q <= cap);
+        unchecked {
+            assert((uint256(p) * u + uint256(q) * uint128(k - u)) / k <= cap);
+        }
+    }
+
     // `cap + 1` may wrap, so the quotient comparison is not cross-multiplied, and `cap * WAD` may
     // wrap too. Unchecked, so only the bound reaches the solver.
     function checkEmaWideCap(uint256 price, uint256 ema, uint64 alpha, uint256 cap) public pure {
@@ -9094,6 +9105,7 @@ contract SymbolicWeightedAverage {
             "checkWeightedMean(uint128,uint128,uint64,uint64,uint128)",
             "checkEmaWideCap(uint256,uint256,uint64,uint256)",
             "checkWeightedScaled(uint128,uint128,uint64,uint128)",
+            "checkMaskedComplement(uint128,uint128,uint256,uint256,uint128)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
@@ -9384,6 +9396,13 @@ contract SymbolicShares {
         assert(protocolFee + lpFee <= amount);
     }
 
+    function checkMaskedComplementShares(uint128 w, uint256 a, uint256 k) public pure {
+        require(a <= k && k != 0);
+        unchecked {
+            assert(uint256(w) * a / k + uint256(w) * uint128(k - a) / k <= w);
+        }
+    }
+
     function checkFeeAndRestWithinAmount(uint128 amount, uint16 feeBps) public pure {
         require(feeBps <= 10_000);
         uint256 fee = uint256(amount) * feeBps / 10_000;
@@ -9474,6 +9493,7 @@ contract SymbolicShares {
             "checkUint256FeeSplitWithinAmount(uint256,uint256,uint256)",
             "checkMaxGuardedFeeSplit(uint256,uint256,uint256)",
             "checkFeeAndRestWithinAmount(uint128,uint16)",
+            "checkMaskedComplementShares(uint128,uint256,uint256)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
