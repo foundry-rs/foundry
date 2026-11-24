@@ -369,17 +369,13 @@ impl ConstraintContext {
                     .or_else(|| peeled.and_then(|peeled| bounded(peeled, None)))
                     .or_else(|| bounded(dividend, None))
             }
-            // `(x / d) * k <= (x / d) * d <= x` once `k <= d`, so the product cannot wrap; a zero
-            // `d` forces a zero product.
+            // `(x / d) * k <= x` once `k <= d`.
             SymExprKind::BinOp(SymBinOp::Mul, left, right) => [(left, right), (right, left)]
                 .into_iter()
                 .any(|(quotient, factor)| {
                     quotient.udiv_operands().is_some_and(|(dividend, divisor)| {
                         dividend == large
-                            && (factor == divisor
-                                || interval(factor)
-                                    .zip(interval(divisor))
-                                    .is_some_and(|(factor, divisor)| factor.max <= divisor.min))
+                            && self.factor_within_divisor(factor, divisor, intervals, remaining)
                     })
                 })
                 .then_some(false),
@@ -602,8 +598,10 @@ impl ConstraintContext {
             })
     }
 
-    /// Returns whether `factor <= divisor`, by equality, another conjunct, or value ranges.
-    fn factor_within_divisor(
+    /// Returns whether `factor <= divisor`, by equality, another conjunct, or value ranges, so
+    /// `(n / divisor) * factor <= (n / divisor) * divisor <= n`. SMT's `n / 0` is all ones, but a
+    /// zero divisor then forces a zero factor and product.
+    pub(super) fn factor_within_divisor(
         &self,
         factor: &SymExpr,
         divisor: &SymExpr,
