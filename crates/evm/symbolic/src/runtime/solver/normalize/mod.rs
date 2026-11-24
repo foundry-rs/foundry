@@ -1021,7 +1021,19 @@ impl ConstraintContext {
                     None
                 }
             }
-            SymBoolExprKind::And(_) => None,
+            // Decides a conjunction such as unoptimized checked multiplication's
+            // `x != 0 && x <= MAX / c`.
+            SymBoolExprKind::And(terms) => {
+                let mut value = Some(true);
+                for term in terms.iter() {
+                    match self.bounded_bool_value(term) {
+                        Some(false) => return Some(false),
+                        Some(true) => {}
+                        None => value = None,
+                    }
+                }
+                value
+            }
         }
     }
 

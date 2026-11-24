@@ -142,11 +142,11 @@ impl ConstraintContext {
     /// Decides a comparison between a division result and one of its operands.
     ///
     /// With a nonzero divisor, `a % d < d` and `a / d <= a`. For every divisor, `a % d <= a` and
-    /// `(a / d) * k <= a` once `k <= d`, and `x * y / k <= x` once `y <= k` and `x * y` cannot
-    /// wrap. With a nonzero `y + z` that cannot wrap, `x * y / (y + z) <= x`, strictly for nonzero
-    /// `x` and `z`. The Euclidean sum `(a / d) * d + a % d` is `a`, so each summand is at most the
-    /// other's complement. With a nonzero divisor, `a / d <= (a - 1) / d + 1`, also when selected
-    /// by `a != 0`, and `(x * y + c) / d <= x` once `y <= d`, `x * y` cannot wrap, and `c < d`.
+    /// `(a / d) * k <= a` once `k <= d`. With a nonzero `k`, `x * y / k <= x` once `y <= k`, even
+    /// if `x * y` wraps. With a nonzero `y + z` that cannot wrap, `x * y / (y + z) <= x`, strictly
+    /// for nonzero `x` and `z`. The Euclidean sum `(a / d) * d + a % d` is `a`, so each summand is
+    /// at most the other's complement. With a nonzero divisor, `a / d <= (a - 1) / d + 1`, also
+    /// when selected by `a != 0`, and `(x * y + c) / d <= x` once `y <= d` and `c < d`.
     /// Another conjunct's cross-multiplied `x * k <= y * l` also decides `x <= y` once `k` is
     /// positive, `l <= k`, and `x * k` cannot wrap.
     /// The shares `w * a / k + w * b / k <= w` once `a + b <= k`, and `n <= ceil(n / d) * d` for a
@@ -296,7 +296,7 @@ impl ConstraintContext {
                     return Some(nonzero(interval(large)) && !rest.min.is_zero());
                 }
                 // Rounding up adds at most `d - 1`, so `(x * y + c) / d <= x` still holds once
-                // `c <= d - 1`; a wrapped sum only shrinks the dividend.
+                // `c <= d - 1`; a wrapped product or sum only shrinks the dividend.
                 let mut bounded = |dividend: &SymExpr, addend: Option<&SymExpr>| {
                     let SymExprKind::BinOp(SymBinOp::Mul, left, right) = dividend.kind() else {
                         return false;
@@ -321,7 +321,6 @@ impl ConstraintContext {
                                 .interval_cached(addend, intervals, remaining)
                                 .is_some_and(|addend| addend.max < range.min)
                     }) && self.factor_within_divisor(other, divisor, intervals, remaining)
-                        && self.mul_cannot_overflow_256_cached(left, right, intervals, remaining)
                 };
                 // `round_down(n, t) <= n` (zero when `t == 0`), so dividing the rounded product
                 // is bounded by `n / d`. The EVM `DIV` may still carry its `t == 0` guard.
@@ -586,19 +585,20 @@ impl ConstraintContext {
             || complement(b, a)
     }
 
-    /// Returns whether other conjuncts assert `small <= large`, including strict `<`. An elapsed
-    /// `t - s` is at most `d` once `s <= t` and `t <= d + s`. A wrapped `d + s` would be below
-    /// `s <= t`, so the two facts cannot both hold.
+    /// Returns whether other conjuncts assert `small <= large`, including strict `<`. Once
+    /// `s <= t`, a difference `t - s` cannot wrap, so it is at most `t`, and at most `d` once
+    /// `t <= d + s`. A wrapped `d + s` would be below `s <= t`, so the two facts cannot both hold.
     pub(super) fn asserts_less_or_equal(&self, small: &SymExpr, large: &SymExpr) -> bool {
         if self.asserted_upper_bounds(small).contains(large) {
             return true;
         }
         let SymExprKind::BinOp(SymBinOp::Sub, end, start) = small.kind() else { return false };
         self.asserted_upper_bounds(start).contains(end)
-            && self.asserted_upper_bounds(end).iter().any(|sum| {
-                matches!(sum.kind(), SymExprKind::BinOp(SymBinOp::Add, a, b)
-                    if (a == large && b == start) || (a == start && b == large))
-            })
+            && (end == large
+                || self.asserted_upper_bounds(end).iter().any(|sum| {
+                    matches!(sum.kind(), SymExprKind::BinOp(SymBinOp::Add, a, b)
+                        if (a == large && b == start) || (a == start && b == large))
+                }))
     }
 
     /// Returns whether `factor <= divisor`, by equality, another conjunct, or value ranges, so
