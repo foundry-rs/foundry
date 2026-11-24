@@ -621,7 +621,7 @@ fn symlink_nested_libs(lib_src: &Path, lib_dst: &Path, depth: usize) -> Result<(
     }
 
     let nested_lib_dirs: Vec<PathBuf> =
-        if let Ok(config) = Config::load_with_root_and_fallback(lib_src) {
+        if let Ok(config) = Config::load_dependency_with_root(lib_src) {
             config.libs
         } else {
             vec![PathBuf::from("lib")]
