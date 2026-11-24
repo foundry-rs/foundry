@@ -11607,6 +11607,34 @@ contract SymbolicBoundedComplementTest {
         uint256 shares = assets * supply / total;
         assert(shares * total / other <= assets);
     }
+
+    // Converting back rounding up, as with Morpho Blue's `mulDivUp` (GPL-2.0-or-later), still
+    // cannot create assets: the rounded product is at most `assets * supply`, so the checked
+    // `shares * total + (supply - 1)` cannot overflow.
+    function checkVaultRoundTripUp(uint128 assets, uint128 supply, uint128 total) public pure {
+        if (supply == 0 || total == 0) return;
+        uint256 shares = uint256(assets) * supply / total;
+        assert((shares * total + (supply - 1)) / supply <= assets);
+    }
+
+    function checkVaultRoundTripUpLeftAssociated(uint128 assets, uint128 supply, uint128 total)
+        public
+        pure
+    {
+        if (supply == 0 || total == 0) return;
+        uint256 shares = uint256(assets) * supply / total;
+        assert((shares * total + supply - 1) / supply <= assets);
+    }
+
+    // Rounding up by another divisor can create assets.
+    function checkVaultOtherDivisorUp(uint128 assets, uint128 supply, uint128 total, uint128 other)
+        public
+        pure
+    {
+        if (total == 0 || other == 0) return;
+        uint256 shares = uint256(assets) * supply / total;
+        assert((shares * total + (other - 1)) / other <= assets);
+    }
 }
 "#,
     );
@@ -11695,6 +11723,23 @@ contract SymbolicBoundedComplementTest {
 
         let result =
             json_test_result(&output, "checkVaultOtherDivisor(uint256,uint256,uint256,uint256)");
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
+        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
+
+        for test in [
+            "checkVaultRoundTripUp(uint128,uint128,uint128)",
+            "checkVaultRoundTripUpLeftAssociated(uint128,uint128,uint128)",
+        ] {
+            let result = json_test_result(&output, test);
+            assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+            assert_eq!(
+                result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+                "optimized={optimized}: {test}"
+            );
+        }
+
+        let result =
+            json_test_result(&output, "checkVaultOtherDivisorUp(uint128,uint128,uint128,uint128)");
         assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
         assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
     }
