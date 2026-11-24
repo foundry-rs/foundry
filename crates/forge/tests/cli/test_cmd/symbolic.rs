@@ -8668,88 +8668,6 @@ ROUNDED_UP_UPDATES        assert(x < 2 ** 128);
     }
 }
 
-// Converting a share amount rounded down back to assets rounding up never exceeds the original
-// assets, as with Morpho Blue's `mulDivDown` and `mulDivUp` (GPL-2.0-or-later). The rounded
-// product `(n / t) * t` is at most `n`, so `x * y + (d - 1)` cannot overflow, and rounding it up
-// stays at most the assets.
-#[forgetest_init]
-fn symbolic_proves_round_trip_rounded_up(prj: _, cmd: _) {
-    skip_unless_z3!("symbolic_proves_round_trip_rounded_up");
-    prj.add_test(
-        "SymbolicRoundTripUp.t.sol",
-        r#"
-library MathLib {
-    function mulDivDown(uint256 x, uint256 y, uint256 d) internal pure returns (uint256) {
-        return (x * y) / d;
-    }
-
-    function mulDivUp(uint256 x, uint256 y, uint256 d) internal pure returns (uint256) {
-        return (x * y + (d - 1)) / d;
-    }
-}
-
-contract SymbolicRoundTripUp {
-    function checkRoundTrip(uint128 assets, uint128 totalAssets, uint128 totalShares) public pure {
-        require(totalAssets != 0 && totalShares != 0);
-        uint256 shares = MathLib.mulDivDown(assets, totalShares, totalAssets);
-        assert(MathLib.mulDivUp(shares, totalAssets, totalShares) <= assets);
-    }
-
-    function checkRoundTripLeftAssociated(
-        uint128 assets,
-        uint128 totalAssets,
-        uint128 totalShares
-    ) public pure {
-        require(totalAssets != 0 && totalShares != 0);
-        uint256 shares = MathLib.mulDivDown(assets, totalShares, totalAssets);
-        assert((shares * totalAssets + totalShares - 1) / totalShares <= assets);
-    }
-
-    function checkOtherDivisor(
-        uint128 assets,
-        uint128 totalAssets,
-        uint128 totalShares,
-        uint128 otherShares
-    ) public pure {
-        require(totalAssets != 0 && otherShares != 0);
-        uint256 shares = MathLib.mulDivDown(assets, totalShares, totalAssets);
-        assert(MathLib.mulDivUp(shares, totalAssets, otherShares) <= assets);
-    }
-}
-"#,
-    );
-    for optimized in [false, true] {
-        prj.update_config(|config| config.optimizer = Some(optimized));
-        let output = cmd
-            .forge_fuse()
-            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicRoundTripUp"])
-            .assert_failure()
-            .get_output()
-            .stdout
-            .clone();
-
-        for test in [
-            "checkRoundTrip(uint128,uint128,uint128)",
-            "checkRoundTripLeftAssociated(uint128,uint128,uint128)",
-        ] {
-            let result = json_test_result(&output, test);
-            assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
-            assert_eq!(
-                result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
-                "optimized={optimized}: {test}"
-            );
-        }
-
-        let result =
-            json_test_result(&output, "checkOtherDivisor(uint128,uint128,uint128,uint128)");
-        assert_eq!(
-            result["symbolic"]["status"], "fail_counterexample",
-            "optimized={optimized}: {result}"
-        );
-        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
-    }
-}
-
 // A fee rounded up adds less than one divisor, so it stays at most the amount once the rate is at
 // most the divisor: `(x * y + d - 1) / d <= x`.
 #[forgetest_init]
@@ -10623,6 +10541,34 @@ contract SymbolicBoundedComplementTest {
         uint256 shares = assets * supply / total;
         assert(shares * total / other <= assets);
     }
+
+    // Converting back rounding up, as with Morpho Blue's `mulDivUp` (GPL-2.0-or-later), still
+    // cannot create assets: the rounded product is at most `assets * supply`, so the checked
+    // `shares * total + (supply - 1)` cannot overflow.
+    function checkVaultRoundTripUp(uint128 assets, uint128 supply, uint128 total) public pure {
+        if (supply == 0 || total == 0) return;
+        uint256 shares = uint256(assets) * supply / total;
+        assert((shares * total + (supply - 1)) / supply <= assets);
+    }
+
+    function checkVaultRoundTripUpLeftAssociated(uint128 assets, uint128 supply, uint128 total)
+        public
+        pure
+    {
+        if (supply == 0 || total == 0) return;
+        uint256 shares = uint256(assets) * supply / total;
+        assert((shares * total + supply - 1) / supply <= assets);
+    }
+
+    // Rounding up by another divisor can create assets.
+    function checkVaultOtherDivisorUp(uint128 assets, uint128 supply, uint128 total, uint128 other)
+        public
+        pure
+    {
+        if (total == 0 || other == 0) return;
+        uint256 shares = uint256(assets) * supply / total;
+        assert((shares * total + (other - 1)) / other <= assets);
+    }
 }
 "#,
     );
@@ -10711,6 +10657,23 @@ contract SymbolicBoundedComplementTest {
 
         let result =
             json_test_result(&output, "checkVaultOtherDivisor(uint256,uint256,uint256,uint256)");
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
+        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
+
+        for test in [
+            "checkVaultRoundTripUp(uint128,uint128,uint128)",
+            "checkVaultRoundTripUpLeftAssociated(uint128,uint128,uint128)",
+        ] {
+            let result = json_test_result(&output, test);
+            assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+            assert_eq!(
+                result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+                "optimized={optimized}: {test}"
+            );
+        }
+
+        let result =
+            json_test_result(&output, "checkVaultOtherDivisorUp(uint128,uint128,uint128,uint128)");
         assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
         assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
     }
