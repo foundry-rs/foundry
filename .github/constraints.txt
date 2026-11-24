@@ -1,0 +1,2 @@
+# Avoid fresh transitive releases hitting Aegis's publication cooldown, including in test venvs.
+packaging==26.3
