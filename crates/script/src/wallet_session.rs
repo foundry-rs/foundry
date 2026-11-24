@@ -205,9 +205,9 @@ impl ScriptArgs {
             child.env_remove(key);
         }
 
-        // With `--json`, the inner output passes through this process to tell whether the inner
-        // `forge script` already printed its failure envelope. Cast may print after it, such as
-        // the session key revocation.
+        // With `--json`, the inner output passes through this process, which holds back the inner
+        // failure envelope until Cast exits so it stays the last stdout line after cleanup output,
+        // such as the session key revocation.
         if shell::is_json() {
             child.stdout(Stdio::piped());
         }
@@ -217,15 +217,22 @@ impl ScriptArgs {
                 command.program.to_string_lossy()
             )
         })?;
-        let mut reported = false;
+        let mut failure_envelope = None;
         if let Some(stdout) = child.stdout.take() {
             for line in BufReader::new(stdout).lines().map_while(std::io::Result::ok) {
-                sh_println!("{line}")?;
-                reported |= serde_json::from_str::<JsonEnvelope<serde_json::Value>>(&line)
-                    .is_ok_and(|envelope| !envelope.success);
+                if serde_json::from_str::<JsonEnvelope<serde_json::Value>>(&line)
+                    .is_ok_and(|envelope| !envelope.success)
+                {
+                    failure_envelope = Some(line);
+                } else {
+                    sh_println!("{line}")?;
+                }
             }
         }
         let status = child.wait().wrap_err("failed to wait for forge script wallet session")?;
+        if let Some(envelope) = &failure_envelope {
+            sh_println!("{envelope}")?;
+        }
 
         if status.success() {
             return Ok(());
@@ -235,7 +242,7 @@ impl ScriptArgs {
             None => "terminated by a signal".into(),
         });
         // `cast` may fail before it runs the inner `forge script`, which then printed nothing.
-        if reported { Err(failure.into()) } else { eyre::bail!("{failure}") }
+        if failure_envelope.is_some() { Err(failure.into()) } else { eyre::bail!("{failure}") }
     }
 
     fn wallet_session_command_from_env(&self) -> Result<WalletSessionCommand> {
