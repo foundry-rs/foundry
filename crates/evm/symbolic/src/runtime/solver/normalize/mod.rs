@@ -1452,8 +1452,8 @@ impl ConstraintContext {
         if !matches!(op, SymCmpOp::Ult | SymCmpOp::Ule) {
             return None;
         }
-        // A symbolic divisor is matched only in `n / d < k`, the shape a round trip such as
-        // `ceil(x / d) * d / m < k` leaves; the rewrite then also needs `d != 0`.
+        // A symbolic divisor is matched only in `n / d < k` and its negation, the shape a round
+        // trip such as `ceil(x / d) * d / m < k` leaves; the rewrite then also needs `d != 0`.
         if let Some((numerator, denominator)) = left.udiv_operands()
             && denominator.as_const().map_or(op == SymCmpOp::Ult, |value| !value.is_zero())
             && !right.contains_udiv()
@@ -1480,9 +1480,10 @@ impl ConstraintContext {
     ) -> Option<(SymBoolExpr, bool)> {
         let (numerator, denominator, threshold, quotient_on_left) =
             Self::udiv_comparison_operands(op, left, right)?;
-        // Folding gives `n / 0 == 0` but SMT gives all ones, so a symbolic divisor must be
-        // nonzero in context for `n / d < k` and `n < k * d` to agree. Its quotient may also take
-        // part in order reasoning with other conjuncts, so the caller keeps the original too.
+        // Folding gives `n / 0 == 0` but SMT gives all ones, and `n / d < k` agrees with
+        // `n < k * d` under both only when `d != 0`, so the context must prove a symbolic divisor
+        // nonzero. Its quotient may also take part in order reasoning with other conjuncts, so the
+        // caller keeps the original too.
         let keep = denominator.as_const().is_none();
         if keep && !self.interval(denominator).is_some_and(|range| !range.min.is_zero()) {
             return None;

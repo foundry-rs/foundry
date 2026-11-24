@@ -9150,7 +9150,8 @@ contract SymbolicDowncastShare {
 // An ERC4626 vault rounds `previewMint` up, so converting those assets back to shares never
 // returns fewer shares than were minted. A quotient bounded by a threshold still orders against
 // other bounds and quotients by the same divisor. Rounding down instead, demanding strictly more
-// shares, or a threshold whose product with the divisor wraps all fail.
+// shares, a quotient equal to its lower bound, or a threshold whose product with the divisor
+// wraps all fail.
 #[forgetest_init]
 fn symbolic_proves_preview_mint_round_trip(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_preview_mint_round_trip");
@@ -9214,6 +9215,11 @@ contract SymbolicPreviewMint {
         assert(m / d <= k);
     }
 
+    function checkQuotientFloor(uint256 n, uint128 d, uint128 k) public pure {
+        if (d == 0 || n / d < k) return;
+        assert(n / d > k);
+    }
+
     function checkWrappedThreshold(uint256 n, uint256 d, uint256 k) public pure {
         require(d != 0 && k != 0 && d % 2 ** 128 == 0 && k % 2 ** 128 == 0);
         assert(n / d >= k);
@@ -9244,6 +9250,7 @@ contract SymbolicPreviewMint {
         for signature in [
             "checkPreviewMintGainsShares(uint128,uint128,uint128)",
             "checkFlooredMintRoundTrip(uint128,uint128,uint128)",
+            "checkQuotientFloor(uint256,uint128,uint128)",
             "checkWrappedThreshold(uint256,uint256,uint256)",
         ] {
             let result = json_test_result(&output, signature);
