@@ -9343,6 +9343,12 @@ contract SymbolicPayoutMinusFee {
         net -= net * bps / 10000;
         net -= net * bps / 10000;
         assert(net <= balance);
+        uint256 kept = balance;
+        kept -= kept * bps / 10000;
+        kept -= kept * bps / 10000;
+        kept -= kept * bps / 10000;
+        kept -= kept * bps / 10000;
+        assert(kept <= balance);
     }
 
     // A rebated fee `fee - fee / 3` is at most `fee`, but the deduction must keep the operand

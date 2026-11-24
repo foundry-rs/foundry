@@ -351,9 +351,12 @@ impl ConstraintContext {
             // A payout minus its fee, `a - b <= a <= large` once `b <= a`, which also keeps the
             // subtraction from wrapping. Each recursion is charged to the budget, because cached
             // intervals cost nothing and subtractions that share operands would otherwise be walked
-            // as a tree.
+            // as a tree. A chain of deductions ends at `large` itself.
             SymExprKind::BinOp(SymBinOp::Sub, a, b) => {
                 let mut order = |small, large| {
+                    if small == large {
+                        return Some(false);
+                    }
                     *remaining = remaining.checked_sub(1)?;
                     self.division_order(small, large, intervals, remaining)
                 };
