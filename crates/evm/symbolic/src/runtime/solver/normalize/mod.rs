@@ -596,6 +596,8 @@ pub(super) struct ConstraintContext {
     non_wrapping_products: HashSet<(SymExpr, SymExpr)>,
     /// Conjuncts of the context, which decide `ite` conditions they assert or deny.
     facts: HashSet<SymBoolExpr>,
+    /// The words each word is asserted to be at most, by a `<=` or `<` conjunct.
+    order_facts: HashMap<SymExpr, Vec<SymExpr>>,
 }
 
 #[derive(Clone, Copy)]
@@ -676,6 +678,18 @@ impl ConstraintContext {
             context.record_lower_bound_constraint(constraint);
             context.record_unsigned_lower_bound_constraint(constraint, promote_unsigned_bounds);
             context.record_zero_mul_high(constraint);
+        }
+        for fact in &context.facts {
+            let (small, large) = match fact.kind() {
+                SymBoolExprKind::Cmp(SymCmpOp::Ult | SymCmpOp::Ule, left, right) => (left, right),
+                SymBoolExprKind::Not(inner)
+                    if let SymBoolExprKind::Cmp(SymCmpOp::Ult, left, right) = inner.kind() =>
+                {
+                    (right, left)
+                }
+                _ => continue,
+            };
+            context.order_facts.entry(small.clone()).or_default().push(large.clone());
         }
         // A bounded number of rounds closes ordinary order chains. Relational propagation keeps
         // strict comparisons weak (`a < b` propagates only `a <= upper(b)`), so inconsistent
@@ -916,7 +930,10 @@ impl ConstraintContext {
         }
         if let SymExprKind::BinOp(SymBinOp::And, value, mask) = expr.kind()
             && let Some(bits) = mask.as_const().and_then(mask_low_bits)
-            && self.unsigned_bits(value) <= bits
+            && (self.unsigned_bits(value) <= bits
+                // Bit widths ignore a divisor, so a share `x * w / k` with `w`'s bound at most
+                // `k`'s minimum looks wider than `x`; its interval divides by `k`.
+                || self.interval(value).is_some_and(|range| range.max.bit_len() <= bits))
         {
             // `x & low_mask => x` when the current context proves `x` fits the mask.
             return value.clone();
@@ -1484,6 +1501,11 @@ impl ConstraintContext {
         self.interval(expr).map(|interval| (interval.min, interval.max))
     }
 
+    /// Returns the words that another conjunct asserts `small` is at most, including strict `<`.
+    fn asserted_upper_bounds(&self, small: &SymExpr) -> &[SymExpr] {
+        self.order_facts.get(small).map_or(&[], Vec::as_slice)
+    }
+
     fn interval(&self, expr: &SymExpr) -> Option<WordInterval> {
         let mut intervals = HashMap::default();
         let mut remaining = MAX_LOCAL_ANALYSIS_NODES;
@@ -1551,14 +1573,14 @@ impl ConstraintContext {
                     max: left.max.checked_add(right.max)?,
                 })
             }
-            SymExprKind::BinOp(SymBinOp::Sub, left, right) => {
+            SymExprKind::BinOp(SymBinOp::Sub, minuend, subtrahend) => {
                 if let Some(interval) =
-                    self.rounding_error_interval(left, right, intervals, remaining)
+                    self.rounding_error_interval(minuend, subtrahend, intervals, remaining)
                 {
                     return Some(interval);
                 }
-                let left = self.interval_cached(left, intervals, remaining)?;
-                let right = self.interval_cached(right, intervals, remaining)?;
+                let left = self.interval_cached(minuend, intervals, remaining)?;
+                let right = self.interval_cached(subtrahend, intervals, remaining)?;
                 if left.max < right.min {
                     // Every subtraction wraps exactly once, so the unsigned image is contiguous.
                     return Some(WordInterval {
@@ -1567,7 +1589,11 @@ impl ConstraintContext {
                     });
                 }
                 if left.min < right.max {
-                    return None;
+                    // An asserted `subtrahend <= minuend` rules out wrapping.
+                    return self
+                        .asserted_upper_bounds(subtrahend)
+                        .contains(minuend)
+                        .then(|| WordInterval { min: U256::ZERO, max: left.max - right.min });
                 }
                 Some(WordInterval {
                     min: left.min.checked_sub(right.max)?,
@@ -2163,6 +2189,14 @@ impl ConstraintContext {
         if self.bounded_zero_check_operand(condition) == Some(operand) {
             return true;
         }
+        // `normalize_cmp_for_solver` rewrites the zero check `a - b == 0` to `a == b`, with a
+        // constant operand on the right, so either order can occur.
+        if let SymExprKind::BinOp(SymBinOp::Sub, a, b) = operand.kind()
+            && let SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) = condition.kind()
+            && ((left == a && right == b) || (left == b && right == a))
+        {
+            return true;
+        }
         // For a positive constant d, n / d == 0 iff n < d. Normalization
         // exposes this comparison before the Solidity multiplication guard.
         if let Some((numerator, denominator)) = operand.udiv_operands()
@@ -2342,17 +2376,29 @@ impl ConstraintContext {
     }
 
     pub(super) fn mul_cannot_overflow_256(&self, left: &SymExpr, right: &SymExpr) -> bool {
+        let mut intervals = HashMap::default();
+        let mut remaining = MAX_LOCAL_ANALYSIS_NODES;
+        self.mul_cannot_overflow_256_cached(left, right, &mut intervals, &mut remaining)
+    }
+
+    /// Like [`Self::mul_cannot_overflow_256`], sharing the caller's interval cache and node
+    /// budget, so a proof nested inside interval analysis does not restart it.
+    fn mul_cannot_overflow_256_cached(
+        &self,
+        left: &SymExpr,
+        right: &SymExpr,
+        intervals: &mut HashMap<SymExpr, Option<WordInterval>>,
+        remaining: &mut usize,
+    ) -> bool {
         // `(a / d) * d <= a`, and the product is zero when `d == 0`, so it never wraps.
         if self.has_non_wrapping_product(left, right)
             || rounded_product_operands(left, right).is_some()
         {
             return true;
         }
-        let mut intervals = HashMap::default();
-        let mut remaining = MAX_LOCAL_ANALYSIS_NODES;
         if self
-            .interval_cached(left, &mut intervals, &mut remaining)
-            .zip(self.interval_cached(right, &mut intervals, &mut remaining))
+            .interval_cached(left, intervals, remaining)
+            .zip(self.interval_cached(right, intervals, remaining))
             .is_some_and(|(left, right)| left.max.checked_mul(right.max).is_some())
         {
             return true;

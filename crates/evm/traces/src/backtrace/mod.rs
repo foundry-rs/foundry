@@ -270,7 +270,7 @@ impl<'a> Backtrace<'a> {
         // Try to get source location from PC mapper
         if !self.disable_source_locs
             && let Some(source_location) = trace.steps.last().and_then(|last_step| {
-                self.pc_mappers.get(&contract_address).and_then(|m| m.map_pc(last_step.pc))
+                self.pc_mappers.get(&contract_address).and_then(|m| m.map_pc(last_step.pc as usize))
             })
         {
             frame = frame
