@@ -452,12 +452,17 @@ impl ConstraintContext {
             })
         };
         // `a + b` must not wrap for `a + b <= k` to hold over the integers: from value ranges, or
-        // from a checked addition's `b <= ~a` guard.
+        // from a checked addition's `b <= ~a` guard, which older compilers write as `b <= MAX - a`.
         let sum_max = self
             .interval_cached(a, intervals, remaining)
             .and_then(|a| a.max.checked_add(self.interval_cached(b, intervals, remaining)?.max));
-        let complement =
-            |x: &SymExpr, y: &SymExpr| matches!(y.kind(), SymExprKind::Not(inner) if inner == x);
+        let complement = |x: &SymExpr, y: &SymExpr| match y.kind() {
+            SymExprKind::Not(inner) => inner == x,
+            SymExprKind::BinOp(SymBinOp::Sub, max, inner) => {
+                max.as_const() == Some(U256::MAX) && inner == x
+            }
+            _ => false,
+        };
         if sum_max.is_none()
             && !asserted(&|x, y| (x == b && complement(a, y)) || (x == a && complement(b, y)))
         {
