@@ -8,7 +8,6 @@ use foundry_compilers::{
     artifacts::{ConfigurableContractArtifact, Severity, contract::Contract},
     compilers::{Compiler, Language, multi::MultiCompilerLanguage},
     contracts::{VersionedContract, VersionedContracts},
-    error::SolcError,
 };
 use foundry_config::{Config, DenyLevel, ExternalCompiler};
 use semver::Version;
@@ -40,14 +39,15 @@ pub(crate) struct ExternalCompilation<'a> {
     active_units: BTreeMap<String, BTreeSet<String>>,
     pending_cache: Vec<PendingCache>,
     no_compile: bool,
-    stale: Vec<PathBuf>,
+    /// Inputs of units that `no_compile` left uncompiled because they are not cached.
+    pub(crate) stale: Vec<PathBuf>,
 }
 
 impl<'a> ExternalCompilation<'a> {
     /// Runs adapters, staging their output until the built-in compilation succeeds.
     ///
-    /// With `no_compile`, fails with [`SolcError::StaleSources`] instead of compiling a unit that
-    /// is not cached.
+    /// With `no_compile`, records the inputs of a unit that is not cached in `stale` instead of
+    /// compiling it.
     pub(crate) fn compile(
         config: &'a Config,
         selected_paths: &[PathBuf],
@@ -75,11 +75,6 @@ impl<'a> ExternalCompilation<'a> {
             ensure_portable_child(&config.out.join(EXTERNAL_ARTIFACT_DIR), &adapter.id, None)?;
             ensure_portable_child(&config.cache_path.join(EXTERNAL_CACHE_DIR), &adapter.id, None)?;
             AdapterClient::new(config, adapter, selected_paths)?.compile(&mut compilation)?;
-        }
-        if !compilation.stale.is_empty() {
-            compilation.stale.sort();
-            compilation.stale.dedup();
-            return Err(SolcError::StaleSources(compilation.stale).into());
         }
         Ok(compilation)
     }

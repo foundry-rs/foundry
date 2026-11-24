@@ -133,9 +133,12 @@ done
     assert_eq!(fs::read(&retained_cache).unwrap(), cache_before);
     assert_eq!(fs::read(&retained_artifact).unwrap(), artifact_before);
 
-    // `script --no-compile` reports a stale external unit instead of compiling it.
+    // `script --no-compile` reports stale external units with stale built-in sources instead of
+    // compiling them.
     let lib = fs::read_to_string(&external_source).unwrap();
     fs::write(&external_source, format!("{lib}\n")).unwrap();
+    let builtin_source = fs::read_to_string(&builtin).unwrap();
+    fs::write(&builtin, format!("{builtin_source}\n")).unwrap();
     cmd.forge_fuse()
         .args(["script", "src/Builtin.sol", "--no-compile"])
         .assert_failure()
@@ -143,10 +146,12 @@ done
 Error: compilation disabled by --no-compile; sources need compiling:
 native/fe.toml
 native/src/lib.fe
+src/Builtin.sol
 
 "#]]);
     assert!(!invoked.exists());
     fs::write(&external_source, lib).unwrap();
+    fs::write(&builtin, builtin_source).unwrap();
 
     fs::remove_file(native.join("src/other.fe")).unwrap();
     let read_only_commands = [
