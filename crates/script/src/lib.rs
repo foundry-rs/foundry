@@ -512,9 +512,6 @@ impl ScriptArgs {
             && !err.is::<wallet_session::InnerScriptFailed>()
         {
             let _ = print_json_failure(err);
-            if let Some(marker) = std::env::var_os(wallet_session::JSON_FAILURE_MARKER_ENV) {
-                let _ = std::fs::write(marker, "");
-            }
         }
         result
     }

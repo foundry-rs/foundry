@@ -8,12 +8,14 @@ use crate::ScriptArgs;
 use alloy_primitives::Address;
 use clap::Args;
 use eyre::{Result, WrapErr};
-use foundry_cli::{opts::TEMPO_SESSION_ID_ENV, utils::LoadConfig};
+use foundry_cli::{json::JsonEnvelope, opts::TEMPO_SESSION_ID_ENV, utils::LoadConfig};
+use foundry_common::shell;
 use foundry_config::Config;
 use std::{
     ffi::{OsStr, OsString},
+    io::{BufRead, BufReader},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
 };
 
 const SESSION_WRAPPER_ENV_REMOVE: &[&str] = &[
@@ -203,17 +205,27 @@ impl ScriptArgs {
             child.env_remove(key);
         }
 
-        // The inner `forge script` creates this file when it prints its failure envelope.
-        let marker = tempfile::tempdir()?;
-        let failure_marker = marker.path().join("failed");
-        child.env(JSON_FAILURE_MARKER_ENV, &failure_marker);
-
-        let status = child.status().wrap_err_with(|| {
+        // With `--json`, the inner output passes through this process to tell whether the inner
+        // `forge script` already printed its failure envelope. Cast may print after it, such as
+        // the session key revocation.
+        if shell::is_json() {
+            child.stdout(Stdio::piped());
+        }
+        let mut child = child.spawn().wrap_err_with(|| {
             format!(
                 "failed to run `{}` for forge script wallet session",
                 command.program.to_string_lossy()
             )
         })?;
+        let mut reported = false;
+        if let Some(stdout) = child.stdout.take() {
+            for line in BufReader::new(stdout).lines().map_while(std::io::Result::ok) {
+                sh_println!("{line}")?;
+                reported |= serde_json::from_str::<JsonEnvelope<serde_json::Value>>(&line)
+                    .is_ok_and(|envelope| !envelope.success);
+            }
+        }
+        let status = child.wait().wrap_err("failed to wait for forge script wallet session")?;
 
         if status.success() {
             return Ok(());
@@ -223,7 +235,7 @@ impl ScriptArgs {
             None => "terminated by a signal".into(),
         });
         // `cast` may fail before it runs the inner `forge script`, which then printed nothing.
-        if failure_marker.exists() { Err(failure.into()) } else { eyre::bail!("{failure}") }
+        if reported { Err(failure.into()) } else { eyre::bail!("{failure}") }
     }
 
     fn wallet_session_command_from_env(&self) -> Result<WalletSessionCommand> {
@@ -481,10 +493,6 @@ fn quote_arg(arg: &OsString) -> Result<String> {
     quoted.push('"');
     Ok(quoted)
 }
-
-/// Names the file the inner `forge script` of a wallet session creates when it prints its
-/// `--json` failure envelope.
-pub(super) const JSON_FAILURE_MARKER_ENV: &str = "FORGE_SCRIPT_JSON_FAILURE_MARKER";
 
 /// The inner `forge script` of a wallet session failed, after reporting the failure itself.
 #[derive(Debug, thiserror::Error)]
