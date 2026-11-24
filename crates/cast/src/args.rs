@@ -1583,7 +1583,8 @@ fn int_bound(s: &str, max: bool) -> Result<String> {
 /// A magnitude beyond that range would silently reinterpret as a small *positive* [`I256`]
 /// if constructed unconditionally via [`I256::from_raw`] -- reject it instead.
 fn signed_parse_units(value: &NumberWithBase) -> Result<ParseUnits> {
-    if value.is_nonnegative() {
+    // Zero has no sign, so "-0" takes the unsigned path instead of failing the I256 check.
+    if value.is_nonnegative() || value.number().is_zero() {
         return Ok(ParseUnits::U256(value.number()));
     }
     let signed = I256::from_raw(value.number());
