@@ -397,9 +397,9 @@ fn expr_less_or_equal<'a>(
         {
             true
         }
-        // `(x * a + c) / d <= x` for `a <= d` and `c < d`, as for a debt scaled by a close factor
-        // and rounded half up: `x * a + c < (x + 1) * d`, a wrapped product or sum only shrinks the
-        // dividend, and a zero `d` yields zero.
+        // `(x * a + c) / d <= x` for `0 < d`, `a <= d`, and `c < d`, as for a debt scaled by a
+        // close factor and rounded half up: `x * a + c < (x + 1) * d`, and a wrapped product or sum
+        // only shrinks the dividend.
         (SymExprKind::BinOp(SymBinOp::UDiv, dividend, divisor), _)
             if scaled_quotient_at_most(dividend, divisor, right, facts, bounds) =>
         {
@@ -764,31 +764,38 @@ fn successor_product_exceeds(
         })
 }
 
-/// Returns whether `(x * a + c) / d <= x`, with an optional addend `c`, for `a <= d` and `c < d`;
-/// a zero `d` yields zero.
-fn scaled_quotient_at_most(
-    dividend: &SymExpr,
+/// Returns whether `(x * a + c) / d <= x`, with an optional addend `c`, for a nonzero `d`,
+/// `a <= d`, and `c < d`. `division_order` in `normalize/rounding.rs` decides a direct comparison
+/// with this bound once `x * a` cannot wrap.
+fn scaled_quotient_at_most<'a>(
+    dividend: &'a SymExpr,
     divisor: &SymExpr,
     x: &SymExpr,
     facts: &OrderFacts<'_>,
     bounds: &ConstraintContext,
 ) -> bool {
-    let divisor_min = bounds.word_range(divisor).map_or(U256::ONE, |(min, _)| min.max(U256::ONE));
-    let below_divisor =
-        |expr: &SymExpr| bounds.word_range(expr).is_some_and(|(_, max)| max < divisor_min);
-    let scaled = |product: &SymExpr| {
-        mul_operands(product).is_some_and(|(a, b)| {
-            [(a, b), (b, a)].into_iter().any(|(factor, scale)| {
-                factor == x
-                    && (expr_less_or_equal(scale, divisor, facts, bounds)
-                        || bounds.word_range(scale).is_some_and(|(_, max)| max <= divisor_min))
-            })
-        })
+    let scale = |product: &'a SymExpr| {
+        let (a, b) = mul_operands(product)?;
+        (a == x).then_some(b).or((b == x).then_some(a))
     };
-    match dividend.kind() {
-        SymExprKind::BinOp(SymBinOp::Add, a, b) => {
-            (scaled(a) && below_divisor(b)) || (scaled(b) && below_divisor(a))
+    let (scale, addend) = match dividend.kind() {
+        SymExprKind::BinOp(SymBinOp::Add, a, b) => match (scale(a), scale(b)) {
+            (Some(scale), _) => (scale, Some(b)),
+            (_, Some(scale)) => (scale, Some(a)),
+            _ => return false,
+        },
+        _ => {
+            let Some(scale) = scale(dividend) else { return false };
+            (scale, None)
         }
-        _ => scaled(dividend),
-    }
+    };
+    // A bare `UDiv` by zero is all ones in SMT; only the EVM's guarded `DIV` yields zero.
+    let divisor_min = match bounds.word_range(divisor) {
+        Some((min, _)) if !min.is_zero() => min,
+        _ if facts.positive.contains(divisor) => U256::ONE,
+        _ => return false,
+    };
+    addend.is_none_or(|addend| bounds.word_range(addend).is_some_and(|(_, max)| max < divisor_min))
+        && (expr_less_or_equal(scale, divisor, facts, bounds)
+            || bounds.word_range(scale).is_some_and(|(_, max)| max <= divisor_min))
 }
