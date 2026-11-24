@@ -13,6 +13,7 @@ extern crate foundry_common;
 extern crate tracing;
 
 use crate::{broadcast::BundledState, runner::ScriptRunner, simulate::PreSimulationState};
+use alloy_dyn_abi::{JsonAbiExt, Specifier};
 use alloy_eips::BlockId;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::{Network, TransactionBuilder};
@@ -62,7 +63,7 @@ use foundry_evm::{
     hardforks::ExecutionSpec,
     inspectors::{
         CheatsConfig,
-        cheatcodes::{BroadcastableTransactions, Wallets},
+        cheatcodes::{BroadcastableTransactions, Wallets, parse_json_as},
     },
     opts::{EvmOpts, ExecutionSpecContext, ForkContext, resolve_execution_spec},
     traces::{InternalTraceMode, TraceRequirements, Traces},
@@ -129,6 +130,12 @@ pub struct ScriptArgs {
 
     /// Arguments to pass to the script function.
     pub args: Vec<String>,
+
+    /// JSON file with the script function arguments as an array, encoded against `--sig`.
+    ///
+    /// Structs are JSON objects keyed by field name.
+    #[arg(long, value_name = "FILE", value_hint = ValueHint::FilePath, conflicts_with = "args")]
+    pub args_json: Option<PathBuf>,
 
     /// The name of the contract you want to run.
     #[arg(long, visible_alias = "tc", value_name = "CONTRACT_NAME")]
@@ -879,6 +886,7 @@ impl ScriptArgs {
                         hex::encode(selector)
                     )
                 })?;
+            eyre::ensure!(self.args_json.is_none(), "--args-json cannot be used with raw calldata");
             return Ok((func.clone(), decoded.into()));
         }
 
@@ -903,7 +911,31 @@ impl ScriptArgs {
                 }
             }
         };
-        let data = encode_function_args(func, &self.args)?;
+        let data = if let Some(path) = &self.args_json {
+            let serde_json::Value::Array(values) = foundry_common::fs::read_json_file(path)? else {
+                eyre::bail!("--args-json must contain a JSON array of arguments");
+            };
+            eyre::ensure!(
+                values.len() == func.inputs.len(),
+                "--args-json has {} arguments, but `{}` takes {}",
+                values.len(),
+                func.signature(),
+                func.inputs.len()
+            );
+            let values = func
+                .inputs
+                .iter()
+                .zip(&values)
+                .map(|(param, value)| {
+                    let ty = param.resolve()?;
+                    parse_json_as(value, &ty)
+                        .map_err(|e| eyre::eyre!("argument `{}` {ty}: {e}", param.name))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            func.abi_encode_input(&values)?
+        } else {
+            encode_function_args(func, &self.args)?
+        };
 
         Ok((func.clone(), data.into()))
     }
