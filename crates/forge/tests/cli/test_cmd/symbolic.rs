@@ -9142,8 +9142,8 @@ contract SymbolicDowncastShare {
 }
 
 // Q96 and Q128 fixed-point math scales an amount with `(x * y) >> k`, which is at most `x` once
-// `y <= 2**k`, even when the product wraps. A larger factor, or a bound on the other factor,
-// proves nothing.
+// `y <= 2**k`, even when the product wraps. Dividing by `2**k` normalizes to the same shift. A
+// factor one above `2**k`, a strict comparison, or a bound on the other factor proves nothing.
 #[forgetest_init]
 fn symbolic_proves_shifted_product_bounded(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_shifted_product_bounded");
@@ -9168,9 +9168,19 @@ contract SymbolicShiftedProduct {
         }
     }
 
+    function checkQ96ScaleDivided(uint128 amount, uint160 price) public pure {
+        require(price <= 2 ** 96);
+        assert(uint256(amount) * price / 2 ** 96 <= amount);
+    }
+
     function checkQ96ScaleAboveOne(uint128 amount, uint160 price) public pure {
-        require(price <= 2 ** 97);
+        require(price <= 2 ** 96 + 1);
         assert((uint256(amount) * price) >> 96 <= amount);
+    }
+
+    function checkQ96ScaleStrict(uint128 amount, uint160 price) public pure {
+        require(price <= 2 ** 96);
+        assert((uint256(amount) * price) >> 96 < amount);
     }
 
     function checkQ96ScaleAgainstPrice(uint128 amount, uint160 price) public pure {
@@ -9194,14 +9204,17 @@ contract SymbolicShiftedProduct {
             "checkQ96Scale(uint128,uint160)",
             "checkQ128Fees(uint128,uint256)",
             "checkQ96ScaleWrapping(uint256,uint256)",
+            "checkQ96ScaleDivided(uint128,uint160)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
         }
 
-        for signature in
-            ["checkQ96ScaleAboveOne(uint128,uint160)", "checkQ96ScaleAgainstPrice(uint128,uint160)"]
-        {
+        for signature in [
+            "checkQ96ScaleAboveOne(uint128,uint160)",
+            "checkQ96ScaleStrict(uint128,uint160)",
+            "checkQ96ScaleAgainstPrice(uint128,uint160)",
+        ] {
             let result = json_test_result(&output, signature);
             assert_eq!(
                 result["symbolic"]["status"], "fail_counterexample",
