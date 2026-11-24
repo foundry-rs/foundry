@@ -9142,8 +9142,9 @@ contract SymbolicDowncastShare {
 }
 
 // A protocol takes a share of a fee, `(amount * a / k) * b / k`, which stays at most the amount
-// once `a <= k` and `b <= k`. A share factor above `k`, or a fee above the amount, proves nothing.
-// Chained products share their factors, so the search must not walk them as a tree.
+// once `a <= k` and `b <= k`, also when the share rounds up. A share factor above `k`, or a fee
+// above the amount, proves nothing. Chained products share their factors, so the search must not
+// walk them as a tree.
 #[forgetest_init]
 fn symbolic_proves_chained_share_bounded(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_chained_share_bounded");
@@ -9155,6 +9156,24 @@ contract SymbolicChainedShare {
         require(feeBps <= 10000 && shareBps <= 10000);
         uint256 fee = uint256(amount) * feeBps / 10000;
         assert(fee * shareBps / 10000 <= amount);
+    }
+
+    function checkProtocolCutRoundedUp(uint128 amount, uint16 feeBps, uint16 shareBps)
+        public
+        pure
+    {
+        require(feeBps <= 10000 && shareBps <= 10000);
+        uint256 fee = uint256(amount) * feeBps / 10000;
+        assert((fee * shareBps + 9999) / 10000 <= amount);
+    }
+
+    function checkProtocolCutRoundedPastWhole(uint128 amount, uint16 feeBps, uint16 shareBps)
+        public
+        pure
+    {
+        require(feeBps <= 10000 && shareBps <= 10000);
+        uint256 fee = uint256(amount) * feeBps / 10000;
+        assert((fee * shareBps + 10000) / 10000 <= amount);
     }
 
     function checkShareAboveWhole(uint128 amount, uint16 feeBps, uint16 shareBps) public pure {
@@ -9228,6 +9247,7 @@ contract SymbolicChainedShare {
             .clone();
         for signature in [
             "checkProtocolCut(uint128,uint16,uint16)",
+            "checkProtocolCutRoundedUp(uint128,uint16,uint16)",
             "checkSymbolicDenominator(uint64,uint64,uint64,uint64)",
             "checkSharedProducts(uint256,uint256)",
         ] {
@@ -9238,6 +9258,7 @@ contract SymbolicChainedShare {
         for signature in [
             "checkShareAboveWhole(uint128,uint16,uint16)",
             "checkFeeAboveAmount(uint128,uint16,uint16)",
+            "checkProtocolCutRoundedPastWhole(uint128,uint16,uint16)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(

@@ -146,9 +146,8 @@ impl ConstraintContext {
     /// wrap. With a nonzero `y + z` that cannot wrap, `x * y / (y + z) <= x`, strictly for nonzero
     /// `x` and `z`. The Euclidean sum `(a / d) * d + a % d` is `a`, so each summand is at most the
     /// other's complement. With a nonzero divisor, `a / d <= (a - 1) / d + 1`, also when selected
-    /// by `a != 0`, and `(x * y + c) / d <= x` once `y <= d`, `x * y` cannot wrap, and `c < d`.
-    /// A nonzero `d` also gives `f * y / d <= x` once `y <= d` and `f` is itself proved at most
-    /// `x`.
+    /// by `a != 0`, and `(x * y + c) / d <= x` once `y <= d`, `x * y` cannot wrap, and `c < d`,
+    /// also with `x` replaced by a factor proved at most `x`.
     /// Another conjunct's cross-multiplied `x * k <= y * l` also decides `x <= y` once `k` is
     /// positive, `l <= k`, and `x * k` cannot wrap.
     /// The shares `w * a / k + w * b / k <= w` once `a + b <= k`, and `n <= ceil(n / d) * d` for a
@@ -237,7 +236,7 @@ impl ConstraintContext {
         }
         let mut interval = |expr: &SymExpr| self.interval_cached(expr, intervals, remaining);
         let nonzero = |range: Option<WordInterval>| range.is_some_and(|range| !range.min.is_zero());
-        let order = match small.kind() {
+        match small.kind() {
             SymExprKind::BinOp(SymBinOp::URem, dividend, divisor) => {
                 if dividend == large {
                     return Some(false);
@@ -272,29 +271,47 @@ impl ConstraintContext {
                     return Some(nonzero(interval(large)) && !rest.min.is_zero());
                 }
                 // Rounding up adds at most `d - 1`, so `(x * y + c) / d <= x` still holds once
-                // `c <= d - 1`; a wrapped sum only shrinks the dividend.
+                // `c <= d - 1`; a wrapped sum only shrinks the dividend. The quotient is at most
+                // the scaled factor, so the factor may also be one proved at most `x`, like a fee
+                // `x * a / k` split into shares. Each recursion is charged to the budget, because
+                // cached intervals are free and chained products that share factors would
+                // otherwise be walked as a tree. A failed search stops at half the budget.
                 let mut bounded = |dividend: &SymExpr, addend: Option<&SymExpr>| {
                     let SymExprKind::BinOp(SymBinOp::Mul, left, right) = dividend.kind() else {
-                        return false;
+                        return None;
                     };
-                    let other = if left == large {
-                        right
-                    } else if right == large {
-                        left
-                    } else {
-                        return false;
-                    };
-                    let Some(range) = interval(divisor).filter(|range| !range.min.is_zero()) else {
-                        return false;
-                    };
-                    addend.is_none_or(|addend| {
+                    let range = self
+                        .interval_cached(divisor, intervals, remaining)
+                        .filter(|range| !range.min.is_zero())?;
+                    let addend_fits = addend.is_none_or(|addend| {
                         matches!(addend.kind(), SymExprKind::BinOp(SymBinOp::Sub, value, one)
                             if value == divisor && one.as_const() == Some(U256::ONE))
-                            || interval(addend).is_some_and(|addend| addend.max < range.min)
-                    }) && (other == divisor
-                        || interval(other).is_some_and(|other| other.max <= range.min)
-                        || self.asserts_less_or_equal(other, divisor))
-                        && self.mul_cannot_overflow_256(left, right)
+                            || self
+                                .interval_cached(addend, intervals, remaining)
+                                .is_some_and(|addend| addend.max < range.min)
+                    });
+                    let factors = [(left, right), (right, left)].map(|(factor, other)| {
+                        self.factor_within_divisor(other, divisor, intervals, remaining)
+                            .then_some(factor)
+                    });
+                    let direct = factors.contains(&Some(large));
+                    let open = *remaining > MAX_LOCAL_ANALYSIS_NODES / 2;
+                    if !addend_fits
+                        || !(direct || (open && factors.iter().any(Option::is_some)))
+                        || !self.mul_cannot_overflow_256(left, right)
+                    {
+                        return None;
+                    }
+                    if direct {
+                        return Some(false);
+                    }
+                    factors.into_iter().flatten().find_map(|factor| {
+                        if *remaining <= MAX_LOCAL_ANALYSIS_NODES / 2 {
+                            return None;
+                        }
+                        *remaining -= 1;
+                        self.division_order(factor, large, intervals, remaining)
+                    })
                 };
                 // `round_down(n, t) <= n` (zero when `t == 0`), so dividing the rounded product
                 // is bounded by `n / d`. The EVM `DIV` may still carry its `t == 0` guard.
@@ -310,7 +327,7 @@ impl ConstraintContext {
                 let rounded_up = match dividend.kind() {
                     SymExprKind::BinOp(SymBinOp::Add, a, b) => [(a, b), (b, a)]
                         .into_iter()
-                        .any(|(product, addend)| bounded(product, Some(addend))),
+                        .find_map(|(product, addend)| bounded(product, Some(addend))),
                     // `(x * y + d) - 1`. A wrapped sum is smaller, and a sum that wraps to zero
                     // gives `MAX == x * y + d - 1` exactly.
                     SymExprKind::BinOp(SymBinOp::Sub, sum, one)
@@ -321,12 +338,11 @@ impl ConstraintContext {
                     {
                         bounded(product, None)
                     }
-                    _ => false,
+                    _ => None,
                 };
-                (rounded_up
-                    || peeled.is_some_and(|peeled| bounded(peeled, None))
-                    || bounded(dividend, None))
-                .then_some(false)
+                rounded_up
+                    .or_else(|| peeled.and_then(|peeled| bounded(peeled, None)))
+                    .or_else(|| bounded(dividend, None))
             }
             // `(x / d) * k <= (x / d) * d <= x` once `k <= d`, so the product cannot wrap; a zero
             // `d` forces a zero product.
@@ -343,40 +359,7 @@ impl ConstraintContext {
                 })
                 .then_some(false),
             _ => None,
-        };
-        if order.is_some() {
-            return order;
         }
-        // A factor that is itself at most `x`, like a fee `x * a / k` split into shares, keeps
-        // `(f * y) / d <= f <= x` once `y <= d`, since `f * y <= f * d` and a wrapped product only
-        // shrinks the dividend. `UDiv` by zero is all ones, so `d` must be nonzero. This runs after
-        // the cheaper rules, and each recursion is charged to the budget, because cached intervals
-        // are free and chained products that share factors would otherwise be walked as a tree. A
-        // failed search stops at half the budget, leaving the rest to the caller's other orders.
-        let (dividend, divisor) = small.udiv_operands()?;
-        let SymExprKind::BinOp(SymBinOp::Mul, left, right) = dividend.kind() else { return None };
-        if left == large || right == large {
-            return None;
-        }
-        let range = self.interval_cached(divisor, intervals, remaining)?;
-        if range.min.is_zero() {
-            return None;
-        }
-        for (factor, other) in [(left, right), (right, left)] {
-            if *remaining > MAX_LOCAL_ANALYSIS_NODES / 2
-                && (other == divisor
-                    || self
-                        .interval_cached(other, intervals, remaining)
-                        .is_some_and(|other| other.max <= range.min)
-                    || self.asserts_less_or_equal(other, divisor))
-            {
-                *remaining -= 1;
-                if let Some(strict) = self.division_order(factor, large, intervals, remaining) {
-                    return Some(strict);
-                }
-            }
-        }
-        None
     }
 
     /// Returns whether another conjunct asserts `small * k <= large * l` with `l <= k` and a
@@ -521,6 +504,22 @@ impl ConstraintContext {
                 matches!(sum.kind(), SymExprKind::BinOp(SymBinOp::Add, a, b)
                     if (a == large && b == start) || (a == start && b == large))
             })
+    }
+
+    /// Returns whether `factor <= divisor`, by equality, another conjunct, or value ranges.
+    fn factor_within_divisor(
+        &self,
+        factor: &SymExpr,
+        divisor: &SymExpr,
+        intervals: &mut HashMap<SymExpr, Option<WordInterval>>,
+        remaining: &mut usize,
+    ) -> bool {
+        factor == divisor
+            || self.asserts_less_or_equal(factor, divisor)
+            || self
+                .interval_cached(factor, intervals, remaining)
+                .zip(self.interval_cached(divisor, intervals, remaining))
+                .is_some_and(|(factor, divisor)| factor.max <= divisor.min)
     }
 
     /// Bounds a subtraction only when the relation proves it cannot underflow.
