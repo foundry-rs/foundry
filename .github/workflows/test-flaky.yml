@@ -17,6 +17,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: full
   RUSTC_WRAPPER: "sccache"
+  PIP_CONSTRAINT: ${{ github.workspace }}/.github/constraints.txt
 
 jobs:
   test:
@@ -50,8 +51,7 @@ jobs:
         run: python -m pip install --upgrade pip==26.2.2
       - name: Install Vyper
         # Also update vyper version in .devcontainer/Dockerfile.dev
-        # Pin packaging so fresh transitive releases do not hit Aegis's publication cooldown.
-        run: pip --version && pip install vyper==0.4.3 packaging==26.3
+        run: pip --version && pip install vyper==0.4.3
       - name: Install Z3
         # Same pin as test.yml, for the symbolic suites below.
         run: pip install z3-solver==5.3.2.0 && z3 --version

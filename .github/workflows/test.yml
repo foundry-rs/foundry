@@ -31,6 +31,7 @@ env:
   RUST_BACKTRACE: full
   RUSTC_WRAPPER: "sccache"
   RUST_MIN_STACK: 4194304 # 2 * the default (2 * 1024 * 1024)
+  PIP_CONSTRAINT: ${{ github.workspace }}/.github/constraints.txt
 
 jobs:
   matrices:
@@ -124,8 +125,7 @@ jobs:
         run: python -m pip install --upgrade pip==26.2.2
       - name: Install Vyper
         # Also update vyper version in .devcontainer/Dockerfile.dev
-        # Pin packaging so fresh transitive releases do not hit Aegis's publication cooldown.
-        run: pip --version && pip install vyper==0.4.3 packaging==26.3
+        run: pip --version && pip install vyper==0.4.3
       - name: Install Z3
         # Pinned so the `forge test --symbolic` snapshot tests stay stable across solver versions.
         if: runner.os == 'Linux'
