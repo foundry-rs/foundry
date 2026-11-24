@@ -152,6 +152,8 @@ impl ConstraintContext {
     /// The shares `w * a / k + w * b / k <= w` once `a + b <= k`, and `n <= ceil(n / d) * d` for a
     /// nonzero `d` once the multiple cannot wrap. A difference `a - b` is at most `x` once `b <= a`
     /// and `a <= x`.
+    /// A weighted average `(p * u + q * v) / k` with `u + v <= k` is at most a bound on `p` and
+    /// `q`.
     pub(super) fn division_comparison_value(&self, expr: &SymBoolExpr) -> Option<bool> {
         if let SymBoolExprKind::Not(inner) = expr.kind() {
             return self.division_comparison_value(inner).map(|value| !value);
@@ -211,6 +213,29 @@ impl ConstraintContext {
             && self.shares_whole(first, second, Some(large), intervals, remaining).is_some()
         {
             return Some(false);
+        }
+        if let Some((dividend, divisor)) = small.udiv_operands()
+            && self.weighted_within(dividend, divisor, large, intervals, remaining)
+        {
+            return Some(false);
+        }
+        // The same sum compared with `(b + 1) * k`, as written in the source or as
+        // `normalize_udiv_comparison` cross-multiplies the quotient form, is at most `b * k`, so
+        // strictly below it once `b + 1` and that product do not wrap.
+        if let SymExprKind::BinOp(SymBinOp::Mul, x, y) = large.kind()
+            && [(x, y), (y, x)].into_iter().any(|(multiplier, divisor)| {
+                matches!(multiplier.kind(), SymExprKind::BinOp(SymBinOp::Add, bound, one)
+                    if one.as_const() == Some(U256::ONE)
+                        && self
+                            .interval_cached(bound, intervals, remaining)
+                            .is_some_and(|bound| bound.max < U256::MAX)
+                        && self.mul_cannot_overflow_256_cached(
+                            multiplier, divisor, intervals, remaining,
+                        )
+                        && self.weighted_within(small, divisor, bound, intervals, remaining))
+            })
+        {
+            return Some(true);
         }
         // `n <= ceil(n / d) * d` for a nonzero `d`, rounding up as `(n + d - 1) / d` or as
         // OpenZeppelin's `ceilDiv`. Over the integers the multiple lies in `[n, n + d - 1]`, so it
@@ -442,6 +467,37 @@ impl ConstraintContext {
         if min.is_zero() {
             return None;
         }
+        self.weights_fit(a, b, divisor, min, intervals, remaining).then_some(found)
+    }
+
+    /// Returns whether `a + b <= k` over the integers for a divisor `k` at least `min`: from `b`
+    /// being `k - a`, possibly masked, with `a <= k`, either way round, from value ranges, or from
+    /// `k` being `a + b` or an asserted `a + b <= k` once the sum cannot wrap.
+    fn weights_fit(
+        &self,
+        a: &SymExpr,
+        b: &SymExpr,
+        divisor: &SymExpr,
+        min: U256,
+        intervals: &mut HashMap<SymExpr, Option<WordInterval>>,
+        remaining: &mut usize,
+    ) -> bool {
+        // `a <= k` keeps `k - a` exact, and a mask only lowers it.
+        let difference = |u: &SymExpr, v: &SymExpr| {
+            let unmasked = match v.kind() {
+                SymExprKind::BinOp(SymBinOp::And, value, mask) if mask.as_const().is_some() => {
+                    value
+                }
+                _ => v,
+            };
+            matches!(unmasked.kind(), SymExprKind::BinOp(SymBinOp::Sub, total, part)
+                if total == divisor && part == u)
+        };
+        if [(a, b), (b, a)].into_iter().any(|(u, v)| {
+            difference(u, v) && self.factor_within_divisor(u, divisor, intervals, remaining)
+        }) {
+            return true;
+        }
         // Whether another conjunct asserts `x <= y`, including strict `<`.
         let asserted = |accept: &dyn Fn(&SymExpr, &SymExpr) -> bool| {
             self.facts.iter().any(|fact| match fact.kind() {
@@ -470,16 +526,51 @@ impl ConstraintContext {
         if sum_max.is_none()
             && !asserted(&|x, y| (x == b && complement(a, y)) || (x == a && complement(b, y)))
         {
-            return None;
+            return false;
         }
         let is_sum = |expr: &SymExpr| {
             matches!(expr.kind(), SymExprKind::BinOp(SymBinOp::Add, x, y)
                 if (x == a && y == b) || (x == b && y == a))
         };
-        (sum_max.is_some_and(|max| max <= min)
+        sum_max.is_some_and(|max| max <= min)
             || is_sum(divisor)
-            || asserted(&|x, y| is_sum(x) && y == divisor))
-        .then_some(found)
+            || asserted(&|x, y| is_sum(x) && y == divisor)
+    }
+
+    /// Returns whether `(p * u + q * v) / k <= b`, as in a weighted average or an EMA: both
+    /// multipliers are at most `b` and the weights fit in a nonzero `k`. Over the integers the
+    /// dividend is then at most `b * k`, and a wrapped product or sum only lowers it. Once `b * k`
+    /// wraps, every word divided by `k` is at most `b`, so callers that compare the dividend with a
+    /// multiple of `k` must rule out that wrap themselves.
+    fn weighted_within(
+        &self,
+        dividend: &SymExpr,
+        divisor: &SymExpr,
+        bound: &SymExpr,
+        intervals: &mut HashMap<SymExpr, Option<WordInterval>>,
+        remaining: &mut usize,
+    ) -> bool {
+        let SymExprKind::BinOp(SymBinOp::Add, first, second) = dividend.kind() else {
+            return false;
+        };
+        let (SymExprKind::BinOp(SymBinOp::Mul, p1, u1), SymExprKind::BinOp(SymBinOp::Mul, q1, v1)) =
+            (first.kind(), second.kind())
+        else {
+            return false;
+        };
+        let Some(k_min) = self.interval_cached(divisor, intervals, remaining).map(|k| k.min) else {
+            return false;
+        };
+        if k_min.is_zero() {
+            return false;
+        }
+        [(p1, u1, q1, v1), (u1, p1, q1, v1), (p1, u1, v1, q1), (u1, p1, v1, q1)].into_iter().any(
+            |(p, u, q, v)| {
+                self.factor_within_divisor(p, bound, intervals, remaining)
+                    && self.factor_within_divisor(q, bound, intervals, remaining)
+                    && self.weights_fit(u, v, divisor, k_min, intervals, remaining)
+            },
+        )
     }
 
     /// Returns whether `a + b` cannot wrap, from value ranges or a checked addition's `b <= ~a`
@@ -516,6 +607,22 @@ impl ConstraintContext {
                 matches!(sum.kind(), SymExprKind::BinOp(SymBinOp::Add, a, b)
                     if (a == large && b == start) || (a == start && b == large))
             })
+    }
+
+    /// Returns whether `factor <= divisor`, by equality, another conjunct, or value ranges.
+    fn factor_within_divisor(
+        &self,
+        factor: &SymExpr,
+        divisor: &SymExpr,
+        intervals: &mut HashMap<SymExpr, Option<WordInterval>>,
+        remaining: &mut usize,
+    ) -> bool {
+        factor == divisor
+            || self.asserts_less_or_equal(factor, divisor)
+            || self
+                .interval_cached(factor, intervals, remaining)
+                .zip(self.interval_cached(divisor, intervals, remaining))
+                .is_some_and(|(factor, divisor)| factor.max <= divisor.min)
     }
 
     /// Bounds a subtraction only when the relation proves it cannot underflow.
