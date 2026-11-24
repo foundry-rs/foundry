@@ -797,16 +797,20 @@ impl ConstraintContext {
         {
             return normalized.not(cx);
         }
+        // A kept original is revisited, so only add its rewrite while the context lacks it.
         if let SymBoolExprKind::Cmp(op, left, right) = expr.kind()
-            && let Some(normalized) = self.normalize_udiv_comparison(cx, *op, left, right)
+            && let Some((normalized, keep)) = self.normalize_udiv_comparison(cx, *op, left, right)
+            && !(keep && self.facts.contains(&normalized))
         {
-            return normalized;
+            return if keep { SymBoolExpr::and(cx, vec![expr, normalized]) } else { normalized };
         }
         if let SymBoolExprKind::Not(value) = expr.kind()
             && let SymBoolExprKind::Cmp(op, left, right) = value.kind()
-            && let Some(normalized) = self.normalize_udiv_comparison(cx, *op, left, right)
+            && let Some((normalized, keep)) = self.normalize_udiv_comparison(cx, *op, left, right)
+            && let normalized = normalized.not(cx)
+            && !(keep && self.facts.contains(&normalized))
         {
-            return normalized.not(cx);
+            return if keep { SymBoolExpr::and(cx, vec![expr, normalized]) } else { normalized };
         }
 
         match expr.kind() {
@@ -1465,23 +1469,22 @@ impl ConstraintContext {
         None
     }
 
+    /// Returns the comparison without its division, and whether the caller must also keep the
+    /// original.
     fn normalize_udiv_comparison(
         &self,
         cx: &mut SymCx,
         op: SymCmpOp,
         left: &SymExpr,
         right: &SymExpr,
-    ) -> Option<SymBoolExpr> {
+    ) -> Option<(SymBoolExpr, bool)> {
         let (numerator, denominator, threshold, quotient_on_left) =
             Self::udiv_comparison_operands(op, left, right)?;
         // Folding gives `n / 0 == 0` but SMT gives all ones, so a symbolic divisor must be
-        // nonzero in context for `n / d < k` and `n < k * d` to agree.
-        // Another conjunct over the same quotient, such as `!p` or `z < n / d`, relates to this one
-        // through order reasoning or a syntactic contradiction that the rewrite would hide.
-        if denominator.as_const().is_none()
-            && (!self.interval(denominator).is_some_and(|range| !range.min.is_zero())
-                || self.facts.iter().any(|fact| fact.visit_bool(|expr| expr == left)))
-        {
+        // nonzero in context for `n / d < k` and `n < k * d` to agree. Its quotient may also take
+        // part in order reasoning with other conjuncts, so the caller keeps the original too.
+        let keep = denominator.as_const().is_none();
+        if keep && !self.interval(denominator).is_some_and(|range| !range.min.is_zero()) {
             return None;
         }
         let increment_threshold =
@@ -1499,13 +1502,14 @@ impl ConstraintContext {
         }
 
         let scaled_threshold = SymExpr::binop(cx, SymBinOp::Mul, threshold, denominator.clone());
-        Some(if quotient_on_left {
+        let normalized = if quotient_on_left {
             // `n / d < k => n < k * d`; `n / d <= k => n < (k + 1) * d`.
             SymBoolExpr::cmp_word_expr(cx, SymCmpOp::Ult, numerator, scaled_threshold)
         } else {
             // `k <= n / d => k * d <= n`; `k < n / d => (k + 1) * d <= n`.
             SymBoolExpr::cmp(cx, SymCmpOp::Ule, scaled_threshold, numerator.clone())
-        })
+        };
+        Some((normalized, keep))
     }
 
     /// Returns the inclusive unsigned range the context proves for `expr`.
