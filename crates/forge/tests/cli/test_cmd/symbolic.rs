@@ -9782,6 +9782,88 @@ contract SymbolicSignedPrice {
     }
 }
 
+// Synthetix and MasterChef reward accrual scale a staked balance by a per-token rate
+// `reward * 1e18 / supply`. With the balance at most the supply, `balance * rate` cannot overflow
+// and stays within `reward * 1e18`. A balance one above the supply, or a rate over another
+// supply, breaks the bound, and the latter product can overflow.
+#[forgetest_init]
+fn symbolic_proves_balance_times_per_token_rate(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_balance_times_per_token_rate");
+    prj.add_test(
+        "SymbolicRewardAccrual.t.sol",
+        r#"
+contract SymbolicRewardAccrual {
+    function rewardPerToken(uint256 reward, uint256 supply) internal pure returns (uint256) {
+        return reward * 1e18 / supply;
+    }
+
+    function checkAccruedWithinReward(uint128 balance, uint128 supply, uint128 reward) public pure {
+        if (supply == 0 || balance > supply) return;
+        assert(uint256(balance) * rewardPerToken(reward, supply) <= uint256(reward) * 1e18);
+    }
+
+    function checkBalanceAboveSupply(uint128 balance, uint128 supply, uint128 reward) public pure {
+        if (supply == 0 || balance > uint256(supply) + 1) return;
+        assert(uint256(balance) * rewardPerToken(reward, supply) <= uint256(reward) * 1e18);
+    }
+
+    function checkOtherSupply(uint128 balance, uint128 supply, uint128 other, uint128 reward)
+        public
+        pure
+    {
+        if (other == 0 || balance > supply) return;
+        assert(uint256(balance) * rewardPerToken(reward, other) <= uint256(reward) * 1e18);
+    }
+
+    function earned(uint128 balance, uint128 supply, uint128 reward)
+        external
+        pure
+        returns (uint256)
+    {
+        return uint256(balance) * rewardPerToken(reward, supply);
+    }
+
+    function checkEarnedOverflowsOverOtherSupply(
+        uint128 balance,
+        uint128 supply,
+        uint128 other,
+        uint128 reward
+    ) public view {
+        if (other == 0 || balance > supply) return;
+        try this.earned(balance, other, reward) {} catch { assert(false); }
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicRewardAccrual"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        let result = json_test_result(&output, "checkAccruedWithinReward(uint128,uint128,uint128)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        for signature in [
+            "checkBalanceAboveSupply(uint128,uint128,uint128)",
+            "checkOtherSupply(uint128,uint128,uint128,uint128)",
+            "checkEarnedOverflowsOverOtherSupply(uint128,uint128,uint128,uint128)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "{signature}, optimized={optimized}: {result}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "{signature}, optimized={optimized}: {result}"
+            );
+        }
+    }
+}
+
 // Fee splits and payment splitters floor each share `w * a / k`, and two shares with
 // `a + b <= k`, or `b = k - a`, sum to at most `w`, so their checked sum cannot overflow either.
 // A wrapped `a + b <= k` does not bound the shares, unless a `b <= MAX - a` guard rules out the
