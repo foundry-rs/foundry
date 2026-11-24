@@ -14,6 +14,27 @@ impl SymbolicExecutor {
             return Ok(StepOutcome::ExceptionalHalt);
         }
 
+        // A free pranked creator and origin first fork over the accounts the run knows now.
+        let pranked_words = self.pranked_words(executor, state, Vec::new());
+        if !pranked_words.is_empty() {
+            self.guard_free_address_words(state, &pranked_words)?;
+            let pre_create_state = state.clone();
+            let create_pc = state.pc.saturating_sub(1);
+            for (word, candidates) in &pranked_words {
+                if self.branch_free_address_write_if_needed(
+                    executor,
+                    state,
+                    worklist,
+                    &pre_create_state,
+                    create_pc,
+                    word,
+                    candidates,
+                )? {
+                    return Ok(StepOutcome::Forked);
+                }
+            }
+        }
+
         let offset = state.stack.peek(1)?.clone();
         let size = state.stack.peek(2)?.clone();
         // EIP-3860: like revm, initcode above the limit halts the creating frame before the
@@ -81,7 +102,8 @@ impl SymbolicExecutor {
         // nonce derives the address and increments, and the account that pays the value. The
         // CREATE consumes the pending prank, so a later prank can replace it.
         let inherited_prank = state.callers();
-        let (creator, creator_word, pranked_origin) = state.prank_for_next_call();
+        let (creator, creator_word, pranked_origin) =
+            state.prank_for_next_call(&mut self.cx, executor);
         // The nonce and balance of a symbolic pranked creator would ignore the accounts it can
         // alias.
         if creator != state.address
