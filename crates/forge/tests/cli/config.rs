@@ -4431,3 +4431,42 @@ openzeppelin-contracts/=lib/openzeppelin-contracts/contracts/
     cmd.forge_fuse().args(["build", "--force"]).assert_success().stderr_eq("");
     cmd.forge_fuse().arg("build").assert_success().stderr_eq("");
 }
+
+// A config passed with `FOUNDRY_CONFIG` configures only the project. Dependencies keep their own
+// `foundry.toml`, so `--root` with an external config detects the same remappings as a build in the
+// project. <https://github.com/foundry-rs/foundry/issues/18677>
+#[forgetest]
+fn external_config_keeps_dependency_remappings(prj: _, cmd: _) {
+    let dep = prj.root().join("lib/dep");
+    pretty_err(&dep, fs::create_dir_all(dep.join("contracts")));
+    pretty_err(&dep, fs::create_dir_all(dep.join("lib/x")));
+    pretty_err(
+        &dep,
+        fs::write(
+            dep.join(Config::FILE_NAME),
+            "[profile.default]\nsrc = \"contracts\"\nremappings = [\"@x/=lib/x/\"]\n",
+        ),
+    );
+    pretty_err(&dep, fs::write(dep.join("lib/x/X.sol"), "library X {}\n"));
+    pretty_err(
+        &dep,
+        fs::write(dep.join("contracts/D.sol"), "import \"@x/X.sol\";\nlibrary D {}\n"),
+    );
+    let external = tempfile::tempdir().unwrap();
+    let config = external.path().join(Config::FILE_NAME);
+    fs::write(&config, "[profile.default]\nsrc = \"src\"\nlibs = [\"lib\"]\n").unwrap();
+
+    cmd.arg("remappings").assert_success().stdout_eq(str![[r#"
+@x/=lib/dep/lib/x/
+dep/=lib/dep/contracts/
+x/=lib/dep/lib/x/
+
+"#]]);
+    cmd.forge_fuse().env("FOUNDRY_CONFIG", &config);
+    cmd.args(["remappings", "--root"]).arg(prj.root()).assert_success().stdout_eq(str![[r#"
+@x/=lib/dep/lib/x/
+dep/=lib/dep/contracts/
+x/=lib/dep/lib/x/
+
+"#]]);
+}
