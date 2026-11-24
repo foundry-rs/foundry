@@ -396,7 +396,8 @@ impl SymbolicExecutor {
 
         // Like Forge, the CREATE applies and consumes a pending prank.
         let inherited_prank = state.callers();
-        let (creator, creator_word, pranked_origin) = state.prank_for_next_call();
+        let (creator, creator_word, pranked_origin) =
+            state.prank_for_next_call(&mut self.cx, executor);
         if creator != state.address
             && state.constrained_word(&mut self.cx, &creator_word).map(word_to_address)
                 != Some(creator)
@@ -642,12 +643,16 @@ impl SymbolicExecutor {
     /// Returns the address words the CALL on top of the stack must decide before it runs, each
     /// with the known accounts to fork it over.
     ///
-    /// `vm.etch` and the nonce cheatcodes through a free address fork over every known account,
-    /// since they need concrete code and nonces, and `vm.store` over the known precompiles,
-    /// where it reverts. `vm.deal` and the rest of a `vm.store` write each account under a
-    /// guard instead. A word written that way is decided only once a call targets it, a pranked
-    /// call takes it as caller or origin, or a cheatcode other than these writes and their
-    /// reads takes it.
+    /// `vm.etch` and the nonce cheatcodes through a free address fork over every known account
+    /// and precompile, since they need concrete code and nonces, and `vm.store` over the
+    /// precompiles, where it reverts. `vm.resetNonce`, `vm.makePersistent`, and
+    /// `vm.revokePersistent` fork the same way, since they would otherwise write an empty
+    /// representative account. A call or `vm.deployCode` that a prank applies to forks a free
+    /// sender and origin over the known accounts, and a call to a word another cheatcode aliased
+    /// forks it over the precompiles. `vm.deal` and the rest of a `vm.store` write each account
+    /// under a guard instead. A word written that way is decided only once a call targets it, a
+    /// pranked call takes it as caller or origin, or a cheatcode other than these writes and
+    /// their reads takes it.
     pub(super) fn free_address_write_targets(
         &mut self,
         executor: &ExecutorView<'_>,
@@ -666,10 +671,22 @@ impl SymbolicExecutor {
                 if to.is_none() {
                     words = self.guarded_words(state, target, words);
                 }
-                for word in state.prank.words() {
-                    words = self.guarded_words(state, word, words);
+                let pranked = state.prank.words().cloned().collect::<Vec<_>>();
+                words = self.known_guarded_words(executor, state, &pranked, words);
+                // An alias without code, guarded or not, stands for an empty account, which a
+                // precompile nothing touched yet differs from only once a call runs it. An
+                // equivalence check abstracts calls to unknown code, precompiles included.
+                if to.is_none()
+                    && self.equivalence.is_none()
+                    && state.world.has_alias(target)
+                    && !state.world.alias_has_code(target)
+                {
+                    let address = target.clone().address_operand(&mut self.cx);
+                    if state.constrained_word(&mut self.cx, &address).is_none() {
+                        words.push((target.clone(), active_precompile_addresses(executor.spec_id)));
+                    }
                 }
-                return Ok(words);
+                return Ok(self.pranked_words(executor, state, words));
             }
         };
         let (Ok(in_offset), Ok(in_size)) =
@@ -723,25 +740,55 @@ impl SymbolicExecutor {
         // The first argument to scan for guarded words.
         let mut first_scanned = 0;
         if to == Some(CHEATCODE_ADDRESS) {
+            // An input without a word for every argument fails to decode, so the cheatcode reverts
+            // before it takes any of them.
+            if in_size < 4 + 32 * vm_params(selector).len() {
+                return Ok(words);
+            }
             let store = selector == storeCall::SELECTOR;
-            if store
-                || [etchCall::SELECTOR, setNonceCall::SELECTOR, setNonceUnsafeCall::SELECTOR]
-                    .contains(&selector)
-            {
-                // The target forks here, or `vm.store` writes it under guards; the other
-                // arguments may still be guarded words.
+            if store {
+                // `vm.store` writes the target under guards, except on the precompiles, where it
+                // reverts; the other arguments may still be guarded words.
                 first_scanned = 1;
                 let word = read_abi_word_arg(&mut self.cx, memory, args_offset, 0)?;
                 if state.constrained_word(&mut self.cx, &word).is_none() {
-                    let mut candidates = state.world.concrete_alias_candidates(executor);
-                    if store {
-                        candidates
-                            .retain(|address| is_precompile_for_spec(*address, executor.spec_id));
-                    }
-                    if !candidates.is_empty() {
+                    words.push((word, active_precompile_addresses(executor.spec_id)));
+                }
+            }
+            if [
+                etchCall::SELECTOR,
+                setNonceCall::SELECTOR,
+                setNonceUnsafeCall::SELECTOR,
+                resetNonceCall::SELECTOR,
+                makePersistent_0Call::SELECTOR,
+                makePersistent_1Call::SELECTOR,
+                makePersistent_2Call::SELECTOR,
+                revokePersistent_0Call::SELECTOR,
+            ]
+            .contains(&selector)
+            {
+                // These need concrete code and nonces, or write the account a free address names
+                // on an empty representative account, whose state a later branch that fixes the
+                // address would not see. So their leading addresses first fork over the known
+                // accounts and precompiles they may name, even when another cheatcode already
+                // aliased them. Only the low 160 bits name the account.
+                first_scanned = vm_params(selector)
+                    .iter()
+                    .take_while(|param| **param == DynSolType::Address)
+                    .count();
+                for index in 0..first_scanned {
+                    let word = read_abi_word_arg(&mut self.cx, memory, args_offset, index)?;
+                    let address = word.clone().address_operand(&mut self.cx);
+                    if state.constrained_word(&mut self.cx, &address).is_none() {
+                        let candidates =
+                            state.world.concrete_alias_candidates_with_precompiles(executor);
                         words.push((word, candidates));
                     }
                 }
+            }
+            // `vm.deployCode` creates as the pranked sender.
+            if [deployCode_0Call::SELECTOR, deployCode_1Call::SELECTOR].contains(&selector) {
+                words = self.pranked_words(executor, state, words);
             }
             // These take their other arguments as symbolic words, so a guarded word there, such
             // as a storage slot hashed from it, needs no decision.
@@ -755,11 +802,37 @@ impl SymbolicExecutor {
         if !state.world.has_guarded_addresses() {
             return Ok(words);
         }
-        for index in first_scanned..in_size.saturating_sub(4) / 32 {
-            let word = read_abi_word_arg(&mut self.cx, memory, args_offset, index)?;
-            words = self.guarded_words(state, &word, words);
+        let args = (first_scanned..in_size.saturating_sub(4) / 32)
+            .map(|index| read_abi_word_arg(&mut self.cx, memory, args_offset, index))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(self.known_guarded_words(executor, state, &args, words))
+    }
+
+    /// Adds to `words` the guarded words that `exprs`, the pranked caller and origin or
+    /// cheatcode arguments, mention, with only the candidates the run knows. A precompile
+    /// nothing touched yet acts like an empty account there, and only a call to the word, which
+    /// decides it over the precompiles, tells them apart.
+    fn known_guarded_words(
+        &mut self,
+        executor: &ExecutorView<'_>,
+        state: &PathState,
+        exprs: &[SymExpr],
+        mut words: Vec<(SymExpr, Vec<Address>)>,
+    ) -> Vec<(SymExpr, Vec<Address>)> {
+        let mut guarded = Vec::new();
+        for expr in exprs {
+            guarded = self.guarded_words(state, expr, guarded);
         }
-        Ok(words)
+        let known = state.world.concrete_alias_candidates(executor);
+        for (word, mut candidates) in guarded {
+            candidates.retain(|address| {
+                !is_precompile_for_spec(*address, executor.spec_id) || known.contains(address)
+            });
+            if !candidates.is_empty() && !words.iter().any(|(other, _)| *other == word) {
+                words.push((word, candidates));
+            }
+        }
+        words
     }
 
     /// Adds to `words` the guarded words that `expr`, a call target or cheatcode argument the
@@ -783,11 +856,79 @@ impl SymbolicExecutor {
         words
     }
 
+    /// Adds to `words` the pranked caller and origin words the path does not fix, with the known
+    /// accounts they may name. `vm.prank` leaves them free, so the call or CREATE the prank
+    /// applies to forks them over the accounts known then, including ones the run learned after
+    /// the prank.
+    pub(super) fn pranked_words(
+        &mut self,
+        executor: &ExecutorView<'_>,
+        state: &PathState,
+        mut words: Vec<(SymExpr, Vec<Address>)>,
+    ) -> Vec<(SymExpr, Vec<Address>)> {
+        for word in state.prank.words() {
+            if state.constrained_word(&mut self.cx, word).is_some() {
+                continue;
+            }
+            let candidates = state.world.concrete_alias_candidates(executor);
+            match words.iter_mut().find(|(known, _)| known == word) {
+                Some((_, known)) => {
+                    known.extend(candidates);
+                    known.sort_unstable();
+                    known.dedup();
+                }
+                None => words.push((word.clone(), candidates)),
+            }
+        }
+        words
+    }
+
+    /// Guards each of `words` for the candidates a fork is about to decide.
+    ///
+    /// An alias another cheatcode gave a word stands for the accounts the fork rules out, so a
+    /// branch that fixes the word to a known account sees that account. An alias may hold state
+    /// written while that account was not known yet, which such a branch would drop, so that
+    /// reports incomplete.
+    pub(super) fn guard_free_address_words(
+        &mut self,
+        state: &mut PathState,
+        words: &[(SymExpr, Vec<Address>)],
+    ) -> Result<(), SymbolicError> {
+        for (word, candidates) in words {
+            let unguarded = state.world.unguarded_alias_candidates(
+                word,
+                candidates,
+                &state.persistent_accounts,
+            );
+            if !unguarded.is_empty() {
+                let address = word.clone().address_operand(&mut self.cx);
+                let names_candidate = unguarded
+                    .iter()
+                    .map(|&candidate| {
+                        SymBoolExpr::eq_word_const(&mut self.cx, &address, address_word(candidate))
+                    })
+                    .collect();
+                let names_candidate = SymBoolExpr::or(&mut self.cx, names_candidate);
+                if self.constraints_for_condition(state, names_candidate)?.is_some() {
+                    return Err(SymbolicError::Unsupported(
+                        "symbolic address whose representative account holds state from \
+                         before the run knew an account it may name",
+                    ));
+                }
+            }
+            state.world.guard_symbolic_address(word, candidates);
+        }
+        Ok(())
+    }
+
     /// Forks an address word over `candidates`, concrete accounts the run knows, so a cheatcode
     /// write through it can land on one of them, or so a guarded word is decided. Accounts the
-    /// run has not seen yet stay outside.
+    /// run has not seen yet stay outside. The active precompiles do not count toward the
+    /// candidate limit, since every run knows them.
+    #[expect(clippy::too_many_arguments)]
     pub(super) fn branch_free_address_write_if_needed(
         &mut self,
+        executor: &ExecutorView<'_>,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
         pre_call_state: &PathState,
@@ -795,17 +936,36 @@ impl SymbolicExecutor {
         target: &SymExpr,
         candidates: &[Address],
     ) -> Result<bool, SymbolicError> {
-        if candidates.len() > MAX_FREE_ADDRESS_ALIAS_CANDIDATES {
-            return Err(SymbolicError::Unsupported(
-                "symbolic cheatcode address with too many alias candidates",
-            ));
-        }
         // Only the low 160 bits name an account, also for a word passed as a plain integer.
         let address = target.clone().address_operand(&mut self.cx);
+        if candidates
+            .iter()
+            .filter(|address| !is_precompile_for_spec(**address, executor.spec_id))
+            .count()
+            > MAX_FREE_ADDRESS_ALIAS_CANDIDATES
+        {
+            // A path that fixes the address only through the solver, such as with two bounds,
+            // needs no fork: record the value it implies, as the fork would.
+            let Some(value) = self.constrained_word_with_solver(state, &address)? else {
+                return Err(SymbolicError::Unsupported(
+                    "symbolic cheatcode address with too many alias candidates",
+                ));
+            };
+            let eq = SymBoolExpr::eq_word_const(&mut self.cx, &address, value);
+            state.constraints.push(eq);
+            if !candidates.contains(&word_to_address(value)) {
+                state.world.exclude_guarded_candidates(target, candidates);
+            }
+            return Ok(false);
+        }
         for &candidate in candidates {
             let eq = SymBoolExpr::eq_word_const(&mut self.cx, &address, address_word(candidate));
-            let (eq_constraints, eq_sat) = self.constraints_with_condition(state, eq.clone())?;
-            let neq = eq.not(&mut self.cx);
+            let neq = eq.clone().not(&mut self.cx);
+            // An earlier fork, such as one at an earlier pranked call, already ruled it out.
+            if state.constraints.contains(&neq) {
+                continue;
+            }
+            let (eq_constraints, eq_sat) = self.constraints_with_condition(state, eq)?;
             let (neq_constraints, neq_sat) = self.constraints_with_condition(state, neq)?;
             match (eq_sat, neq_sat) {
                 (true, true) => {
@@ -1534,29 +1694,22 @@ impl SymbolicExecutor {
                 {
                     return Err(SymbolicError::Unsupported(delegate_message));
                 }
-                let caller = read_abi_address_word_or_symbolic_slot_arg(
-                    &mut self.cx,
-                    state,
-                    args_offset,
-                    0,
-                )?;
+                // The call or CREATE the prank applies to forks a free sender and origin over the
+                // accounts known then and resolves them, so the prank aliases no account yet.
+                let mut read_address = |index| {
+                    let word = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, index)?
+                        .address_operand(&mut self.cx);
+                    let address = state
+                        .constrained_word(&mut self.cx, &word)
+                        .map(word_to_address)
+                        .unwrap_or_else(|| word.representative_symbolic_address());
+                    Ok::<_, SymbolicError>((address, word))
+                };
+                let caller = read_address(0)?;
                 let origin = (params.get(1) == Some(&DynSolType::Address))
-                    .then(|| {
-                        read_abi_address_word_or_symbolic_slot_arg(
-                            &mut self.cx,
-                            state,
-                            args_offset,
-                            1,
-                        )
-                    })
+                    .then(|| read_address(1))
                     .transpose()?;
-                // Like Forge, root frames share one prank slot, so a prank parked for another root
-                // frame also blocks an overwrite, and a new prank ends it.
-                let parked = state.root_pranks.values().filter(|_| state.call_depth == 0);
-                if let Some(error) = std::iter::once(&state.prank)
-                    .chain(parked)
-                    .find_map(|prank| prank.overwrite_error(persistent))
-                {
+                if let Some(error) = state.prank_overwrite_error(persistent) {
                     let name = if persistent { "startPrank" } else { "prank" };
                     return Ok(CheatcodeOutcome::Revert(error_string_return_data(
                         &mut self.cx,

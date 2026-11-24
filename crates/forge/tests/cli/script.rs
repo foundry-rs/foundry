@@ -3919,12 +3919,86 @@ contract SimpleScript is Script {
     ])
     .assert_success()
     .stdout_eq(str![[r#"
-{"logs":[],"returns":{"success":{"internal_type":"bool","value":"true"}},"success":true,"raw_logs":[],"traces":[["Deployment",{"arena":[{"parent":null,"children":[],"idx":0,"trace":{"depth":0,"success":true,"caller":"0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38","address":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","maybe_precompile":false,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CREATE","value":"0x0","data":"[..]","output":"[..]","bytecode":null,"gas_used":"{...}","gas_limit":"{...}","gas_refund_counter":0,"status":"Return","steps":[],"step_deltas":[],"decoded":{"label":"SimpleScript","return_data":null,"call_data":null}},"logs":[],"ordering":[]}]}],["Execution",{"arena":[{"parent":null,"children":[1,2],"idx":0,"trace":{"depth":0,"success":true,"caller":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","address":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0xc0406226","output":"0x0000000000000000000000000000000000000000000000000000000000000001","bytecode":null,"gas_used":"{...}","gas_limit":1073720760,"gas_refund_counter":0,"status":"Return","steps":[],"step_deltas":[],"decoded":{"label":"SimpleScript","return_data":"true","call_data":{"signature":"run()","args":[]}}},"logs":[],"ordering":[{"Call":0},{"Call":1}]},{"parent":0,"children":[],"idx":1,"trace":{"depth":1,"success":true,"caller":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","address":"0x7109709ecfa91a80626ff3989d68f67f5b1dd12d","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0x7fb5297f","output":"0x","bytecode":null,"gas_used":"{...}","gas_limit":1056940999,"gas_refund_counter":0,"status":"Return","steps":[],"step_deltas":[],"decoded":{"label":"VM","return_data":null,"call_data":{"signature":"startBroadcast()","args":[]}}},"logs":[],"ordering":[]},{"parent":0,"children":[],"idx":2,"trace":{"depth":1,"success":true,"caller":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","address":"0x0000000000000000000000000000000000000000","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0x","output":"0x","bytecode":null,"gas_used":"{...}","gas_limit":1056940650,"gas_refund_counter":0,"status":"Stop","steps":[],"step_deltas":[],"decoded":{"label":null,"return_data":null,"call_data":null}},"logs":[],"ordering":[]}]}]],"gas_used":"{...}","labeled_addresses":{},"returned":"0x0000000000000000000000000000000000000000000000000000000000000001","address":null}
+{"logs":[],"returns":{"success":{"internal_type":"bool","value":"true"}},"success":true,"raw_logs":[],"traces":[["Deployment",{"arena":[{"parent":null,"children":[],"idx":0,"trace":{"depth":0,"success":true,"caller":"0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38","address":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","maybe_precompile":false,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CREATE","value":"0x0","data":"[..]","output":"[..]","bytecode":null,"gas_used":"{...}","gas_limit":"{...}","gas_refund_counter":0,"status":"Return","steps":[],"step_deltas":[],"decoded":{"label":"SimpleScript","return_data":null,"call_data":null}},"logs":[],"ordering":[]}]}],["Execution",{"arena":[{"parent":null,"children":[1,2],"idx":0,"trace":{"depth":0,"success":true,"caller":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","address":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0xc0406226","output":"0x0000000000000000000000000000000000000000000000000000000000000001","bytecode":null,"gas_used":"{...}","gas_limit":1073720760,"gas_refund_counter":0,"status":"Return","steps":[],"step_deltas":[],"decoded":{"label":"SimpleScript","return_data":"true","call_data":{"signature":"run()","args":[]}}},"logs":[],"ordering":[{"Call":0},{"Call":1}]},{"parent":0,"children":[],"idx":1,"trace":{"depth":1,"success":true,"caller":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","address":"0x7109709ecfa91a80626ff3989d68f67f5b1dd12d","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0x7fb5297f","output":"0x","bytecode":null,"gas_used":"{...}","gas_limit":1056940999,"gas_refund_counter":0,"status":"Return","steps":[],"step_deltas":[],"decoded":{"label":"VM","return_data":null,"call_data":{"signature":"startBroadcast()","args":[]}}},"logs":[],"ordering":[]},{"parent":0,"children":[],"idx":2,"trace":{"depth":1,"success":true,"caller":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","address":"0x0000000000000000000000000000000000000000","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0x","output":"0x","bytecode":null,"gas_used":"{...}","gas_limit":1056940650,"gas_refund_counter":0,"status":"Stop","steps":[],"step_deltas":[],"decoded":{"label":null,"return_data":null,"call_data":null}},"logs":[],"ordering":[]}]}]],"gas_used":"{...}","labeled_addresses":{},"returned":"0x0000000000000000000000000000000000000000000000000000000000000001","address":null,"broadcastable_transactions":[{"from":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","to":"0x0000000000000000000000000000000000000000","value":"0x0","input":"0x","nonce":"0x0","chainId":"0x7a69"}]}
 {"chain":31337,"estimated_gas_price":"{...}","estimated_total_gas_used":"{...}","estimated_amount_required":"{...}","token_symbol":"ETH","estimated_max_fee_per_gas":"{...}","estimated_base_fee_per_gas":"{...}","estimated_max_priority_fee_per_gas":"{...}"}
 {"chain":"anvil-hardhat","status":"success","tx_hash":"0x4f78afe915fceb282c7625a68eb350bc0bf78acb59ad893e5c62b710a37f3156","contract_address":null,"block_number":1,"gas_used":"{...}","gas_price":"{...}"}
 {"status":"success","transactions":"[..]/broadcast/Foo.sol/31337/run-latest.json","sensitive":"[..]/cache/Foo.sol/31337/run-latest.json"}
 
 "#]].is_jsonlines());
+}
+
+// `--json` reports the recorded transactions, including when no RPC is given.
+#[forgetest]
+async fn script_json_broadcastable_transactions_fork(prj: _, cmd: _) {
+    prj.add_script(
+        "Foo",
+        r#"
+interface Vm {
+    function startBroadcast() external;
+}
+
+contract Dummy {}
+
+contract SimpleScript {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run() external {
+        vm.startBroadcast();
+        new Dummy();
+        (bool success, ) = address(0).call("");
+        success;
+    }
+
+    function none() external {}
+}
+   "#,
+    );
+    let sender = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+
+    cmd.args(["script", "SimpleScript", "--sig", "none()", "--sender", sender, "--json"])
+        .assert_success()
+        .stdout_eq(
+            str![[r#"
+{"logs":[],"returns":{},"success":true,"raw_logs":[],"traces":"{...}","gas_used":"{...}","labeled_addresses":{},"returned":"0x","address":null,"broadcastable_transactions":[]}
+
+"#]]
+            .is_jsonlines(),
+        );
+
+    // Without an RPC, the sender's nonce starts at 1 and the CREATE has no chain ID.
+    cmd.forge_fuse()
+        .args(["script", "SimpleScript", "--sender", sender, "--json"])
+        .assert_success()
+        .stdout_eq(
+            str![[r#"
+{"logs":[],"returns":{},"success":true,"raw_logs":[],"traces":"{...}","gas_used":"{...}","labeled_addresses":{},"returned":"0x","address":null,"broadcastable_transactions":[{"from":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","to":null,"value":"0x0","input":"{...}","nonce":"0x1"},{"from":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","to":"0x0000000000000000000000000000000000000000","value":"0x0","input":"0x","nonce":"0x2","chainId":"0x7a69"}]}
+
+"#]]
+            .is_jsonlines(),
+        );
+
+    // With an RPC, every unsigned transaction gets the RPC's chain ID, as in the broadcast file.
+    let (_api, handle) = spawn(NodeConfig::test().with_chain_id(Some(1234u64))).await;
+    cmd.forge_fuse()
+        .args([
+            "script",
+            "SimpleScript",
+            "--fork-url",
+            &handle.http_endpoint(),
+            "--sender",
+            sender,
+            "--json",
+        ])
+        .assert_success()
+        .stdout_eq(
+            str![[r#"
+{"logs":[],"returns":{},"success":true,"raw_logs":[],"traces":"{...}","gas_used":"{...}","labeled_addresses":{},"returned":"0x","address":null,"broadcastable_transactions":[{"from":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","to":null,"value":"0x0","input":"{...}","nonce":"0x0","chainId":"0x4d2"},{"from":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","to":"0x0000000000000000000000000000000000000000","value":"0x0","input":"0x","nonce":"0x1","chainId":"0x4d2"}]}
+{"chain":1234,"estimated_gas_price":"{...}","estimated_total_gas_used":"{...}","estimated_amount_required":"{...}","token_symbol":"ETH","estimated_max_fee_per_gas":"{...}","estimated_base_fee_per_gas":"{...}","estimated_max_priority_fee_per_gas":"{...}"}
+{"status":"success","transactions":"[..]/broadcast/Foo.sol/1234/dry-run/run-latest.json","sensitive":"[..]/cache/Foo.sol/1234/dry-run/run-latest.json"}
+
+"#]]
+            .is_jsonlines(),
+        );
 }
 
 #[forgetest]
@@ -11675,4 +11749,128 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
         }
     }
     assert_eq!(receipts, 2);
+}
+
+// Raw trace data in JSON output applies the same cheatcode redaction as decoded traces.
+#[forgetest]
+fn script_json_redacts_raw_cheatcode_secrets(prj: _, cmd: _) {
+    prj.add_script(
+        "Deploy.s.sol",
+        r#"
+interface Vm {
+    function envUint(string calldata name) external view returns (uint256);
+    function startBroadcast(uint256 privateKey) external;
+    function stopBroadcast() external;
+}
+
+contract C {}
+
+contract Deploy {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run() external {
+        uint256 pk = vm.envUint("PRIVATE_KEY");
+        vm.startBroadcast(pk);
+        new C();
+        vm.stopBroadcast();
+    }
+}
+   "#,
+    );
+
+    cmd.env("PRIVATE_KEY", "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
+    let output: Value = serde_json::from_slice(
+        &cmd.args(["script", "script/Deploy.s.sol", "--tc", "Deploy", "--json"])
+            .assert_success()
+            .get_output()
+            .stdout,
+    )
+    .unwrap();
+    let execution =
+        output["traces"].as_array().unwrap().iter().find(|trace| trace[0] == "Execution").unwrap();
+    let vm_calls = execution[1]["arena"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|node| &node["trace"])
+        .filter(|trace| trace["decoded"]["label"] == "VM")
+        .map(|trace| {
+            serde_json::json!({
+                "call": trace["decoded"]["call_data"],
+                "return": trace["decoded"]["return_data"],
+                "data": trace["data"],
+                "output": trace["output"],
+            })
+        })
+        .collect::<Vec<_>>();
+    assert_data_eq!(
+        serde_json::to_string(&vm_calls).unwrap().is_json(),
+        str![[r#"
+[
+  {
+    "call": { "signature": "envUint(string)", "args": ["\"PRIVATE_KEY\""] },
+    "return": "<env var value>",
+    "data": "0xc1978d1f0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000b505249564154455f4b4559000000000000000000000000000000000000000000",
+    "output": "0x"
+  },
+  {
+    "call": { "signature": "startBroadcast(uint256)", "args": ["<pk>"] },
+    "return": null,
+    "data": "0xce817d47",
+    "output": "0x"
+  },
+  {
+    "call": { "signature": "stopBroadcast()", "args": [] },
+    "return": null,
+    "data": "0x76eadd36",
+    "output": "0x"
+  }
+]
+"#]]
+        .is_json(),
+    );
+}
+
+// `--skip-simulation` keeps `--json` stdout to JSON lines.
+#[forgetest]
+async fn script_json_skip_simulation_fork(prj: _, cmd: _) {
+    prj.add_script(
+        "Foo",
+        r#"
+interface Vm {
+    function startBroadcast() external;
+}
+
+contract SimpleScript {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run() external {
+        vm.startBroadcast();
+        (bool success, ) = address(0).call("");
+        success;
+    }
+}
+   "#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    cmd.args([
+        "script",
+        "SimpleScript",
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--sender",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--skip-simulation",
+        "--json",
+    ])
+    .assert_success()
+    .stdout_eq(
+        str![[r#"
+{"success":true,"...":"{...}"}
+{"status":"success","transactions":"[..]/broadcast/Foo.sol/31337/dry-run/run-latest.json","sensitive":"[..]/cache/Foo.sol/31337/dry-run/run-latest.json"}
+
+"#]]
+        .is_jsonlines(),
+    );
 }

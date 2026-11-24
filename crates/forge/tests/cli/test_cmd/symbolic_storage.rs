@@ -1120,6 +1120,99 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 "#]]);
 }
 
+// A constant slot whose top 128 bits are all zeros or all ones, read in assembly, is a fixed slot,
+// not a folded nested mapping entry, so it is not searched against the layout's nested mappings.
+// The 256 branches add enough candidate keys that the search would exhaust its budget. The default
+// profile is unoptimized, so solc pushes the owner slot whole instead of as `not(0x8b78c6d8)`.
+#[forgetest_init]
+fn symbolic_non_hash_constant_slot_skips_folded_mapping_search(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_non_hash_constant_slot_skips_folded_mapping_search");
+
+    let branches: String =
+        (0..256).map(|i| format!("        if (x == {}) return {i};\n", 1000 + i)).collect();
+    prj.add_test(
+        "SymbolicNonHashConstantSlot.t.sol",
+        &format!(
+            r#"
+contract ConstantSlotCounter {{
+    struct Buckets {{
+        mapping(uint256 => uint256) a;
+        mapping(uint256 => uint256) b;
+        mapping(uint256 => uint256) c;
+        mapping(uint256 => uint256) d;
+    }}
+
+    mapping(uint256 => Buckets) buckets;
+
+    function add(uint256 amount) external {{
+        assembly {{
+            sstore(0x05345cdf77eb68f44c, add(sload(0x05345cdf77eb68f44c), amount))
+        }}
+    }}
+
+    function total() external view returns (uint256 value) {{
+        assembly {{
+            value := sload(0x05345cdf77eb68f44c)
+        }}
+    }}
+
+    function setOwner(address owner) external {{
+        assembly {{
+            sstore(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffff74873927, owner)
+        }}
+    }}
+
+    function getOwner() external view returns (address owner) {{
+        assembly {{
+            owner := sload(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffff74873927)
+        }}
+    }}
+
+    function index(uint256 x) external pure returns (uint256) {{
+{branches}        return type(uint256).max;
+    }}
+}}
+
+contract SymbolicNonHashConstantSlot {{
+    ConstantSlotCounter counter = new ConstantSlotCounter();
+
+    function checkAddSetsTotal(uint256 amount) public {{
+        counter.add(amount);
+        assert(counter.total() == amount);
+    }}
+
+    function checkAddChangesTotal(uint256 amount) public {{
+        counter.add(amount);
+        assert(counter.total() != amount);
+    }}
+
+    function checkSetOwnerSetsOwner(address owner) public {{
+        counter.setOwner(owner);
+        assert(counter.getOwner() == owner);
+    }}
+}}
+"#
+        ),
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicNonHashConstantSlot",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 3 tests for test/SymbolicNonHashConstantSlot.t.sol:SymbolicNonHashConstantSlot
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkAddChangesTotal(uint256) ([METRICS])
+[PASS] checkAddSetsTotal(uint256) ([METRICS])
+[PASS] checkSetOwnerSetsOwner(address) ([METRICS])
+Suite result: FAILED. 2 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
 // A build without storage layouts after an edit keeps the cached symbolic profile, so the next
 // symbolic run must recompile the artifacts it wrote without layouts.
 #[forgetest_init]

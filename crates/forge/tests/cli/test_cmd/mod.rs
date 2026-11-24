@@ -11,6 +11,7 @@ use foundry_evm_networks::NetworkConfigs;
 use foundry_test_utils::{
     TestCommand,
     rpc::{self, next_etherscan_api_key, rpc_endpoints},
+    snapbox::IntoData,
     str,
     util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION},
 };
@@ -9096,4 +9097,450 @@ contract TransactCreationForkTest {
 "#]];
     cmd.args(["test"]).assert_success().stdout_eq(output.clone());
     cmd.forge_fuse().args(["test", "--no-isolate"]).assert_success().stdout_eq(output);
+}
+
+// An account created on one fork does not make the account at its address on another fork a
+// created one, whose storage a later call or a roll of that fork would discard, even once it is
+// persistent or carried back to the first fork.
+#[forgetest]
+async fn fork_created_account_other_fork(prj: _, cmd: _) {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    // The account has code and storage on the latest block but not on the first one. State
+    // changes apply to the latest block, so they follow a second one.
+    let deployer = address!("0x1000000000000000000000000000000000000001");
+    let created = deployer.create(0);
+    api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
+    api.anvil_set_code(created, Bytes::from_static(&[0x00])).await.unwrap();
+    api.anvil_set_storage_at(created, U256::ZERO, B256::with_last_byte(7)).await.unwrap();
+    api.anvil_mine(Some(U256::ONE), None).await.unwrap();
+
+    prj.add_test(
+        "OtherForkCreation.t.sol",
+        &r#"
+interface Vm {
+    function createSelectFork(string calldata url, uint256 blockNumber) external returns (uint256);
+    function createSelectFork(string calldata url) external returns (uint256);
+    function prank(address sender) external;
+    function rollFork(uint256 blockNumber) external;
+    function makePersistent(address account) external;
+    function selectFork(uint256 forkId) external;
+    function load(address target, bytes32 slot) external view returns (bytes32);
+}
+
+contract Empty {}
+
+contract OtherForkCreationForkTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant DEPLOYER = <deployer>;
+    address constant CREATED = <created>;
+
+    function createOnFirstBlock() internal returns (uint256 forkId) {
+        forkId = vm.createSelectFork("<url>", 1);
+        vm.prank(DEPLOYER);
+        require(address(new Empty()) == CREATED, "created address");
+    }
+
+    function selectLatest() external {
+        vm.createSelectFork("<url>");
+    }
+
+    function poke() external {}
+
+    function testForkCreatedOnOtherForkKeepsStorage() public {
+        createOnFirstBlock();
+        vm.createSelectFork("<url>");
+        require(vm.load(CREATED, bytes32(0)) == bytes32(uint256(7)), "before call");
+        this.poke();
+        require(vm.load(CREATED, bytes32(0)) == bytes32(uint256(7)), "after call");
+    }
+
+    function testForkCreatedOnOtherForkKeepsStorageAcrossRoll() public {
+        createOnFirstBlock();
+        this.selectLatest();
+        vm.rollFork(block.number);
+        require(vm.load(CREATED, bytes32(0)) == bytes32(uint256(7)), "after roll");
+    }
+
+    function testForkCreatedOnOtherForkKeepsStorageWhenPersistent() public {
+        createOnFirstBlock();
+        vm.createSelectFork("<url>");
+        vm.makePersistent(CREATED);
+        this.poke();
+        require(vm.load(CREATED, bytes32(0)) == bytes32(uint256(7)), "after call");
+    }
+
+    function testForkCreatedOnOtherForkKeepsStorageWhenCarriedBack() public {
+        uint256 first = createOnFirstBlock();
+        vm.createSelectFork("<url>");
+        require(vm.load(CREATED, bytes32(0)) == bytes32(uint256(7)), "before carry");
+        vm.makePersistent(CREATED);
+        vm.selectFork(first);
+        require(vm.load(CREATED, bytes32(0)) == bytes32(uint256(7)), "carried back");
+        this.poke();
+        require(vm.load(CREATED, bytes32(0)) == bytes32(uint256(7)), "after call");
+    }
+}
+"#
+        .replace("<url>", &handle.http_endpoint())
+        .replace("<deployer>", &deployer.to_checksum(None))
+        .replace("<created>", &created.to_checksum(None)),
+    );
+
+    let output = str![[r#"
+...
+[PASS] testForkCreatedOnOtherForkKeepsStorage() ([GAS])
+[PASS] testForkCreatedOnOtherForkKeepsStorageAcrossRoll() ([GAS])
+[PASS] testForkCreatedOnOtherForkKeepsStorageWhenCarriedBack() ([GAS])
+[PASS] testForkCreatedOnOtherForkKeepsStorageWhenPersistent() ([GAS])
+...
+"#]];
+    cmd.args(["test"]).assert_success().stdout_eq(output.clone());
+    cmd.forge_fuse().args(["test", "--no-isolate"]).assert_success().stdout_eq(output);
+}
+
+// An account the running transaction created on a fork stays created after a frame that selected
+// that fork reverts, so that EIP-6780 SELFDESTRUCT in a later isolated call still deletes it.
+// Without isolation the running state itself loses the mark with the revert, so only isolated
+// calls are checked.
+#[forgetest]
+async fn fork_created_account_reverted_switch(prj: _, cmd: _) {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    prj.add_test(
+        "RevertedSwitch.t.sol",
+        &r#"
+interface Vm {
+    function createSelectFork(string calldata url) external returns (uint256);
+    function selectFork(uint256 forkId) external;
+    function deal(address account, uint256 balance) external;
+}
+
+contract Bomb {
+    function boom() external {
+        selfdestruct(payable(address(this)));
+    }
+}
+
+contract RevertedSwitchForkTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function selectAndRevert(uint256 forkId) external {
+        vm.selectFork(forkId);
+        revert();
+    }
+
+    function testForkCreatedAccountSelfDestructsAfterRevertedSwitch() public {
+        uint256 first = vm.createSelectFork("<url>");
+        Bomb bomb = new Bomb();
+        vm.deal(address(bomb), 42);
+        vm.createSelectFork("<url>");
+        (bool ok,) = address(this).delegatecall(abi.encodeCall(this.selectAndRevert, (first)));
+        require(!ok, "reverted");
+        bomb.boom();
+        require(address(bomb).balance == 0, "destroyed");
+    }
+}
+"#
+        .replace("<url>", &handle.http_endpoint()),
+    );
+
+    cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS] testForkCreatedAccountSelfDestructsAfterRevertedSwitch() ([GAS])
+...
+"#]]);
+}
+
+// An account counts as created, which EIP-6780 SELFDESTRUCT deletes, only while the account the
+// running transaction holds on a fork is the one it created there, however isolated calls switch
+// forks, restore snapshots or carry persistent accounts around it.
+#[forgetest]
+async fn fork_created_account_lifecycle(prj: _, cmd: _) {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    // The account self-destructs to itself with 42 wei and has storage on the latest block, and
+    // does not exist on the first one. State changes apply to the latest block, so they follow a
+    // second one.
+    let deployer = address!("0x1000000000000000000000000000000000000001");
+    let created = deployer.create(0);
+    api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
+    api.anvil_set_code(created, Bytes::from_static(&[0x30, 0xff])).await.unwrap();
+    api.anvil_set_balance(created, U256::from(42)).await.unwrap();
+    api.anvil_set_storage_at(created, U256::ZERO, B256::with_last_byte(7)).await.unwrap();
+    api.anvil_mine(Some(U256::ONE), None).await.unwrap();
+
+    prj.add_test(
+        "CreatedLifecycle.t.sol",
+        &r#"
+interface Vm {
+    function createFork(string calldata url, uint256 blockNumber) external returns (uint256);
+    function createFork(string calldata url) external returns (uint256);
+    function createSelectFork(string calldata url, uint256 blockNumber) external returns (uint256);
+    function createSelectFork(string calldata url) external returns (uint256);
+    function selectFork(uint256 forkId) external;
+    function rollFork(uint256 blockNumber) external;
+    function makePersistent(address account) external;
+    function revokePersistent(address account) external;
+    function prank(address sender) external;
+    function deal(address account, uint256 balance) external;
+    function snapshotState() external returns (uint256);
+    function revertToState(uint256 snapshotId) external returns (bool);
+    function load(address target, bytes32 slot) external view returns (bytes32);
+}
+
+contract Bomb {
+    fallback() external payable {
+        selfdestruct(payable(address(this)));
+    }
+}
+
+contract CreatedLifecycleForkTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant DEPLOYER = <deployer>;
+    address constant CREATED = <created>;
+
+    function deploy() internal {
+        vm.prank(DEPLOYER);
+        require(address(new Bomb()) == CREATED, "created address");
+    }
+
+    function boom() internal {
+        (bool ok,) = CREATED.call("");
+        require(ok, "boom");
+    }
+
+    function select(uint256 forkId) external {
+        vm.selectFork(forkId);
+    }
+
+    function carryBack(uint256 first, uint256 second) external {
+        vm.selectFork(second);
+        require(CREATED.balance == 42, "before carry");
+        vm.makePersistent(CREATED);
+        vm.selectFork(first);
+    }
+
+    function restore(uint256 snapshotId) external {
+        require(vm.revertToState(snapshotId), "restored");
+    }
+
+    function deployAndLeave(uint256 forkId) external {
+        deploy();
+        vm.deal(CREATED, 42);
+        vm.selectFork(forkId);
+    }
+
+    function testForkCarriedBackAccountIsNotCreated() public {
+        uint256 first = vm.createSelectFork("<url>", 1);
+        deploy();
+        uint256 second = vm.createFork("<url>");
+        this.carryBack(first, second);
+        require(CREATED.code.length == 2 && CREATED.balance == 42, "carried back");
+        boom();
+        require(CREATED.balance == 42, "kept balance");
+    }
+
+    function testForkRevokedCarriedBackAccountIsNotCreated() public {
+        uint256 first = vm.createSelectFork("<url>", 1);
+        deploy();
+        uint256 second = vm.createSelectFork("<url>");
+        require(CREATED.balance == 42, "before carry");
+        vm.makePersistent(CREATED);
+        vm.selectFork(first);
+        require(CREATED.code.length == 2 && CREATED.balance == 42, "carried back");
+        vm.revokePersistent(CREATED);
+        vm.selectFork(second);
+        this.select(first);
+        boom();
+        require(CREATED.balance == 42, "kept balance");
+    }
+
+    function testForkSnapshotBeforeCreationKeepsStorage() public {
+        vm.createSelectFork("<url>");
+        uint256 snapshotId = vm.snapshotState();
+        vm.rollFork(1);
+        deploy();
+        this.restore(snapshotId);
+        vm.rollFork(3);
+        require(vm.load(CREATED, bytes32(0)) == bytes32(uint256(7)), "after roll");
+    }
+
+    function testForkCreatedOnLeftForkIsCreated() public {
+        uint256 first = vm.createSelectFork("<url>", 1);
+        uint256 second = vm.createFork("<url>", 1);
+        this.deployAndLeave(second);
+        vm.selectFork(first);
+        require(CREATED.code.length > 0 && CREATED.balance == 42, "deployed");
+        boom();
+        require(CREATED.balance == 0, "destroyed");
+    }
+}
+"#
+        .replace("<url>", &handle.http_endpoint())
+        .replace("<deployer>", &deployer.to_checksum(None))
+        .replace("<created>", &created.to_checksum(None)),
+    );
+
+    let output = str![[r#"
+...
+[PASS] testForkCarriedBackAccountIsNotCreated() ([GAS])
+[PASS] testForkCreatedOnLeftForkIsCreated() ([GAS])
+[PASS] testForkRevokedCarriedBackAccountIsNotCreated() ([GAS])
+[PASS] testForkSnapshotBeforeCreationKeepsStorage() ([GAS])
+...
+"#]];
+    cmd.args(["test"]).assert_success().stdout_eq(output.clone());
+    cmd.forge_fuse().args(["test", "--no-isolate"]).assert_success().stdout_eq(output);
+}
+
+// An account the previous transaction created on a fork is not created in the next one, even when
+// the next one creates an account at its address on another fork or restores a snapshot the
+// previous one took.
+#[forgetest]
+async fn fork_created_account_previous_transaction(prj: _, cmd: _) {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.anvil_mine(Some(U256::ONE), None).await.unwrap();
+    let deployer = address!("0x1000000000000000000000000000000000000001");
+    prj.add_test(
+        "PreviousCreation.t.sol",
+        &r#"
+interface Vm {
+    function createSelectFork(string calldata url, uint256 blockNumber) external returns (uint256);
+    function selectFork(uint256 forkId) external;
+    function prank(address sender) external;
+    function deal(address account, uint256 balance) external;
+    function snapshotState() external returns (uint256);
+    function revertToState(uint256 snapshotId) external returns (bool);
+    function rollFork(uint256 blockNumber) external;
+}
+
+contract Bomb {
+    fallback() external payable {
+        selfdestruct(payable(address(this)));
+    }
+}
+
+contract PreviousCreationForkTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant DEPLOYER = <deployer>;
+    address constant CREATED = <created>;
+    uint256 first;
+    uint256 onFirst;
+    uint256 onSecond;
+    uint256 switchedBack;
+
+    function deploy() internal {
+        vm.prank(DEPLOYER);
+        require(address(new Bomb()) == CREATED, "created address");
+    }
+
+    function setUp() public {
+        first = vm.createSelectFork("<url>", 1);
+        deploy();
+        vm.deal(CREATED, 42);
+        onFirst = vm.snapshotState();
+        uint256 second = vm.createSelectFork("<url>", 1);
+        onSecond = vm.snapshotState();
+        vm.selectFork(first);
+        switchedBack = vm.snapshotState();
+        vm.selectFork(second);
+    }
+
+    function boom() internal {
+        (bool ok,) = CREATED.call("");
+        require(ok, "boom");
+        require(CREATED.balance == 42, "kept balance");
+    }
+
+    function testForkCreatedInSetUpIsNotCreated() public {
+        deploy();
+        vm.selectFork(first);
+        boom();
+    }
+
+    function testForkCreatedInSetUpIsNotCreatedAfterRevert() public {
+        require(vm.revertToState(onFirst), "reverted");
+        boom();
+    }
+
+    function testForkCreatedInSetUpIsNotCreatedAfterRevertAndSwitch() public {
+        require(vm.revertToState(onSecond), "reverted");
+        vm.selectFork(first);
+        boom();
+    }
+
+    function testForkCreatedInSetUpIsNotCreatedAfterSwitchBackRevertAndRoll() public {
+        require(vm.revertToState(switchedBack), "reverted");
+        vm.rollFork(block.number);
+        boom();
+    }
+}
+"#
+        .replace("<url>", &handle.http_endpoint())
+        .replace("<deployer>", &deployer.to_checksum(None))
+        .replace("<created>", &deployer.create(0).to_checksum(None)),
+    );
+
+    let output = str![[r#"
+...
+[PASS] testForkCreatedInSetUpIsNotCreated() ([GAS])
+[PASS] testForkCreatedInSetUpIsNotCreatedAfterRevert() ([GAS])
+[PASS] testForkCreatedInSetUpIsNotCreatedAfterRevertAndSwitch() ([GAS])
+[PASS] testForkCreatedInSetUpIsNotCreatedAfterSwitchBackRevertAndRoll() ([GAS])
+...
+"#]];
+    cmd.args(["test"]).assert_success().stdout_eq(output.clone());
+    cmd.forge_fuse().args(["test", "--no-isolate"]).assert_success().stdout_eq(output);
+}
+
+// Raw trace data in JSON output applies the same cheatcode redaction as decoded traces.
+#[forgetest]
+fn test_json_redacts_raw_cheatcode_secrets(prj: _, cmd: _) {
+    prj.add_test(
+        "Secret.t.sol",
+        r#"
+interface Vm {
+    function deriveKey(string calldata mnemonic, uint32 index) external pure returns (uint256);
+    function addr(uint256 privateKey) external pure returns (address);
+}
+
+contract SecretTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testSecret() public pure {
+        uint256 pk =
+            vm.deriveKey("test test test test test test test test test test test junk", 0);
+        require(vm.addr(pk) == 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266);
+    }
+}
+   "#,
+    );
+
+    let output: serde_json::Value = serde_json::from_slice(
+        &cmd.args(["test", "-vvv", "--json"]).assert_success().get_output().stdout,
+    )
+    .unwrap();
+    let traces = output["test/Secret.t.sol:SecretTest"]["test_results"]["testSecret()"]["traces"]
+        .as_array()
+        .unwrap();
+    let execution = traces.iter().find(|trace| trace[0] == "Execution").unwrap();
+    let vm_calls = execution[1]["arena"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|node| &node["trace"])
+        .filter(|trace| trace["address"] == "0x7109709ecfa91a80626ff3989d68f67f5b1dd12d")
+        .map(|trace| serde_json::json!({ "data": trace["data"], "output": trace["output"] }))
+        .collect::<Vec<_>>();
+    assert_data_eq!(
+        serde_json::to_string(&vm_calls).unwrap().is_json(),
+        str![[r#"
+[
+  { "data": "0x6229498b", "output": "0x" },
+  {
+    "data": "0xffa18649",
+    "output": "0x000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266"
+  }
+]
+"#]]
+        .is_json(),
+    );
 }
