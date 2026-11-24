@@ -91,8 +91,7 @@ pub struct SymbolicConfig {
     pub exploration_order: SymbolicExplorationOrder,
     /// Maximum number of solver queries.
     pub max_solver_queries: u32,
-    /// Largest length explored for dynamic ABI inputs without an explicit length. Lengths 0, 1
-    /// and this one are explored.
+    /// Default bounded length for dynamic ABI inputs.
     pub default_dynamic_length: u32,
     /// Maximum permitted bounded length for a dynamic ABI input.
     pub max_dynamic_length: u32,

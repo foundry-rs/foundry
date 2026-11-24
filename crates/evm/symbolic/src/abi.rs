@@ -670,12 +670,7 @@ impl<'a, 'cx> SymbolicAbiBuilder<'a, 'cx> {
             state.positional_dynamic_index += 1;
             vec![len]
         } else {
-            // Empty and one-element inputs plus the default length, without a shape per length
-            // in between, since shapes multiply across arguments.
-            let len = self.config.default_dynamic_length;
-            let mut lengths = vec![0, len.min(1), len];
-            lengths.dedup();
-            lengths
+            vec![self.config.default_dynamic_length]
         };
 
         if lengths.is_empty() {
