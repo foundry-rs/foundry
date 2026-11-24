@@ -397,8 +397,7 @@ fn expr_less_or_equal<'a>(
         {
             true
         }
-        // A constant bounds any word whose interval it caps, such as a signed price below a
-        // constant once it is known to be positive.
+        // `left <= C` when the interval of `left` is at most `C`.
         (_, SymExprKind::Const(bound))
             if bounds.word_range(left).is_some_and(|(_, max)| max <= *bound) =>
         {

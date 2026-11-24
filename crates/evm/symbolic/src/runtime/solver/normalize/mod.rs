@@ -1033,17 +1033,16 @@ impl ConstraintContext {
             SymCmpOp::Sgt => (right, left),
             _ => return None,
         };
-        let signed_max = U256::MAX >> 1;
         if let Some((_, increment)) = sum.add_with_operand(base) {
             let base_range = self.interval(base)?;
             let increment_range = self.interval(increment)?;
             // Opposite-sign addition cannot overflow: adding a nonnegative value cannot make
             // a negative summand smaller, and adding a negative value makes a nonnegative one
             // smaller.
-            if base_range.min > signed_max && increment_range.max <= signed_max {
+            if base_range.min > SIGNED_MAX && increment_range.max <= SIGNED_MAX {
                 return Some(SymBoolExpr::constant(cx, false));
             }
-            if base_range.max <= signed_max && increment_range.min > signed_max {
+            if base_range.max <= SIGNED_MAX && increment_range.min > SIGNED_MAX {
                 return Some(SymBoolExpr::constant(cx, true));
             }
         } else if base.as_const() != Some(U256::ZERO) {
@@ -1055,8 +1054,8 @@ impl ConstraintContext {
             for (positive, negative) in [(left, right), (right, left)] {
                 if let SymExprKind::BinOp(SymBinOp::Sub, zero, amount) = negative.kind()
                     && zero.as_const() == Some(U256::ZERO)
-                    && self.interval(positive).is_some_and(|range| range.max <= signed_max)
-                    && self.interval(amount).is_some_and(|range| range.max <= signed_max)
+                    && self.interval(positive).is_some_and(|range| range.max <= SIGNED_MAX)
+                    && self.interval(amount).is_some_and(|range| range.max <= SIGNED_MAX)
                 {
                     // For a,b in [0, int256::MAX], signed(a + (-b)) < 0 iff a < b.
                     return Some(SymBoolExpr::cmp_word_expr(
@@ -1073,12 +1072,12 @@ impl ConstraintContext {
         let SymExprKind::BinOp(SymBinOp::Add, increment, base) = sum.kind() else {
             return None;
         };
-        if self.interval(base)?.max > signed_max || self.interval(increment)?.max > signed_max {
+        if self.interval(base)?.max > SIGNED_MAX || self.interval(increment)?.max > SIGNED_MAX {
             return None;
         }
         // With nonnegative summands their unsigned sum cannot wrap. It is signed-less than a
         // summand exactly when it crosses the signed maximum; equality (zero increment) is safe.
-        let limit = SymExpr::constant(cx, signed_max);
+        let limit = SymExpr::constant(cx, SIGNED_MAX);
         let remaining = SymExpr::binop(cx, SymBinOp::Sub, limit, base.clone());
         Some(SymBoolExpr::cmp(cx, SymCmpOp::Ult, remaining, increment.clone()))
     }
