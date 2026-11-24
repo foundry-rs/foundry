@@ -9143,7 +9143,7 @@ contract SymbolicDowncastShare {
 
 // A collateral ratio `collateral * WAD / debt` of at least a minimum of 100% or more implies the
 // collateral covers the debt, since `collateral < debt` makes the ratio below `WAD`, even when a
-// nonzero scale wraps the product. A zero scale or a minimum just under 100% does not, and
+// nonzero scale wraps the product. A zero scale or a minimum below the scale does not, and
 // collateral equal to the debt reaches a ratio of exactly `WAD`.
 #[forgetest_init]
 fn symbolic_proves_collateral_ratio_covers_debt(prj: _, cmd: _) {
@@ -9188,6 +9188,25 @@ contract SymbolicCollateralRatio {
         assert(collateral >= debt);
     }
 
+    function checkMinimumBelowScale(
+        uint256 collateral,
+        uint256 debt,
+        uint256 scale,
+        uint256 minRatio
+    ) public pure {
+        require(debt != 0 && scale != 0 && minRatio <= scale);
+        unchecked {
+            require(collateral * scale / debt >= minRatio);
+        }
+        assert(collateral >= debt);
+    }
+
+    function checkSmallMinimum(uint128 collateral, uint128 debt, uint8 minRatio) public pure {
+        require(debt != 0);
+        require(uint256(collateral) * WAD / debt >= minRatio);
+        assert(collateral >= debt);
+    }
+
     function checkMinimumBelowOne(uint128 collateral, uint128 debt, uint128 minRatio) public pure {
         require(debt != 0 && minRatio >= WAD - 1);
         require(uint256(collateral) * WAD / debt >= minRatio);
@@ -9224,6 +9243,8 @@ contract SymbolicCollateralRatio {
         }
         for signature in [
             "checkZeroScale(uint256,uint256,uint256)",
+            "checkMinimumBelowScale(uint256,uint256,uint256,uint256)",
+            "checkSmallMinimum(uint128,uint128,uint8)",
             "checkMinimumBelowOne(uint128,uint128,uint128)",
             "checkCollateralEqualsDebt(uint128,uint128)",
         ] {

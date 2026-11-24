@@ -31,9 +31,6 @@ pub(crate) fn product_monotonic_unsat_normalized(constraints: &[SymBoolExpr]) ->
             || less_or_equal_comparison(constraint).is_some_and(|(left, right)| {
                 successor_product_exceeds(left, right, &facts, &bounds)
                     || quotient_below(right, left, &facts, &bounds)
-                    || facts.less_or_equal.iter().any(|(small, large)| {
-                        *small == right && quotient_below(large, left, &facts, &bounds)
-                    })
             })
             || disequality(constraint).is_some_and(|(left, right)| {
                 expr_less_or_equal(left, right, &facts, &bounds)
@@ -762,7 +759,7 @@ fn successor_product_exceeds(
 
 /// Returns whether `quotient = x * scale / d` is below `bound` because `x < d` and
 /// `0 < scale <= bound`, refuting `bound <= quotient` as in a collateral ratio of at least 100%
-/// with collateral below debt. `x * scale < d * scale` even when the product wraps, and `d > x`
+/// with collateral below debt. The wrapped product is at most `x * scale < d * scale`, and `d > x`
 /// makes `d` nonzero.
 fn quotient_below(
     quotient: &SymExpr,
