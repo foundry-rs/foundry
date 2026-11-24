@@ -740,22 +740,42 @@ impl<'a> AnchorIndex<'a> {
         arms: &IfArms,
     ) -> Option<EdgeAnchor> {
         // The statement's span ends before the `;` that a jump's source element can include.
+        let in_condition = |element: &SourceElement| {
+            is_in_source_range(element, loc)
+                && !is_in_source_range(element, &arms.then_arm)
+                && arms.else_arm.as_ref().is_none_or(|arm| !is_in_source_range(element, arm))
+        };
         let mut jumps = self
             .branches
             .iter()
-            .filter(|&&(ic, ..)| {
-                self.source_map.get(ic + 1).is_some_and(|jump| {
-                    is_in_source_range(jump, loc)
-                        && !is_in_source_range(jump, &arms.then_arm)
-                        && arms.else_arm.as_ref().is_none_or(|arm| !is_in_source_range(jump, arm))
-                })
-            })
+            .filter(|&&(ic, ..)| self.source_map.get(ic + 1).is_some_and(in_condition))
             .collect::<Vec<_>>();
-        // A jump to a failure, such as an overflow check in the condition, cannot enter an arm,
-        // unless it is the only jump, as when the arm is a shared `revert`.
+        // A check in the condition, such as an array bounds, enum, or call check, cannot enter an
+        // arm, unless it is the only jump, as when the arm is a shared `revert`. One side of a
+        // check leads to a failure, whether the check jumps to it or, as solc's legacy pipeline
+        // emits it, around it. The failure starts in the condition, or in no source at all, as
+        // Solar's shared panic block does. A side of the `if`'s own jump can fail too, when the
+        // code after the `if` or its loop reverts. That code is mapped outside the `if`, or with
+        // Solar to no source, but the `if`'s own jump is mapped to the whole statement, while a
+        // check's is mapped to the expression it guards.
+        let fails_in_condition = |pc: u32, unmapped: bool| {
+            let Ok(mut ic) = self.pcs.binary_search(&pc) else { return false };
+            while self.pcs.get(ic).is_some_and(|&p| self.bytecode[p as usize] == opcode::JUMPDEST) {
+                ic += 1;
+            }
+            self.source_map.get(ic).is_some_and(|element| {
+                (unmapped && element.index().is_none()) || in_condition(element)
+            }) && self.fails(pc)
+        };
         if jumps.len() > 1 {
-            jumps.retain(|&&(_, _, immediate)| {
-                jump_destination(immediate).is_ok_and(|target| !self.fails(target))
+            jumps.retain(|&&(ic, jump, immediate)| {
+                let is_check = self
+                    .source_map
+                    .get(ic + 1)
+                    .is_some_and(|element| element.offset() != loc.bytes.start);
+                !fails_in_condition(jump as u32 + 1, is_check)
+                    && jump_destination(immediate)
+                        .is_ok_and(|target| !fails_in_condition(target, is_check))
             });
         }
         let &[&(_, jump, immediate)] = jumps.as_slice() else { return None };
@@ -2752,8 +2772,43 @@ mod tests {
             opcode::REVERT,
         ];
         assert_eq!(
-            if_anchors(&checked, "12:3:0;;12:3:0;;;10:60:0;80:5:0;;;0:100:0;;;0:100:0;;;", false),
+            if_anchors(&checked, "12:3:0;;12:3:0;;;10:60:0;80:5:0;;;0:100:0;;;12:3:0;;;", false),
             [(13, Some(9))]
         );
+
+        // A check that jumps around its failure, as solc's legacy pipeline emits an array bounds
+        // check, cannot enter the arm either, even when the statement after the `if` reverts, or
+        // the arm's side does, as when a `break` leaves a loop that is followed by a revert.
+        let jumps_around_check = |next: [u8; 3], arm_end: u8, source_map: &str| {
+            let mut bytecode = vec![
+                opcode::PUSH1,
+                0,
+                opcode::PUSH1,
+                8,
+                opcode::JUMPI,
+                opcode::PUSH0,
+                opcode::PUSH0,
+                opcode::REVERT,
+                opcode::JUMPDEST,
+                opcode::PUSH1,
+                0,
+                opcode::PUSH1,
+                17,
+                opcode::JUMPI,
+            ];
+            bytecode.extend_from_slice(&next);
+            bytecode.extend_from_slice(&[opcode::JUMPDEST, opcode::PUSH0, arm_end]);
+            if_anchors(&bytecode, source_map, false)
+        };
+        let mapped = "12:3:0;;;;;;;;;10:60:0;80:5:0;;;0:100:0;;";
+        let next = [opcode::PUSH0, opcode::POP, opcode::STOP];
+        let next_reverts = [opcode::PUSH0, opcode::PUSH0, opcode::REVERT];
+        assert_eq!(jumps_around_check(next, opcode::RETURN, mapped), [(17, Some(13))]);
+        assert_eq!(jumps_around_check(next_reverts, opcode::RETURN, mapped), [(17, Some(13))]);
+        assert_eq!(jumps_around_check(next, opcode::REVERT, mapped), [(17, Some(13))]);
+        // With Solar, both the check's failure and the revert that the arm's side leads to can be
+        // mapped to no source, so only the jumps' own spans tell the check from the `if`'s jump.
+        let unmapped = "12:3:0;;;0:0:-1;;;12:3:0;;;10:60:0;80:5:0;;;0:0:-1;;";
+        assert_eq!(jumps_around_check(next, opcode::REVERT, unmapped), [(17, Some(13))]);
     }
 }

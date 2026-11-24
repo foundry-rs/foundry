@@ -14,7 +14,8 @@ use alloy_rpc_types::trace::geth::{CallConfig, CallFrame, CallLogFrame};
 use alloy_transport::TransportError;
 use evm2::interpreter::InstrStop;
 use foundry_evm::traces::{
-    CallKind, CallLog, CallTrace, CallTraceArena, CallTraceNode, TraceMemberOrder,
+    CallKind, CallLog, CallTrace, CallTraceArena, CallTraceNode, SelfdestructTrace,
+    TraceMemberOrder,
 };
 
 pub use foundry_common::provider::is_rpc_method_not_found as is_method_not_found_error;
@@ -78,7 +79,7 @@ fn push_frame(
     nodes: &mut Vec<CallTraceNode>,
     frame: &CallFrame,
     parent: Option<usize>,
-    depth: usize,
+    depth: u16,
 ) -> usize {
     let idx = nodes.len();
 
@@ -87,10 +88,10 @@ fn push_frame(
     // A `SELFDESTRUCT` frame is not an ordinary call: geth encodes `from` as the destructed
     // contract, `to` as the refund target and `value` as the transferred balance (the inverse of
     // `CallTraceNode::geth_selfdestruct_call_trace`). Mirror the local trace representation, which
-    // records the selfdestruct through the dedicated fields and an
+    // records the selfdestruct through the dedicated `SelfdestructTrace` and an
     // `InstrStop::SelfDestruct` status, so the destructed contract (not the
     // beneficiary) is identified and `is_selfdestruct` holds. The transferred balance lives in
-    // `selfdestruct_transferred_value`, so the call `value` stays zero.
+    // `SelfdestructTrace::transferred_value`, so the call `value` stays zero.
     let is_selfdestruct = frame.typ == "SELFDESTRUCT";
     let status = if is_selfdestruct {
         Some(InstrStop::SelfDestruct)
@@ -116,9 +117,13 @@ fn push_frame(
         caller: frame.from,
         address: if is_selfdestruct { frame.from } else { frame.to.unwrap_or_default() },
         maybe_precompile: None,
-        selfdestruct_address: is_selfdestruct.then_some(frame.from),
-        selfdestruct_refund_target: if is_selfdestruct { frame.to } else { None },
-        selfdestruct_transferred_value: if is_selfdestruct { frame.value } else { None },
+        selfdestruct: is_selfdestruct.then(|| {
+            Box::new(SelfdestructTrace {
+                address: Some(frame.from),
+                refund_target: frame.to,
+                transferred_value: frame.value,
+            })
+        }),
         kind: call_kind(&frame.typ),
         value: if is_selfdestruct { U256::ZERO } else { frame.value.unwrap_or_default() },
         data: frame.input.clone(),
@@ -254,9 +259,9 @@ mod tests {
 
         // The destructed contract is the identified address, not the refund target.
         assert_eq!(trace.address, destructed);
-        assert_eq!(trace.selfdestruct_address, Some(destructed));
-        assert_eq!(trace.selfdestruct_refund_target, Some(beneficiary));
-        assert_eq!(trace.selfdestruct_transferred_value, Some(U256::from(9u64)));
+        assert_eq!(trace.selfdestruct_address(), Some(destructed));
+        assert_eq!(trace.selfdestruct_refund_target(), Some(beneficiary));
+        assert_eq!(trace.selfdestruct_transferred_value(), Some(U256::from(9u64)));
         assert_eq!(trace.status, Some(InstrStop::SelfDestruct));
         assert!(trace.is_selfdestruct());
     }
