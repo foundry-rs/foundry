@@ -3078,8 +3078,8 @@ fn prepare_results_for_json(
                 for log in &mut node.logs {
                     log.decoded = None;
                 }
-                for step in &mut node.trace.steps {
-                    step.decoded = None;
+                for extra in node.trace.steps.iter_mut().filter_map(|step| step.extra.as_mut()) {
+                    extra.decoded = None;
                 }
             }
             if let Some(trace_depth) = trace_depth {
