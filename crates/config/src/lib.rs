@@ -898,7 +898,7 @@ impl Config {
     /// instead of returning an error, since dependencies may not define all profiles the main
     /// project uses.
     #[track_caller]
-    pub fn load_with_root_and_fallback(root: impl AsRef<Path>) -> Result<Self, ExtractConfigError> {
+    pub fn load_dependency_with_root(root: impl AsRef<Path>) -> Result<Self, ExtractConfigError> {
         let figment = Self::with_root(root.as_ref()).to_figment(FigmentProviders::Dependency);
         Self::from_figment_fallback(figment)
     }
@@ -3061,7 +3061,8 @@ impl Config {
         }
         // Apply key fixes before selecting profiles, while standalone sections and profile names
         // are still distinguishable.
-        let provider = BackwardsCompatTomlProvider(ForcedSnakeCaseData(toml_provider), solc_env);
+        let provider =
+            BackwardsCompatTomlProvider { provider: ForcedSnakeCaseData(toml_provider), solc_env };
         let provider = &provider.strict_select(profiles);
         // Config files must not move the project root. Only profile merges drop `root`, since
         // standalone sections may use it as a key, e.g. an `[rpc_endpoints]` alias.
@@ -9892,8 +9893,8 @@ mod tests {
             // Set a profile that doesn't exist in the lib
             jail.set_env("FOUNDRY_PROFILE", "ci");
 
-            // load_with_root_and_fallback should succeed and fall back to default
-            let config = Config::load_with_root_and_fallback(&lib_path)
+            // load_dependency_with_root should succeed and fall back to default
+            let config = Config::load_dependency_with_root(&lib_path)
                 .expect("lib config should load with fallback");
             assert_eq!(config.profile, Config::DEFAULT_PROFILE);
             assert_eq!(config.src.as_os_str(), "contracts");
@@ -9924,8 +9925,8 @@ mod tests {
             // Set a profile that exists in the lib
             jail.set_env("FOUNDRY_PROFILE", "ci");
 
-            // load_with_root_and_fallback should use the ci profile
-            let config = Config::load_with_root_and_fallback(&lib_path)
+            // load_dependency_with_root should use the ci profile
+            let config = Config::load_dependency_with_root(&lib_path)
                 .expect("lib config should load with profile");
             assert_eq!(config.profile.as_str(), "ci");
             assert_eq!(config.fuzz.runs, 5000);

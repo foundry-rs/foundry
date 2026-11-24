@@ -690,7 +690,7 @@ impl RemappingsProvider<'_> {
 /// Returns the normalized library directories the dependency at `root` configures, as nested
 /// remapping discovery accepts them.
 pub fn dependency_library_paths(root: &Path) -> Vec<PathBuf> {
-    let Ok(config) = Config::load_with_root_and_fallback(root) else { return Vec::new() };
+    let Ok(config) = Config::load_dependency_with_root(root) else { return Vec::new() };
     let canonical = dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     config
         .libs
@@ -712,7 +712,7 @@ fn contained_library_path(owner: &Path, canonical: &Path, lib: &Path) -> Option<
 }
 
 fn load_nested_config(root: &Path) -> Result<Option<CachedNestedConfig>, Error> {
-    let Ok(config) = Config::load_with_root_and_fallback(root) else { return Ok(None) };
+    let Ok(config) = Config::load_dependency_with_root(root) else { return Ok(None) };
     let src = config.src.clone();
     let libs = config.libs.clone();
     let remappings = config.sanitized().remappings.into_iter().map(Remapping::from).collect();
@@ -2346,8 +2346,39 @@ mod tests {
                     "{key}"
                 );
                 assert_eq!(
-                    Config::load_with_root_and_fallback(&dep).unwrap().solc,
+                    Config::load_dependency_with_root(&dep).unwrap().solc,
                     Some(crate::SolcReq::Version("0.8.18".parse().unwrap())),
+                    "{key}"
+                );
+            }
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn dependency_library_paths_ignore_project_env_overrides() {
+        figment::Jail::expect_with(|jail| {
+            let temp = tempdir().unwrap();
+            let dep = dunce::canonicalize(temp.path()).unwrap();
+            fs::create_dir_all(dep.join("vendor")).unwrap();
+            fs::create_dir_all(dep.join("other")).unwrap();
+            fs::write(dep.join(Config::FILE_NAME), "[profile.default]\nlibs = [\"vendor\"]\n")
+                .unwrap();
+            // An external config for the project, as passed with `FOUNDRY_CONFIG`.
+            let external = dep.join("other").join(Config::FILE_NAME);
+            fs::write(&external, "[profile.default]\nlibs = [\"other\"]\n").unwrap();
+
+            for (key, value) in [
+                ("FOUNDRY_CONFIG", external.display().to_string()),
+                ("FOUNDRY_LIBS", "[\"other\"]".to_string()),
+                ("DAPP_LIBS", "[\"other\"]".to_string()),
+            ] {
+                jail.clear_env();
+                jail.set_env(key, value);
+                assert_eq!(
+                    dependency_library_paths(&dep),
+                    [normalize_remapping_context(&dep.join("vendor"))],
                     "{key}"
                 );
             }
