@@ -9354,6 +9354,84 @@ contract SymbolicDowncastShare {
     }
 }
 
+// Unoptimized checked multiplication by a constant normalizes to `x != 0 && x <= MAX / c`. With
+// nonzero factors that fit, intervals decide both conjuncts, so a scaled product such as Uniswap
+// V2's `reserveIn * amountOut * 1000` is proved without the solver. A nonzero factor that may not
+// fit leaves one conjunct undecided, and one that never fits decides it false; both still reach
+// the overflow.
+#[forgetest_init]
+fn symbolic_decides_unoptimized_constant_multiply_guard(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_decides_unoptimized_constant_multiply_guard");
+    prj.add_test(
+        "SymbolicConstantMultiplyGuard.t.sol",
+        r#"
+contract SymbolicConstantMultiplyGuard {
+    function scale(uint256 value) external pure returns (uint256) {
+        return value * 1000;
+    }
+
+    function checkScaledQuotient(uint112 reserveIn, uint112 amountOut, uint112 denominator)
+        public
+        pure
+    {
+        require(reserveIn != 0 && amountOut != 0 && denominator != 0);
+        uint256 numerator = uint256(reserveIn) * amountOut * 1000;
+        assert(numerator / denominator <= numerator);
+    }
+
+    function checkLargeFactor(uint256 value) public view {
+        require(value != 0);
+        try this.scale(value) returns (uint256) {}
+        catch {
+            assert(false);
+        }
+    }
+
+    function checkOverflowingFactor(uint256 value) public view {
+        require(value > type(uint256).max / 1000);
+        try this.scale(value) returns (uint256) {}
+        catch {
+            assert(false);
+        }
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args([
+                "test",
+                "--symbolic",
+                "--json",
+                "--match-contract",
+                "SymbolicConstantMultiplyGuard",
+            ])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        let result = json_test_result(&output, "checkScaledQuotient(uint112,uint112,uint112)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        assert_eq!(
+            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+            "optimized={optimized}: {result}"
+        );
+        for signature in ["checkLargeFactor(uint256)", "checkOverflowingFactor(uint256)"] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "{signature} optimized={optimized}: {result}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "{signature} optimized={optimized}: {result}"
+            );
+        }
+    }
+}
+
 // An ERC4626 vault rounds `previewMint` up, so converting those assets back to shares never
 // returns fewer shares than were minted. A quotient bounded by a threshold still orders against
 // other bounds and quotients by the same divisor. Rounding down instead, demanding strictly more
