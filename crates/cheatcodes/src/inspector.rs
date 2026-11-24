@@ -816,6 +816,11 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// depositing it fails, and whether the constructor ran in an isolated call.
     pub deploy_code_output: Option<(Bytes, bool)>,
 
+    /// The depth and remaining gas of the last frame that halted while a revert was expected.
+    /// The EVM consumes a halted frame's gas when it ends, so an expected halt that the
+    /// cheatcodes turn into a return gives back the gas the frame had left when it halted.
+    pub halted_frame_gas: Option<(usize, u64)>,
+
     /// The `vm.accessList` the running transaction last applied to a call or create. It replaces
     /// the transaction's access list when computing its stipend.
     pub applied_access_list: Option<AccessList>,
@@ -915,6 +920,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             deploy_code_depth: None,
             deploy_code_create_state_gas: 0,
             deploy_code_output: None,
+            halted_frame_gas: None,
             applied_access_list: None,
             unrun_create_depth: None,
             env_handoff_creator: None,
@@ -1968,6 +1974,16 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         if self.has_active_env_overrides() {
             steps = steps.union(opcodes([op::BASEFEE, op::GASPRICE, op::CHAINID, op::BLOBHASH]));
         }
+        // `expectRevert` gives back the gas of a call that halts, which `step_end_hook` records.
+        // Only the instructions compiled code halts on are stepped, so expected calls keep
+        // running on the plain loop; other halts consume their gas.
+        if self
+            .expected_revert
+            .as_ref()
+            .is_some_and(|expected| matches!(expected.kind, ExpectedRevertKind::Default))
+        {
+            steps = steps.union(opcodes([op::INVALID, op::RETURNDATACOPY]));
+        }
         if self.failure_provenance.is_some() {
             steps = steps.union(opcodes([op::REVERT, op::INVALID]));
         }
@@ -2168,6 +2184,20 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         backend: &mut dyn CheatcodesBackend<FEN>,
         executor: &mut dyn CheatcodesExecutor<FEN>,
     ) {
+        // `expectRevert`: keep the gas a halting frame has left, which the EVM consumes when the
+        // frame ends. Only the halts that `hook_steps` steps count, so the result does not depend
+        // on which other cheatcodes step every instruction.
+        if self.expected_revert.is_some()
+            && interp.result().is_err_and(InstrStop::is_halt)
+            && interp
+                .original_bytecode()
+                .get(self.pc)
+                .is_some_and(|&opcode| matches!(opcode, op::INVALID | op::RETURNDATACOPY))
+        {
+            self.halted_frame_gas =
+                Some((usize::from(interp.message().depth), interp.gas().remaining()));
+        }
+
         // `deployCode`: keep the constructor's output, which it reports if depositing it fails.
         if let Some(depth) = self.deploy_code_depth
             && usize::from(interp.message().depth) == depth + 1
@@ -2390,6 +2420,12 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         backend: &mut dyn CheatcodesBackend<FEN>,
     ) {
         let curr_depth = usize::from(call.depth);
+        let halted_frame_gas = self
+            .halted_frame_gas
+            .take()
+            // As on revm-based Foundry, only a static call gives back the gas of an expected halt.
+            .filter(|&(depth, _)| depth == curr_depth && call.is_static())
+            .map(|(_, gas)| gas);
         self.replay_persistent_writes(interp, curr_depth, outcome.is_success());
         // Depth at which the caller resumes and applies the region snapshot correction.
         let isolated_snapshot_gas_used = self.gas_metering.take_isolated_snapshot_gas_used(
@@ -2529,6 +2565,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                             if clear_last_frame_gas {
                                 self.gas_metering.last_frame_gas = None;
                             }
+                            return_expected_halt_gas(outcome, halted_frame_gas);
                             set_return(outcome, retdata);
                         }
                     };
@@ -2839,6 +2876,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     ) {
         let curr_depth = usize::from(call.depth);
         let frame_ran = self.unrun_create_depth.take() != Some(curr_depth);
+        // An expected halting create keeps consuming its gas, as on revm; drop its record so a
+        // later call at this depth does not take it.
+        self.halted_frame_gas = None;
         self.replay_persistent_writes(interp, curr_depth, outcome.is_success());
         // Depth at which the caller resumes and applies the region snapshot correction.
         let isolated_snapshot_gas_used = self.gas_metering.take_isolated_snapshot_gas_used(
@@ -4082,6 +4122,18 @@ const fn frame_gas(stop: InstrStop, gas: &GasTracker) -> Vm::Gas {
 fn set_revert<E>(outcome: &mut MessageResultExt<E>, output: Bytes) {
     outcome.stop = InstrStop::Revert;
     outcome.output = output;
+}
+
+/// Gives an expected halt back the gas its frame had left when it halted, as a return does.
+const fn return_expected_halt_gas<E>(
+    outcome: &mut MessageResultExt<E>,
+    halted_frame_gas: Option<u64>,
+) {
+    if outcome.stop.is_halt()
+        && let Some(remaining) = halted_frame_gas
+    {
+        outcome.gas.set_remaining(remaining);
+    }
 }
 
 /// Turns `outcome` into a successful return with `output`.
