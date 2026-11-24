@@ -496,6 +496,12 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
             logs: decode_console_logs(&result.logs),
             returns: &self.execution_artifacts.returns,
             result: &result,
+            broadcastable_transactions: result
+                .transactions
+                .iter()
+                .flatten()
+                .map(|tx| &tx.transaction)
+                .collect(),
         };
         let json = serde_json::to_string(&json_result)?;
 
