@@ -9354,6 +9354,125 @@ contract SymbolicDowncastShare {
     }
 }
 
+// An ERC4626 vault rounds `previewMint` up, so converting those assets back to shares never
+// returns fewer shares than were minted. A quotient bounded by a threshold still orders against
+// other bounds and quotients by the same divisor. Rounding down instead, demanding strictly more
+// shares, a quotient equal to its lower bound, or a threshold whose product with the divisor
+// wraps all fail.
+#[forgetest_init]
+fn symbolic_proves_preview_mint_round_trip(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_preview_mint_round_trip");
+    prj.add_test(
+        "SymbolicPreviewMint.t.sol",
+        r#"
+contract SymbolicPreviewMint {
+    function previewMint(uint256 shares, uint256 totalAssets, uint256 totalSupply)
+        internal
+        pure
+        returns (uint256)
+    {
+        return (shares * totalAssets + totalSupply - 1) / totalSupply;
+    }
+
+    function convertToShares(uint256 assets, uint256 totalAssets, uint256 totalSupply)
+        internal
+        pure
+        returns (uint256)
+    {
+        return assets * totalSupply / totalAssets;
+    }
+
+    function checkPreviewMintRoundTrip(uint128 shares, uint128 totalAssets, uint128 totalSupply)
+        public
+        pure
+    {
+        if (totalSupply == 0 || totalAssets == 0) return;
+        uint256 assets = previewMint(shares, totalAssets, totalSupply);
+        assert(convertToShares(assets, totalAssets, totalSupply) >= shares);
+    }
+
+    function checkPreviewMintGainsShares(uint128 shares, uint128 totalAssets, uint128 totalSupply)
+        public
+        pure
+    {
+        if (totalSupply == 0 || totalAssets == 0) return;
+        uint256 assets = previewMint(shares, totalAssets, totalSupply);
+        assert(convertToShares(assets, totalAssets, totalSupply) > shares);
+    }
+
+    function checkFlooredMintRoundTrip(uint128 shares, uint128 totalAssets, uint128 totalSupply)
+        public
+        pure
+    {
+        if (totalSupply == 0 || totalAssets == 0) return;
+        uint256 assets = uint256(shares) * totalAssets / totalSupply;
+        assert(convertToShares(assets, totalAssets, totalSupply) >= shares);
+    }
+
+    function checkQuotientOrder(uint256 n, uint128 d, uint128 k, uint256 z) public pure {
+        if (d == 0) return;
+        uint256 q = n / d;
+        if (q >= k || k > z) return;
+        assert(q <= z);
+    }
+
+    function checkSharedDivisor(uint256 m, uint256 n, uint128 d, uint128 k) public pure {
+        if (d == 0 || m > n) return;
+        if (n / d >= k) return;
+        assert(m / d <= k);
+    }
+
+    function checkQuotientFloor(uint256 n, uint128 d, uint128 k) public pure {
+        if (d == 0 || n / d < k) return;
+        assert(n / d > k);
+    }
+
+    function checkWrappedThreshold(uint256 n, uint256 d, uint256 k) public pure {
+        require(d != 0 && k != 0 && d % 2 ** 128 == 0 && k % 2 ** 128 == 0);
+        assert(n / d >= k);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicPreviewMint"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        for signature in [
+            "checkPreviewMintRoundTrip(uint128,uint128,uint128)",
+            "checkQuotientOrder(uint256,uint128,uint128,uint256)",
+            "checkSharedDivisor(uint256,uint256,uint128,uint128)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "pass",
+                "{signature}, optimized={optimized}: {result}"
+            );
+        }
+        for signature in [
+            "checkPreviewMintGainsShares(uint128,uint128,uint128)",
+            "checkFlooredMintRoundTrip(uint128,uint128,uint128)",
+            "checkQuotientFloor(uint256,uint128,uint128)",
+            "checkWrappedThreshold(uint256,uint256,uint256)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "{signature}, optimized={optimized}: {result}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "{signature}, optimized={optimized}: {result}"
+            );
+        }
+    }
+}
+
 // A withdrawal pays out `balance * shares / supply`, at most the balance once `shares <= supply`,
 // so the payout fits the balance's type and a checked fee multiply on it cannot overflow. A wrapped
 // product only shrinks the payout, and an elapsed `t - s` with `t <= s + d` is at most `d`. Shares
