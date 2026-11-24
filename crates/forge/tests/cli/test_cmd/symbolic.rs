@@ -12312,7 +12312,9 @@ contract SymbolicFeeOnRemainder {
 // of a larger product, at least the floor plus one, strictly above the product, or above it in
 // low words alone must still reach counterexamples. An optimizer may lower `iszero(sub(x, y))` to
 // `eq(x, y)`, so the high word's zero check can reach the solver as `mm - lo == lt(mm, lo)` or
-// `mm == lo + lt(mm, lo)`; both must prove like the high word compared with zero.
+// `mm == lo + lt(mm, lo)`; both must prove like the high word compared with zero. An operand
+// written `(x << 128) >> 128`, `x & (2**128 - 1)` or, below `2**128`, `x` names one value, the
+// reversed pair `(x >> 128) << 128` does not, and `x << 8` still rebuilds from its bytes.
 #[forgetest_init]
 fn symbolic_proves_full_precision_mul_div(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_full_precision_mul_div");
@@ -12706,6 +12708,47 @@ contract FullPrecisionMulDivTest {
         assert(zero == (high(a, b) == 0));
     }
 
+    function proveNarrowedOperandSpellings(uint256 g, uint256 x, uint256 d) external pure {
+        unchecked {
+            assert(low128(x) * g / d == (x & type(uint128).max) * g / d);
+        }
+    }
+
+    function proveBoundedNarrowedOperand(uint256 g, uint256 x, uint256 d) external pure {
+        if (x > type(uint128).max) return;
+        unchecked {
+            assert(low128(x) * g / d == x * g / d);
+        }
+    }
+
+    function proveNarrowedOperandIsTheOperand(uint256 x) external pure {
+        assert(low128(x) == x);
+    }
+
+    function proveReversedShiftPairIsTheLowMask(uint256 x) external pure {
+        uint256 cleared;
+        assembly ("memory-safe") {
+            cleared := shl(128, shr(128, x))
+        }
+        assert(cleared == x & type(uint128).max);
+    }
+
+    function proveShiftedWordRebuildsFromItsBytes(uint256 x) external pure {
+        uint256 w;
+        uint256 y;
+        assembly ("memory-safe") {
+            w := shl(8, x)
+            for { let i := 0 } lt(i, 32) { i := add(i, 1) } { y := or(y, shl(mul(8, sub(31, i)), byte(i, w))) }
+        }
+        assert(y == w);
+    }
+
+    function low128(uint256 x) internal pure returns (uint256 y) {
+        assembly ("memory-safe") {
+            y := shr(128, shl(128, x))
+        }
+    }
+
     function assertFloor(uint256 z, uint256 x, uint256 y, uint256 d) internal pure {
         (uint256 zdHi, uint256 zdLo) = mul512(z, d);
         (uint256 xyHi, uint256 xyLo) = mul512(x, y);
@@ -12786,6 +12829,18 @@ contract FullPrecisionMulDivTest {
             assert_eq!(result["symbolic"]["status"], "pass", "{name}, optimized={optimized}");
         }
         for (name, args) in [
+            ("proveNarrowedOperandSpellings", "uint256,uint256,uint256"),
+            ("proveBoundedNarrowedOperand", "uint256,uint256,uint256"),
+            ("proveShiftedWordRebuildsFromItsBytes", "uint256"),
+        ] {
+            let result = json_test_result(&output, &format!("{name}({args})"));
+            assert_eq!(result["symbolic"]["status"], "pass", "{name}, optimized={optimized}");
+            assert_eq!(
+                result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+                "{name}, optimized={optimized}"
+            );
+        }
+        for (name, args) in [
             ("proveV4RoundingUpIsFloor", "uint256,uint256,uint256"),
             ("proveSoladyRoundingUpIsFloor", "uint256,uint256,uint256"),
             ("proveFiveStepIdentity", "uint256,uint256"),
@@ -12798,6 +12853,8 @@ contract FullPrecisionMulDivTest {
             ("proveLoweredZeroCheckWithWrongOperand", "uint256,uint256"),
             ("proveLoweredZeroCheckWithWrongModulus", "uint256,uint256"),
             ("proveLoweredZeroCheckWithSwappedBorrow", "uint256,uint256"),
+            ("proveNarrowedOperandIsTheOperand", "uint256"),
+            ("proveReversedShiftPairIsTheLowMask", "uint256"),
         ] {
             let result = json_test_result(&output, &format!("{name}({args})"));
             assert_eq!(

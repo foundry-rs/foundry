@@ -1193,10 +1193,13 @@ impl SymExpr {
 
         if let SymExprKind::BinOp(SymBinOp::Shl, inner, left_shift) = expr.kind()
             && left_shift.as_const() == Some(U256::from(shift))
-            && inner.unsigned_bits() <= 256 - shift
         {
-            // `(a << n) >> n => a`.
-            return inner.clone();
+            if inner.unsigned_bits() <= 256 - shift {
+                // `(a << n) >> n => a`.
+                return inner.clone();
+            }
+            // `(a << n) >> n => a & low_mask(256 - n)`.
+            return Self::and_const(cx, inner.clone(), mask_bits(U256::MAX, 256 - shift));
         }
 
         if let SymExprKind::BinOp(SymBinOp::Or, left, right) = expr.kind() {
@@ -1840,8 +1843,18 @@ impl SymExpr {
 
     pub(crate) fn extracted_byte(&self, cx: &mut SymCx, index: usize) -> Self {
         debug_assert!(index < 32);
-        let shift = Self::constant(cx, U256::from((31 - index) * 8));
-        let shifted = Self::binop(cx, SymBinOp::Shr, self.clone(), shift);
+        let bits = (31 - index) * 8;
+        let shift = Self::constant(cx, U256::from(bits));
+        let shifted = match self.kind() {
+            // `(a << n) >> n` stays a shift.
+            SymExprKind::BinOp(SymBinOp::Shl, inner, left_shift)
+                if left_shift.as_const() == Some(U256::from(bits))
+                    && inner.unsigned_bits() > 256 - bits =>
+            {
+                Self::from_kind(cx, SymExprKind::BinOp(SymBinOp::Shr, self.clone(), shift))
+            }
+            _ => Self::binop(cx, SymBinOp::Shr, self.clone(), shift),
+        };
         let mask = Self::constant(cx, U256::from(0xff));
         Self::binop(cx, SymBinOp::And, shifted, mask)
     }
