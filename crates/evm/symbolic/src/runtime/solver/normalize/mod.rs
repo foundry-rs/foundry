@@ -612,6 +612,9 @@ struct WordInterval {
 const MAX_LOCAL_ANALYSIS_NODES: usize = 256;
 const MAX_CONTEXTUAL_PASSES: usize = 4;
 
+/// The largest non-negative signed word, `2^255 - 1`.
+const SIGNED_MAX: U256 = I256::MAX.into_raw();
+
 impl WordInterval {
     fn new(min: U256, max: U256) -> Option<Self> {
         (min <= max).then_some(Self { min, max })
@@ -1030,17 +1033,16 @@ impl ConstraintContext {
             SymCmpOp::Sgt => (right, left),
             _ => return None,
         };
-        let signed_max = U256::MAX >> 1;
         if let Some((_, increment)) = sum.add_with_operand(base) {
             let base_range = self.interval(base)?;
             let increment_range = self.interval(increment)?;
             // Opposite-sign addition cannot overflow: adding a nonnegative value cannot make
             // a negative summand smaller, and adding a negative value makes a nonnegative one
             // smaller.
-            if base_range.min > signed_max && increment_range.max <= signed_max {
+            if base_range.min > SIGNED_MAX && increment_range.max <= SIGNED_MAX {
                 return Some(SymBoolExpr::constant(cx, false));
             }
-            if base_range.max <= signed_max && increment_range.min > signed_max {
+            if base_range.max <= SIGNED_MAX && increment_range.min > SIGNED_MAX {
                 return Some(SymBoolExpr::constant(cx, true));
             }
         } else if base.as_const() != Some(U256::ZERO) {
@@ -1052,8 +1054,8 @@ impl ConstraintContext {
             for (positive, negative) in [(left, right), (right, left)] {
                 if let SymExprKind::BinOp(SymBinOp::Sub, zero, amount) = negative.kind()
                     && zero.as_const() == Some(U256::ZERO)
-                    && self.interval(positive).is_some_and(|range| range.max <= signed_max)
-                    && self.interval(amount).is_some_and(|range| range.max <= signed_max)
+                    && self.interval(positive).is_some_and(|range| range.max <= SIGNED_MAX)
+                    && self.interval(amount).is_some_and(|range| range.max <= SIGNED_MAX)
                 {
                     // For a,b in [0, int256::MAX], signed(a + (-b)) < 0 iff a < b.
                     return Some(SymBoolExpr::cmp_word_expr(
@@ -1070,12 +1072,12 @@ impl ConstraintContext {
         let SymExprKind::BinOp(SymBinOp::Add, increment, base) = sum.kind() else {
             return None;
         };
-        if self.interval(base)?.max > signed_max || self.interval(increment)?.max > signed_max {
+        if self.interval(base)?.max > SIGNED_MAX || self.interval(increment)?.max > SIGNED_MAX {
             return None;
         }
         // With nonnegative summands their unsigned sum cannot wrap. It is signed-less than a
         // summand exactly when it crosses the signed maximum; equality (zero increment) is safe.
-        let limit = SymExpr::constant(cx, signed_max);
+        let limit = SymExpr::constant(cx, SIGNED_MAX);
         let remaining = SymExpr::binop(cx, SymBinOp::Sub, limit, base.clone());
         Some(SymBoolExpr::cmp(cx, SymCmpOp::Ult, remaining, increment.clone()))
     }
@@ -1264,7 +1266,14 @@ impl ConstraintContext {
                     let changed = self.propagate_less_or_equal_bounds(left, right);
                     self.propagate_less_or_equal_bounds(right, left) || changed
                 }
-                SymCmpOp::Slt | SymCmpOp::Sgt => false,
+                // `x <s C` bounds a non-negative `x` by `C - 1`.
+                SymCmpOp::Slt => right
+                    .as_const()
+                    .filter(|bound| !bound.is_zero() && *bound <= SIGNED_MAX)
+                    .is_some_and(|bound| {
+                        self.propagate_signed_upper_bound(left, bound - U256::ONE)
+                    }),
+                SymCmpOp::Sgt => false,
             },
             SymBoolExprKind::Not(value) => match value.kind() {
                 SymBoolExprKind::Cmp(op, left, right) => match op {
@@ -1274,12 +1283,25 @@ impl ConstraintContext {
                     SymCmpOp::Ugt | SymCmpOp::Uge => {
                         self.propagate_less_or_equal_bounds(left, right)
                     }
-                    SymCmpOp::Eq | SymCmpOp::Slt | SymCmpOp::Sgt => false,
+                    // `!(C <s x)` bounds a non-negative `x` by `C`.
+                    SymCmpOp::Slt => left
+                        .as_const()
+                        .is_some_and(|bound| self.propagate_signed_upper_bound(right, bound)),
+                    SymCmpOp::Eq | SymCmpOp::Sgt => false,
                 },
                 _ => false,
             },
             SymBoolExprKind::Const(_) | SymBoolExprKind::And(_) => false,
         }
+    }
+
+    /// Records the signed upper bound `expr <=s bound` as an unsigned one once `expr` is known to
+    /// be non-negative. A non-negative signed word equals its unsigned value, while a signed upper
+    /// bound alone admits negative words, which are huge unsigned values.
+    fn propagate_signed_upper_bound(&mut self, expr: &SymExpr, bound: U256) -> bool {
+        bound <= SIGNED_MAX
+            && self.upper_bounds.get(expr).is_some_and(|upper| *upper <= SIGNED_MAX)
+            && self.record_upper_bound(expr.clone(), bound)
     }
 
     /// Propagates interval bounds through the known unsigned relation `left <= right`.
@@ -1296,6 +1318,9 @@ impl ConstraintContext {
         &self,
         constraint: &'a SymBoolExpr,
     ) -> Option<(&'a SymExpr, U256)> {
+        if let Some((expr, _)) = signed_non_negative_lower_bound(constraint) {
+            return Some((expr, SIGNED_MAX));
+        }
         match constraint.kind() {
             SymBoolExprKind::Cmp(op, left, right) => match *op {
                 SymCmpOp::Eq => const_side_bound(left, right),
@@ -1352,6 +1377,9 @@ impl ConstraintContext {
         &self,
         constraint: &'a SymBoolExpr,
     ) -> Option<(&'a SymExpr, U256)> {
+        if let Some(bound) = signed_non_negative_lower_bound(constraint) {
+            return Some(bound);
+        }
         match constraint.kind() {
             SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => const_side_bound(left, right),
             SymBoolExprKind::Not(value) => match value.kind() {
@@ -1686,6 +1714,25 @@ impl MulDivFactor<'_> {
             Self::Expr(other) => other == expected,
             Self::Const(other) => expected.as_const() == Some(other),
         }
+    }
+}
+
+/// Returns `x` and its least value when `constraint` is `C <s x` or `!(x <s C)` for a non-negative
+/// signed constant `C`. Such an `x` is non-negative, so as an unsigned word it lies in
+/// `[bound, 2^255 - 1]`; normalization already turned `>s` into `<s`.
+fn signed_non_negative_lower_bound(constraint: &SymBoolExpr) -> Option<(&SymExpr, U256)> {
+    match constraint.kind() {
+        SymBoolExprKind::Cmp(SymCmpOp::Slt, left, right) => left
+            .as_const()
+            .filter(|bound| *bound < SIGNED_MAX)
+            .map(|bound| (right, bound + U256::ONE)),
+        SymBoolExprKind::Not(value) => match value.kind() {
+            SymBoolExprKind::Cmp(SymCmpOp::Slt, left, right) => {
+                right.as_const().filter(|bound| *bound <= SIGNED_MAX).map(|bound| (left, bound))
+            }
+            _ => None,
+        },
+        _ => None,
     }
 }
 

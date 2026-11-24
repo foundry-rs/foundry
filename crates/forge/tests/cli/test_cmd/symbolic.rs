@@ -9470,6 +9470,112 @@ contract SymbolicPayoutShare {
     }
 }
 
+// A Chainlink `int256 answer` checked positive and at most the feed scale, or a rate cast by
+// SafeCast's `toUint256`, is a non-negative word equal to its unsigned value, so scaling an amount
+// by it cannot overflow and stays below the amount. A signed cap alone, or a negative floor,
+// admits negative answers, which are huge unsigned values.
+#[forgetest_init]
+fn symbolic_proves_signed_price_scales(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_signed_price_scales");
+    prj.add_test(
+        "SymbolicSignedPrice.t.sol",
+        r#"
+contract SymbolicSignedPrice {
+    error SafeCastOverflowedIntToUint(int256 value);
+
+    function toUint256(int256 value) internal pure returns (uint256) {
+        if (value < 0) revert SafeCastOverflowedIntToUint(value);
+        return uint256(value);
+    }
+
+    function checkChainlinkQuote(uint128 amount, int256 answer) public pure {
+        require(answer > 0 && answer <= 1e8);
+        assert(amount * uint256(answer) / 1e8 <= amount);
+    }
+
+    function checkSafeCastScale(uint128 amount, int256 rate) public pure {
+        require(rate <= 1e18);
+        assert(amount * toUint256(rate) / 1e18 <= amount);
+    }
+
+    function checkSafeCastStrictCap(uint128 amount, int256 rate) public pure {
+        require(rate < 1e18 + 1);
+        assert(amount * toUint256(rate) / 1e18 <= amount);
+    }
+
+    function checkQuoteAboveMinAnswer(uint128 amount, int256 answer) public pure {
+        require(amount > 0 && answer > 1e6 && answer <= 1e8);
+        assert(amount * uint256(answer) > 1e6);
+    }
+
+    function checkMissingPositivity(uint128 amount, int256 answer) public pure {
+        require(answer <= 1e8);
+        assert(amount * uint256(answer) / 1e8 <= amount);
+    }
+
+    function checkNegativeFloor(uint128 amount, int256 answer) public pure {
+        require(answer >= -1 && answer <= 1e8);
+        assert(amount * uint256(answer) / 1e8 <= amount);
+    }
+
+    function checkCapAboveScale(uint128 amount, int256 answer) public pure {
+        require(answer > 0 && answer <= 1e8 + 1);
+        assert(amount * uint256(answer) / 1e8 <= amount);
+    }
+
+    function checkSmallestAnswer(int256 answer) public pure {
+        require(answer > 0 && answer <= 1e8);
+        assert(uint256(answer) >= 2);
+    }
+
+    function checkNegativeFloorCap(int256 answer, uint256 cap) public pure {
+        require(answer >= -1e8 && uint256(answer) <= cap);
+        assert(cap > type(uint128).max);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicSignedPrice"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        for signature in [
+            "checkChainlinkQuote(uint128,int256)",
+            "checkSafeCastScale(uint128,int256)",
+            "checkSafeCastStrictCap(uint128,int256)",
+            "checkQuoteAboveMinAnswer(uint128,int256)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "pass",
+                "{signature}, optimized={optimized}: {result}"
+            );
+        }
+        for signature in [
+            "checkMissingPositivity(uint128,int256)",
+            "checkNegativeFloor(uint128,int256)",
+            "checkCapAboveScale(uint128,int256)",
+            "checkSmallestAnswer(int256)",
+            "checkNegativeFloorCap(int256,uint256)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "{signature}, optimized={optimized}: {result}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "{signature}, optimized={optimized}: {result}"
+            );
+        }
+    }
+}
+
 // Fee splits and payment splitters floor each share `w * a / k`, and two shares with
 // `a + b <= k`, or `b = k - a`, sum to at most `w`, so their checked sum cannot overflow either.
 // A wrapped `a + b <= k` does not bound the shares, unless a `b <= MAX - a` guard rules out the
