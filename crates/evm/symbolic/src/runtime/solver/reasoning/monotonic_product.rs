@@ -397,6 +397,14 @@ fn expr_less_or_equal<'a>(
         {
             true
         }
+        // `(x * a + c) / d <= x` for `0 < d`, `a <= d`, and `c < d`, as for a debt scaled by a
+        // close factor and rounded half up: `x * a + c < (x + 1) * d`, and a wrapped product or sum
+        // only shrinks the dividend.
+        (SymExprKind::BinOp(SymBinOp::UDiv, dividend, divisor), _)
+            if scaled_quotient_at_most(dividend, divisor, right, facts, bounds) =>
+        {
+            true
+        }
         // `left <= C` when the interval of `left` is at most `C`.
         (_, SymExprKind::Const(bound))
             if bounds.word_range(left).is_some_and(|(_, max)| max <= *bound) =>
@@ -760,4 +768,40 @@ fn successor_product_exceeds(
                 && bounds.mul_cannot_overflow_256(successor, c)
                 && product_less_or_equal_known(x, y, u, c, facts, bounds)
         })
+}
+
+/// Returns whether `(x * a + c) / d <= x`, with an optional addend `c`, for a nonzero `d`,
+/// `a <= d`, and `c < d`. `division_order` in `normalize/rounding.rs` decides a direct comparison
+/// with this bound once `x * a` cannot wrap.
+fn scaled_quotient_at_most<'a>(
+    dividend: &'a SymExpr,
+    divisor: &SymExpr,
+    x: &SymExpr,
+    facts: &OrderFacts<'_>,
+    bounds: &ConstraintContext,
+) -> bool {
+    let scale = |product: &'a SymExpr| {
+        let (a, b) = mul_operands(product)?;
+        (a == x).then_some(b).or((b == x).then_some(a))
+    };
+    let (scale, addend) = match dividend.kind() {
+        SymExprKind::BinOp(SymBinOp::Add, a, b) => match (scale(a), scale(b)) {
+            (Some(scale), _) => (scale, Some(b)),
+            (_, Some(scale)) => (scale, Some(a)),
+            _ => return false,
+        },
+        _ => {
+            let Some(scale) = scale(dividend) else { return false };
+            (scale, None)
+        }
+    };
+    // A bare `UDiv` by zero is all ones in SMT; only the EVM's guarded `DIV` yields zero.
+    let divisor_min = match bounds.word_range(divisor) {
+        Some((min, _)) if !min.is_zero() => min,
+        _ if facts.positive.contains(divisor) => U256::ONE,
+        _ => return false,
+    };
+    addend.is_none_or(|addend| bounds.word_range(addend).is_some_and(|(_, max)| max < divisor_min))
+        && (expr_less_or_equal(scale, divisor, facts, bounds)
+            || bounds.word_range(scale).is_some_and(|(_, max)| max <= divisor_min))
 }
