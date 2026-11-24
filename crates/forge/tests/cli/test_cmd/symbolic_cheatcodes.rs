@@ -27,7 +27,8 @@ import "forge-std/Test.sol";
 
 contract SymbolicAddressCheatcodes is Test {
     function checkSymbolicDealStoreLoadAndNonce(address who, bytes32 value) public {
-        vm.assume(who != address(0));
+        // Not address(0) or a precompile, where `vm.etch` and `vm.store` revert.
+        vm.assume(uint160(who) > 0x100);
         vm.assume(who != address(this));
         vm.assume(who != address(vm));
         // `who` may be a known account, such as the sender or a system contract.
@@ -48,7 +49,8 @@ contract SymbolicAddressCheatcodes is Test {
     }
 
     function checkSymbolicEtch(address who) public {
-        vm.assume(who != address(0));
+        // Not address(0) or a precompile, where `vm.etch` and `vm.store` revert.
+        vm.assume(uint160(who) > 0x100);
         vm.assume(who != address(this));
         vm.assume(who != address(vm));
 
@@ -57,7 +59,8 @@ contract SymbolicAddressCheatcodes is Test {
     }
 
     function checkSymbolicResetDelegatedNonce(address who, address delegate) public {
-        vm.assume(who != address(0));
+        // Not address(0) or a precompile, where `vm.etch` and `vm.store` revert.
+        vm.assume(uint160(who) > 0x100);
         vm.assume(who != address(this));
         vm.assume(who != address(vm));
 
@@ -75,7 +78,8 @@ contract SymbolicAddressCheatcodes is Test {
     function checkSymbolicResetNonceCodePrefix(address who, address delegate, bytes3 prefix)
         public
     {
-        vm.assume(who != address(0));
+        // Not address(0) or a precompile, where `vm.etch` and `vm.store` revert.
+        vm.assume(uint160(who) > 0x100);
         vm.assume(who != address(this));
         vm.assume(who != address(vm));
 
@@ -89,7 +93,8 @@ contract SymbolicAddressCheatcodes is Test {
     function checkSymbolicResetNonceDelegationPrefix(address who, address delegate, bytes3 prefix)
         public
     {
-        vm.assume(who != address(0));
+        // Not address(0) or a precompile, where `vm.etch` and `vm.store` revert.
+        vm.assume(uint160(who) > 0x100);
         vm.assume(who != address(this));
         vm.assume(who != address(vm));
 
@@ -3108,6 +3113,8 @@ contract SymbolicFreeAddressWrites is Test {
     }
 
     function checkWritesStayOnOnePath(address a, address b, uint256 x) public {
+        // `vm.store` reverts on a precompile.
+        vm.assume(uint160(b) > 0x100);
         vm.deal(a, x);
         vm.store(b, bytes32(uint256(1000)), bytes32(x));
         // A slot hashed from a guarded address needs no decision.
@@ -3116,8 +3123,10 @@ contract SymbolicFreeAddressWrites is Test {
         assert(uint256(vm.load(b, bytes32(uint256(1000)))) == x);
     }
 
-    // Each test below fails concretely for `a == address(vault)`.
+    // Each test below fails concretely for `a == address(vault)`. The ones that store through
+    // `a` rule out the precompiles, where `vm.store` reverts.
     function checkStoreMayTargetSetUpContract(address a) public {
+        vm.assume(uint160(a) > 0x100);
         vm.store(a, 0, bytes32(uint256(7)));
         assert(vault.total() != 7);
     }
@@ -3129,6 +3138,7 @@ contract SymbolicFreeAddressWrites is Test {
     }
 
     function checkLaterStoreShowsThrough(address a) public {
+        vm.assume(uint160(a) > 0x100);
         vm.store(a, 0, bytes32(uint256(1)));
         vault.set(2);
         assert(uint256(vm.load(a, 0)) == 1);
@@ -3140,6 +3150,7 @@ contract SymbolicFreeAddressWrites is Test {
     }
 
     function checkStoreKeepsNonce(address a) public {
+        vm.assume(uint160(a) > 0x100);
         vm.store(a, bytes32(uint256(9)), bytes32(uint256(1)));
         assert(vm.getNonce(a) == 0);
     }
@@ -3340,7 +3351,8 @@ contract SymbolicPrankedAddress is Test {
     }
 
     // The address may name the contract deployed after `vm.makePersistent`, which the earlier
-    // fork did not cover, so the prank reports incomplete instead of dropping its persistence.
+    // fork did not cover. The prank is never applied, so it decides nothing, and the persistence
+    // written through the address shows on that contract.
     function checkPersistentBeforeDeployment(address who) public {
         vm.makePersistent(who);
         WETH later = new WETH();
@@ -3379,6 +3391,8 @@ contract SymbolicPrankedAddress is Test {
 
     // A call to the fixed address runs the code `vm.etch` wrote through it, not the empty account.
     function checkPrankedCallRunsEtchedCode(address who) public {
+        // `vm.etch` reverts on a precompile.
+        vm.assume(who > address(0x100));
         vm.etch(who, hex"602a60005260206000f3"); // Returns 42.
         vm.deal(who, 5);
         if (who != address(0xB0B)) return;
@@ -3408,6 +3422,8 @@ contract SymbolicPrankedAddress is Test {
     }
 
     function checkEtchedCodeThroughOtherWord(address writer, uint256 raw) public {
+        // `vm.etch` reverts on a precompile.
+        vm.assume(uint160(writer) > 0x100);
         vm.etch(writer, hex"00");
         if (raw != 0xB0B) return;
         assert(address(uint160(raw)).code.length == 0);
@@ -3488,7 +3504,7 @@ Ran 16 tests for test/SymbolicPrankedAddress.t.sol:SymbolicPrankedAddress
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealtBalanceThroughOtherWord(address,uint256) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic address fixed to an account whose state another symbolic address may hold] checkDealtBalanceThroughOtherWordAfterIsPersistent(address,uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkEtchedCodeThroughOtherWord(address,uint256) ([METRICS])
-[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic address whose representative account holds state from before the run knew an account it may name] checkPersistentBeforeDeployment(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPersistentBeforeDeployment(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPersistentOncePranked(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedCallRunsEtchedCode(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedOriginCode(address) ([METRICS])
@@ -3517,6 +3533,104 @@ Ran 4 tests for test/SymbolicPrankedAddress.t.sol:SymbolicPrankedMany
 [PASS] checkRejectedPrankDoesNotFork(address) ([METRICS])
 [PASS] checkShortPrankInputDoesNotFork(address) ([METRICS])
 Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+// A free address may name a precompile nothing touched yet, or an account the run learns after
+// `vm.prank` takes the address but before the pranked call.
+#[forgetest_init]
+fn symbolic_free_address_may_name_precompile_or_later_account(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_free_address_may_name_precompile_or_later_account");
+
+    prj.add_test(
+        "SymbolicLaterCandidates.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Callee {
+    uint256 calls;
+
+    function callSender() external view returns (bytes memory out) {
+        (, out) = msg.sender.staticcall(hex"0102");
+    }
+
+    function callSenderAndCount() external returns (bytes memory out) {
+        calls++;
+        (, out) = msg.sender.call(hex"0102");
+    }
+
+    function senderCodeSize() external view returns (uint256) {
+        return msg.sender.code.length;
+    }
+}
+
+contract SymbolicLaterCandidates is Test {
+    Callee callee;
+
+    function setUp() public {
+        callee = new Callee();
+    }
+
+    // Fails for `who == address(4)`, where the identity precompile echoes the input.
+    function checkPrankedPrecompileSender(address who) public {
+        vm.prank(who);
+        assert(keccak256(callee.callSender()) != keccak256(hex"0102"));
+    }
+
+    // The isolated pranked call bumps the sender's nonce before the callee calls the sender.
+    function checkPrankedPrecompileSenderCall(address who) public {
+        vm.prank(who);
+        assert(keccak256(callee.callSenderAndCount()) != keccak256(hex"0102"));
+    }
+
+    // A dealt address may still be the identity precompile. Its balance belongs to the
+    // precompile on that branch, which the run does not model, so this reports incomplete.
+    function checkDealtAddressCallsPrecompile(address who) public {
+        vm.deal(who, 1);
+        (, bytes memory out) = who.staticcall(hex"0102");
+        assert(keccak256(out) != keccak256(hex"0102"));
+    }
+
+    // Fails for `who == raw == 4`: the balance dealt through `who` stays visible through `raw`
+    // after a pranked call takes `who`.
+    function checkDealtPrankedBalanceThroughOtherWord(address who, uint256 raw) public {
+        vm.deal(who, 5);
+        vm.prank(who);
+        callee.senderCodeSize();
+        if (raw != 4) return;
+        assert(address(uint160(raw)).balance != 5);
+    }
+
+    // Fails for `who == address(0xB0B)`, which has code once the pranked call runs.
+    function checkPrankedSenderEtchedAfterPrank(address who) public {
+        vm.prank(who);
+        vm.etch(address(0xB0B), hex"00000000000000");
+        assert(callee.senderCodeSize() != 7);
+    }
+
+    function checkEtchFreeAddress(address who) public {
+        vm.etch(who, hex"00");
+    }
+
+    function checkStoreFreeAddress(address who) public {
+        vm.store(who, 0, bytes32(uint256(1)));
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args(["test", "--symbolic"])).failure().stdout_eq(str![[r#"
+...
+Ran 7 tests for test/SymbolicLaterCandidates.t.sol:SymbolicLaterCandidates
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic address whose representative account holds state from before the run knew an account it may name] checkDealtAddressCallsPrecompile(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealtPrankedBalanceThroughOtherWord(address,uint256) ([METRICS])
+[FAIL: vm.etch: cannot use precompile [..] as an argument; counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkEtchFreeAddress(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedPrecompileSender(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedPrecompileSenderCall(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedSenderEtchedAfterPrank(address) ([METRICS])
+[FAIL: vm.store: cannot use precompile [..] as an argument; counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkStoreFreeAddress(address) ([METRICS])
+Suite result: FAILED. 0 passed; 7 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
