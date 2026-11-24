@@ -11937,3 +11937,56 @@ Error: argument `plan` (string,(address,uint256),(address,uint256)[]): field "ma
 
 "#]]);
 }
+
+// A relink for a new library deployer reruns the script with the arguments read before the
+// first run, even if the script rewrites its `--args-json` file.
+#[forgetest]
+fn args_json_survives_deployer_relink(prj: _, cmd: _) {
+    prj.add_source(
+        "Foo",
+        r#"
+interface Vm {
+    function writeFile(string calldata path, string calldata data) external;
+    function startBroadcast(address signer) external;
+}
+
+library Lib {
+    function id(uint256 value) external pure returns (uint256) { return value; }
+}
+
+contract Dummy {}
+
+contract Relink {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run(uint256 value) external returns (uint256) {
+        vm.writeFile("args.json", "[2]");
+        vm.startBroadcast(address(0xBEEF));
+        new Dummy();
+        return Lib.id(value);
+    }
+}
+"#,
+    );
+    prj.update_config(|config| {
+        config.fs_permissions = foundry_config::FsPermissions::new(vec![
+            foundry_config::fs_permissions::PathPermission::read_write("./"),
+        ]);
+    });
+    fs::write(prj.root().join("args.json"), "[1]").unwrap();
+    cmd.args(["script", "Relink", "--args-json", "args.json"]).assert_success().stdout_eq(str![[
+        r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+[GAS]
+
+== Return ==
+0: uint256 1
+
+If you wish to simulate on-chain transactions pass a RPC URL.
+
+"#
+    ]]);
+}

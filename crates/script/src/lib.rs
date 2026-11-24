@@ -71,7 +71,7 @@ use foundry_evm::{
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
 use foundry_wallets::{MultiWalletOpts, utils::maybe_get_keystore_path, wallet_multi::MultiWallet};
 use serde::Serialize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tempo_alloy::TempoNetwork;
 
 #[cfg(feature = "base")]
@@ -134,8 +134,14 @@ pub struct ScriptArgs {
     /// JSON file with the script function arguments as an array, encoded against `--sig`.
     ///
     /// Structs are JSON objects keyed by field name.
-    #[arg(long, value_name = "FILE", value_hint = ValueHint::FilePath, conflicts_with = "args")]
-    pub args_json: Option<PathBuf>,
+    #[arg(
+        long,
+        value_name = "FILE",
+        value_hint = ValueHint::FilePath,
+        value_parser = read_args_json,
+        conflicts_with = "args"
+    )]
+    pub args_json: Option<serde_json::Value>,
 
     /// The name of the contract you want to run.
     #[arg(long, visible_alias = "tc", value_name = "CONTRACT_NAME")]
@@ -911,8 +917,8 @@ impl ScriptArgs {
                 }
             }
         };
-        let data = if let Some(path) = &self.args_json {
-            let serde_json::Value::Array(values) = foundry_common::fs::read_json_file(path)? else {
+        let data = if let Some(json) = &self.args_json {
+            let serde_json::Value::Array(values) = json else {
                 eyre::bail!("--args-json must contain a JSON array of arguments");
             };
             eyre::ensure!(
@@ -925,7 +931,7 @@ impl ScriptArgs {
             let values = func
                 .inputs
                 .iter()
-                .zip(&values)
+                .zip(values)
                 .map(|(param, value)| {
                     let ty = param.resolve()?;
                     parse_json_as(value, &ty)
@@ -1489,6 +1495,11 @@ const fn script_trace_requirements(config: &Config, debug: bool) -> TraceRequire
         } else {
             InternalTraceMode::None
         })
+}
+
+/// Reads the `--args-json` file once at parse time, so script reruns reuse the same arguments.
+fn read_args_json(path: &str) -> Result<serde_json::Value, String> {
+    foundry_common::fs::read_json_file(Path::new(path)).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
