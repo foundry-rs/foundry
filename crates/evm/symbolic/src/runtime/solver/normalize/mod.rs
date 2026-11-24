@@ -1626,7 +1626,8 @@ impl ConstraintContext {
                 }
                 let mut max = numerator.max / denominator.min;
                 // A pro-rata share `x * y / d` with `y <= d` is at most `x`, and a wrapped product
-                // only shrinks the dividend.
+                // only shrinks the dividend. This needs the positive `d` checked above: a bare
+                // `UDiv` is emitted as `bvudiv`, all ones on zero, so `y = d = 0` would break it.
                 if let SymExprKind::BinOp(SymBinOp::Mul, left, right) = numerator_expr.kind()
                     && let Some(scaled) =
                         [(left, right), (right, left)].into_iter().find_map(|(scaled, factor)| {
