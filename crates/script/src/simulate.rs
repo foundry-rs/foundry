@@ -153,7 +153,9 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
         let decoders = self.build_rpc_decoders().await?;
         let transactions =
             self.transaction_metadata(|rpc| decoders.get(rpc).expect("invalid rpc url"))?;
-        sh_println!("\nSKIPPING ON CHAIN SIMULATION.")?;
+        if !shell::is_json() {
+            sh_println!("\nSKIPPING ON CHAIN SIMULATION.")?;
+        }
         Ok(self.into_filled(transactions))
     }
 
