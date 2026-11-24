@@ -8930,6 +8930,213 @@ contract SymbolicMinRatioNested {
     }
 }
 
+// An EMA or weighted average `(p * u + q * v) / k` with `u + v <= k` stays at most a bound on
+// `p` and `q`.
+#[forgetest_init]
+fn symbolic_proves_weighted_average_bound(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_weighted_average_bound");
+    prj.add_test(
+        "SymbolicWeightedAverage.t.sol",
+        r#"
+contract SymbolicWeightedAverage {
+    uint256 internal constant WAD = 1e18;
+
+    function checkEmaBelowCap(uint128 price, uint128 ema, uint64 alpha, uint128 cap)
+        public
+        pure
+    {
+        require(alpha <= WAD && price <= cap && ema <= cap);
+        uint256 next = (uint256(price) * alpha + uint256(ema) * (WAD - alpha)) / WAD;
+        assert(next <= cap);
+    }
+
+    function checkWeightedAverageBelowMax(uint128 a, uint128 b, uint64 w) public pure {
+        require(w <= WAD && a <= b);
+        assert((uint256(a) * w + uint256(b) * (WAD - w)) / WAD <= b);
+    }
+
+    // Parameter order changes symbol ids and so which summand the canonical sum puts first.
+    function checkEmaBelowCapReordered(uint128 cap, uint64 alpha, uint128 price, uint128 ema)
+        public
+        pure
+    {
+        require(alpha <= WAD && price <= cap && ema <= cap);
+        uint256 next = (uint256(price) * alpha + uint256(ema) * (WAD - alpha)) / WAD;
+        assert(next <= cap);
+    }
+
+    function checkWeightedAverageBelowMaxReordered(uint64 w, uint128 b, uint128 a) public pure {
+        require(w <= WAD && a <= b);
+        assert((uint256(a) * w + uint256(b) * (WAD - w)) / WAD <= b);
+    }
+
+    function checkEmaAssertedWeights(uint128 price, uint128 ema, uint64 u, uint64 v, uint128 cap)
+        public
+        pure
+    {
+        require(uint256(u) + v <= WAD && price <= cap && ema <= cap);
+        assert((uint256(price) * u + uint256(ema) * v) / WAD <= cap);
+    }
+
+    function checkWeightedMean(uint128 a, uint128 b, uint64 u, uint64 v, uint128 cap) public pure {
+        require(a <= cap && b <= cap && uint256(u) + v != 0);
+        assert((uint256(a) * u + uint256(b) * v) / (uint256(u) + v) <= cap);
+    }
+
+    // Cross-multiplied by hand; unchecked, so only the bound reaches the solver.
+    function checkWeightedScaled(uint128 p, uint128 q, uint64 u, uint128 cap) public pure {
+        require(u <= WAD && p <= cap && q <= cap);
+        unchecked {
+            assert(uint256(p) * u + uint256(q) * (WAD - u) < (uint256(cap) + 1) * WAD);
+        }
+    }
+
+    // A narrowing cast masks the complement, which only lowers it.
+    function checkMaskedComplement(uint128 p, uint128 q, uint256 u, uint256 k, uint128 cap)
+        public
+        pure
+    {
+        require(u <= k && k != 0 && p <= cap && q <= cap);
+        unchecked {
+            assert((uint256(p) * u + uint256(q) * uint128(k - u)) / k <= cap);
+        }
+    }
+
+    // `cap + 1` may wrap, so the quotient comparison is not cross-multiplied, and `cap * WAD` may
+    // wrap too. Unchecked, so only the bound reaches the solver.
+    function checkEmaWideCap(uint256 price, uint256 ema, uint64 alpha, uint256 cap) public pure {
+        require(alpha <= WAD && price <= cap && ema <= cap);
+        uint256 next;
+        unchecked {
+            next = (price * alpha + ema * (WAD - alpha)) / WAD;
+        }
+        assert(next <= cap);
+    }
+
+    function checkEmaWeightsOverBudget(
+        uint128 price,
+        uint128 ema,
+        uint64 u,
+        uint64 v,
+        uint128 cap
+    ) public pure {
+        require(uint256(u) + v <= WAD + 1 && price <= cap && ema <= cap);
+        uint256 next = (uint256(price) * u + uint256(ema) * v) / WAD;
+        assert(next <= cap);
+    }
+
+    function checkEmaPriceAboveCap(uint128 price, uint128 ema, uint64 alpha, uint128 cap)
+        public
+        pure
+    {
+        require(alpha <= WAD && price <= uint256(cap) + 1 && ema <= cap);
+        uint256 next = (uint256(price) * alpha + uint256(ema) * (WAD - alpha)) / WAD;
+        assert(next <= cap);
+    }
+
+    function checkEmaAverageAboveCap(uint128 price, uint128 ema, uint64 alpha, uint128 cap)
+        public
+        pure
+    {
+        require(alpha <= WAD && price <= cap && ema <= uint256(cap) + 1);
+        uint256 next = (uint256(price) * alpha + uint256(ema) * (WAD - alpha)) / WAD;
+        assert(next <= cap);
+    }
+
+    // `cap + 1` or `(cap + 1) * WAD` may wrap below the sum.
+    function checkWeightedScaledWraps(uint128 p, uint128 q, uint64 u, uint256 cap) public pure {
+        require(u <= WAD && p <= cap && q <= cap);
+        unchecked {
+            assert(uint256(p) * u + uint256(q) * (WAD - u) < (cap + 1) * WAD);
+        }
+    }
+
+    // With `k == 0` both sides are zero.
+    function checkWeightedZeroWhole(uint128 p, uint128 q, uint64 u, uint64 k, uint128 cap)
+        public
+        pure
+    {
+        require(u <= k && p <= cap && q <= cap);
+        assert(uint256(p) * u + uint256(q) * (k - u) < (uint256(cap) + 1) * k);
+    }
+
+    function checkEmaOtherComplement(
+        uint128 price,
+        uint128 ema,
+        uint64 alpha,
+        uint64 beta,
+        uint128 cap
+    ) public pure {
+        require(alpha <= WAD && beta <= WAD && price <= cap && ema <= cap);
+        uint256 next = (uint256(price) * alpha + uint256(ema) * (WAD - beta)) / WAD;
+        assert(next <= cap);
+    }
+
+    function checkEmaWrappingComplement(uint128 price, uint128 ema, uint64 alpha, uint128 cap)
+        public
+        pure
+    {
+        require(price <= cap && ema <= cap);
+        uint256 next;
+        unchecked {
+            next = (uint256(price) * alpha + uint256(ema) * (WAD - alpha)) / WAD;
+        }
+        assert(next <= cap);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicWeightedAverage"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+
+        for signature in [
+            "checkEmaBelowCap(uint128,uint128,uint64,uint128)",
+            "checkWeightedAverageBelowMax(uint128,uint128,uint64)",
+            "checkEmaBelowCapReordered(uint128,uint64,uint128,uint128)",
+            "checkWeightedAverageBelowMaxReordered(uint64,uint128,uint128)",
+            "checkEmaAssertedWeights(uint128,uint128,uint64,uint64,uint128)",
+            "checkWeightedMean(uint128,uint128,uint64,uint64,uint128)",
+            "checkEmaWideCap(uint256,uint256,uint64,uint256)",
+            "checkWeightedScaled(uint128,uint128,uint64,uint128)",
+            "checkMaskedComplement(uint128,uint128,uint256,uint256,uint128)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+            assert_eq!(
+                result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+                "optimized={optimized}: {signature}"
+            );
+        }
+
+        for signature in [
+            "checkEmaWeightsOverBudget(uint128,uint128,uint64,uint64,uint128)",
+            "checkEmaPriceAboveCap(uint128,uint128,uint64,uint128)",
+            "checkEmaAverageAboveCap(uint128,uint128,uint64,uint128)",
+            "checkWeightedScaledWraps(uint128,uint128,uint64,uint256)",
+            "checkWeightedZeroWhole(uint128,uint128,uint64,uint64,uint128)",
+            "checkEmaOtherComplement(uint128,uint128,uint64,uint64,uint128)",
+            "checkEmaWrappingComplement(uint128,uint128,uint64,uint128)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "optimized={optimized}: {result}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "optimized={optimized}: {signature}"
+            );
+        }
+    }
+}
+
 // OpenZeppelin's `VestingWallet` (MIT) vests `total * (t - start) / duration` once
 // `start <= t < start + duration`, so the elapsed time stays at most the duration.
 #[forgetest_init]
@@ -9225,6 +9432,125 @@ contract SymbolicConstantMultiplyGuard {
     }
 }
 
+// An ERC4626 vault rounds `previewMint` up, so converting those assets back to shares never
+// returns fewer shares than were minted. A quotient bounded by a threshold still orders against
+// other bounds and quotients by the same divisor. Rounding down instead, demanding strictly more
+// shares, a quotient equal to its lower bound, or a threshold whose product with the divisor
+// wraps all fail.
+#[forgetest_init]
+fn symbolic_proves_preview_mint_round_trip(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_preview_mint_round_trip");
+    prj.add_test(
+        "SymbolicPreviewMint.t.sol",
+        r#"
+contract SymbolicPreviewMint {
+    function previewMint(uint256 shares, uint256 totalAssets, uint256 totalSupply)
+        internal
+        pure
+        returns (uint256)
+    {
+        return (shares * totalAssets + totalSupply - 1) / totalSupply;
+    }
+
+    function convertToShares(uint256 assets, uint256 totalAssets, uint256 totalSupply)
+        internal
+        pure
+        returns (uint256)
+    {
+        return assets * totalSupply / totalAssets;
+    }
+
+    function checkPreviewMintRoundTrip(uint128 shares, uint128 totalAssets, uint128 totalSupply)
+        public
+        pure
+    {
+        if (totalSupply == 0 || totalAssets == 0) return;
+        uint256 assets = previewMint(shares, totalAssets, totalSupply);
+        assert(convertToShares(assets, totalAssets, totalSupply) >= shares);
+    }
+
+    function checkPreviewMintGainsShares(uint128 shares, uint128 totalAssets, uint128 totalSupply)
+        public
+        pure
+    {
+        if (totalSupply == 0 || totalAssets == 0) return;
+        uint256 assets = previewMint(shares, totalAssets, totalSupply);
+        assert(convertToShares(assets, totalAssets, totalSupply) > shares);
+    }
+
+    function checkFlooredMintRoundTrip(uint128 shares, uint128 totalAssets, uint128 totalSupply)
+        public
+        pure
+    {
+        if (totalSupply == 0 || totalAssets == 0) return;
+        uint256 assets = uint256(shares) * totalAssets / totalSupply;
+        assert(convertToShares(assets, totalAssets, totalSupply) >= shares);
+    }
+
+    function checkQuotientOrder(uint256 n, uint128 d, uint128 k, uint256 z) public pure {
+        if (d == 0) return;
+        uint256 q = n / d;
+        if (q >= k || k > z) return;
+        assert(q <= z);
+    }
+
+    function checkSharedDivisor(uint256 m, uint256 n, uint128 d, uint128 k) public pure {
+        if (d == 0 || m > n) return;
+        if (n / d >= k) return;
+        assert(m / d <= k);
+    }
+
+    function checkQuotientFloor(uint256 n, uint128 d, uint128 k) public pure {
+        if (d == 0 || n / d < k) return;
+        assert(n / d > k);
+    }
+
+    function checkWrappedThreshold(uint256 n, uint256 d, uint256 k) public pure {
+        require(d != 0 && k != 0 && d % 2 ** 128 == 0 && k % 2 ** 128 == 0);
+        assert(n / d >= k);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicPreviewMint"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        for signature in [
+            "checkPreviewMintRoundTrip(uint128,uint128,uint128)",
+            "checkQuotientOrder(uint256,uint128,uint128,uint256)",
+            "checkSharedDivisor(uint256,uint256,uint128,uint128)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "pass",
+                "{signature}, optimized={optimized}: {result}"
+            );
+        }
+        for signature in [
+            "checkPreviewMintGainsShares(uint128,uint128,uint128)",
+            "checkFlooredMintRoundTrip(uint128,uint128,uint128)",
+            "checkQuotientFloor(uint256,uint128,uint128)",
+            "checkWrappedThreshold(uint256,uint256,uint256)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "{signature}, optimized={optimized}: {result}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "{signature}, optimized={optimized}: {result}"
+            );
+        }
+    }
+}
+
 // A withdrawal pays out `balance * shares / supply`, at most the balance once `shares <= supply`,
 // so the payout fits the balance's type and a checked fee multiply on it cannot overflow. A wrapped
 // product only shrinks the payout, and an elapsed `t - s` with `t <= s + d` is at most `d`. Shares
@@ -9341,9 +9667,116 @@ contract SymbolicPayoutShare {
     }
 }
 
+// A Chainlink `int256 answer` checked positive and at most the feed scale, or a rate cast by
+// SafeCast's `toUint256`, is a non-negative word equal to its unsigned value, so scaling an amount
+// by it cannot overflow and stays below the amount. A signed cap alone, or a negative floor,
+// admits negative answers, which are huge unsigned values.
+#[forgetest_init]
+fn symbolic_proves_signed_price_scales(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_signed_price_scales");
+    prj.add_test(
+        "SymbolicSignedPrice.t.sol",
+        r#"
+contract SymbolicSignedPrice {
+    error SafeCastOverflowedIntToUint(int256 value);
+
+    function toUint256(int256 value) internal pure returns (uint256) {
+        if (value < 0) revert SafeCastOverflowedIntToUint(value);
+        return uint256(value);
+    }
+
+    function checkChainlinkQuote(uint128 amount, int256 answer) public pure {
+        require(answer > 0 && answer <= 1e8);
+        assert(amount * uint256(answer) / 1e8 <= amount);
+    }
+
+    function checkSafeCastScale(uint128 amount, int256 rate) public pure {
+        require(rate <= 1e18);
+        assert(amount * toUint256(rate) / 1e18 <= amount);
+    }
+
+    function checkSafeCastStrictCap(uint128 amount, int256 rate) public pure {
+        require(rate < 1e18 + 1);
+        assert(amount * toUint256(rate) / 1e18 <= amount);
+    }
+
+    function checkQuoteAboveMinAnswer(uint128 amount, int256 answer) public pure {
+        require(amount > 0 && answer > 1e6 && answer <= 1e8);
+        assert(amount * uint256(answer) > 1e6);
+    }
+
+    function checkMissingPositivity(uint128 amount, int256 answer) public pure {
+        require(answer <= 1e8);
+        assert(amount * uint256(answer) / 1e8 <= amount);
+    }
+
+    function checkNegativeFloor(uint128 amount, int256 answer) public pure {
+        require(answer >= -1 && answer <= 1e8);
+        assert(amount * uint256(answer) / 1e8 <= amount);
+    }
+
+    function checkCapAboveScale(uint128 amount, int256 answer) public pure {
+        require(answer > 0 && answer <= 1e8 + 1);
+        assert(amount * uint256(answer) / 1e8 <= amount);
+    }
+
+    function checkSmallestAnswer(int256 answer) public pure {
+        require(answer > 0 && answer <= 1e8);
+        assert(uint256(answer) >= 2);
+    }
+
+    function checkNegativeFloorCap(int256 answer, uint256 cap) public pure {
+        require(answer >= -1e8 && uint256(answer) <= cap);
+        assert(cap > type(uint128).max);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicSignedPrice"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        for signature in [
+            "checkChainlinkQuote(uint128,int256)",
+            "checkSafeCastScale(uint128,int256)",
+            "checkSafeCastStrictCap(uint128,int256)",
+            "checkQuoteAboveMinAnswer(uint128,int256)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "pass",
+                "{signature}, optimized={optimized}: {result}"
+            );
+        }
+        for signature in [
+            "checkMissingPositivity(uint128,int256)",
+            "checkNegativeFloor(uint128,int256)",
+            "checkCapAboveScale(uint128,int256)",
+            "checkSmallestAnswer(int256)",
+            "checkNegativeFloorCap(int256,uint256)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "{signature}, optimized={optimized}: {result}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "{signature}, optimized={optimized}: {result}"
+            );
+        }
+    }
+}
+
 // Fee splits and payment splitters floor each share `w * a / k`, and two shares with
-// `a + b <= k` sum to at most `w`, so their checked sum cannot overflow either. A wrapped
-// `a + b <= k` does not bound the shares, unless a `b <= MAX - a` guard rules out the wrap.
+// `a + b <= k`, or `b = k - a`, sum to at most `w`, so their checked sum cannot overflow either.
+// A wrapped `a + b <= k` does not bound the shares, unless a `b <= MAX - a` guard rules out the
+// wrap.
 #[forgetest_init]
 fn symbolic_proves_shares_within_whole(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_shares_within_whole");
@@ -9380,6 +9813,20 @@ contract SymbolicShares {
         uint256 protocolFee = amount * protocolBps / 10_000;
         uint256 lpFee = amount * lpBps / 10_000;
         assert(protocolFee + lpFee <= amount);
+    }
+
+    function checkMaskedComplementShares(uint128 w, uint256 a, uint256 k) public pure {
+        require(a <= k && k != 0);
+        unchecked {
+            assert(uint256(w) * a / k + uint256(w) * uint128(k - a) / k <= w);
+        }
+    }
+
+    function checkFeeAndRestWithinAmount(uint128 amount, uint16 feeBps) public pure {
+        require(feeBps <= 10_000);
+        uint256 fee = uint256(amount) * feeBps / 10_000;
+        uint256 rest = uint256(amount) * (10_000 - feeBps) / 10_000;
+        assert(fee + rest <= amount);
     }
 
     function checkFeeSplitOverBudget(uint128 amount, uint16 protocolBps, uint16 lpBps)
@@ -9464,6 +9911,8 @@ contract SymbolicShares {
             "checkPayeesWithinReceived(uint128,uint128,uint128)",
             "checkUint256FeeSplitWithinAmount(uint256,uint256,uint256)",
             "checkMaxGuardedFeeSplit(uint256,uint256,uint256)",
+            "checkFeeAndRestWithinAmount(uint128,uint16)",
+            "checkMaskedComplementShares(uint128,uint256,uint256)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
