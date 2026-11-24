@@ -17,6 +17,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: full
   RUSTC_WRAPPER: "sccache"
+  PIP_CONSTRAINT: ${{ github.workspace }}/.github/constraints.txt
 
 jobs:
   test:
