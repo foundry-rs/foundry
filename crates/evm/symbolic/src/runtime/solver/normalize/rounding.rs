@@ -469,9 +469,7 @@ impl ConstraintContext {
                 if total == divisor && part == u)
         };
         if [(a, b), (b, a)].into_iter().any(|(u, v)| {
-            difference(u, v)
-                && (self.asserts_less_or_equal(u, divisor)
-                    || self.interval_cached(u, intervals, remaining).is_some_and(|u| u.max <= min))
+            difference(u, v) && self.factor_within_divisor(u, divisor, intervals, remaining)
         }) {
             return true;
         }
@@ -541,19 +539,10 @@ impl ConstraintContext {
         if k_min.is_zero() {
             return false;
         }
-        let b_min = self.interval_cached(bound, intervals, remaining).map_or(U256::ZERO, |b| b.min);
-        let at_most_bound =
-            |multiplier: &SymExpr, intervals: &mut HashMap<_, _>, remaining: &mut usize| {
-                multiplier == bound
-                    || self.asserts_less_or_equal(multiplier, bound)
-                    || self
-                        .interval_cached(multiplier, intervals, remaining)
-                        .is_some_and(|m| m.max <= b_min)
-            };
         [(p1, u1, q1, v1), (u1, p1, q1, v1), (p1, u1, v1, q1), (u1, p1, v1, q1)].into_iter().any(
             |(p, u, q, v)| {
-                at_most_bound(p, intervals, remaining)
-                    && at_most_bound(q, intervals, remaining)
+                self.factor_within_divisor(p, bound, intervals, remaining)
+                    && self.factor_within_divisor(q, bound, intervals, remaining)
                     && self.weights_fit(u, v, divisor, k_min, intervals, remaining)
             },
         )
@@ -593,6 +582,22 @@ impl ConstraintContext {
                 matches!(sum.kind(), SymExprKind::BinOp(SymBinOp::Add, a, b)
                     if (a == large && b == start) || (a == start && b == large))
             })
+    }
+
+    /// Returns whether `factor <= divisor`, by equality, another conjunct, or value ranges.
+    fn factor_within_divisor(
+        &self,
+        factor: &SymExpr,
+        divisor: &SymExpr,
+        intervals: &mut HashMap<SymExpr, Option<WordInterval>>,
+        remaining: &mut usize,
+    ) -> bool {
+        factor == divisor
+            || self.asserts_less_or_equal(factor, divisor)
+            || self
+                .interval_cached(factor, intervals, remaining)
+                .zip(self.interval_cached(divisor, intervals, remaining))
+                .is_some_and(|(factor, divisor)| factor.max <= divisor.min)
     }
 
     /// Bounds a subtraction only when the relation proves it cannot underflow.
