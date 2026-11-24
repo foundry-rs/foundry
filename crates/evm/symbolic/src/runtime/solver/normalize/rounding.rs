@@ -308,9 +308,8 @@ impl ConstraintContext {
                     SymExprKind::BinOp(SymBinOp::Add, a, b) => [(a, b), (b, a)]
                         .into_iter()
                         .any(|(product, addend)| bounded(product, Some(addend))),
-                    // `(x * y + d) - 1`. A wrapped sum is smaller. A sum that wraps to zero gives
-                    // `MAX`: either `MAX == x * y + d - 1` exactly, or `x * y` wrapped and
-                    // `x >= 2**256 / d` bounds `MAX / d`.
+                    // `(x * y + d) - 1`. A wrapped sum is smaller, and a sum that wraps to zero
+                    // gives `MAX == x * y + d - 1` exactly.
                     SymExprKind::BinOp(SymBinOp::Sub, sum, one)
                         if one.as_const() == Some(U256::ONE)
                             && let SymExprKind::BinOp(SymBinOp::Add, a, b) = sum.kind()

@@ -9145,7 +9145,7 @@ contract SymbolicDowncastShare {
 // assets once `balance <= totalSupply`, and may also check the result against its idle liquidity.
 // That check implies the total's type bound, which is then dropped, so the bound must not rely on
 // it, nor on the product fitting: a wrapped product only shrinks the quotient. A balance above
-// the supply can exceed the total.
+// the supply can exceed the total, and so can rounding up by a full divisor.
 #[forgetest_init]
 fn symbolic_proves_converted_shares_below_total(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_converted_shares_below_total");
@@ -9181,6 +9181,13 @@ contract SymbolicConvertedShares {
             assert((x * y + d - 1) / d <= x);
         }
     }
+
+    function checkRoundUpPastDivisor(uint256 x, uint256 y, uint256 d) public pure {
+        require(d != 0 && y <= d);
+        unchecked {
+            assert((x * y + d) / d <= x);
+        }
+    }
 }
 "#,
     );
@@ -9200,16 +9207,20 @@ contract SymbolicConvertedShares {
             let result = json_test_result(&output, signature);
             assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
         }
-        let result =
-            json_test_result(&output, "checkBalanceAboveSupply(uint128,uint128,uint128,uint128)");
-        assert_eq!(
-            result["symbolic"]["status"], "fail_counterexample",
-            "optimized={optimized}: {result}"
-        );
-        assert_eq!(
-            result["symbolic"]["replay"]["status"], "confirmed",
-            "optimized={optimized}: {result}"
-        );
+        for signature in [
+            "checkBalanceAboveSupply(uint128,uint128,uint128,uint128)",
+            "checkRoundUpPastDivisor(uint256,uint256,uint256)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "optimized={optimized}: {result}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "optimized={optimized}: {result}"
+            );
+        }
     }
 }
 
