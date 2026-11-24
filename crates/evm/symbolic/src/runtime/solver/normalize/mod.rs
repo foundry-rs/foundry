@@ -1614,20 +1614,30 @@ impl ConstraintContext {
                         .or_else(|| guarded.then_some(U256::MAX))?,
                 })
             }
-            SymExprKind::BinOp(SymBinOp::UDiv, numerator, denominator) => {
+            SymExprKind::BinOp(SymBinOp::UDiv, numerator_expr, denominator_expr) => {
                 // Even an otherwise unbounded numerator is a uint256 word. Division by a
                 // positive denominator bounds the quotient regardless of numerator wrapping.
                 let numerator = self
-                    .interval_cached(numerator, intervals, remaining)
+                    .interval_cached(numerator_expr, intervals, remaining)
                     .unwrap_or(WordInterval { min: U256::ZERO, max: U256::MAX });
-                let denominator = self.interval_cached(denominator, intervals, remaining)?;
+                let denominator = self.interval_cached(denominator_expr, intervals, remaining)?;
                 if denominator.min.is_zero() {
                     return None;
                 }
-                Some(WordInterval {
-                    min: numerator.min / denominator.max,
-                    max: numerator.max / denominator.min,
-                })
+                let mut max = numerator.max / denominator.min;
+                // A pro-rata share `x * y / d` with `y <= d` is at most `x`, and a wrapped product
+                // only shrinks the dividend. This needs the positive `d` checked above: a bare
+                // `UDiv` is emitted as `bvudiv`, all ones on zero, so `y = d = 0` would break it.
+                if let SymExprKind::BinOp(SymBinOp::Mul, left, right) = numerator_expr.kind()
+                    && let Some(scaled) =
+                        [(left, right), (right, left)].into_iter().find_map(|(scaled, factor)| {
+                            self.asserts_less_or_equal(factor, denominator_expr).then_some(scaled)
+                        })
+                    && let Some(scaled) = self.interval_cached(scaled, intervals, remaining)
+                {
+                    max = max.min(scaled.max);
+                }
+                WordInterval::new(numerator.min / denominator.max, max)
             }
             // `a % d <= a`, and `a % d < d` for a positive `d`.
             SymExprKind::BinOp(SymBinOp::URem, dividend, divisor) => {
