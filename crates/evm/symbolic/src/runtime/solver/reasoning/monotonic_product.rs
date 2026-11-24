@@ -349,8 +349,8 @@ fn expr_less_or_equal<'a>(
         // `x - e <= x <= right` when `e <= x`, so the difference does not wrap, as for an accrued
         // index delta.
         (SymExprKind::BinOp(SymBinOp::Sub, minuend, subtrahend), _)
-            if expr_less_or_equal(minuend, right, facts, bounds)
-                && expr_less_or_equal(subtrahend, minuend, facts, bounds) =>
+            if expr_less_or_equal(subtrahend, minuend, facts, bounds)
+                && expr_less_or_equal(minuend, right, facts, bounds) =>
         {
             true
         }
