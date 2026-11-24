@@ -613,6 +613,9 @@ struct WordInterval {
 const MAX_LOCAL_ANALYSIS_NODES: usize = 256;
 const MAX_CONTEXTUAL_PASSES: usize = 4;
 
+/// The largest non-negative signed word, `2^255 - 1`.
+const SIGNED_MAX: U256 = I256::MAX.into_raw();
+
 impl WordInterval {
     fn new(min: U256, max: U256) -> Option<Self> {
         (min <= max).then_some(Self { min, max })
@@ -798,16 +801,20 @@ impl ConstraintContext {
         {
             return normalized.not(cx);
         }
+        // A kept original is revisited, so only add its rewrite while the context lacks it.
         if let SymBoolExprKind::Cmp(op, left, right) = expr.kind()
-            && let Some(normalized) = self.normalize_udiv_comparison(cx, *op, left, right)
+            && let Some((normalized, keep)) = self.normalize_udiv_comparison(cx, *op, left, right)
+            && !(keep && self.facts.contains(&normalized))
         {
-            return normalized;
+            return if keep { SymBoolExpr::and(cx, vec![expr, normalized]) } else { normalized };
         }
         if let SymBoolExprKind::Not(value) = expr.kind()
             && let SymBoolExprKind::Cmp(op, left, right) = value.kind()
-            && let Some(normalized) = self.normalize_udiv_comparison(cx, *op, left, right)
+            && let Some((normalized, keep)) = self.normalize_udiv_comparison(cx, *op, left, right)
+            && let normalized = normalized.not(cx)
+            && !(keep && self.facts.contains(&normalized))
         {
-            return normalized.not(cx);
+            return if keep { SymBoolExpr::and(cx, vec![expr, normalized]) } else { normalized };
         }
 
         match expr.kind() {
@@ -1031,17 +1038,16 @@ impl ConstraintContext {
             SymCmpOp::Sgt => (right, left),
             _ => return None,
         };
-        let signed_max = U256::MAX >> 1;
         if let Some((_, increment)) = sum.add_with_operand(base) {
             let base_range = self.interval(base)?;
             let increment_range = self.interval(increment)?;
             // Opposite-sign addition cannot overflow: adding a nonnegative value cannot make
             // a negative summand smaller, and adding a negative value makes a nonnegative one
             // smaller.
-            if base_range.min > signed_max && increment_range.max <= signed_max {
+            if base_range.min > SIGNED_MAX && increment_range.max <= SIGNED_MAX {
                 return Some(SymBoolExpr::constant(cx, false));
             }
-            if base_range.max <= signed_max && increment_range.min > signed_max {
+            if base_range.max <= SIGNED_MAX && increment_range.min > SIGNED_MAX {
                 return Some(SymBoolExpr::constant(cx, true));
             }
         } else if base.as_const() != Some(U256::ZERO) {
@@ -1053,8 +1059,8 @@ impl ConstraintContext {
             for (positive, negative) in [(left, right), (right, left)] {
                 if let SymExprKind::BinOp(SymBinOp::Sub, zero, amount) = negative.kind()
                     && zero.as_const() == Some(U256::ZERO)
-                    && self.interval(positive).is_some_and(|range| range.max <= signed_max)
-                    && self.interval(amount).is_some_and(|range| range.max <= signed_max)
+                    && self.interval(positive).is_some_and(|range| range.max <= SIGNED_MAX)
+                    && self.interval(amount).is_some_and(|range| range.max <= SIGNED_MAX)
                 {
                     // For a,b in [0, int256::MAX], signed(a + (-b)) < 0 iff a < b.
                     return Some(SymBoolExpr::cmp_word_expr(
@@ -1071,12 +1077,12 @@ impl ConstraintContext {
         let SymExprKind::BinOp(SymBinOp::Add, increment, base) = sum.kind() else {
             return None;
         };
-        if self.interval(base)?.max > signed_max || self.interval(increment)?.max > signed_max {
+        if self.interval(base)?.max > SIGNED_MAX || self.interval(increment)?.max > SIGNED_MAX {
             return None;
         }
         // With nonnegative summands their unsigned sum cannot wrap. It is signed-less than a
         // summand exactly when it crosses the signed maximum; equality (zero increment) is safe.
-        let limit = SymExpr::constant(cx, signed_max);
+        let limit = SymExpr::constant(cx, SIGNED_MAX);
         let remaining = SymExpr::binop(cx, SymBinOp::Sub, limit, base.clone());
         Some(SymBoolExpr::cmp(cx, SymCmpOp::Ult, remaining, increment.clone()))
     }
@@ -1265,7 +1271,14 @@ impl ConstraintContext {
                     let changed = self.propagate_less_or_equal_bounds(left, right);
                     self.propagate_less_or_equal_bounds(right, left) || changed
                 }
-                SymCmpOp::Slt | SymCmpOp::Sgt => false,
+                // `x <s C` bounds a non-negative `x` by `C - 1`.
+                SymCmpOp::Slt => right
+                    .as_const()
+                    .filter(|bound| !bound.is_zero() && *bound <= SIGNED_MAX)
+                    .is_some_and(|bound| {
+                        self.propagate_signed_upper_bound(left, bound - U256::ONE)
+                    }),
+                SymCmpOp::Sgt => false,
             },
             SymBoolExprKind::Not(value) => match value.kind() {
                 SymBoolExprKind::Cmp(op, left, right) => match op {
@@ -1275,12 +1288,25 @@ impl ConstraintContext {
                     SymCmpOp::Ugt | SymCmpOp::Uge => {
                         self.propagate_less_or_equal_bounds(left, right)
                     }
-                    SymCmpOp::Eq | SymCmpOp::Slt | SymCmpOp::Sgt => false,
+                    // `!(C <s x)` bounds a non-negative `x` by `C`.
+                    SymCmpOp::Slt => left
+                        .as_const()
+                        .is_some_and(|bound| self.propagate_signed_upper_bound(right, bound)),
+                    SymCmpOp::Eq | SymCmpOp::Sgt => false,
                 },
                 _ => false,
             },
             SymBoolExprKind::Const(_) | SymBoolExprKind::And(_) => false,
         }
+    }
+
+    /// Records the signed upper bound `expr <=s bound` as an unsigned one once `expr` is known to
+    /// be non-negative. A non-negative signed word equals its unsigned value, while a signed upper
+    /// bound alone admits negative words, which are huge unsigned values.
+    fn propagate_signed_upper_bound(&mut self, expr: &SymExpr, bound: U256) -> bool {
+        bound <= SIGNED_MAX
+            && self.upper_bounds.get(expr).is_some_and(|upper| *upper <= SIGNED_MAX)
+            && self.record_upper_bound(expr.clone(), bound)
     }
 
     /// Propagates interval bounds through the known unsigned relation `left <= right`.
@@ -1297,6 +1323,9 @@ impl ConstraintContext {
         &self,
         constraint: &'a SymBoolExpr,
     ) -> Option<(&'a SymExpr, U256)> {
+        if let Some((expr, _)) = signed_non_negative_lower_bound(constraint) {
+            return Some((expr, SIGNED_MAX));
+        }
         match constraint.kind() {
             SymBoolExprKind::Cmp(op, left, right) => match *op {
                 SymCmpOp::Eq => const_side_bound(left, right),
@@ -1353,6 +1382,9 @@ impl ConstraintContext {
         &self,
         constraint: &'a SymBoolExpr,
     ) -> Option<(&'a SymExpr, U256)> {
+        if let Some(bound) = signed_non_negative_lower_bound(constraint) {
+            return Some(bound);
+        }
         match constraint.kind() {
             SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => const_side_bound(left, right),
             SymBoolExprKind::Not(value) => match value.kind() {
@@ -1449,8 +1481,10 @@ impl ConstraintContext {
         if !matches!(op, SymCmpOp::Ult | SymCmpOp::Ule) {
             return None;
         }
+        // A symbolic divisor is matched only in `n / d < k` and its negation, the shape a round
+        // trip such as `ceil(x / d) * d / m < k` leaves; the rewrite then also needs `d != 0`.
         if let Some((numerator, denominator)) = left.udiv_operands()
-            && denominator.as_const().is_some_and(|value| !value.is_zero())
+            && denominator.as_const().map_or(op == SymCmpOp::Ult, |value| !value.is_zero())
             && !right.contains_udiv()
         {
             return Some((numerator, denominator, right, true));
@@ -1464,15 +1498,25 @@ impl ConstraintContext {
         None
     }
 
+    /// Returns the comparison without its division, and whether the caller must also keep the
+    /// original.
     fn normalize_udiv_comparison(
         &self,
         cx: &mut SymCx,
         op: SymCmpOp,
         left: &SymExpr,
         right: &SymExpr,
-    ) -> Option<SymBoolExpr> {
+    ) -> Option<(SymBoolExpr, bool)> {
         let (numerator, denominator, threshold, quotient_on_left) =
             Self::udiv_comparison_operands(op, left, right)?;
+        // Folding gives `n / 0 == 0` but SMT gives all ones, and `n / d < k` agrees with
+        // `n < k * d` under both only when `d != 0`, so the context must prove a symbolic divisor
+        // nonzero. Its quotient may also take part in order reasoning with other conjuncts, so the
+        // caller keeps the original too.
+        let keep = denominator.as_const().is_none();
+        if keep && !self.interval(denominator).is_some_and(|range| !range.min.is_zero()) {
+            return None;
+        }
         let increment_threshold =
             matches!((op, quotient_on_left), (SymCmpOp::Ule, true) | (SymCmpOp::Ult, false));
         let threshold = if increment_threshold {
@@ -1488,13 +1532,14 @@ impl ConstraintContext {
         }
 
         let scaled_threshold = SymExpr::binop(cx, SymBinOp::Mul, threshold, denominator.clone());
-        Some(if quotient_on_left {
+        let normalized = if quotient_on_left {
             // `n / d < k => n < k * d`; `n / d <= k => n < (k + 1) * d`.
             SymBoolExpr::cmp_word_expr(cx, SymCmpOp::Ult, numerator, scaled_threshold)
         } else {
             // `k <= n / d => k * d <= n`; `k < n / d => (k + 1) * d <= n`.
             SymBoolExpr::cmp(cx, SymCmpOp::Ule, scaled_threshold, numerator.clone())
-        })
+        };
+        Some((normalized, keep))
     }
 
     /// Returns the inclusive unsigned range the context proves for `expr`.
@@ -1626,20 +1671,30 @@ impl ConstraintContext {
                     product.with_bounds(None, Some(cap))
                 })
             }
-            SymExprKind::BinOp(SymBinOp::UDiv, numerator, denominator) => {
+            SymExprKind::BinOp(SymBinOp::UDiv, numerator_expr, denominator_expr) => {
                 // Even an otherwise unbounded numerator is a uint256 word. Division by a
                 // positive denominator bounds the quotient regardless of numerator wrapping.
                 let numerator = self
-                    .interval_cached(numerator, intervals, remaining)
+                    .interval_cached(numerator_expr, intervals, remaining)
                     .unwrap_or(WordInterval { min: U256::ZERO, max: U256::MAX });
-                let denominator = self.interval_cached(denominator, intervals, remaining)?;
+                let denominator = self.interval_cached(denominator_expr, intervals, remaining)?;
                 if denominator.min.is_zero() {
                     return None;
                 }
-                Some(WordInterval {
-                    min: numerator.min / denominator.max,
-                    max: numerator.max / denominator.min,
-                })
+                let mut max = numerator.max / denominator.min;
+                // A pro-rata share `x * y / d` with `y <= d` is at most `x`, and a wrapped product
+                // only shrinks the dividend. This needs the positive `d` checked above: a bare
+                // `UDiv` is emitted as `bvudiv`, all ones on zero, so `y = d = 0` would break it.
+                if let SymExprKind::BinOp(SymBinOp::Mul, left, right) = numerator_expr.kind()
+                    && let Some(scaled) =
+                        [(left, right), (right, left)].into_iter().find_map(|(scaled, factor)| {
+                            self.asserts_less_or_equal(factor, denominator_expr).then_some(scaled)
+                        })
+                    && let Some(scaled) = self.interval_cached(scaled, intervals, remaining)
+                {
+                    max = max.min(scaled.max);
+                }
+                WordInterval::new(numerator.min / denominator.max, max)
             }
             // `a % d <= a`, and `a % d < d` for a positive `d`.
             SymExprKind::BinOp(SymBinOp::URem, dividend, divisor) => {
@@ -1688,6 +1743,25 @@ impl MulDivFactor<'_> {
             Self::Expr(other) => other == expected,
             Self::Const(other) => expected.as_const() == Some(other),
         }
+    }
+}
+
+/// Returns `x` and its least value when `constraint` is `C <s x` or `!(x <s C)` for a non-negative
+/// signed constant `C`. Such an `x` is non-negative, so as an unsigned word it lies in
+/// `[bound, 2^255 - 1]`; normalization already turned `>s` into `<s`.
+fn signed_non_negative_lower_bound(constraint: &SymBoolExpr) -> Option<(&SymExpr, U256)> {
+    match constraint.kind() {
+        SymBoolExprKind::Cmp(SymCmpOp::Slt, left, right) => left
+            .as_const()
+            .filter(|bound| *bound < SIGNED_MAX)
+            .map(|bound| (right, bound + U256::ONE)),
+        SymBoolExprKind::Not(value) => match value.kind() {
+            SymBoolExprKind::Cmp(SymCmpOp::Slt, left, right) => {
+                right.as_const().filter(|bound| *bound <= SIGNED_MAX).map(|bound| (left, bound))
+            }
+            _ => None,
+        },
+        _ => None,
     }
 }
 

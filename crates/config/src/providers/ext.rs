@@ -453,20 +453,25 @@ fn snake_case_profile_keys(value: Value) -> Value {
     }
 }
 
-/// A Provider that handles breaking changes in toml files
-pub(crate) struct BackwardsCompatTomlProvider<P>(pub(crate) P);
+/// A Provider that handles breaking changes in toml files.
+pub(crate) struct BackwardsCompatTomlProvider<P> {
+    pub(crate) provider: P,
+    /// Whether `FOUNDRY_SOLC_VERSION` and `DAPP_SOLC_VERSION` override `solc`.
+    pub(crate) solc_env: bool,
+}
 
 impl<P: Provider> Provider for BackwardsCompatTomlProvider<P> {
     fn metadata(&self) -> Metadata {
-        self.0.metadata()
+        self.provider.metadata()
     }
 
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
-        let mut map = self.0.data()?;
+        let mut map = self.provider.data()?;
         let solc_env = std::env::var("FOUNDRY_SOLC_VERSION")
             .or_else(|_| std::env::var("DAPP_SOLC_VERSION"))
             .map(Value::from)
-            .ok();
+            .ok()
+            .filter(|_| self.solc_env);
         for_each_profile_dict(&mut map, |dict| {
             rewrite_legacy_profile_keys(dict, solc_env.as_ref())
         });
@@ -475,7 +480,7 @@ impl<P: Provider> Provider for BackwardsCompatTomlProvider<P> {
     }
 
     fn profile(&self) -> Option<Profile> {
-        self.0.profile()
+        self.provider.profile()
     }
 }
 
