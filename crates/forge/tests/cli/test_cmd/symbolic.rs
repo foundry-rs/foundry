@@ -9040,7 +9040,10 @@ contract SymbolicVestingSchedule {
 
 // A repayment below the close-factor cap `debt * closeFactor / 1e4` is below the debt once the
 // close factor is at most 100%. With a bounded repayment the strict comparison normalizes to
-// `(repay + 1) * 1e4 <= debt * closeFactor`, refuted by `debt * closeFactor <= repay * 1e4`.
+// `(repay + 1) * 1e4 <= debt * closeFactor`, refuted by `debt * closeFactor <= repay * 1e4`. An
+// unbounded repayment keeps the quotient, which is still at most the debt when rounded down or
+// half up as in Aave's `percentMul`, for a constant or symbolic maximum factor, and when an
+// unchecked product wraps. A larger factor or a rounding addend of a whole unit can exceed it.
 #[forgetest_init]
 fn symbolic_proves_repayment_below_strict_cap(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_repayment_below_strict_cap");
@@ -9048,6 +9051,26 @@ fn symbolic_proves_repayment_below_strict_cap(prj: _, cmd: _) {
         "SymbolicStrictCap.t.sol",
         r#"
 contract SymbolicStrictCap {
+    uint256 internal constant PERCENTAGE_FACTOR = 1e4;
+    uint256 internal constant HALF_PERCENTAGE_FACTOR = 0.5e4;
+
+    // Half-up `percentMul` as in Aave v3's `PercentageMath`.
+    function percentMul(uint256 value, uint256 percentage) internal pure returns (uint256 result) {
+        assembly {
+            if iszero(
+                or(
+                    iszero(percentage),
+                    iszero(gt(value, div(sub(not(0), HALF_PERCENTAGE_FACTOR), percentage)))
+                )
+            ) { revert(0, 0) }
+            result := div(add(mul(value, percentage), HALF_PERCENTAGE_FACTOR), PERCENTAGE_FACTOR)
+        }
+    }
+
+    function cap(uint256 repay, uint256 maxRepay) internal pure returns (uint256) {
+        return repay > maxRepay ? maxRepay : repay;
+    }
+
     function capped(uint128 debt, uint128 repay, uint16 closeFactor) internal pure returns (uint256) {
         uint256 maxRepay = uint256(debt) * closeFactor / 10_000;
         return repay < maxRepay ? repay : maxRepay;
@@ -9070,6 +9093,41 @@ contract SymbolicStrictCap {
         require(closeFactor <= 10_000);
         assert(capped(debt, repay, closeFactor) <= other);
     }
+
+    function checkHalfUpCap(uint128 debt, uint256 repay, uint16 closeFactor) public pure {
+        require(closeFactor <= PERCENTAGE_FACTOR);
+        assert(cap(repay, percentMul(debt, closeFactor)) <= debt);
+    }
+
+    function checkTruncatedCap(uint128 debt, uint256 repay, uint16 closeFactor) public pure {
+        require(closeFactor <= PERCENTAGE_FACTOR);
+        assert(cap(repay, uint256(debt) * closeFactor / PERCENTAGE_FACTOR) <= debt);
+    }
+
+    function checkSymbolicMaxFactor(
+        uint128 debt,
+        uint256 repay,
+        uint16 closeFactor,
+        uint16 maxFactor
+    ) public pure {
+        require(closeFactor <= maxFactor);
+        assert(cap(repay, uint256(debt) * closeFactor / maxFactor) <= debt);
+    }
+
+    function checkWrappedCap(uint256 debt, uint256 repay, uint16 closeFactor) public pure {
+        require(closeFactor <= PERCENTAGE_FACTOR);
+        uint256 maxRepay;
+        unchecked {
+            maxRepay = debt * closeFactor / PERCENTAGE_FACTOR;
+        }
+        assert(cap(repay, maxRepay) <= debt);
+    }
+
+    function checkWholeUnitAddend(uint128 debt, uint256 repay, uint16 closeFactor) public pure {
+        require(closeFactor <= PERCENTAGE_FACTOR);
+        uint256 rounded = (uint256(debt) * closeFactor + PERCENTAGE_FACTOR) / PERCENTAGE_FACTOR;
+        assert(cap(repay, rounded) <= debt);
+    }
 }
 "#,
     );
@@ -9082,11 +9140,23 @@ contract SymbolicStrictCap {
             .get_output()
             .stdout
             .clone();
-        let result = json_test_result(&output, "checkRepaymentBelowDebt(uint128,uint128,uint16)");
-        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        for signature in [
+            "checkRepaymentBelowDebt(uint128,uint128,uint16)",
+            "checkHalfUpCap(uint128,uint256,uint16)",
+            "checkTruncatedCap(uint128,uint256,uint16)",
+            "checkSymbolicMaxFactor(uint128,uint256,uint16,uint16)",
+            "checkWrappedCap(uint256,uint256,uint16)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "pass",
+                "{signature}, optimized={optimized}: {result}"
+            );
+        }
         for signature in [
             "checkLargeCloseFactor(uint128,uint128,uint16)",
             "checkOtherDebt(uint128,uint128,uint128,uint16)",
+            "checkWholeUnitAddend(uint128,uint256,uint16)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(
@@ -9147,81 +9217,79 @@ contract SymbolicDowncastShare {
     }
 }
 
-// Liquidations cap the repaid debt at `debt * closeFactor / 1e4`, rounded down or half up as in
-// Aave's `percentMul`, so the capped amount never exceeds the debt once the close factor is at
-// most 100% of a constant or symbolic maximum, even when an unchecked product wraps. A larger
-// factor or a rounding addend of a whole unit can exceed it.
+// A withdrawal pays out `balance * shares / supply`, at most the balance once `shares <= supply`,
+// so the payout fits the balance's type and a checked fee multiply on it cannot overflow. A wrapped
+// product only shrinks the payout, and an elapsed `t - s` with `t <= s + d` is at most `d`. Shares
+// above the supply can pay out more than the balance, and without that order neither factor
+// bounds the payout.
 #[forgetest_init]
-fn symbolic_proves_liquidation_cap_bounded(prj: _, cmd: _) {
-    skip_unless_z3!("symbolic_proves_liquidation_cap_bounded");
+fn symbolic_proves_payout_share_bounded(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_payout_share_bounded");
     prj.add_test(
-        "SymbolicLiquidationCap.t.sol",
+        "SymbolicPayoutShare.t.sol",
         r#"
-contract SymbolicLiquidationCap {
-    uint256 internal constant PERCENTAGE_FACTOR = 1e4;
-    uint256 internal constant HALF_PERCENTAGE_FACTOR = 0.5e4;
-
-    // Half-up `percentMul` as in Aave v3's `PercentageMath`.
-    function percentMul(uint256 value, uint256 percentage) internal pure returns (uint256 result) {
-        assembly {
-            if iszero(
-                or(
-                    iszero(percentage),
-                    iszero(gt(value, div(sub(not(0), HALF_PERCENTAGE_FACTOR), percentage)))
-                )
-            ) { revert(0, 0) }
-            result := div(add(mul(value, percentage), HALF_PERCENTAGE_FACTOR), PERCENTAGE_FACTOR)
-        }
+contract SymbolicPayoutShare {
+    function checkFeeOnPayout(uint128 balance, uint256 shares, uint256 supply, uint16 bps)
+        public
+        pure
+    {
+        require(supply != 0 && shares <= supply && bps <= 10000);
+        uint256 payout = uint256(balance) * shares / supply;
+        assert(payout * bps / 10000 <= payout);
     }
 
-    function cap(uint256 debtToCover, uint256 maxLiquidatable) internal pure returns (uint256) {
-        return debtToCover > maxLiquidatable ? maxLiquidatable : debtToCover;
+    function checkPayoutFits(uint128 balance, uint128 shares, uint128 supply) public pure {
+        require(supply != 0 && shares <= supply);
+        assert(uint256(balance) * shares / supply <= type(uint128).max);
     }
 
-    function checkHalfUpCap(uint128 debt, uint256 debtToCover, uint16 closeFactor) public pure {
-        require(closeFactor <= PERCENTAGE_FACTOR);
-        assert(cap(debtToCover, percentMul(debt, closeFactor)) <= debt);
-    }
-
-    function checkTruncatedCap(uint128 debt, uint256 debtToCover, uint16 closeFactor) public pure {
-        require(closeFactor <= PERCENTAGE_FACTOR);
-        assert(cap(debtToCover, uint256(debt) * closeFactor / PERCENTAGE_FACTOR) <= debt);
-    }
-
-    function checkSymbolicMaxFactor(
-        uint128 debt,
-        uint256 debtToCover,
-        uint16 closeFactor,
-        uint16 maxFactor
-    ) public pure {
-        require(closeFactor <= maxFactor);
-        assert(cap(debtToCover, uint256(debt) * closeFactor / maxFactor) <= debt);
-    }
-
-    function checkWrappedCap(uint256 debt, uint256 debtToCover, uint16 closeFactor) public pure {
-        require(closeFactor <= PERCENTAGE_FACTOR);
-        uint256 maxLiquidatable;
+    function checkWrappedPayoutFits(uint128 balance, uint256 shares, uint256 supply)
+        public
+        pure
+    {
+        require(supply != 0 && shares <= supply);
         unchecked {
-            maxLiquidatable = debt * closeFactor / PERCENTAGE_FACTOR;
+            assert(balance * shares / supply <= type(uint128).max);
         }
-        assert(cap(debtToCover, maxLiquidatable) <= debt);
     }
 
-    function checkLargeCloseFactor(uint128 debt, uint256 debtToCover, uint16 closeFactor)
+    function checkVestedFits(uint128 total, uint256 start, uint256 time, uint256 duration)
         public
         pure
     {
-        require(closeFactor <= PERCENTAGE_FACTOR + 1);
-        assert(cap(debtToCover, uint256(debt) * closeFactor / PERCENTAGE_FACTOR) <= debt);
+        require(duration != 0 && start <= time && time <= start + duration);
+        assert(uint256(total) * (time - start) / duration <= type(uint128).max);
     }
 
-    function checkWholeUnitAddend(uint128 debt, uint256 debtToCover, uint16 closeFactor)
+    function checkVestedBeforeStart(uint128 total, uint256 start, uint256 time, uint256 duration)
         public
         pure
     {
-        require(closeFactor <= PERCENTAGE_FACTOR);
-        uint256 rounded = (uint256(debt) * closeFactor + PERCENTAGE_FACTOR) / PERCENTAGE_FACTOR;
-        assert(cap(debtToCover, rounded) <= debt);
+        require(duration != 0 && time <= start + duration);
+        unchecked {
+            assert(uint256(total) * (time - start) / duration <= type(uint128).max);
+        }
+    }
+
+    function checkSharesAboveSupply(uint128 balance, uint128 shares, uint128 supply) public pure {
+        require(supply != 0 && shares <= uint256(supply) + 1);
+        assert(uint256(balance) * shares / supply <= type(uint128).max);
+    }
+
+    function checkUnorderedNarrowShares(uint256 balance, uint128 shares, uint128 supply)
+        public
+        pure
+    {
+        require(supply != 0);
+        assert(balance * shares / supply <= type(uint128).max);
+    }
+
+    function checkUnorderedNarrowBalance(uint128 balance, uint256 shares, uint128 supply)
+        public
+        pure
+    {
+        require(supply != 0);
+        assert(balance * shares / supply <= type(uint128).max);
     }
 }
 "#,
@@ -9230,35 +9298,36 @@ contract SymbolicLiquidationCap {
         prj.update_config(|config| config.optimizer = Some(optimized));
         let output = cmd
             .forge_fuse()
-            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicLiquidationCap"])
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicPayoutShare"])
             .assert_failure()
             .get_output()
             .stdout
             .clone();
+
         for signature in [
-            "checkHalfUpCap(uint128,uint256,uint16)",
-            "checkTruncatedCap(uint128,uint256,uint16)",
-            "checkSymbolicMaxFactor(uint128,uint256,uint16,uint16)",
-            "checkWrappedCap(uint256,uint256,uint16)",
+            "checkFeeOnPayout(uint128,uint256,uint256,uint16)",
+            "checkPayoutFits(uint128,uint128,uint128)",
+            "checkWrappedPayoutFits(uint128,uint256,uint256)",
+            "checkVestedFits(uint128,uint256,uint256,uint256)",
         ] {
             let result = json_test_result(&output, signature);
-            assert_eq!(
-                result["symbolic"]["status"], "pass",
-                "{signature}, optimized={optimized}: {result}"
-            );
+            assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
         }
+
         for signature in [
-            "checkLargeCloseFactor(uint128,uint256,uint16)",
-            "checkWholeUnitAddend(uint128,uint256,uint16)",
+            "checkVestedBeforeStart(uint128,uint256,uint256,uint256)",
+            "checkSharesAboveSupply(uint128,uint128,uint128)",
+            "checkUnorderedNarrowShares(uint256,uint128,uint128)",
+            "checkUnorderedNarrowBalance(uint128,uint256,uint128)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(
                 result["symbolic"]["status"], "fail_counterexample",
-                "{signature}, optimized={optimized}: {result}"
+                "optimized={optimized}: {result}"
             );
             assert_eq!(
                 result["symbolic"]["replay"]["status"], "confirmed",
-                "{signature}, optimized={optimized}: {result}"
+                "optimized={optimized}: {result}"
             );
         }
     }
