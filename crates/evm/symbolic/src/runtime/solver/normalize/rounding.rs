@@ -481,7 +481,7 @@ impl ConstraintContext {
     /// Returns whether other conjuncts assert `small <= large`, including strict `<`. Once
     /// `s <= t`, a difference `t - s` cannot wrap, so it is at most `t`, and at most `d` once
     /// `t <= d + s`. A wrapped `d + s` would be below `s <= t`, so the two facts cannot both hold.
-    fn asserts_less_or_equal(&self, small: &SymExpr, large: &SymExpr) -> bool {
+    pub(super) fn asserts_less_or_equal(&self, small: &SymExpr, large: &SymExpr) -> bool {
         if self.asserted_upper_bounds(small).contains(large) {
             return true;
         }
