@@ -133,6 +133,21 @@ done
     assert_eq!(fs::read(&retained_cache).unwrap(), cache_before);
     assert_eq!(fs::read(&retained_artifact).unwrap(), artifact_before);
 
+    // `script --no-compile` reports a stale external unit instead of compiling it.
+    let lib = fs::read_to_string(&external_source).unwrap();
+    fs::write(&external_source, format!("{lib}\n")).unwrap();
+    cmd.forge_fuse()
+        .args(["script", "src/Builtin.sol", "--no-compile"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: compilation disabled by --no-compile; sources need compiling:
+native/fe.toml
+native/src/lib.fe
+
+"#]]);
+    assert!(!invoked.exists());
+    fs::write(&external_source, lib).unwrap();
+
     fs::remove_file(native.join("src/other.fe")).unwrap();
     let read_only_commands = [
         vec!["inspect", "native/src/lib.fe:Counter", "abi"],

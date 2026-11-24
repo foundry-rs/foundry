@@ -8,6 +8,7 @@ use foundry_compilers::{
     artifacts::{ConfigurableContractArtifact, Severity, contract::Contract},
     compilers::{Compiler, Language, multi::MultiCompilerLanguage},
     contracts::{VersionedContract, VersionedContracts},
+    error::SolcError,
 };
 use foundry_config::{Config, DenyLevel, ExternalCompiler};
 use semver::Version;
@@ -38,14 +39,20 @@ pub(crate) struct ExternalCompilation<'a> {
     complete_discovery: bool,
     active_units: BTreeMap<String, BTreeSet<String>>,
     pending_cache: Vec<PendingCache>,
+    no_compile: bool,
+    stale: Vec<PathBuf>,
 }
 
 impl<'a> ExternalCompilation<'a> {
     /// Runs adapters, staging their output until the built-in compilation succeeds.
+    ///
+    /// With `no_compile`, fails with [`SolcError::StaleSources`] instead of compiling a unit that
+    /// is not cached.
     pub(crate) fn compile(
         config: &'a Config,
         selected_paths: &[PathBuf],
         write_outputs: bool,
+        no_compile: bool,
     ) -> Result<Self> {
         let mut compilation = Self {
             config,
@@ -55,6 +62,8 @@ impl<'a> ExternalCompilation<'a> {
             complete_discovery: selected_paths.is_empty(),
             active_units: BTreeMap::new(),
             pending_cache: Vec::new(),
+            no_compile,
+            stale: Vec::new(),
         };
         let mut adapter_keys = BTreeSet::new();
         for adapter in &config.external_compilers {
@@ -66,6 +75,11 @@ impl<'a> ExternalCompilation<'a> {
             ensure_portable_child(&config.out.join(EXTERNAL_ARTIFACT_DIR), &adapter.id, None)?;
             ensure_portable_child(&config.cache_path.join(EXTERNAL_CACHE_DIR), &adapter.id, None)?;
             AdapterClient::new(config, adapter, selected_paths)?.compile(&mut compilation)?;
+        }
+        if !compilation.stale.is_empty() {
+            compilation.stale.sort();
+            compilation.stale.dedup();
+            return Err(SolcError::StaleSources(compilation.stale).into());
         }
         Ok(compilation)
     }
@@ -247,6 +261,16 @@ impl<'a> AdapterClient<'a> {
             };
             let (result, fresh) = match result {
                 Some(result) => (result, false),
+                None if output.no_compile => {
+                    // A unit without inputs is reported by its ID.
+                    if unit.inputs.is_empty() {
+                        output.stale.push(unit.id.into());
+                    }
+                    for input in &unit.inputs {
+                        output.stale.push(self.config.root.join(input));
+                    }
+                    continue;
+                }
                 None => {
                     let result: CompileResult = process
                         .request("compile", json!({"unit": unit.id, "fingerprint": fingerprint}))?;

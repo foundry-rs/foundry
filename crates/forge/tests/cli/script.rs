@@ -11874,3 +11874,37 @@ contract SimpleScript {
         .is_jsonlines(),
     );
 }
+
+// `--no-compile` runs a script from cached artifacts, and fails instead of compiling when a source
+// changed.
+#[forgetest]
+fn script_no_compile(prj: _, cmd: _) {
+    let script = prj.add_source("Foo", "contract Demo { function run() external {} }");
+    cmd.arg("build").assert_success();
+    cmd.forge_fuse().arg("script").arg(&script).arg("--no-compile").assert_success().stdout_eq(
+        str![[r#"
+No files changed, compilation skipped
+Script ran successfully.
+...
+"#]],
+    );
+
+    prj.add_source("Foo", "contract Demo { function run() external pure {} }");
+    cmd.forge_fuse()
+        .arg("script")
+        .arg(&script)
+        .arg("--no-compile")
+        .assert_failure()
+        .stdout_eq(str![[""]])
+        .stderr_eq(str![[r#"
+Error: compilation disabled by --no-compile; sources need compiling:
+src/Foo.sol
+
+"#]]);
+
+    // The cache is untouched, so a normal run compiles the change.
+    cmd.forge_fuse().arg("script").arg(&script).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+...
+"#]]);
+}

@@ -187,6 +187,10 @@ pub struct ScriptArgs {
     #[arg(long)]
     pub skip_simulation: bool,
 
+    /// Uses only cached artifacts, and fails instead of compiling when a source needs compiling.
+    #[arg(long, conflicts_with_all = ["force", "verify"])]
+    pub no_compile: bool,
+
     /// Relative percentage to multiply gas estimates by.
     #[arg(long, short, default_value = "130")]
     pub gas_estimate_multiplier: u64,

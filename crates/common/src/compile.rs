@@ -303,12 +303,17 @@ impl ProjectCompiler {
         let preprocess = self.dynamic_test_linking;
         let abi_cache = self.abi_cache;
         let external_compilers = self.external_compilers.take();
-        let external_writes = self.external_writes && !project.no_artifacts;
+        let external_writes = self.external_writes && !project.no_artifacts && !project.no_compile;
         self.compile_with(|| {
             let external = external_compilers
                 .as_ref()
                 .map(|config| {
-                    ExternalCompilation::compile(config, &selected_paths, external_writes)
+                    ExternalCompilation::compile(
+                        config,
+                        &selected_paths,
+                        external_writes,
+                        project.no_compile,
+                    )
                 })
                 .transpose()?;
             let sources = if explicit_selection {
