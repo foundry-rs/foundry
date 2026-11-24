@@ -73,9 +73,12 @@ pub async fn check_tx_status<N: Network>(
                             // Transaction is not known to the node, mark it as dropped
                             Ok(TxStatus::Dropped)
                         }
-                        Err(err) => Err(RetryError::Retry(eyre!(
-                            "failed to check if transaction {hash} is still known to the node: {err}"
-                        ))),
+                        Err(err) => {
+                            let message = format!(
+                                "failed to check if transaction {hash} is still known to the node: {err}"
+                            );
+                            Err(RetryError::Retry(eyre::Report::new(err).wrap_err(message)))
+                        }
                     }
                 }
                 Err(e) => match provider.get_transaction_by_hash(hash).await {
@@ -97,9 +100,12 @@ pub async fn check_tx_status<N: Network>(
                         _ => Err(RetryError::Retry(e.into())),
                     },
                     Ok(None) => Ok(TxStatus::Dropped),
-                    Err(err) => Err(RetryError::Retry(eyre!(
-                        "failed to check if transaction {hash} is still known to the node after receipt error: {err}; receipt error: {e}"
-                    ))),
+                    Err(err) => {
+                        let message = format!(
+                            "failed to check if transaction {hash} is still known to the node after receipt error: {err}; receipt error: {e}"
+                        );
+                        Err(RetryError::Retry(eyre::Report::new(err).wrap_err(message)))
+                    }
                 },
             }
         })

@@ -1,3 +1,4 @@
+use crate::flattened;
 use alloy_network::Network;
 use alloy_primitives::map::{HashMap, hash_map::Entry};
 use alloy_provider::{Provider, RootProvider};
@@ -103,11 +104,11 @@ impl<N: Network> ProviderInfo<N> {
         match &self.gas_price {
             GasPrice::Legacy(res) => match res {
                 Ok(val) => Ok(*val),
-                Err(err) => Err(eyre::eyre!("{}", err)),
+                Err(err) => Err(flattened(err)),
             },
             GasPrice::EIP1559(res) => match res {
                 Ok(fees) => Ok(fees.max_fee_per_gas),
-                Err(err) => Err(eyre::eyre!("{}", err)),
+                Err(err) => Err(flattened(err)),
             },
         }
     }

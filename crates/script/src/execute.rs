@@ -1,4 +1,4 @@
-use super::{JsonResult, NestedValue, ScriptResult, runner::ScriptRunner};
+use super::{JsonResult, NestedValue, ScriptResult, revert_error, runner::ScriptRunner};
 use crate::{
     ScriptArgs, ScriptConfig,
     build::{CompiledState, LinkedBuildData},
@@ -194,6 +194,7 @@ impl<FEN: FoundryEvmNetwork> PreExecutionState<FEN> {
             setup_result.returned = script_result.returned;
             setup_result.exit_reason = script_result.exit_reason;
             setup_result.breakpoints = script_result.breakpoints;
+            setup_result.rpc_failure = script_result.rpc_failure;
 
             match (&mut setup_result.transactions, script_result.transactions) {
                 (Some(txs), Some(new_txs)) => {
@@ -519,13 +520,17 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
         sh_println!("{json}")?;
 
         if !self.execution_result.success {
-            return Err(eyre::eyre!(
-                "script failed: {}",
-                &self
-                    .execution_artifacts
-                    .decoder
-                    .revert_decoder
-                    .decode(&result.returned[..], result.exit_reason)
+            let reason = self
+                .execution_artifacts
+                .decoder
+                .revert_decoder
+                .decode(&result.returned[..], result.exit_reason);
+            return Err(revert_error(
+                format!("script failed: {reason}"),
+                &result.returned,
+                &reason,
+                result.exit_reason,
+                result.rpc_failure.as_ref(),
             ));
         }
 

@@ -1,12 +1,14 @@
-use super::{ScriptConfig, ScriptResult};
+use super::{ScriptConfig, ScriptResult, revert_error};
 use crate::build::ScriptPredeployLibraries;
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, Bytes, TxKind, U256, map::AddressHashMap};
 use evm2::interpreter::InstrStop;
 use eyre::Result;
-use foundry_cheatcodes::BroadcastableTransaction;
-use foundry_common::{FoundryTransactionBuilder, LIBRARY_DEPLOYER, TransactionMaybeSigned};
+use foundry_cheatcodes::{BroadcastableTransaction, Cheatcodes};
+use foundry_common::{
+    FoundryTransactionBuilder, LIBRARY_DEPLOYER, TransactionMaybeSigned, provider::RpcFailure,
+};
 use foundry_config::Config;
 use foundry_evm::{
     constants::CALLER,
@@ -68,7 +70,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
             let DeployResult { address, raw } = self
                 .executor
                 .deploy(LIBRARY_DEPLOYER, library.bytecode.clone(), U256::ZERO, None)
-                .map_err(|err| eyre::eyre!("couldn't deploy local library: {err}"))?;
+                .map_err(|err| self.deploy_error(err, "couldn't deploy local library: "))?;
             eyre::ensure!(
                 library.address == address,
                 "local library deployed at an unexpected address"
@@ -127,7 +129,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                     } = self
                         .executor
                         .deploy(self.evm_opts.sender, code.clone(), U256::ZERO, None)
-                        .map_err(|err| eyre::eyre!("couldn't deploy library: {err}"))?
+                        .map_err(|err| self.deploy_error(err, "couldn't deploy library: "))?
                         .raw;
 
                     self.extend_debug_bytecodes(&mut debug_bytecodes, deploy_debug_bytecodes);
@@ -173,7 +175,10 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                             calldata.clone().into(),
                             U256::ZERO,
                         )
-                        .map_err(|err| eyre::eyre!("couldn't deploy library: {err}"))?;
+                        .map_err(|err| {
+                            let message = format!("couldn't deploy library: {err}");
+                            err.wrap_err(message)
+                        })?;
 
                     self.extend_debug_bytecodes(&mut debug_bytecodes, deploy_debug_bytecodes);
 
@@ -235,7 +240,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
         } = self
             .executor
             .deploy(CALLER, code, U256::ZERO, None)
-            .map_err(|err| eyre::eyre!("Failed to deploy script:\n{}", err))?;
+            .map_err(|err| self.deploy_error(err, "Failed to deploy script:\n"))?;
 
         if self.evm_opts.sender == CALLER {
             self.executor.set_nonce(self.evm_opts.sender, prev_sender_nonce)?;
@@ -250,12 +255,15 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
         self.extend_debug_bytecodes(&mut debug_bytecodes, constructor_debug_bytecodes);
 
         // Optionally call the `setUp` function
+        let mut rpc_failure = None;
         let (success, returned, exit_reason, gas_used, labeled_addresses, transactions) = if setup {
             let result = match self.executor.setup(Some(self.evm_opts.sender), address, None) {
                 Ok(result) => result,
                 Err(EvmError::Execution(err)) => err.raw,
                 Err(err) => return Err(err.into()),
             };
+            // `setUp` commits, which moves the cheatcode state into the executor.
+            rpc_failure = rpc_failure_of(&result, self.executor.inspector().cheatcodes.as_deref());
             let RawCallResult {
                 reverted,
                 result,
@@ -293,6 +301,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                 logs,
                 traces,
                 address: None,
+                rpc_failure,
                 ..Default::default()
             },
         ))
@@ -475,6 +484,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
         res: RawCallResult<FEN>,
         gas_used: u64,
     ) -> ScriptResult<FEN::Network> {
+        let rpc_failure = rpc_failure_of(&res, res.cheatcodes.as_deref());
         let RawCallResult {
             result,
             reverted,
@@ -507,6 +517,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
             exit_reason,
             address: None,
             breakpoints,
+            rpc_failure,
         }
     }
 
@@ -586,6 +597,27 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
         tx.set_gas_limit(transaction.gas().expect("fixed gas limit missing") as u64);
         (env, tx)
     }
+
+    /// Returns the error of a failed deployment: a revert keeps its revert data, other errors
+    /// their cause.
+    fn deploy_error(&self, err: EvmError<FEN>, context: &str) -> eyre::Report {
+        let message = format!("{context}{err}");
+        match err {
+            EvmError::Execution(err) => {
+                // Deployments commit, which moves the cheatcode state into the executor.
+                let cheatcodes = self.executor.inspector().cheatcodes.as_deref();
+                let rpc_failure = rpc_failure_of(&err.raw, cheatcodes);
+                revert_error(
+                    message,
+                    &err.raw.result,
+                    &err.reason,
+                    err.raw.exit_reason,
+                    rpc_failure.as_ref(),
+                )
+            }
+            err => eyre::Report::new(err).wrap_err(message),
+        }
+    }
 }
 
 /// Returns whether `tx` executes a single contract creation.
@@ -653,6 +685,20 @@ impl GasSearch {
 /// Returns whether the gas search treats `exit_reason` as needing more gas.
 pub(crate) const fn needs_more_gas(exit_reason: Option<InstrStop>) -> bool {
     matches!(exit_reason, Some(InstrStop::Revert | InstrStop::OutOfGas | InstrStop::OutOfFunds))
+}
+
+/// Returns how an RPC request failed when a cheatcode error that failure caused is the revert
+/// data of `call`.
+fn rpc_failure_of<FEN: FoundryEvmNetwork>(
+    call: &RawCallResult<FEN>,
+    cheatcodes: Option<&Cheatcodes<FEN>>,
+) -> Option<RpcFailure> {
+    if !call.reverted {
+        return None;
+    }
+    // A script may catch a failure and rethrow it after later ones.
+    let failures = &cheatcodes?.rpc_failures;
+    failures.iter().rev().find(|(data, _)| *data == call.result).map(|(_, rpc)| rpc.clone())
 }
 
 #[cfg(test)]

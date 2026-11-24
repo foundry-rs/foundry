@@ -1,4 +1,5 @@
 use crate::{
+    backend::ForkBlockNotFound,
     constants::DEFAULT_CREATE2_DEPLOYER,
     evm::{
         EvmEnv, EvmEnvFor, EvmFactoryFor, FoundryEvmFactory, FoundryEvmNetwork, SpecFor, SpecOf,
@@ -1089,7 +1090,10 @@ impl EvmOpts {
             } else {
                 Default::default()
             };
-            eyre::bail!("failed to get {block_number_message}{latest_message}");
+            return Err(ForkBlockNotFound(format!(
+                "failed to get {block_number_message}{latest_message}"
+            ))
+            .into());
         };
         let actual = BlockNumHash::new(block.header().number(), block.header().hash());
 

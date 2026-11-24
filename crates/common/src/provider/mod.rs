@@ -24,6 +24,7 @@ use alloy_transport::{
 use eyre::{Result, WrapErr};
 use foundry_config::Config;
 use reqwest::Url;
+use serde::Serialize;
 use std::{
     marker::PhantomData,
     net::SocketAddr,
@@ -548,6 +549,53 @@ fn rpc_error_code_from_body(body: &str) -> Option<i64> {
         serde_json::Deserializer::from_str(body).into_iter::<serde_json::Value>().next()?.ok()?;
     let error = value.get("error").unwrap_or(&value);
     error.get("code")?.as_i64()
+}
+
+/// How an RPC request failed, for programs that decide whether to retry.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct RpcFailure {
+    /// Whether the endpoint answered, with an error or with null where a value must exist. When
+    /// it did not, the connection failed or timed out, or it returned an HTTP error without a
+    /// JSON-RPC error.
+    #[serde(skip)]
+    pub answered: bool,
+    /// The JSON-RPC error code, when the endpoint sent one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<i64>,
+    /// The HTTP status, when the endpoint returned an HTTP error.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<u16>,
+}
+
+impl RpcFailure {
+    /// Returns the machine-readable kind of this failure.
+    pub const fn kind(&self) -> &'static str {
+        if self.answered { "rpc.error" } else { "rpc.transport" }
+    }
+}
+
+/// Classifies the innermost [`TransportError`] in `error`'s chain.
+///
+/// The innermost one is the cause: a retry layer that gives up wraps the last error it got in a
+/// transport error.
+pub fn rpc_failure(error: &(dyn std::error::Error + 'static)) -> Option<RpcFailure> {
+    let error = std::iter::successors(Some(error), |error| error.source())
+        .filter_map(|error| error.downcast_ref::<TransportError>())
+        .last()?;
+    // These fail before a request is sent.
+    if matches!(
+        error,
+        TransportError::LocalUsageError(_)
+            | TransportError::SerError(_)
+            | TransportError::UnsupportedFeature(_)
+    ) {
+        return None;
+    }
+    let code = rpc_error_code(error);
+    let status = error.as_transport_err().and_then(|error| error.as_http_error()).map(|e| e.status);
+    let answered =
+        code.is_some() || matches!(error, TransportError::ErrorResp(_) | TransportError::NullResp);
+    Some(RpcFailure { answered, code, status })
 }
 
 /// Constructs a provider using [`try_get_http_provider`].

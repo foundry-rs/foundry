@@ -274,7 +274,7 @@ impl Cheatcode for eth_getLogsCall {
         }
 
         let logs = foundry_common::block_on(provider.get_logs(&filter))
-            .map_err(|e| fmt_err!("failed to get logs: {e}"))?;
+            .map_err(|e| fmt_err!("failed to get logs: {e}").with_rpc_failure_of(&e))?;
 
         let eth_logs = logs
             .into_iter()
@@ -305,7 +305,7 @@ impl Cheatcode for eth_getProofCall {
         let proof = foundry_common::block_on(async move {
             provider.get_proof(*target, slots.clone()).number(block_number).await
         })
-        .map_err(|e| fmt_err!("failed to get proof: {e}"))?;
+        .map_err(|e| fmt_err!("failed to get proof: {e}").with_rpc_failure_of(&e))?;
 
         let storage_proof = proof
             .storage_proof
@@ -334,7 +334,7 @@ impl Cheatcode for getRawBlockHeaderCall {
             .map_err(|_| fmt_err!("block number must be less than 2^64"))?;
         let block =
             foundry_common::block_on(async move { provider.get_block(block_number.into()).await })
-                .map_err(|e| fmt_err!("failed to get block: {e}"))?
+                .map_err(|e| fmt_err!("failed to get block: {e}").with_rpc_failure_of(&e))?
                 .ok_or_else(|| fmt_err!("block {block_number} not found"))?;
 
         let header: alloy_consensus::Header = block
@@ -640,7 +640,7 @@ fn rpc_result(url: &str, method: &str, params: &str) -> Result<serde_json::Value
     let provider = ProviderBuilder::<AnyNetwork>::new(url).build()?;
     let params_json: serde_json::Value = serde_json::from_str(params)?;
     foundry_common::block_on(provider.raw_request(method.to_string().into(), params_json))
-        .map_err(|err| fmt_err!("{method:?}: {err}"))
+        .map_err(|err| fmt_err!("{method:?}: {err}").with_rpc_failure_of(&err))
 }
 
 /// Convert fixed bytes and address values to bytes in order to prevent encoding issues.

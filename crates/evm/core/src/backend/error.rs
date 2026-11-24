@@ -1,5 +1,6 @@
 use alloy_primitives::Address;
 use evm2::registry::HandlerError;
+use foundry_common::provider::{RpcFailure, rpc_failure};
 
 pub use foundry_fork_db::{DatabaseError, DatabaseResult};
 
@@ -81,4 +82,61 @@ pub struct TransactionValidationError {
     pub reason: String,
     /// The evm2 rejection.
     pub error: HandlerError,
+}
+
+/// A fork's endpoint has no block at the number the fork starts from, such as a load-balanced
+/// endpoint whose backend has not seen that block yet.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub struct ForkBlockNotFound(pub String);
+
+/// Returns how an RPC request in `error`'s chain failed, including requests a fork's database
+/// made during execution.
+pub fn rpc_failure_in(error: &(dyn std::error::Error + 'static)) -> Option<RpcFailure> {
+    for error in std::iter::successors(Some(error), |error| error.source()) {
+        if error.is::<ForkBlockNotFound>() {
+            return Some(RpcFailure { answered: true, ..Default::default() });
+        }
+        // These wrappers hide the fork database error from the source chain.
+        let state = error
+            .downcast_ref::<evm2::DatabaseError>()
+            .or_else(|| match error.downcast_ref() {
+                Some(BackendError::State(error)) => Some(error),
+                _ => None,
+            })
+            .or_else(|| match error.downcast_ref() {
+                Some(evm2::ExecutionError::Database(error)) => Some(error),
+                _ => None,
+            });
+        let database = state
+            .and_then(|error| error.downcast_ref::<DatabaseError>())
+            .or_else(|| error.downcast_ref::<DatabaseError>())
+            .or_else(|| match error.downcast_ref() {
+                Some(BackendError::Database(error)) => Some(error),
+                _ => None,
+            });
+        if let Some(database) = database {
+            return match database {
+                DatabaseError::GetAccount(.., error)
+                | DatabaseError::GetStorage(.., error)
+                | DatabaseError::GetBlockHash(_, error)
+                | DatabaseError::GetFullBlock(_, error)
+                | DatabaseError::AnyRequest(error) => {
+                    Some(rpc_failure((**error).as_ref()).unwrap_or_default())
+                }
+                // Without a transport error, the endpoint answered that it has no such transaction.
+                DatabaseError::GetTransaction(_, error) => Some(
+                    rpc_failure((**error).as_ref())
+                        .unwrap_or(RpcFailure { answered: true, ..Default::default() }),
+                ),
+                DatabaseError::BlockNotFound(_) => {
+                    Some(RpcFailure { answered: true, ..Default::default() })
+                }
+                DatabaseError::MissingCode(_) | DatabaseError::Recv(_) | DatabaseError::Send(_) => {
+                    None
+                }
+            };
+        }
+    }
+    rpc_failure(error)
 }

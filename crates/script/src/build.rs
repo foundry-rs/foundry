@@ -4,6 +4,7 @@ use crate::{
         BundledState, refused_after_revert, remaining_operation_indices,
         remaining_unsigned_transactions_for_recovery,
     },
+    coded,
     execute::LinkedState,
     multi_sequence::MultiChainSequence,
     progress::ScriptProgress,
@@ -254,7 +255,7 @@ impl<FEN: FoundryEvmNetwork> PreprocessedState<FEN> {
         } else {
             compiler.target_files([target_path.clone()])
         };
-        let output = compiler.compile(&project)?;
+        let output = compiler.compile(&project).map_err(|err| coded(err, "compiler.error"))?;
 
         let mut target_id: Option<ArtifactId> = None;
 
@@ -448,7 +449,11 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
             match errors.len() {
                 0 => {}
                 1 => return Err(errors.remove(0)),
-                _ => eyre::bail!("{}", errors.iter().format("\n")),
+                _ => {
+                    // Keep the first error itself, so callers can tell why the RPC failed.
+                    let message = errors.iter().format("\n").to_string();
+                    return Err(errors.swap_remove(0).wrap_err(message));
+                }
             }
         }
         // Resume refuses new operations after a recorded revert. Saved attempts after it are still

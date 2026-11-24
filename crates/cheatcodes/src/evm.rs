@@ -336,11 +336,9 @@ impl Cheatcode for loadCall {
 
         ccx.evm.state_mut().account(&target)?.warm();
         let (is_cold, mut value) = {
-            let mut slot = ccx
-                .evm
-                .state_mut()
-                .storage_slot(&target, slot.into())
-                .map_err(|e| fmt_err!("failed to load storage slot: {e}"))?;
+            let mut slot = ccx.evm.state_mut().storage_slot(&target, slot.into()).map_err(|e| {
+                fmt_err!("failed to load storage slot: {e}").with_rpc_failure_of(&e)
+            })?;
             (slot.warm(), slot.current())
         };
 
@@ -925,7 +923,7 @@ impl Cheatcode for storeCall {
         let state = ccx.evm.state_mut();
         touch_account(state, target)?;
         warm_storage_slot(state, &target, slot.into())
-            .map_err(|e| fmt_err!("failed to store storage slot: {e}"))?
+            .map_err(|e| fmt_err!("failed to store storage slot: {e}").with_rpc_failure_of(&e))?
             .set(value.into());
         ccx.state.mark_arbitrary_storage_slot_explicit(target, slot.into());
         // A `fail()` fails the call where it is made, like an assertion.
@@ -1540,7 +1538,9 @@ impl Cheatcode for executeTransactionCall {
             Some(env),
         );
         ccx.state.tx_warm_addresses = previous;
-        let res = res.map_err(|e| fmt_err!("transaction execution failed: {e}"))?;
+        let res = res.map_err(|e| {
+            fmt_err!("transaction execution failed: {e}").with_rpc_failure_of(e.as_ref())
+        })?;
 
         // Return output bytes.
         if !res.status {

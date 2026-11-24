@@ -203,6 +203,11 @@ impl ScriptArgs {
             child.env_remove(key);
         }
 
+        // The inner `forge script` creates this file when it prints its failure envelope.
+        let marker = tempfile::tempdir()?;
+        let failure_marker = marker.path().join("failed");
+        child.env(JSON_FAILURE_MARKER_ENV, &failure_marker);
+
         let status = child.status().wrap_err_with(|| {
             format!(
                 "failed to run `{}` for forge script wallet session",
@@ -211,17 +216,14 @@ impl ScriptArgs {
         })?;
 
         if status.success() {
-            Ok(())
-        } else {
-            match status.code() {
-                Some(code) => {
-                    eyre::bail!("forge script wallet session exited with code {code}");
-                }
-                None => {
-                    eyre::bail!("forge script wallet session terminated by a signal");
-                }
-            }
+            return Ok(());
         }
+        let failure = InnerScriptFailed(match status.code() {
+            Some(code) => format!("exited with code {code}"),
+            None => "terminated by a signal".into(),
+        });
+        // `cast` may fail before it runs the inner `forge script`, which then printed nothing.
+        if failure_marker.exists() { Err(failure.into()) } else { eyre::bail!("{failure}") }
     }
 
     fn wallet_session_command_from_env(&self) -> Result<WalletSessionCommand> {
@@ -479,6 +481,15 @@ fn quote_arg(arg: &OsString) -> Result<String> {
     quoted.push('"');
     Ok(quoted)
 }
+
+/// Names the file the inner `forge script` of a wallet session creates when it prints its
+/// `--json` failure envelope.
+pub(super) const JSON_FAILURE_MARKER_ENV: &str = "FORGE_SCRIPT_JSON_FAILURE_MARKER";
+
+/// The inner `forge script` of a wallet session failed, after reporting the failure itself.
+#[derive(Debug, thiserror::Error)]
+#[error("forge script wallet session {0}")]
+pub(super) struct InnerScriptFailed(String);
 
 #[cfg(test)]
 mod tests {

@@ -774,7 +774,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
             })
             .collect::<Vec<_>>();
 
-        let errors = join_all(futs)
+        let mut errors = join_all(futs)
             .await
             .into_iter()
             .enumerate()
@@ -786,7 +786,9 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
         self.sequence.save(true, false)?;
 
         if !errors.is_empty() {
-            return Err(eyre::eyre!("{}", errors.iter().format("\n")));
+            // Keep the first error itself, so callers can tell why the RPC failed.
+            let message = errors.iter().format("\n").to_string();
+            return Err(errors.swap_remove(0).wrap_err(message));
         }
 
         Ok(self)

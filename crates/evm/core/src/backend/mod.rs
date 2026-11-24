@@ -75,8 +75,8 @@ mod bal;
 
 mod error;
 pub use error::{
-    BackendError, BackendResult, DatabaseError, DatabaseResult, TransactionValidationError,
-    handler_error, transaction_error,
+    BackendError, BackendResult, DatabaseError, DatabaseResult, ForkBlockNotFound,
+    TransactionValidationError, handler_error, rpc_failure_in, transaction_error,
 };
 
 mod cow;
