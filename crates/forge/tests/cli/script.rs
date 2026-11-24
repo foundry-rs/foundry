@@ -3929,7 +3929,7 @@ contract SimpleScript is Script {
 
 // `--json` reports the recorded transactions, including when no RPC is given.
 #[forgetest]
-fn script_json_broadcastable_transactions(prj: _, cmd: _) {
+async fn script_json_broadcastable_transactions_fork(prj: _, cmd: _) {
     prj.add_script(
         "Foo",
         r#"
@@ -3937,11 +3937,14 @@ interface Vm {
     function startBroadcast() external;
 }
 
+contract Dummy {}
+
 contract SimpleScript {
     Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
 
     function run() external {
         vm.startBroadcast();
+        new Dummy();
         (bool success, ) = address(0).call("");
         success;
     }
@@ -3962,12 +3965,36 @@ contract SimpleScript {
             .is_jsonlines(),
         );
 
+    // Without an RPC, the sender's nonce starts at 1 and the CREATE has no chain ID.
     cmd.forge_fuse()
         .args(["script", "SimpleScript", "--sender", sender, "--json"])
         .assert_success()
         .stdout_eq(
             str![[r#"
-{"logs":[],"returns":{},"success":true,"raw_logs":[],"traces":"{...}","gas_used":"{...}","labeled_addresses":{},"returned":"0x","address":null,"broadcastable_transactions":[{"from":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","to":"0x0000000000000000000000000000000000000000","value":"0x0","input":"0x","nonce":"0x1","chainId":"0x7a69"}]}
+{"logs":[],"returns":{},"success":true,"raw_logs":[],"traces":"{...}","gas_used":"{...}","labeled_addresses":{},"returned":"0x","address":null,"broadcastable_transactions":[{"from":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","to":null,"value":"0x0","input":"{...}","nonce":"0x1"},{"from":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","to":"0x0000000000000000000000000000000000000000","value":"0x0","input":"0x","nonce":"0x2","chainId":"0x7a69"}]}
+
+"#]]
+            .is_jsonlines(),
+        );
+
+    // With an RPC, every unsigned transaction gets the RPC's chain ID, as in the broadcast file.
+    let (_api, handle) = spawn(NodeConfig::test().with_chain_id(Some(1234u64))).await;
+    cmd.forge_fuse()
+        .args([
+            "script",
+            "SimpleScript",
+            "--fork-url",
+            &handle.http_endpoint(),
+            "--sender",
+            sender,
+            "--json",
+        ])
+        .assert_success()
+        .stdout_eq(
+            str![[r#"
+{"logs":[],"returns":{},"success":true,"raw_logs":[],"traces":"{...}","gas_used":"{...}","labeled_addresses":{},"returned":"0x","address":null,"broadcastable_transactions":[{"from":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","to":null,"value":"0x0","input":"{...}","nonce":"0x0","chainId":"0x4d2"},{"from":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","to":"0x0000000000000000000000000000000000000000","value":"0x0","input":"0x","nonce":"0x1","chainId":"0x4d2"}]}
+{"chain":1234,"estimated_gas_price":"{...}","estimated_total_gas_used":"{...}","estimated_amount_required":"{...}","token_symbol":"ETH","estimated_max_fee_per_gas":"{...}","estimated_base_fee_per_gas":"{...}","estimated_max_priority_fee_per_gas":"{...}"}
+{"status":"success","transactions":"[..]/broadcast/Foo.sol/1234/dry-run/run-latest.json","sensitive":"[..]/cache/Foo.sol/1234/dry-run/run-latest.json"}
 
 "#]]
             .is_jsonlines(),

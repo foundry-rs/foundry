@@ -6,7 +6,7 @@ use crate::{
 };
 use alloy_dyn_abi::FunctionExt;
 use alloy_json_abi::{Function, InternalType, JsonAbi};
-use alloy_network::{AnyNetwork, Network};
+use alloy_network::{AnyNetwork, Network, TransactionBuilder};
 use alloy_primitives::{
     Address, Bytes,
     map::{HashMap, HashSet},
@@ -489,6 +489,17 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
             decode_trace_arena(trace, &self.execution_artifacts.decoder).await;
             if let Some(trace_depth) = trace_depth {
                 *trace = trace_arena_at_depth(trace, trace_depth);
+            }
+        }
+
+        // Like simulation, set each unsigned transaction's chain ID to its RPC's chain, since
+        // CREATE broadcasts and library deployments are recorded without one.
+        for tx in result.transactions.iter_mut().flatten() {
+            if let Some(rpc) = &tx.rpc
+                && let Some(&chain_id) = self.execution_artifacts.rpc_data.chain_ids.get(rpc)
+                && let Some(tx) = tx.transaction.as_unsigned_mut()
+            {
+                tx.set_chain_id(chain_id);
             }
         }
 
