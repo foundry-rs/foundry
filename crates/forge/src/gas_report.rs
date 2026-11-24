@@ -132,7 +132,7 @@ impl GasReport {
         // Only include top-level calls which account for calldata and base (21.000) cost.
         // Only include Calls and Creates as only these calls are isolated in inspector.
         // Report a `vm.deployCode` create at the depth of the cheatcode call, as a native create.
-        let depth = trace.depth - usize::from(deploy_code);
+        let depth = trace.depth - u16::from(deploy_code);
         if depth > 1 && (trace.kind == CallKind::Call || is_create_call) {
             return;
         }
