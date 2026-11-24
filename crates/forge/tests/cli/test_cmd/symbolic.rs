@@ -9211,6 +9211,11 @@ contract SymbolicCeilingBounds {
         require(d != 0 && e != 0);
         assert((uint256(n) + d - 1) / d >= uint256(n) / e);
     }
+
+    function checkOtherDivisorPlusOne(uint128 n, uint128 d, uint128 e) public pure {
+        require(d != 0 && e != 0);
+        assert((uint256(n) + d - 1) / d <= uint256(n) / e + 1);
+    }
 }
 "#,
     );
@@ -9250,6 +9255,7 @@ contract SymbolicCeilingBounds {
             "checkSmallerOffset(uint128,uint128)",
             "checkCeilingAtMostFloor(uint128,uint128)",
             "checkOtherDivisor(uint128,uint128,uint128)",
+            "checkOtherDivisorPlusOne(uint128,uint128,uint128)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(
