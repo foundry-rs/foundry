@@ -8930,8 +8930,8 @@ contract SymbolicMinRatioNested {
     }
 }
 
-// An EMA or weighted average `(p * u + q * v) / k` with `u + v <= k` stays at most the larger
-// of `p` and `q`.
+// An EMA or weighted average `(p * u + q * v) / k` with `u + v <= k` stays at most a bound on
+// `p` and `q`.
 #[forgetest_init]
 fn symbolic_proves_weighted_average_bound(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_weighted_average_bound");
@@ -8970,6 +8970,38 @@ contract SymbolicWeightedAverage {
         assert((uint256(a) * w + uint256(b) * (WAD - w)) / WAD <= b);
     }
 
+    function checkEmaAssertedWeights(uint128 price, uint128 ema, uint64 u, uint64 v, uint128 cap)
+        public
+        pure
+    {
+        require(uint256(u) + v <= WAD && price <= cap && ema <= cap);
+        assert((uint256(price) * u + uint256(ema) * v) / WAD <= cap);
+    }
+
+    function checkWeightedMean(uint128 a, uint128 b, uint64 u, uint64 v, uint128 cap) public pure {
+        require(a <= cap && b <= cap && uint256(u) + v != 0);
+        assert((uint256(a) * u + uint256(b) * v) / (uint256(u) + v) <= cap);
+    }
+
+    // Cross-multiplied by hand; unchecked, so only the bound reaches the solver.
+    function checkWeightedScaled(uint128 p, uint128 q, uint64 u, uint128 cap) public pure {
+        require(u <= WAD && p <= cap && q <= cap);
+        unchecked {
+            assert(uint256(p) * u + uint256(q) * (WAD - u) < (uint256(cap) + 1) * WAD);
+        }
+    }
+
+    // `cap + 1` may wrap, so the quotient comparison is not cross-multiplied, and `cap * WAD` may
+    // wrap too. Unchecked, so only the bound reaches the solver.
+    function checkEmaWideCap(uint256 price, uint256 ema, uint64 alpha, uint256 cap) public pure {
+        require(alpha <= WAD && price <= cap && ema <= cap);
+        uint256 next;
+        unchecked {
+            next = (price * alpha + ema * (WAD - alpha)) / WAD;
+        }
+        assert(next <= cap);
+    }
+
     function checkEmaWeightsOverBudget(
         uint128 price,
         uint128 ema,
@@ -8989,6 +9021,32 @@ contract SymbolicWeightedAverage {
         require(alpha <= WAD && price <= uint256(cap) + 1 && ema <= cap);
         uint256 next = (uint256(price) * alpha + uint256(ema) * (WAD - alpha)) / WAD;
         assert(next <= cap);
+    }
+
+    function checkEmaAverageAboveCap(uint128 price, uint128 ema, uint64 alpha, uint128 cap)
+        public
+        pure
+    {
+        require(alpha <= WAD && price <= cap && ema <= uint256(cap) + 1);
+        uint256 next = (uint256(price) * alpha + uint256(ema) * (WAD - alpha)) / WAD;
+        assert(next <= cap);
+    }
+
+    // `cap + 1` or `(cap + 1) * WAD` may wrap below the sum.
+    function checkWeightedScaledWraps(uint128 p, uint128 q, uint64 u, uint256 cap) public pure {
+        require(u <= WAD && p <= cap && q <= cap);
+        unchecked {
+            assert(uint256(p) * u + uint256(q) * (WAD - u) < (cap + 1) * WAD);
+        }
+    }
+
+    // With `k == 0` both sides are zero.
+    function checkWeightedZeroWhole(uint128 p, uint128 q, uint64 u, uint64 k, uint128 cap)
+        public
+        pure
+    {
+        require(u <= k && p <= cap && q <= cap);
+        assert(uint256(p) * u + uint256(q) * (k - u) < (uint256(cap) + 1) * k);
     }
 
     function checkEmaOtherComplement(
@@ -9032,6 +9090,10 @@ contract SymbolicWeightedAverage {
             "checkWeightedAverageBelowMax(uint128,uint128,uint64)",
             "checkEmaBelowCapReordered(uint128,uint64,uint128,uint128)",
             "checkWeightedAverageBelowMaxReordered(uint64,uint128,uint128)",
+            "checkEmaAssertedWeights(uint128,uint128,uint64,uint64,uint128)",
+            "checkWeightedMean(uint128,uint128,uint64,uint64,uint128)",
+            "checkEmaWideCap(uint256,uint256,uint64,uint256)",
+            "checkWeightedScaled(uint128,uint128,uint64,uint128)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
@@ -9044,12 +9106,21 @@ contract SymbolicWeightedAverage {
         for signature in [
             "checkEmaWeightsOverBudget(uint128,uint128,uint64,uint64,uint128)",
             "checkEmaPriceAboveCap(uint128,uint128,uint64,uint128)",
+            "checkEmaAverageAboveCap(uint128,uint128,uint64,uint128)",
+            "checkWeightedScaledWraps(uint128,uint128,uint64,uint256)",
+            "checkWeightedZeroWhole(uint128,uint128,uint64,uint64,uint128)",
             "checkEmaOtherComplement(uint128,uint128,uint64,uint64,uint128)",
             "checkEmaWrappingComplement(uint128,uint128,uint64,uint128)",
         ] {
             let result = json_test_result(&output, signature);
-            assert_eq!(result["symbolic"]["status"], "fail_counterexample", "{signature}");
-            assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "{signature}");
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "optimized={optimized}: {result}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "optimized={optimized}: {signature}"
+            );
         }
     }
 }
@@ -9272,8 +9343,8 @@ contract SymbolicDowncastShare {
 }
 
 // Fee splits and payment splitters floor each share `w * a / k`, and two shares with
-// `a + b <= k` sum to at most `w`, so their checked sum cannot overflow either. A wrapped
-// `a + b <= k` does not bound the shares.
+// `a + b <= k`, or `b = k - a`, sum to at most `w`, so their checked sum cannot overflow either.
+// A wrapped `a + b <= k` does not bound the shares.
 #[forgetest_init]
 fn symbolic_proves_shares_within_whole(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_shares_within_whole");
@@ -9310,6 +9381,13 @@ contract SymbolicShares {
         uint256 protocolFee = amount * protocolBps / 10_000;
         uint256 lpFee = amount * lpBps / 10_000;
         assert(protocolFee + lpFee <= amount);
+    }
+
+    function checkFeeAndRestWithinAmount(uint128 amount, uint16 feeBps) public pure {
+        require(feeBps <= 10_000);
+        uint256 fee = uint256(amount) * feeBps / 10_000;
+        uint256 rest = uint256(amount) * (10_000 - feeBps) / 10_000;
+        assert(fee + rest <= amount);
     }
 
     function checkFeeSplitOverBudget(uint128 amount, uint16 protocolBps, uint16 lpBps)
@@ -9363,6 +9441,7 @@ contract SymbolicShares {
             "checkFeeSplitWithinAmount(uint128,uint16,uint16)",
             "checkPayeesWithinReceived(uint128,uint128,uint128)",
             "checkUint256FeeSplitWithinAmount(uint256,uint256,uint256)",
+            "checkFeeAndRestWithinAmount(uint128,uint16)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
