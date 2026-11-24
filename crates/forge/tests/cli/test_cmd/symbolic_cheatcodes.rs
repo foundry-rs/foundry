@@ -204,8 +204,9 @@ contract SymbolicPrankSender is Test {
         vm.stopPrank();
     }
 
-    // A symbolic creator can alias this funded contract, so the CREATE is not modeled.
-    function checkSymbolicPrankCreateIsIncomplete(address who) public {
+    // A symbolic creator may name this funded contract, where the CREATE succeeds. A creator
+    // that names no known account still reports incomplete.
+    function checkSymbolicPrankCreate(address who) public {
         vm.prank(who);
         try new CreatedBySender{value: 1}() {
             assert(false);
@@ -333,7 +334,7 @@ Ran 14 tests for test/SymbolicPrankSender.t.sol:SymbolicPrankSender
 [FAIL: vm.prank: cannot overwrite a prank until it is applied at least once; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkPrankRejectsUnusedPrankOverwrite() ([METRICS])
 [PASS] checkStartPrankCreate2(address) ([METRICS])
 [PASS] checkSymbolicPrank(address) ([METRICS])
-[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic CREATE prank] checkSymbolicPrankCreateIsIncomplete(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicPrankCreate(address) ([METRICS])
 [PASS] checkSymbolicPrankOrigin(address,address) ([METRICS])
 [PASS] checkSymbolicStartPrank(address) ([METRICS])
 [PASS] checkSymbolicStartPrankOrigin(address,address) ([METRICS])
@@ -3246,6 +3247,276 @@ Ran 11 tests for test/SymbolicFreeAddressWrites.t.sol:SymbolicFreeAddressWrites
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkSymbolicOffsetPrank(address,uint8) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkSymbolicSizeSetNonce(address,uint256) ([METRICS])
 Suite result: FAILED. 0 passed; 11 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+// A free pranked sender or origin may name a known account, so calls and code reads through it
+// must not run against an empty account.
+#[forgetest_init]
+fn symbolic_pranked_address_may_name_known_account(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_pranked_address_may_name_known_account");
+
+    prj.add_test(
+        "SymbolicPrankedAddress.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract WETH {
+    mapping(address => uint256) public balanceOf;
+
+    function deposit() public payable {
+        balanceOf[msg.sender] += msg.value;
+    }
+
+    function transfer(address to, uint256 amount) external {
+        balanceOf[msg.sender] -= amount;
+        balanceOf[to] += amount;
+    }
+
+    function withdraw(uint256 amount) external {
+        balanceOf[msg.sender] -= amount;
+        (bool ok,) = msg.sender.call{value: amount}("");
+        require(ok);
+    }
+
+    function senderCodeSize() external view returns (uint256) {
+        return msg.sender.code.length;
+    }
+
+    function originCodeSize() external view returns (uint256) {
+        return tx.origin.code.length;
+    }
+
+    receive() external payable {
+        deposit();
+    }
+}
+
+contract SymbolicPrankedAddress is Test {
+    WETH weth;
+
+    function setUp() public {
+        weth = new WETH();
+    }
+
+    // Fails for `who == address(weth)`, whose `receive` deposits the withdrawn ether again.
+    function checkWithdrawToPrankedSender(address who) public {
+        weth.deposit{value: 1}();
+        weth.transfer(who, 1);
+        uint256 balanceBefore = weth.balanceOf(who);
+        vm.prank(who);
+        weth.withdraw(1);
+        assert(weth.balanceOf(who) == balanceBefore - 1);
+    }
+
+    function checkWithdrawToOtherSender(address who) public {
+        vm.assume(who != address(weth));
+        checkWithdrawToPrankedSender(who);
+    }
+
+    function checkPrankedSenderCode(address who) public {
+        vm.prank(who);
+        assert(weth.senderCodeSize() == 0);
+    }
+
+    function checkPrankedOriginCode(address who) public {
+        vm.startPrank(address(this), who);
+        assert(weth.originCodeSize() == 0);
+        vm.stopPrank();
+    }
+
+    // A cheatcode that took the address before the prank does not decide it.
+    function checkWithdrawAfterMakePersistent(address who) public {
+        vm.makePersistent(who);
+        checkWithdrawToPrankedSender(who);
+    }
+
+    // The persistence `vm.makePersistent` wrote through the address stays once the prank forks it.
+    function checkPersistentOncePranked(address who) public {
+        vm.makePersistent(who);
+        vm.prank(who);
+        assert(!vm.isPersistent(who) || who != address(weth));
+    }
+
+    // The address may name the contract deployed after `vm.makePersistent`, which the earlier
+    // fork did not cover, so the prank reports incomplete instead of dropping its persistence.
+    function checkPersistentBeforeDeployment(address who) public {
+        vm.makePersistent(who);
+        WETH later = new WETH();
+        vm.prank(who);
+        assert(!vm.isPersistent(who) || who != address(later));
+    }
+
+    function checkDealtBalanceBeforeDeployment(address who) public {
+        vm.deal(who, 5);
+        WETH later = new WETH();
+        vm.prank(who);
+        later.deposit();
+        assert(who.balance != 5 || who != address(later));
+    }
+
+    // An alias a read-only cheatcode gave the address does not hide the account it is fixed to.
+    function checkPrankedSenderCodeAfterIsPersistent(address who) public {
+        vm.isPersistent(who);
+        vm.assume(who == address(weth));
+        vm.prank(who);
+        assert(weth.senderCodeSize() == 0);
+    }
+
+    function checkPrankedSenderCodeAfterResetNonce(address who) public {
+        vm.resetNonce(who);
+        vm.prank(who);
+        assert(weth.senderCodeSize() == 0);
+    }
+
+    // The balance `vm.deal` wrote through the address stays once the path fixes it.
+    function checkDealtBalanceOnceFixed(address who) public {
+        vm.deal(who, 5);
+        vm.assume(who == address(0xB0B));
+        assert(who.balance != 5);
+    }
+
+    // A call to the fixed address runs the code `vm.etch` wrote through it, not the empty account.
+    function checkPrankedCallRunsEtchedCode(address who) public {
+        vm.etch(who, hex"602a60005260206000f3"); // Returns 42.
+        vm.deal(who, 5);
+        if (who != address(0xB0B)) return;
+
+        vm.prank(who);
+        (bool ok, bytes memory data) = who.staticcall("");
+        assert(!ok || data.length == 0);
+    }
+
+    // A read through a word the path fixes still sees the balance `vm.deal` wrote through another
+    // word that may name the same account.
+    function checkDealtBalanceThroughOtherWord(address writer, uint256 raw) public {
+        vm.deal(writer, 5);
+        if (raw != 0xB0B) return;
+        assert(address(uint160(raw)).balance != 5);
+    }
+
+    // `BALANCE` ignores the high bits of the word.
+    function checkDealtBalanceThroughOtherDirtyWord(address writer, uint256 raw) public {
+        vm.deal(writer, 5);
+        if (raw != ((1 << 200) | 0xB0B)) return;
+        uint256 dealt;
+        assembly {
+            dealt := balance(raw)
+        }
+        assert(dealt != 5);
+    }
+
+    function checkEtchedCodeThroughOtherWord(address writer, uint256 raw) public {
+        vm.etch(writer, hex"00");
+        if (raw != 0xB0B) return;
+        assert(address(uint160(raw)).code.length == 0);
+    }
+
+    // The alias `vm.isPersistent` gave `raw` would hide the balance `writer` may hold for the
+    // account the path fixes `raw` to.
+    function checkDealtBalanceThroughOtherWordAfterIsPersistent(address writer, uint256 raw)
+        public
+    {
+        vm.isPersistent(address(uint160(raw)));
+        vm.deal(writer, 5);
+        if (raw != 0xB0B) return;
+        assert(address(uint160(raw)).balance != 5);
+    }
+}
+
+contract SymbolicPrankedMany is Test {
+    WETH weth;
+
+    function setUp() public {
+        for (uint256 i = 0; i < 36; i++) {
+            weth = new WETH();
+        }
+    }
+
+    // A prank the cheatcode rejects does not fork the sender, even over more than 32 accounts.
+    function checkRejectedPrankDoesNotFork(address who) public {
+        vm.prank(address(weth));
+        (bool ok,) = address(vm).call(abi.encodeWithSignature("prank(address)", who));
+        assert(!ok);
+    }
+
+    // Only the low 160 bits of the sender count.
+    function checkDirtySenderDoesNotFork(uint96 tag) public {
+        (bool ok,) = address(vm).call(
+            abi.encodeWithSignature("prank(address)", (uint256(tag) << 160) | uint160(address(weth)))
+        );
+        assert(ok);
+        assert(weth.senderCodeSize() > 0);
+    }
+
+    // A prank whose input stops at the selector fails to decode, so its sender does not fork.
+    function checkShortPrankInputDoesNotFork(address who) public {
+        bytes memory payload = abi.encodeWithSignature("prank(address)", who);
+        address target = address(vm);
+        bool ok;
+        assembly {
+            ok := call(gas(), target, 0, add(payload, 32), 4, 0, 0)
+        }
+        assert(!ok);
+    }
+
+    function sender() public view returns (address) {
+        return msg.sender;
+    }
+
+    // A sender the path fixes only through two bounds does not fork over the known accounts.
+    function checkBoundedSenderDoesNotFork(address who) public {
+        address bob = address(0xB0B);
+        vm.assume(who >= bob);
+        vm.assume(who <= bob);
+        vm.prank(who);
+        assert(this.sender() == bob);
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicPrankedAddress"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 16 tests for test/SymbolicPrankedAddress.t.sol:SymbolicPrankedAddress
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic address whose representative account holds state from before the run knew an account it may name] checkDealtBalanceBeforeDeployment(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealtBalanceOnceFixed(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealtBalanceThroughOtherDirtyWord(address,uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealtBalanceThroughOtherWord(address,uint256) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic address fixed to an account whose state another symbolic address may hold] checkDealtBalanceThroughOtherWordAfterIsPersistent(address,uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkEtchedCodeThroughOtherWord(address,uint256) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic address whose representative account holds state from before the run knew an account it may name] checkPersistentBeforeDeployment(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPersistentOncePranked(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedCallRunsEtchedCode(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedOriginCode(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedSenderCode(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedSenderCodeAfterIsPersistent(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedSenderCodeAfterResetNonce(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkWithdrawAfterMakePersistent(address) ([METRICS])
+[PASS] checkWithdrawToOtherSender(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkWithdrawToPrankedSender(address) ([METRICS])
+Suite result: FAILED. 1 passed; 15 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    assert_symbolic(cmd.forge_fuse().args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicPrankedMany",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 4 tests for test/SymbolicPrankedAddress.t.sol:SymbolicPrankedMany
+[PASS] checkBoundedSenderDoesNotFork(address) ([METRICS])
+[PASS] checkDirtySenderDoesNotFork(uint96) ([METRICS])
+[PASS] checkRejectedPrankDoesNotFork(address) ([METRICS])
+[PASS] checkShortPrankInputDoesNotFork(address) ([METRICS])
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
