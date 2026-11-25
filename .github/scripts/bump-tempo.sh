@@ -73,6 +73,13 @@ update_cargo_toml() {
 
   sed -i "s|git = \"https://github.com/tempoxyz/tempo\", rev = \"$old_rev\"|git = \"https://github.com/tempoxyz/tempo\", rev = \"$new_rev\"|g" "$CARGO_TOML"
   echo "Updated Cargo.toml: $old_rev -> $new_rev"
+
+  # reth-evm must match Tempo's reth rev, or the lockfile carries two reth graphs.
+  local reth_rev
+  reth_rev=$(gh api "repos/tempoxyz/tempo/contents/Cargo.toml?ref=$new_rev" -H "Accept: application/vnd.github.raw" |
+    grep -om1 'paradigmxyz/reth", rev = "[0-9a-f]\{40\}' | cut -d'"' -f3)
+  sed -i "/^reth-evm = /s/rev = \"[0-9a-f]*\"/rev = \"$reth_rev\"/" "$CARGO_TOML"
+  echo "Updated reth-evm to Tempo's reth rev: $reth_rev"
 }
 
 # Resolve the new revision while preserving unrelated locked dependencies.
