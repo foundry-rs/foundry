@@ -398,9 +398,16 @@ fn resolved_compiler_path(
 /// Parses a solc version, `solar`, or a `solar:<version>` pin, with the same rules as the `solc`
 /// config key.
 fn parse_compiler(s: &str) -> Result<Compiler, String> {
-    // Installed releases are named without build metadata, so `0.8.30+commit.73712a01` installs
-    // and removes `0.8.30`. A prerelease identifier names another release and stays.
-    let release = |version: Version| Version { build: BuildMetadata::EMPTY, ..version };
+    // Like the build path, stable releases are named without build metadata, so
+    // `0.8.30+commit.73712a01` installs and removes `0.8.30`. A prerelease keeps its full version,
+    // which is the name a `solc` pin installs it under.
+    let release = |version: Version| {
+        if version.pre.is_empty() {
+            Version { build: BuildMetadata::EMPTY, ..version }
+        } else {
+            version
+        }
+    };
     match SolcReq::from(s) {
         SolcReq::Version(version) => Ok(Compiler::Solc(release(version))),
         SolcReq::Solar(version) => Ok(Compiler::Solar(release(version))),
