@@ -851,6 +851,7 @@ impl<'a> AnchorIndex<'a> {
                 self.starts_in_range(ic, callee)
                     && self.source_map[ic].length() != callee.len()
                     && self.source_map[ic].offset() < callee.bytes.end
+                    && !in_reverting_run(&self.reverting_runs, ic)
             })
             .collect::<Vec<_>>();
         let (&first, &last) = (body.iter().min()?, body.iter().max()?);
@@ -863,15 +864,21 @@ impl<'a> AnchorIndex<'a> {
         }) {
             return None;
         }
-        // The run is entered by falling into it. A first instruction that something jumps to, such
-        // as a loop header, runs more often than the arm, even behind unmapped `JUMPDEST`s.
+        // The run is entered once per arm. A first instruction that a later jump returns to, such
+        // as a loop header, runs more often than the arm, even behind unmapped `JUMPDEST`s. A jump
+        // from before it, such as a dispatcher's, only enters the run.
         let mut ic = first;
         loop {
             let pc = *self.pcs.get(ic)?;
-            if self.bytecode.get(pc as usize) == Some(&opcode::JUMPDEST)
-                && self.address_pushes.binary_search_by_key(&pc, |&(target, _)| target).is_ok()
-            {
-                return None;
+            if self.bytecode.get(pc as usize) == Some(&opcode::JUMPDEST) {
+                let start = self.address_pushes.partition_point(|&(target, _)| target < pc);
+                if self.address_pushes[start..]
+                    .iter()
+                    .take_while(|&&(target, _)| target == pc)
+                    .any(|&(_, push)| push >= ic)
+                {
+                    return None;
+                }
             }
             match ic.checked_sub(1) {
                 Some(prev)

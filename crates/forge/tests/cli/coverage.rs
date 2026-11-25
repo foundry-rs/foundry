@@ -3240,6 +3240,57 @@ BRDA:157,17,0,-
     );
 }
 
+// An arm whose only code is a call to an internal function that the optimizer inlines has no code
+// of its own, so it counts the inlined run of the function. Solar places the overflow check's panic
+// stub of the function after the run, and enters the run from the dispatcher's jump.
+#[forgetest]
+fn if_arm_whose_only_code_is_a_call_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Gate.sol",
+        r#"
+contract Gate {
+    uint256 public total;
+
+    function bump() internal {
+        total += 1;
+    }
+
+    function live() external {
+        if (true) {
+            bump();
+        }
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Gate.t.sol",
+        r#"
+import "../src/Gate.sol";
+
+contract GateTest {
+    function testLive() public {
+        Gate gate = new Gate();
+        for (uint256 i = 0; i < 3; i++) gate.live();
+    }
+}
+"#,
+    );
+
+    let optimized = ["coverage", "--no-isolate", "--keep-optimizer", "--optimize"];
+    let expected = str![[r#"
+...
+BRDA:12,0,0,3
+...
+"#]];
+    assert_lcov(cmd.args(optimized), expected.clone());
+    prj.update_config(|config| config.via_ir = true);
+    assert_lcov(cmd.forge_fuse().args(optimized), expected.clone());
+    prj.update_config(|config| config.via_ir = false);
+    let solar = prj.ensure_foundry_bin("solar");
+    assert_lcov(cmd.forge_fuse().args(optimized).arg("--use").arg(&solar), expected);
+}
+
 #[forgetest]
 fn identical_bytecodes(prj: _, cmd: _) {
     prj.insert_ds_test();
