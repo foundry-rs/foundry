@@ -1511,14 +1511,14 @@ fn coded(err: eyre::Report, code: &str) -> eyre::Report {
     err.wrap_err(json_failure(JsonMessage::error(code, message)))
 }
 
-/// Returns a new report with the text of `err`, keeping its `--json` code.
-fn flattened(err: &eyre::Report) -> eyre::Report {
-    match rpc_failure_in(err.as_ref()) {
+/// Returns a new report with `message`, keeping the `--json` code of `cause`.
+fn flattened(message: String, cause: &(dyn std::error::Error + 'static)) -> eyre::Report {
+    match rpc_failure_in(cause) {
         Some(rpc) => json_failure(
-            JsonMessage::error(rpc.kind(), err.to_string()).with_details(serde_json::json!(rpc)),
+            JsonMessage::error(rpc.kind(), message).with_details(serde_json::json!(rpc)),
         )
         .into(),
-        None => eyre::eyre!("{err}"),
+        None => eyre::eyre!(message),
     }
 }
 

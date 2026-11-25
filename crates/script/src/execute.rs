@@ -25,7 +25,7 @@ use foundry_config::{Chain, NamedChain};
 use foundry_debugger::DebuggerBuilder;
 use foundry_evm::{
     core::evm::FoundryEvmNetwork,
-    decode::decode_console_logs,
+    decode::{RevertDecoder, decode_console_logs},
     inspectors::cheatcodes::BroadcastableTransactions,
     traces::{
         CallTraceDecoder, CallTraceDecoderBuilder, DebugTraceIdentifier, TraceKind,
@@ -177,6 +177,8 @@ impl<FEN: FoundryEvmNetwork> PreExecutionState<FEN> {
         let (address, mut setup_result) = runner.setup(
             &self.build_data.predeploy_libraries,
             self.execution_data.bytecode.clone(),
+            &RevertDecoder::new()
+                .with_abis(self.build_data.known_contracts.values().map(|contract| &contract.abi)),
             needs_setup(&self.execution_data.abi),
             &self.script_config,
             self.args.broadcast,

@@ -11899,6 +11899,16 @@ contract Succeeds is Base {
     function run() external {}
 }
 
+contract RevertsInConstructor is Base {
+    error BadConfig(uint256 code);
+
+    constructor() {
+        revert BadConfig(7);
+    }
+
+    function run() external {}
+}
+
 contract Halts is Base {
     function run() external pure {
         assembly { invalid() }
@@ -11981,6 +11991,15 @@ async fn script_json_failure_codes(prj: _, cmd: _) {
         str![[r#"
 {"success":false,"...":"{...}"}
 {"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"script.error","message":"script failed: EvmError: InvalidFEOpcode"}],"warnings":[]}
+
+"#]]
+        .is_jsonlines(),
+    );
+
+    // A constructor revert is decoded with the script's ABI.
+    cmd.forge_fuse().args(["script", "RevertsInConstructor", "--json"]).assert_failure().stdout_eq(
+        str![[r#"
+{"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"script.revert","message":"Failed to deploy script:\nexecution reverted: custom error 0x0dad7c22: 0000000000000000000000000000000000000000000000000000000000000007 ([GAS])","details":{"data":"0x0dad7c220000000000000000000000000000000000000000000000000000000000000007","reason":"BadConfig(7)"}}],"warnings":[]}
 
 "#]]
         .is_jsonlines(),

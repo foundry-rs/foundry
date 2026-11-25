@@ -589,6 +589,12 @@ impl RpcFailure {
     }
 }
 
+/// An endpoint answered without a block that must exist, such as a load-balanced endpoint whose
+/// backend has not seen that block yet.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub struct BlockNotFound(pub String);
+
 /// Classifies the innermost [`TransportError`] in `error`'s chain.
 ///
 /// The innermost one is the cause: a retry layer that gives up wraps the last error it got in a

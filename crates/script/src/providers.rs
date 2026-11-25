@@ -104,11 +104,11 @@ impl<N: Network> ProviderInfo<N> {
         match &self.gas_price {
             GasPrice::Legacy(res) => match res {
                 Ok(val) => Ok(*val),
-                Err(err) => Err(flattened(err)),
+                Err(err) => Err(flattened(err.to_string(), err.as_ref())),
             },
             GasPrice::EIP1559(res) => match res {
                 Ok(fees) => Ok(fees.max_fee_per_gas),
-                Err(err) => Err(flattened(err)),
+                Err(err) => Err(flattened(err.to_string(), err.as_ref())),
             },
         }
     }

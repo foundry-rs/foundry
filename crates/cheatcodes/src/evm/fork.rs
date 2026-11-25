@@ -8,9 +8,9 @@ use alloy_primitives::{Address, B256, U256, map::AddressHashMap};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::Filter;
 use alloy_sol_types::SolValue;
-use foundry_common::provider::ProviderBuilder;
+use foundry_common::provider::{BlockNotFound, ProviderBuilder};
 use foundry_evm_core::{
-    backend::{Backend, ForkAccountField, ForkBlockNotFound, LocalForkId},
+    backend::{Backend, ForkAccountField, LocalForkId},
     evm::{ExecutionPhase, FoundryEvmFor, FoundryEvmNetwork},
     fork::CreateFork,
 };
@@ -337,7 +337,7 @@ impl Cheatcode for getRawBlockHeaderCall {
                 .map_err(|e| fmt_err!("failed to get block: {e}").with_rpc_failure_of(&e))?
                 .ok_or_else(|| {
                     // The endpoint answered that it has no such block.
-                    let err = ForkBlockNotFound(format!("block {block_number} not found"));
+                    let err = BlockNotFound(format!("block {block_number} not found"));
                     fmt_err!("{err}").with_rpc_failure_of(&err)
                 })?;
 

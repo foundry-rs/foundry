@@ -373,7 +373,10 @@ Add `--resume` to your command to try and continue broadcasting the transactions
             }
 
             return Err(match receipt_error {
-                Some(err) => crate::flattened(&err.wrap_err(error_msg)),
+                Some(err) => {
+                    let err = err.wrap_err(error_msg);
+                    crate::flattened(err.to_string(), err.as_ref())
+                }
                 None => eyre::eyre!(error_msg),
             });
         } else if discarded_transactions {

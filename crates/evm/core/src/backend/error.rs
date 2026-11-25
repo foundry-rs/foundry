@@ -1,6 +1,6 @@
 use alloy_primitives::Address;
 use evm2::registry::HandlerError;
-use foundry_common::provider::{RpcFailure, rpc_failure};
+use foundry_common::provider::{BlockNotFound, RpcFailure, rpc_failure};
 
 pub use foundry_fork_db::{DatabaseError, DatabaseResult};
 
@@ -84,17 +84,11 @@ pub struct TransactionValidationError {
     pub error: HandlerError,
 }
 
-/// A fork's endpoint has no block at a requested number, such as the one the fork starts from on a
-/// load-balanced endpoint whose backend has not seen that block yet.
-#[derive(Debug, thiserror::Error)]
-#[error("{0}")]
-pub struct ForkBlockNotFound(pub String);
-
 /// Returns how an RPC request in `error`'s chain failed, including requests a fork's database
 /// made during execution.
 pub fn rpc_failure_in(error: &(dyn std::error::Error + 'static)) -> Option<RpcFailure> {
     for error in std::iter::successors(Some(error), |error| error.source()) {
-        if error.is::<ForkBlockNotFound>() {
+        if error.is::<BlockNotFound>() {
             return Some(RpcFailure { answered: true, ..Default::default() });
         }
         // These wrappers hide the fork database error from the source chain.

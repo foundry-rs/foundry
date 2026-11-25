@@ -1,4 +1,4 @@
-use super::{ScriptConfig, ScriptResult, revert_error};
+use super::{ScriptConfig, ScriptResult, flattened, revert_error};
 use crate::build::ScriptPredeployLibraries;
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_network::TransactionBuilder;
@@ -13,6 +13,7 @@ use foundry_config::Config;
 use foundry_evm::{
     constants::CALLER,
     core::evm::{EvmEnvFor, FoundryEvmNetwork, TransactionRequestFor},
+    decode::RevertDecoder,
     executors::{DeployResult, EvmError, ExecutionErr, Executor, RawCallResult},
     opts::EvmOpts,
     traces::{TraceKind, Traces},
@@ -70,7 +71,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
             let DeployResult { address, raw } = self
                 .executor
                 .deploy(LIBRARY_DEPLOYER, library.bytecode.clone(), U256::ZERO, None)
-                .map_err(|err| self.deploy_error(err, "couldn't deploy local library: "))?;
+                .map_err(|err| self.deploy_error(err, "couldn't deploy local library: ", None))?;
             eyre::ensure!(
                 library.address == address,
                 "local library deployed at an unexpected address"
@@ -87,6 +88,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
         &mut self,
         libraries: &ScriptPredeployLibraries,
         code: Bytes,
+        revert_decoder: &RevertDecoder,
         setup: bool,
         script_config: &ScriptConfig<FEN>,
         is_broadcast: bool,
@@ -129,7 +131,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                     } = self
                         .executor
                         .deploy(self.evm_opts.sender, code.clone(), U256::ZERO, None)
-                        .map_err(|err| self.deploy_error(err, "couldn't deploy library: "))?
+                        .map_err(|err| self.deploy_error(err, "couldn't deploy library: ", None))?
                         .raw;
 
                     self.extend_debug_bytecodes(&mut debug_bytecodes, deploy_debug_bytecodes);
@@ -237,10 +239,9 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                     debug_bytecodes: constructor_debug_bytecodes,
                     ..
                 },
-        } = self
-            .executor
-            .deploy(CALLER, code, U256::ZERO, None)
-            .map_err(|err| self.deploy_error(err, "Failed to deploy script:\n"))?;
+        } = self.executor.deploy(CALLER, code, U256::ZERO, None).map_err(|err| {
+            self.deploy_error(err, "Failed to deploy script:\n", Some(revert_decoder))
+        })?;
 
         if self.evm_opts.sender == CALLER {
             self.executor.set_nonce(self.evm_opts.sender, prev_sender_nonce)?;
@@ -409,9 +410,8 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                     sh_err!("Failed with `{reason}`:\n")?;
                     (Address::ZERO, raw)
                 }
-                Err(e) => {
-                    eyre::bail!("Failed deploying contract: {e:?}");
-                }
+                // Keep how an RPC request failed for `--json`.
+                Err(e) => return Err(flattened(format!("Failed deploying contract: {e:?}"), &e)),
             };
 
         Ok(ScriptResult {
@@ -599,18 +599,27 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
     }
 
     /// Returns the error of a failed deployment: a revert keeps its revert data, other errors
-    /// their cause.
-    fn deploy_error(&self, err: EvmError<FEN>, context: &str) -> eyre::Report {
+    /// their cause. `decoder` decodes the revert reason reported to `--json`.
+    fn deploy_error(
+        &self,
+        err: EvmError<FEN>,
+        context: &str,
+        decoder: Option<&RevertDecoder>,
+    ) -> eyre::Report {
         let message = format!("{context}{err}");
         match err {
             EvmError::Execution(err) => {
                 // Deployments commit, which moves the cheatcode state into the executor.
                 let cheatcodes = self.executor.inspector().cheatcodes.as_deref();
                 let rpc_failure = rpc_failure_of(&err.raw, cheatcodes);
+                let reason = decoder.map_or_else(
+                    || err.reason.clone(),
+                    |decoder| decoder.decode(&err.raw.result, err.raw.exit_reason),
+                );
                 revert_error(
                     message,
                     &err.raw.result,
-                    &err.reason,
+                    &reason,
                     err.raw.exit_reason,
                     rpc_failure.as_ref(),
                 )
