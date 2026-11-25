@@ -15,9 +15,9 @@ CARGO_TARGET_DIR ?= target
 # List of features to use when building. Can be overridden via the environment.
 # No jemalloc on Windows
 ifeq ($(OS),Windows_NT)
-    FEATURES ?= aws-kms gcp-kms turnkey cli asm-keccak base monad optimism
+    FEATURES ?= aws-kms gcp-kms turnkey azure-key-vault cli asm-keccak base monad optimism
 else
-    FEATURES ?= jemalloc aws-kms gcp-kms turnkey cli asm-keccak base monad optimism
+    FEATURES ?= jemalloc aws-kms gcp-kms turnkey azure-key-vault cli asm-keccak base monad optimism
 endif
 
 ##@ Help

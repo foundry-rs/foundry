@@ -593,7 +593,8 @@ solar-lsp = { git = "https://github.com/paradigmxyz/solar", tag = "v0.3.0" }
 solar-lint = { git = "https://github.com/paradigmxyz/solar", tag = "v0.3.0" }
 
 ## foundry-core
-foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "4d183274aed94cccbac20d8871916d7abc1036e2" }
+# Temporary: Azure Key Vault signer from foundry-rs/foundry-core#228 until it merges.
+foundry-wallets = { git = "https://github.com/aelmanaa/foundry-core", rev = "c710cd81f160f103654b6e603af9c73e3ab90a1e" }
 foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "989f05e23c64b5a96c62ea962191eb1af74a2804" }
 foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "989f05e23c64b5a96c62ea962191eb1af74a2804" }
 foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "989f05e23c64b5a96c62ea962191eb1af74a2804" }
