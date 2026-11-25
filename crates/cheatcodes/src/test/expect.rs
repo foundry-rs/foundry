@@ -8,7 +8,7 @@ use alloy_primitives::{
     map::{HashMap, hash_map::Entry},
 };
 use alloy_sol_types::{SolCall, SolValue};
-use evm2::interpreter::MessageKind;
+use evm2::interpreter::{MessageKind, gas::CALL_STIPEND};
 use foundry_evm_core::evm::FoundryEvmNetwork;
 use itertools::Itertools;
 use tempo_contracts::precompiles::ISignatureVerifier;
@@ -772,13 +772,13 @@ fn expect_call(
         && value > U256::ZERO
     {
         // If the value of the transaction is non-zero, the EVM adds a call stipend of 2300 gas
-        // to ensure that the basic fallback function can be called.
-        let positive_value_cost_stipend = 2300;
+        // to ensure that the basic fallback function can be called. Saturate like the EVM does
+        // when it adds the stipend, so that gas near `u64::MAX` does not overflow.
         if let Some(gas) = &mut expected.gas {
-            *gas += positive_value_cost_stipend;
+            *gas = gas.saturating_add(CALL_STIPEND.into());
         }
         if let Some(min_gas) = &mut expected.min_gas {
-            *min_gas += positive_value_cost_stipend;
+            *min_gas = min_gas.saturating_add(CALL_STIPEND.into());
         }
     }
 
@@ -1256,6 +1256,32 @@ mod tests {
             "expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f7 \
              to be called 1 time, but was called 0 times"
         );
+    }
+
+    #[test]
+    fn expect_call_adds_the_value_stipend_saturating() {
+        let calldata = bytes!("771602f7");
+        let key = (calldata.clone(), None);
+        let mut state = CheatcodesCore::default();
+        let mut register = |value, gas| {
+            state.expected_calls.clear();
+            let data = expected(value, gas, gas, 1, ExpectedCallType::Count);
+            expect_call(&mut state, &TARGET, &calldata, None, data).unwrap();
+            let (data, _) = &state.expected_calls[&TARGET][&key];
+            assert_eq!(data.gas, data.min_gas);
+            data.gas
+        };
+
+        let one = Some(U256::from(1));
+        assert_eq!(register(one, Some(25_000)), Some(27_300));
+        assert_eq!(register(one, Some(u64::MAX - 2300)), Some(u64::MAX));
+        assert_eq!(register(one, Some(u64::MAX - 2299)), Some(u64::MAX));
+        assert_eq!(register(one, Some(u64::MAX)), Some(u64::MAX));
+        assert_eq!(register(one, None), None);
+
+        // Calls without a positive transfer value get no stipend.
+        assert_eq!(register(Some(U256::ZERO), Some(25_000)), Some(25_000));
+        assert_eq!(register(None, Some(25_000)), Some(25_000));
     }
 
     #[test]
