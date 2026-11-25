@@ -12276,6 +12276,7 @@ contract ArgsJson {
         r#"[
   {
     "name": "plan",
+    "note": null,
     "main": { "to": "0x0000000000000000000000000000000000000001", "amount": 1 },
     "extra": [{ "to": "0x0000000000000000000000000000000000000002", "amount": "2" }]
   },
@@ -12309,6 +12310,17 @@ Script ran successfully.
     .unwrap();
     cmd.assert_failure().stderr_eq(str![[r#"
 Error: argument `plan` (string,(address,uint256),(address,uint256)[]): field "main" not found in JSON object
+
+"#]]);
+
+    // `null` must not be encoded as the string "null".
+    fs::write(
+        &args,
+        r#"[{ "name": null, "main": { "to": "0x0000000000000000000000000000000000000001", "amount": 1 }, "extra": [] }, 1, 2, "0x0000000000000000000000000000000000000001"]"#,
+    )
+    .unwrap();
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: argument `plan` (string,(address,uint256),(address,uint256)[]): JSON null is not supported
 
 "#]]);
 }
