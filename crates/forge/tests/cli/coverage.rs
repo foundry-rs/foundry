@@ -3356,6 +3356,64 @@ BRDA:12,0,0,3
     assert_lcov(cmd.forge_fuse().args(optimized).arg("--use").arg(&solar), expected);
 }
 
+// Member accesses count against the function that type checking resolves them to, so a member of
+// another name space that is also called `bump` does not keep the live arm from counting.
+#[forgetest]
+fn if_arm_counts_when_other_members_share_its_function_name_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Names.sol",
+        r#"
+contract Other {
+    function bump() external {}
+}
+
+contract Names {
+    struct Slot {
+        uint256 bump;
+    }
+
+    uint256 public total;
+    Slot slot;
+
+    function bump() internal {
+        total += 1;
+    }
+
+    function live() external {
+        slot.bump = 1;
+        new Other().bump();
+        if (true) {
+            bump();
+        }
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Names.t.sol",
+        r#"
+import "../src/Names.sol";
+
+contract NamesTest {
+    function testLive() public {
+        Names names = new Names();
+        for (uint256 i = 0; i < 3; i++) names.live();
+    }
+}
+"#,
+    );
+
+    let optimized = ["coverage", "--no-isolate", "--keep-optimizer", "--optimize"];
+    let expected = str![[r#"
+...
+BRDA:23,0,0,3
+...
+"#]];
+    assert_lcov(cmd.args(optimized), expected.clone());
+    let solar = prj.ensure_foundry_bin("solar");
+    assert_lcov(cmd.forge_fuse().args(optimized).arg("--use").arg(&solar), expected);
+}
+
 // The run of an inlined function is the arm's only when nothing else enters it: a loop in the
 // function, a function with the same body, which the optimizer can merge, and a dead arm next to a
 // live function with the same body must not change the arm's count.

@@ -2620,10 +2620,40 @@ mod tests {
                 hits: 0,
             })
             .collect();
-        let analysis = SourceAnalysis::for_test(items, vec![(0, BranchKind::If(arms))]);
+        let callees =
+            arms.then_callees.iter().chain(&arms.else_callees).cloned().collect::<Vec<_>>();
+        let mut analysis = SourceAnalysis::for_test(items, vec![(0, BranchKind::If(arms))]);
+        for callee in &callees {
+            analysis = analysis.with_callee_calls(callee, 1);
+        }
         let source_map = sourcemap::parse(source_map).unwrap();
         let ic_pc_map = IcPcMap::new(bytecode);
         find_anchors(bytecode, &source_map, &ic_pc_map, &analysis)
+    }
+
+    #[test]
+    fn if_arm_without_a_jump_counts_the_run_of_its_function() {
+        // The condition has no jump, and the then arm calls the function at 100..110, which the
+        // compiler inlined, so its run is the arm's. The first instruction of the run anchors it.
+        let anchors = |bytecode: &[u8], source_map| {
+            let anchors =
+                find_if_anchors_calling(bytecode, source_map, false, false, Some(100..110), None);
+            (0..anchors.anchors.len()).map(|i| anchors.anchors[i].instruction).collect::<Vec<_>>()
+        };
+        // A failure stub after the run, as with an overflow check's panic, is not the run. The
+        // `STOP` that ends the run is mapped to the enclosing function at 92..171.
+        let run_then_stub = [
+            opcode::PUSH0,
+            opcode::POP,
+            opcode::STOP,
+            opcode::PUSH0,
+            opcode::PUSH0,
+            opcode::REVERT,
+        ];
+        assert_eq!(anchors(&run_then_stub, "102:3:0;;92:79:0;102:3:0;;"), [0]);
+        // A function that only fails has nothing but the stub, which is then its run.
+        let only_stub = [opcode::PUSH0, opcode::PUSH0, opcode::REVERT];
+        assert_eq!(anchors(&only_stub, "102:3:0;;"), [0]);
     }
 
     #[test]
