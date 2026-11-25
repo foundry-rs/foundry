@@ -772,7 +772,7 @@ impl<'ast> State<'_, 'ast> {
         let offset = if let BlockFormat::NoBraces(Some(off)) = block_format { off } else { 0 };
         self.print_comments(
             pos_hi,
-            self.cmnt_config()
+            CommentConfig::default()
                 .offset(offset)
                 .mixed_no_break()
                 .mixed_prev_space()

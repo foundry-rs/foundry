@@ -1306,14 +1306,14 @@ impl CallTraceDecoder {
         }
         match func.name.as_str() {
             "expectRevert" => {
-                let decoded =
-                    data.get(SELECTOR_LEN..).and_then(|data| func.abi_decode_input(data).ok());
+                let decoded = data
+                    .get(SELECTOR_LEN..)
+                    .and_then(|data| func.abi_decode_input(data).ok())
+                    .filter(|decoded| !decoded.is_empty());
                 let Some(decoded) = decoded else {
                     return Some(vec![self.revert_decoder.decode(data, None)]);
                 };
-                let Some(first) = decoded.first() else {
-                    return Some(vec![self.revert_decoder.decode(data, None)]);
-                };
+                let first = &decoded[0];
                 let expected_revert = match first {
                     DynSolValue::Bytes(bytes) => bytes.as_slice(),
                     DynSolValue::FixedBytes(word, size) => &word[..*size],
