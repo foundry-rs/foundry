@@ -2718,6 +2718,8 @@ contract GateTest {
 ...
 BRDA:12,1,0,2
 ...
+LH:5
+...
 "#]],
     );
 }
@@ -2871,6 +2873,59 @@ contract MTest is M {
         str![[r#"
 ...
 BRDA:8,0,0,1
+...
+"#]],
+    );
+}
+
+// A call through a member access, such as `super.bump()`, is resolved statically and still runs the
+// function that the arm names, so the arm is not its only call.
+#[forgetest]
+fn if_arm_does_not_take_super_calls_lcov(prj: _, cmd: _) {
+    prj.update_config(|config| config.via_ir = true);
+    prj.add_source(
+        "Super.sol",
+        r#"
+contract Base {
+    uint256 public total;
+
+    function bump() internal {
+        total += 1;
+    }
+}
+
+contract Derived is Base {
+    function never() internal {
+        if (true) {
+            bump();
+        }
+    }
+
+    function run() external {
+        super.bump();
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Super.t.sol",
+        r#"
+import "../src/Super.sol";
+
+contract SuperTest {
+    function testRun() public {
+        Derived derived = new Derived();
+        derived.run();
+    }
+}
+"#,
+    );
+
+    assert_lcov(
+        cmd.args(["coverage", "--no-isolate", "--keep-optimizer", "--optimize"]),
+        str![[r#"
+...
+BRDA:14,0,0,-
 ...
 "#]],
     );

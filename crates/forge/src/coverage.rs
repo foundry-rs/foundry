@@ -150,14 +150,27 @@ impl CoverageReporter for LcovReporter {
                 }
             }
             // A taken branch evaluated its line, so the line is not left unhit, which `genhtml`
-            // rejects. A condition that the optimizer proved has no code of its own.
+            // rejects. A condition that the optimizer proved has no code of its own. `LH` counts
+            // the line items of those lines as hit too, to match the `DA` records.
+            let mut raised_lines = HashSet::new();
             for item in &items {
                 if matches!(item.kind, CoverageItemKind::Branch { .. })
                     && let Some(hits) = line_hits.get_mut(&item.loc.lines.start)
                 {
+                    if *hits == 0 && item.hits > 0 {
+                        raised_lines.insert(item.loc.lines.start);
+                    }
                     *hits = (*hits).max(item.hits);
                 }
             }
+            let raised_line_hits = items
+                .iter()
+                .filter(|item| {
+                    matches!(item.kind, CoverageItemKind::Line)
+                        && item.hits == 0
+                        && raised_lines.contains(&item.loc.lines.start)
+                })
+                .count();
 
             let mut recorded_lines = HashSet::new();
 
@@ -219,7 +232,7 @@ impl CoverageReporter for LcovReporter {
 
             // Line summary
             writeln!(out, "LF:{}", summary.line_count)?;
-            writeln!(out, "LH:{}", summary.line_hits)?;
+            writeln!(out, "LH:{}", summary.line_hits + raised_line_hits)?;
 
             // Branch summary
             writeln!(out, "BRF:{}", summary.branch_count)?;
