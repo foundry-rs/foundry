@@ -166,7 +166,7 @@ pub struct Param {
 
 impl Param {
     /// The number of stack words the value takes.
-    fn slots(&self) -> usize {
+    const fn slots(&self) -> usize {
         match (&self.ty, self.storage) {
             (
                 Some(DynSolType::String | DynSolType::Bytes | DynSolType::Array(_)),
