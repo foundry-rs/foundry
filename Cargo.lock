@@ -6853,7 +6853,6 @@ dependencies = [
  "alloy-rpc-types",
  "alloy-rpc-types-eth",
  "alloy-serde",
- "alloy-signer",
  "base-common-consensus",
  "base-common-rpc-types",
  "derive_more",
