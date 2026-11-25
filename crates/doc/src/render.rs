@@ -154,21 +154,17 @@ fn render_contract<'ast, 'gcx>(
     let write_vars =
         |out: &mut String, vars: &[(Span, &VariableDefinition<'_>, &DocComments<'_>)]| {
             for (span, v, docs) in vars {
-                let vname = v.name.map(|n| n.as_str().to_string()).unwrap_or_default();
+                let vname = v.name.as_ref().map_or("", |n| n.as_str());
                 writeln!(out, "### {vname}").unwrap();
                 writeln!(out).unwrap();
                 let mut c = collect_comments(docs, links);
                 // Explicit `@inheritdoc` merges into a partial local doc; implicit
                 // inheritance only runs when the variable has no local NatSpec at all.
                 let vid = hir_id.and_then(|cid| {
-                    gcx.hir.contract(cid).items.iter().find_map(|&item| match item {
-                        hir::ItemId::Variable(id)
-                            if gcx.hir.variable(id).span.lo() == span.lo() =>
-                        {
-                            Some(id)
-                        }
-                        _ => None,
-                    })
+                    gcx.hir
+                        .contract(cid)
+                        .variables()
+                        .find(|&id| gcx.hir.variable(id).span.lo() == span.lo())
                 });
                 let inherited = vid.and_then(|id| {
                     let explicit = has_inheritdoc(docs);
@@ -220,20 +216,17 @@ fn render_contract<'ast, 'gcx>(
         for (span, f, docs) in &functions {
             let fn_name = match f.kind {
                 FunctionKind::Constructor => None,
-                FunctionKind::Fallback => Some("fallback".to_string()),
-                FunctionKind::Receive => Some("receive".to_string()),
+                FunctionKind::Fallback => Some("fallback"),
+                FunctionKind::Receive => Some("receive"),
                 FunctionKind::Function | FunctionKind::Modifier => {
-                    f.header.name.map(|name| name.as_str().to_string())
+                    f.header.name.as_ref().map(|name| name.as_str())
                 }
             };
             // Explicit `@inheritdoc` merges into a partial local doc; implicit inheritance
             // only runs when the function has no local NatSpec at all.
-            let inherited = fn_name.as_deref().and_then(|fname| {
+            let inherited = fn_name.and_then(|fname| {
                 let fid = hir_id.and_then(|cid| {
-                    gcx.hir.contract(cid).items.iter().find_map(|&item| match item {
-                        hir::ItemId::Function(id) if gcx.hir.function(id).span == *span => Some(id),
-                        _ => None,
-                    })
+                    gcx.hir.contract(cid).functions().find(|&id| gcx.hir.function(id).span == *span)
                 });
                 match (has_inheritdoc(docs), has_local_natspec(docs)) {
                     (true, _) => {
@@ -304,7 +297,7 @@ fn render_constants(
     let title = format!("{stem} Constants");
     let mut out = write_page_header(&title, None, git_url);
     for (span, v, docs) in vars {
-        let name = v.name.map(|n| n.as_str().to_string()).unwrap_or_else(|| "_".to_string());
+        let name = v.name.as_ref().map_or("_", |n| n.as_str());
         writeln!(out, "## {name}").unwrap();
         writeln!(out).unwrap();
         let c = collect_comments(docs, links);
@@ -363,8 +356,8 @@ fn render_function_section(
         c.inherit_descriptions(inherited, &sanitize_description);
         if c.params.is_empty() {
             let params = inherited.params.iter().map(|desc| sanitize(desc)).collect::<Vec<_>>();
-            for (index, desc) in params.iter().enumerate() {
-                if let Some(name) = f.header.parameters.get(index).and_then(|param| param.name) {
+            for (param, desc) in f.header.parameters.iter().zip(&params) {
+                if let Some(name) = param.name {
                     c.params.push((name.as_str().to_string(), desc.clone()));
                 }
             }
@@ -386,8 +379,9 @@ fn render_function_section(
     }
     write_comment_block(out, &c);
     let hspan = if f.header.span.lo() == f.header.span.hi() { span } else { f.header.span };
-    let snippet = ctx.dedented_snippet(hspan);
-    write_code_block(out, &format!("{snippet};"));
+    let mut snippet = ctx.dedented_snippet(hspan);
+    snippet.push(';');
+    write_code_block(out, &snippet);
     write_param_table(
         out,
         "Parameters",
@@ -495,8 +489,6 @@ fn collect_comments(docs: &DocComments<'_>, links: Links<'_>) -> CommentData {
 
     // Tags that are not user-facing natspec; do not warn on these.
     const FILTERED_CUSTOM: &[&str] = &["solidity", "src", "use-src", "ast-id"];
-    // Recognised natspec custom tags (mirror legacy behaviour).
-    const KNOWN_CUSTOM: &[&str] = &["name"];
 
     // Track whether the previous DocComment was blank (empty natspec), which signals a
     // paragraph break even between continuation lines.
@@ -532,10 +524,6 @@ fn collect_comments(docs: &DocComments<'_>, links: Links<'_>) -> CommentData {
                 continue;
             }
 
-            // Keep descriptions raw until continuation lines have been joined. Only complete,
-            // standalone descriptions can safely identify fenced code blocks.
-            let content = trimmed.to_string();
-
             if is_continuation && !prev_doc_was_blank {
                 let appended = match last_section {
                     Some(LastSection::Desc) => data.descriptions.last_mut().map(|d| &mut d.content),
@@ -545,13 +533,16 @@ fn collect_comments(docs: &DocComments<'_>, links: Links<'_>) -> CommentData {
                 };
                 if let Some(last) = appended {
                     last.push('\n');
-                    last.push_str(&content);
-                    prev_doc_was_blank = false;
+                    last.push_str(trimmed);
                     continue;
                 }
             }
 
             prev_doc_was_blank = false;
+
+            // Keep descriptions raw until continuation lines have been joined. Only complete,
+            // standalone descriptions can safely identify fenced code blocks.
+            let content = trimmed.to_string();
 
             match item.kind {
                 NatSpecKind::Title => data.titles.push(content),
@@ -588,7 +579,7 @@ fn collect_comments(docs: &DocComments<'_>, links: Links<'_>) -> CommentData {
                         }
                     } else {
                         // unknown-natspec-tag warning.
-                        if !KNOWN_CUSTOM.contains(&tag) && !is_known_custom_tag(tag) {
+                        if !is_known_custom_tag(tag) {
                             warn!("unknown natspec custom tag: @custom:{tag}");
                         }
                         data.customs.push((tag.to_string(), content));
@@ -703,7 +694,7 @@ fn yaml_escape_double_quoted(s: &str) -> String {
             '\t' => out.push_str("\\t"),
             '\u{0}' => out.push_str("\\0"),
             c if (c as u32) < 0x20 => {
-                out.push_str(&format!("\\x{:02x}", c as u32));
+                write!(out, "\\x{:02x}", c as u32).unwrap();
             }
             c => out.push(c),
         }
@@ -808,11 +799,7 @@ fn is_complete_fence(text: &str) -> bool {
     let mut lines = logical_lines(text);
     let Some((_, first)) = lines.next() else { return false };
     let Some((marker, length)) = fence_marker(first) else { return false };
-    let mut last = None;
-    for (_, line) in lines {
-        last = Some(line);
-    }
-    let Some(last) = last else { return false };
+    let Some((_, last)) = lines.last() else { return false };
     let indent = last.len() - last.trim_start_matches(' ').len();
     if indent > 3 {
         return false;
@@ -985,15 +972,12 @@ fn return_description<'a>(
     }
 
     match return_name {
-        Some(return_name) => desc.strip_prefix(return_name).and_then(strip_one_ws).unwrap_or(desc),
+        Some(return_name) => desc
+            .strip_prefix(return_name)
+            .and_then(|rest| rest.strip_prefix(char::is_whitespace))
+            .unwrap_or(desc),
         None => desc,
     }
-}
-
-fn strip_one_ws(s: &str) -> Option<&str> {
-    let mut chars = s.char_indices();
-    let (_, first) = chars.next()?;
-    first.is_whitespace().then(|| chars.next().map(|(idx, _)| &s[idx..]).unwrap_or(""))
 }
 
 fn write_struct_properties_table(
@@ -1057,22 +1041,14 @@ fn find_contract_id<'gcx>(
 ) -> Option<hir::ContractId> {
     gcx.hir.contract_ids().find(|&id| {
         let c = gcx.hir.contract(id);
-        if c.name.as_str() != name {
-            return false;
-        }
-        match &gcx.hir.source(c.source).file.name {
-            FileName::Real(p) => p == abs_sol_path,
-            _ => false,
-        }
+        c.name.as_str() == name
+            && matches!(&gcx.hir.source(c.source).file.name, FileName::Real(p) if p == abs_sol_path)
     })
 }
 
 /// Strip common leading whitespace from all non-empty lines.
 fn dedent(s: &str) -> String {
     let lines: Vec<&str> = s.lines().collect();
-    if lines.is_empty() {
-        return s.to_string();
-    }
     let indent = lines
         .iter()
         .filter(|l| !l.trim().is_empty())

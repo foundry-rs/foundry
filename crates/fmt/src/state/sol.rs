@@ -673,7 +673,7 @@ impl<'ast> State<'_, 'ast> {
             if let Some(o) = override_ {
                 self.print_fn_attribute(o.span, &mut map, &mut |s| s.print_override(o));
             }
-            for m in attributes.iter().filter(|a| matches!(a.kind, AttributeKind::Modifier(_))) {
+            for m in &attributes {
                 if let AttributeKind::Modifier(modifier) = m.kind {
                     let is_base = self.is_modifier_a_base_contract(kind, modifier);
                     self.print_fn_attribute(m.span, &mut map, &mut |s| {
@@ -840,10 +840,7 @@ impl<'ast> State<'_, 'ast> {
         // 1. exactly matches the name of a base contract as declared in the `contract is`;
         // this does not account for inheritance;
         let is_contract_base = self.contract.is_some_and(|contract| {
-            contract
-                .bases
-                .iter()
-                .any(|contract_base| contract_base.name.to_string() == modifier.name.to_string())
+            contract.bases.iter().any(|contract_base| contract_base.name == modifier.name)
         });
         // 2. assume that title case names in constructors are bases.
         // LEGACY: constructors used to also be `function NameOfContract...`; not checked.
@@ -2854,14 +2851,10 @@ impl<'ast> State<'_, 'ast> {
 
     /// Checks if a statement was explicitly written in a new line.
     fn is_stmt_in_new_line(&self, cond: Span, then: &'ast ast::Stmt<'ast>) -> bool {
-        let span_between = cond.between(then.span);
-        if let Some(snip) = self.snippet(span_between) {
-            // Check for newlines after the closing parenthesis of the `if (...)`.
-            if let Some((_, after_paren)) = snip.rsplit_once(')') {
-                return after_paren.contains('\n');
-            }
-        }
-        false
+        // Check for newlines after the closing parenthesis of the `if (...)`.
+        self.snippet(cond.between(then.span))
+            .and_then(|snip| snip.rsplit_once(')'))
+            .is_some_and(|(_, after_paren)| after_paren.contains('\n'))
     }
 
     /// Returns true if eliding the braces of `then` would expose an inner `if` to a
@@ -3167,7 +3160,7 @@ impl<'ast> State<'_, 'ast> {
                 }
                 Some(size + args.len().saturating_sub(1) * 2)
             }
-            ast::ExprKind::Ident(ident) => Some(ident.to_string().len()),
+            ast::ExprKind::Ident(ident) => Some(ident.as_str().len()),
             ast::ExprKind::Index(expr, kind) => {
                 let index_size = match kind {
                     ast::IndexKind::Index(Some(index)) => self.estimate_call_chain_size(index)?,
@@ -3193,7 +3186,7 @@ impl<'ast> State<'_, 'ast> {
                 Some(1)
             }
             ast::ExprKind::Member(expr, ident) => {
-                Some(self.estimate_call_chain_size(expr)? + ident.to_string().len() + 1)
+                Some(self.estimate_call_chain_size(expr)? + ident.as_str().len() + 1)
             }
             ast::ExprKind::Tuple(exprs) if let [SpannedOption::Some(expr)] = exprs.as_ref() => {
                 Some(self.estimate_call_chain_size(expr)? + 2)
@@ -3360,27 +3353,12 @@ impl<'ast> AttributeCommentMapper<'ast> {
     }
 
     fn cache_comments(&mut self, state: &mut State<'_, 'ast>) {
-        let mut pending = None;
-        for cmnt in state.comments.iter() {
-            if cmnt.pos() >= self.limit_pos {
-                break;
-            }
-            match pending {
-                Some(ref p) => pending = Some(p + 1),
-                None => pending = Some(0),
-            }
-        }
-        while let Some(p) = pending {
-            if p == 0 {
-                pending = None;
-            } else {
-                pending = Some(p - 1);
-            }
+        let count = state.comments.iter().take_while(|cmnt| cmnt.pos() < self.limit_pos).count();
+        for _ in 0..count {
             let cmnt = state.next_comment().unwrap();
-            if cmnt.style.is_blank() {
-                continue;
+            if !cmnt.style.is_blank() {
+                self.comments.push(cmnt);
             }
-            self.comments.push(cmnt);
         }
     }
 }

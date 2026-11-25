@@ -148,7 +148,7 @@ impl BindArgs {
         } else {
             self.load_config_with_dependencies()?
         };
-        let artifacts = config.out.clone();
+        let artifacts = &config.out;
         let (files, enum_definitions) = if self.skip_build {
             self.cached_bindings(&config)?
         } else {
@@ -159,9 +159,10 @@ impl BindArgs {
                 &mut project,
                 ProjectCompiler::new().external_compilers(&config),
             )?;
+            let external = artifacts.join(".external");
             let files =
                 self.filter_artifact_paths(output.artifact_ids().filter_map(|(id, _)| {
-                    (id.path.starts_with(artifacts.join(".external"))
+                    (id.path.starts_with(&external)
                         || contexts
                             .get(&id.source)
                             .is_some_and(|contexts| contexts.contains(&(id.version, id.profile))))
@@ -204,10 +205,7 @@ impl BindArgs {
 
         if let Some(skip) = self.build.skip.as_ref().filter(|s| !s.is_empty()) {
             return Ok(Filter::Skip(
-                skip.clone()
-                    .into_iter()
-                    .map(|s| Regex::new(s.file_pattern()))
-                    .collect::<Result<Vec<_>, _>>()?,
+                skip.iter().map(|s| Regex::new(s.file_pattern())).collect::<Result<Vec<_>, _>>()?,
             ));
         }
 
@@ -234,10 +232,11 @@ impl BindArgs {
         } else {
             BTreeMap::default()
         };
+        let external = config.out.join(".external");
         let files = if let Some(cache) = cache.as_ref().filter(|_| config.cache) {
             let mut files = self.cached_artifact_paths(config, cache, graph)?;
             // External adapter artifacts are not part of the built-in compiler cache.
-            files.extend(json_files(&config.out.join(".external")));
+            files.extend(json_files(&external));
             files
         } else {
             // Without cache-based selection, include all artifacts on disk.
@@ -253,16 +252,15 @@ impl BindArgs {
             })
             .collect::<HashMap<_, _>>();
         let files = self.filter_artifact_paths(files.into_iter().map(|path| {
-            let source = sources.get(&path).map(|source| (*source).clone());
+            let source = sources.get(&path).copied().cloned();
             (path, source)
         }))?;
         // Cache-based selection already guarantees membership for built-in artifacts.
         if !config.cache
             && !definitions.is_empty()
-            && files.iter().any(|file| {
-                !file.path.starts_with(config.out.join(".external"))
-                    && !sources.contains_key(&file.path)
-            })
+            && files
+                .iter()
+                .any(|file| !file.path.starts_with(&external) && !sources.contains_key(&file.path))
         {
             definitions.clear();
         }
@@ -517,8 +515,8 @@ fn collect_enum_definitions<'ast>(
     for item in items {
         match &item.kind {
             ItemKind::Enum(enum_item) => {
-                let name = enum_item.name.to_string();
-                let key = owner.map_or_else(|| name.clone(), |owner| format!("{owner}.{name}"));
+                let name = enum_item.name.as_str();
+                let key = owner.map_or_else(|| name.to_owned(), |owner| format!("{owner}.{name}"));
                 let variants = enum_item.variants.iter().map(|v| v.name.to_string()).collect();
                 if definitions.get(&key).is_some_and(|existing| existing != &variants) {
                     definitions.remove(&key);
@@ -528,10 +526,9 @@ fn collect_enum_definitions<'ast>(
                 }
             }
             ItemKind::Contract(contract) => {
-                let owner = contract.name.to_string();
                 collect_enum_definitions(
                     contract.body.iter(),
-                    Some(&owner),
+                    Some(contract.name.as_str()),
                     definitions,
                     ambiguous,
                 );
@@ -702,10 +699,7 @@ impl Compiler for CachedCompiler {
     fn compile(
         &self,
         _input: &Self::Input,
-    ) -> std::result::Result<
-        CompilerOutput<Self::CompilationError, Self::CompilerContract>,
-        SolcError,
-    > {
+    ) -> Result<CompilerOutput<Self::CompilationError, Self::CompilerContract>, SolcError> {
         Err(SolcError::msg("cached artifact selection cannot compile sources"))
     }
 
