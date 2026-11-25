@@ -1362,14 +1362,14 @@ fn metadata_has_absolute_paths(metadata: &SolcMetadata) -> bool {
     metadata.language == "Solidity"
         && (metadata.sources.inner.keys().any(|path| is_absolute(path))
             || metadata.settings.remappings.iter().any(|remapping| {
-                // A Windows context's drive colon can be parsed as the context separator,
-                // leaving the absolute path suffix in the remapping name.
-                is_absolute(&remapping.name)
-                    || is_absolute(&remapping.path)
+                // Recover a Windows context split at its drive colon. Virtual names alone aren't
+                // paths; the remaining context separator must also be present.
+                is_absolute(&remapping.path)
                     || remapping.context.as_deref().is_some_and(|context| {
                         is_absolute(context)
                             || (matches!(context.as_bytes(), [drive] if drive.is_ascii_alphabetic())
-                                && remapping.name.starts_with('\\'))
+                                && remapping.name.starts_with(['/', '\\'])
+                                && remapping.name.contains(':'))
                     })
             }))
 }

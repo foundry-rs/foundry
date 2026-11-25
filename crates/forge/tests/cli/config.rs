@@ -4609,6 +4609,7 @@ fn metadata_path_warning_recognizes_windows_paths(prj: _, cmd: _) {
         (r"unused/=\\server\share\", ABSOLUTE_METADATA_PATH_WARNING),
         ("unused/=C:relative/", ""),
         ("src/:unused/=lib/", ""),
+        ("s:/virtual/=lib/", ""),
         ("unused/=../shared/", ""),
         (internal.as_str(), ""),
     ] {
@@ -4620,5 +4621,31 @@ fn metadata_path_warning_recognizes_windows_paths(prj: _, cmd: _) {
             .args(["build", "--force", "--no-lint"])
             .assert_success()
             .stderr_eq(warning);
+    }
+}
+
+#[forgetest]
+fn virtual_import_alias_does_not_warn_about_metadata_paths(prj: _, cmd: _) {
+    prj.add_lib("Dependency.sol", "contract Dependency {}\n");
+    prj.add_source(
+        "Root.sol",
+        "import {Dependency} from \"/virtual/Dependency.sol\"; contract Root is Dependency {}\n",
+    );
+    for remapping in ["/virtual/=lib/", "src/:/virtual/=lib/"] {
+        prj.update_config(|config| {
+            config.auto_detect_remappings = false;
+            config.remappings = vec![Remapping::from_str(remapping).unwrap().into()];
+        });
+        cmd.forge_fuse().args(["build", "--force", "--no-lint"]).assert_success().stderr_eq("");
+        cmd.forge_fuse().args(["build", "--no-lint"]).assert_success().stderr_eq("");
+        let artifact: ConfigurableContractArtifact =
+            serde_json::from_slice(&fs::read(prj.root().join("out/Root.sol/Root.json")).unwrap())
+                .unwrap();
+        let metadata = artifact.metadata.unwrap();
+        assert_eq!(metadata.settings.remappings, vec![Remapping::from_str(remapping).unwrap()]);
+        assert_eq!(
+            metadata.sources.inner.into_keys().collect::<Vec<_>>(),
+            ["lib/Dependency.sol", "src/Root.sol"]
+        );
     }
 }
