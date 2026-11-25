@@ -817,15 +817,24 @@ impl<'a> AnchorIndex<'a> {
     /// source map, so a call that the compiler removed along with its arm can borrow the run of
     /// another call to the same function.
     fn if_entry(&self, item_id: u32, path_id: u32, arms: &IfArms) -> Option<EdgeAnchor> {
-        let (arm, callees) = match path_id {
-            0 => (&arms.then_arm, &arms.then_callees),
-            _ => (arms.else_arm.as_ref()?, &arms.else_callees),
+        let (arm, callees, other) = match path_id {
+            0 => (&arms.then_arm, &arms.then_callees, &arms.else_callees),
+            _ => (arms.else_arm.as_ref()?, &arms.else_callees, &arms.then_callees),
         };
+        // Arms that call the same function share its run, so it cannot tell which one kept it.
         let [callee] = callees.as_slice() else { return None };
+        if other
+            .iter()
+            .any(|other| (other.source_id, &other.bytes) == (callee.source_id, &callee.bytes))
+        {
+            return None;
+        }
         let body = self
             .instructions_starting_in(callee)
             .filter(|&ic| {
-                self.starts_in_range(ic, callee) && self.source_map[ic].length() != callee.len()
+                self.starts_in_range(ic, callee)
+                    && self.source_map[ic].length() != callee.len()
+                    && self.source_map[ic].offset() < callee.bytes.end
             })
             .collect::<Vec<_>>();
         let (&first, &last) = (body.iter().min()?, body.iter().max()?);
@@ -836,6 +845,14 @@ impl<'a> AnchorIndex<'a> {
                 element.index().is_none() || is_in_source_range(element, callee)
             })
         }) {
+            return None;
+        }
+        // The run is entered by falling into it. A first instruction that something jumps to, such
+        // as a loop header, runs more often than the arm.
+        let pc = *self.pcs.get(first)?;
+        if self.bytecode.get(pc as usize) == Some(&opcode::JUMPDEST)
+            && self.address_pushes.binary_search_by_key(&pc, |&(target, _)| target).is_ok()
+        {
             return None;
         }
         let anchor =
