@@ -11,7 +11,7 @@ use alloy_provider::Provider;
 use alloy_signer_local::PrivateKeySigner;
 use anvil::{NodeConfig, spawn};
 use foundry_common::tempo::ALPHA_USD_ADDRESS;
-use foundry_compilers::artifacts::BytecodeHash;
+use foundry_compilers::artifacts::{BytecodeHash, remappings::Remapping};
 use foundry_evm::hardfork::TempoHardfork;
 use foundry_test_utils::{
     assert_data_eq, forgetest, rpc::spawn_rpc_proxy_mapping_method, snapbox::IntoData, str,
@@ -856,4 +856,46 @@ async fn create_from_tempo_configurable_account(prj: _, cmd: _) {
             format!("...\nDeployer: {deployer}\nDeployed to: {deployed}\nTransaction hash: [..]\n")
         );
     }
+}
+
+#[forgetest]
+async fn create_json_warns_about_absolute_metadata_paths(prj: _, cmd: _) {
+    prj.add_source("Root.sol", "contract Root {}\n");
+    let external = tempfile::tempdir().unwrap();
+    prj.update_config(|config| {
+        config.remappings.push(
+            Remapping {
+                context: None,
+                name: "unused/".into(),
+                path: external.path().display().to_string(),
+            }
+            .into(),
+        );
+    });
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+    cmd.args(["create", "src/Root.sol:Root", "--json", "--rpc-url"])
+        .arg(handle.http_endpoint())
+        .args(["--private-key", &pk])
+        .assert_json_stdout_with_status(true, str![[r#"
+{
+  "contract": "Root",
+  "transaction": {
+    "from": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+    "to": null,
+    "maxFeePerGas": "0x77359401",
+    "maxPriorityFeePerGas": "0x1",
+    "gas": "[..]",
+    "input": "[..]",
+    "nonce": "0x0",
+    "chainId": "0x7a69"
+  },
+  "abi": []
+}
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Solidity metadata contains absolute filesystem paths that may reveal information about your local system when published. Review the metadata before sharing or verifying these artifacts.
+
+"#]]);
 }
