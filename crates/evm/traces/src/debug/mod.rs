@@ -9,6 +9,7 @@ use alloy_dyn_abi::{
     parser::{Parameters, Storage},
 };
 use alloy_primitives::U256;
+use evm2::interpreter::opcode::OpCode;
 use foundry_common::fmt::format_token;
 use foundry_compilers::{
     artifacts::sourcemap::{Jump, SourceElement},
@@ -48,16 +49,26 @@ impl DebugTraceIdentifier {
         contract_name: &str,
     ) {
         let is_create = node.trace.kind.is_any_create();
-        let Some(artifact) = sources.find_artifact(contract_name, is_create) else { return };
+        // The code ran if it has every jump destination that the call executed.
+        let ran = |artifact: &ArtifactData| {
+            let jumpdests = &artifact.functions(is_create).jumpdests;
+            node.trace
+                .steps
+                .iter()
+                .filter(|step| step.op == OpCode::JUMPDEST)
+                .all(|step| jumpdests.contains(&step.pc))
+        };
+        let Some(artifact) = sources.find_artifact(contract_name, is_create, ran) else { return };
         let resolve = |pc: u32, entries: &[FunctionEntry]| {
-            resolve_entry(sources, contract_name, is_create, pc, entries)
+            resolve_entry(sources, artifact, is_create, pc, entries)
         };
         let context = TrackerContext {
             code: artifact.functions(is_create),
             resolve: &resolve,
+            is_create,
             convention: CallConvention::solc(artifact.via_ir),
             calldata: node.trace.data.as_ref(),
-            from_source_map: &|step| source_map_function(node, sources, contract_name, step),
+            from_source_map: &|step| source_map_function(node, sources, artifact, step),
         };
         let calls = track_internal_calls(&node.trace.steps, &context);
         for internal_call in calls {
@@ -75,14 +86,14 @@ impl DebugTraceIdentifier {
 /// generated, are not shown.
 fn resolve_entry(
     sources: &ContractSources,
-    contract_name: &str,
+    artifact: &ArtifactData,
     is_create: bool,
     pc: u32,
     entries: &[FunctionEntry],
 ) -> Option<ResolvedEntry> {
     let named = entries.iter().filter(|entry| entry.name.is_some()).collect::<Vec<_>>();
     let defined =
-        sources.find_source_mapping(contract_name, pc, is_create).and_then(|(element, source)| {
+        sources.source_mapping_in(artifact, pc, is_create).and_then(|(element, source)| {
             let offset =
                 SourceEdit::original_offset(&source.source_edits, element.offset() as usize);
             source.functions.get(&offset).cloned()
@@ -90,47 +101,52 @@ fn resolve_entry(
     let (entry, function) = match choose_entry(&named, defined.as_deref())? {
         Choice::Function(entry, function) => (entry, function.info(&sources.user_types)),
         Choice::Ambiguous(entry, function) => {
-            let mut info = function.info(&sources.user_types);
-            info.name = function.qualified_name();
-            info.params = None;
-            info.returns = None;
-            (entry, info)
+            let name = function.qualified_name();
+            let is_entry = function.is_entry;
+            (entry, FunctionInfo { name, params: None, returns: None, is_entry })
         }
         Choice::KeyName(entry) => {
             let name = without_number(entry.name.as_deref()?).to_string();
             (entry, FunctionInfo { name, params: None, returns: None, is_entry: false })
         }
     };
-    Some((entry.clone(), function))
+    Some((entry.parameter_slots, entry.return_slots, function))
 }
 
 /// What a call to an entry runs.
 enum Choice<'a> {
     /// The function that the source map and the key agree on.
     Function(&'a FunctionEntry, &'a SourceFunction),
-    /// A function that the compiler merged with others of the same name, such as overloads that
-    /// differ in a type only. The call does not tell which of them ran.
+    /// Functions that the compiler merged into one entry, which share a name, such as overloads
+    /// that differ in a type only. The call does not tell which of them ran.
     Ambiguous(&'a FunctionEntry, &'a SourceFunction),
     /// The name of the key, if the source map has no function that agrees with it.
     KeyName(&'a FunctionEntry),
 }
 
-/// Picks the entry among `named`, which share an offset, that the function `defined` at the
-/// offset in the source belongs to. The compiler merges functions with the same code into one
-/// entry.
+/// Decides what a call to an entry runs, given the entries `named` at its offset and the function
+/// `defined` at the offset in the source.
+///
+/// The compiler merges functions with the same code into one entry, and the call does not tell
+/// which of them ran. Such a call is shown only if they share a name, and then without types.
 fn choose_entry<'a>(
     named: &[&'a FunctionEntry],
     defined: Option<&'a SourceFunction>,
 ) -> Option<Choice<'a>> {
     let first = *named.first()?;
-    let Some(function) = defined else { return Some(Choice::KeyName(first)) };
-    let mut agreeing = named.iter().copied().filter(|entry| {
+    let agrees = |entry: &FunctionEntry, function: &SourceFunction| {
         entry.name.as_deref().is_some_and(|key_name| names_agree(key_name, &function.name))
-    });
-    Some(match (agreeing.next(), agreeing.next()) {
-        (None, _) => Choice::KeyName(first),
-        (Some(entry), None) => Choice::Function(entry, function),
-        (Some(entry), Some(_)) => Choice::Ambiguous(entry, function),
+    };
+    if named.len() > 1 {
+        let function = defined?;
+        return named
+            .iter()
+            .all(|entry| agrees(entry, function))
+            .then_some(Choice::Ambiguous(first, function));
+    }
+    Some(match defined {
+        Some(function) if agrees(first, function) => Choice::Function(first, function),
+        _ => Choice::KeyName(first),
     })
 }
 
@@ -167,12 +183,12 @@ fn params_from(parameters: &Parameters<'_>) -> Vec<Param> {
 fn source_map_function(
     node: &CallTraceNode,
     sources: &ContractSources,
-    contract_name: &str,
+    artifact: &ArtifactData,
     step: usize,
 ) -> Option<(FunctionInfo, usize, usize)> {
     let src_map = |step: usize| {
-        sources.find_source_mapping(
-            contract_name,
+        sources.source_mapping_in(
+            artifact,
             node.trace.steps.get(step)?.pc,
             node.trace.kind.is_any_create(),
         )
@@ -447,8 +463,8 @@ mod tests {
         params_from(&Parameters::parse(source).unwrap())
     }
 
-    fn entry(id: u32, name: &str) -> FunctionEntry {
-        FunctionEntry { id: Some(id), name: Some(name.into()), parameter_slots: 1, return_slots: 1 }
+    fn entry(name: &str) -> FunctionEntry {
+        FunctionEntry { name: Some(name.into()), parameter_slots: 1, return_slots: 1 }
     }
 
     fn defined(name: &str) -> SourceFunction {
@@ -462,32 +478,31 @@ mod tests {
     }
 
     #[test]
-    fn chooses_the_entry_that_agrees_with_the_defined_function() {
-        let (a, b) = (entry(1, "a"), entry(2, "b"));
-        let a_defined = defined("a");
+    fn a_name_that_does_not_agree_gives_the_name_of_the_key() {
+        let (a, b) = (entry("a"), entry("b"));
 
-        // Two functions with the same code share an entry: the one that the source map names.
-        assert!(matches!(
-            choose_entry(&[&a, &b], Some(&a_defined)),
-            Some(Choice::Function(entry, _)) if entry.id == Some(1)
-        ));
-        // A name that does not agree gives the name of the key, never the defined function.
-        assert!(matches!(
-            choose_entry(&[&b], Some(&a_defined)),
-            Some(Choice::KeyName(entry)) if entry.id == Some(2)
-        ));
+        assert!(matches!(choose_entry(&[&a], Some(&defined("a"))), Some(Choice::Function(..))));
+        // The source map never gives another function than the one of the key.
+        assert!(
+            matches!(choose_entry(&[&b], Some(&defined("a"))), Some(Choice::KeyName(entry)) if entry.name.as_deref() == Some("b"))
+        );
         assert!(matches!(choose_entry(&[&a], None), Some(Choice::KeyName(_))));
-        assert!(choose_entry(&[], Some(&a_defined)).is_none());
+        assert!(choose_entry(&[], Some(&defined("a"))).is_none());
     }
 
     #[test]
-    fn overloads_with_the_same_code_are_ambiguous() {
-        let (first, second) = (entry(1, "log_17"), entry(2, "log_18"));
+    fn merged_functions_are_shown_only_if_they_share_a_name() {
+        let (first, second) = (entry("log_17"), entry("log_18"));
+        let (a, b) = (entry("a"), entry("b"));
 
+        // Overloads with the same code: the call does not tell which of them ran.
         assert!(matches!(
             choose_entry(&[&first, &second], Some(&defined("log"))),
             Some(Choice::Ambiguous(..))
         ));
+        // Functions with other names would show the name of the source map for both.
+        assert!(choose_entry(&[&a, &b], Some(&defined("a"))).is_none());
+        assert!(choose_entry(&[&a, &b], None).is_none());
     }
 
     #[test]

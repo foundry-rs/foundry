@@ -125,11 +125,6 @@ pub struct ArtifactData {
 }
 
 impl ArtifactData {
-    /// The functions of the creation code if `init_code`, otherwise of the runtime code.
-    pub const fn functions(&self, init_code: bool) -> &CodeFunctions {
-        if init_code { &self.functions } else { &self.functions_runtime }
-    }
-
     fn new(
         bytecode: ContractBytecodeSome,
         build_id: String,
@@ -178,6 +173,11 @@ impl ArtifactData {
             },
         })
     }
+
+    /// The functions of the creation code if `init_code`, otherwise of the runtime code.
+    pub const fn functions(&self, init_code: bool) -> &CodeFunctions {
+        if init_code { &self.functions } else { &self.functions_runtime }
+    }
 }
 
 /// The offsets of the `JUMPDEST`s in `code`.
@@ -201,7 +201,6 @@ fn entries(data: Option<&BTreeMap<String, FunctionDebugData>>) -> HashMap<u32, V
             continue;
         };
         entries.entry(entry_point).or_default().push(FunctionEntry {
-            id: function.id,
             name: function.id.and_then(|id| name_of_key(key, id)),
             parameter_slots: parameter_slots as usize,
             return_slots: return_slots as usize,
@@ -380,20 +379,6 @@ impl ContractSources {
         }
     }
 
-    /// Records a user-defined type. A name that two different types have resolves to none.
-    fn add_user_type(&mut self, name: String, ty: Option<UserType>) {
-        match self.user_types.entry(name) {
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                entry.insert(ty);
-            }
-            std::collections::hash_map::Entry::Occupied(mut entry) => {
-                if entry.get() != &ty {
-                    entry.insert(None);
-                }
-            }
-        }
-    }
-
     /// Merges given contract sources.
     pub fn merge(&mut self, sources: Self) {
         self.sources_by_id.extend(sources.sources_by_id);
@@ -419,14 +404,21 @@ impl ContractSources {
         })
     }
 
-    /// Returns the artifact of a contract that has the most information about its functions: the
-    /// first with entry points for the code, or else the first.
-    pub fn find_artifact(&self, name: &str, init_code: bool) -> Option<&ArtifactData> {
+    /// Returns the artifact of a contract that has run. Artifacts can share a name, so among them
+    /// it is the first for which `ran` holds, with entry points for the code if one has them.
+    pub fn find_artifact(
+        &self,
+        name: &str,
+        init_code: bool,
+        ran: impl Fn(&ArtifactData) -> bool,
+    ) -> Option<&ArtifactData> {
         let artifacts = self.artifacts_by_name.get(name)?;
-        artifacts
-            .iter()
-            .find(|artifact| !artifact.functions(init_code).entries.is_empty())
-            .or_else(|| artifacts.first())
+        if let [artifact] = artifacts.as_slice() {
+            return Some(artifact);
+        }
+        let mut candidates = artifacts.iter().filter(|artifact| ran(artifact)).peekable();
+        let first = candidates.peek().copied();
+        candidates.find(|artifact| !artifact.functions(init_code).entries.is_empty()).or(first)
     }
 
     /// Returns all (name, bytecode, source) sets.
@@ -446,42 +438,75 @@ impl ContractSources {
         pc: u32,
         init_code: bool,
     ) -> Option<(SourceElement, &SourceData)> {
-        self.get_sources(contract_name)?.find_map(|(artifact, source)| {
-            let source_map = if init_code {
-                artifact.source_map.as_ref()
-            } else {
-                artifact.source_map_runtime.as_ref()
-            }?;
+        self.get_sources(contract_name)?
+            .find_map(|(artifact, source)| self.source_mapping(artifact, source, pc, init_code))
+    }
 
-            // Solc indexes source maps by instruction counter, but Vyper indexes by program
-            // counter.
-            let source_element = if matches!(source.language, MultiCompilerLanguage::Solc(_)) {
-                let pc_ic_map = if init_code {
-                    artifact.pc_ic_map.as_ref()
-                } else {
-                    artifact.pc_ic_map_runtime.as_ref()
-                }?;
-                let ic = pc_ic_map.get(pc)?;
+    /// Returns the source map element at `pc` of the code of `artifact`, with the source that it
+    /// points into.
+    pub fn source_mapping_in(
+        &self,
+        artifact: &ArtifactData,
+        pc: u32,
+        init_code: bool,
+    ) -> Option<(SourceElement, &SourceData)> {
+        let source = self.sources_by_id.get(&artifact.build_id)?.get(&artifact.file_id)?;
+        self.source_mapping(artifact, source, pc, init_code)
+    }
 
-                source_map.get(ic as usize)
+    fn source_mapping<'a>(
+        &'a self,
+        artifact: &ArtifactData,
+        source: &'a SourceData,
+        pc: u32,
+        init_code: bool,
+    ) -> Option<(SourceElement, &'a SourceData)> {
+        let source_map = if init_code {
+            artifact.source_map.as_ref()
+        } else {
+            artifact.source_map_runtime.as_ref()
+        }?;
+
+        // Solc indexes source maps by instruction counter, but Vyper indexes by program
+        // counter.
+        let source_element = if matches!(source.language, MultiCompilerLanguage::Solc(_)) {
+            let pc_ic_map = if init_code {
+                artifact.pc_ic_map.as_ref()
             } else {
-                source_map.get(pc as usize)
+                artifact.pc_ic_map_runtime.as_ref()
             }?;
-            // if the source element has an index, find the sourcemap for that index
-            source_element
-                .index()
-                // if index matches current file_id, return current source code
-                .and_then(|index| {
-                    (index == artifact.file_id).then(|| (source_element.clone(), source))
-                })
-                .or_else(|| {
-                    // otherwise find the source code for the element's index
-                    self.sources_by_id
-                        .get(&artifact.build_id)?
-                        .get(&source_element.index()?)
-                        .map(|source| (source_element.clone(), source.as_ref()))
-                })
-        })
+            let ic = pc_ic_map.get(pc)?;
+
+            source_map.get(ic as usize)
+        } else {
+            source_map.get(pc as usize)
+        }?;
+        // if the source element has an index, find the sourcemap for that index
+        source_element
+            .index()
+            // if index matches current file_id, return current source code
+            .and_then(|index| (index == artifact.file_id).then(|| (source_element.clone(), source)))
+            .or_else(|| {
+                // otherwise find the source code for the element's index
+                self.sources_by_id
+                    .get(&artifact.build_id)?
+                    .get(&source_element.index()?)
+                    .map(|source| (source_element.clone(), source.as_ref()))
+            })
+    }
+
+    /// Records a user-defined type. A name that two different types have resolves to none.
+    fn add_user_type(&mut self, name: String, ty: Option<UserType>) {
+        match self.user_types.entry(name) {
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(ty);
+            }
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                if entry.get() != &ty {
+                    entry.insert(None);
+                }
+            }
+        }
     }
 }
 

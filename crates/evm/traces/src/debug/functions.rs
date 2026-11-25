@@ -10,8 +10,8 @@ use super::Param;
 use alloy_dyn_abi::{DynSolType, parser::Storage};
 use solar::{
     ast::{
-        DataLocation, ElementaryType, ExprKind, FunctionKind, ItemKind, LitKind, SourceUnit, Type,
-        TypeKind, VariableDefinition, Visibility,
+        DataLocation, ElementaryType, ExprKind, FunctionKind, Item, ItemKind, LitKind, SourceUnit,
+        Type, TypeKind, VariableDefinition, Visibility,
     },
     interface::source_map::SourceMap,
 };
@@ -140,8 +140,7 @@ pub fn collect(
     functions: &mut HashMap<usize, Arc<SourceFunction>>,
     user_types: &mut Vec<(String, UserType)>,
 ) {
-    let start =
-        |item: &solar::ast::Item<'_>| source_map.span_to_range(item.span).ok().map(|r| r.start);
+    let start = |item: &Item<'_>| source_map.span_to_range(item.span).ok().map(|r| r.start);
     for item in ast.items.iter() {
         match &item.kind {
             ItemKind::Contract(contract) => {
@@ -157,7 +156,7 @@ pub fn collect(
 }
 
 fn collect_item(
-    item: &solar::ast::Item<'_>,
+    item: &Item<'_>,
     contract: Option<&str>,
     start: Option<usize>,
     functions: &mut HashMap<usize, Arc<SourceFunction>>,
@@ -239,16 +238,16 @@ fn source_type(ty: &Type<'_>) -> SourceType {
         TypeKind::Array(array) => {
             let size = match &array.size {
                 None => None,
-                Some(size) => match &size.kind {
-                    ExprKind::Lit(lit, _) => match &lit.kind {
-                        LitKind::Number(number) => match usize::try_from(*number) {
-                            Ok(size) => Some(size),
-                            Err(_) => return SourceType::Other,
-                        },
-                        _ => return SourceType::Other,
-                    },
-                    _ => return SourceType::Other,
-                },
+                Some(size) => {
+                    if let ExprKind::Lit(lit, _) = &size.kind
+                        && let LitKind::Number(number) = &lit.kind
+                        && let Ok(size) = usize::try_from(*number)
+                    {
+                        Some(size)
+                    } else {
+                        return SourceType::Other;
+                    }
+                }
             };
             SourceType::Array(Box::new(source_type(&array.element)), size)
         }

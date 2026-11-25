@@ -1,6 +1,6 @@
 //! Tests for internal call detection with `--decode-internal`.
 
-use foundry_test_utils::{TestCommand, TestProject, file, snapbox::IntoData, util::OutputExt};
+use foundry_test_utils::{TestCommand, TestProject, file, snapbox::IntoData};
 
 /// Compiles the fixture in the given mode and compares the `-vvvv --decode-internal` output.
 #[track_caller]

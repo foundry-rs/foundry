@@ -27,9 +27,8 @@ use std::{
 /// A function that `functionDebugData` lists.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FunctionEntry {
-    /// The AST id of the function, or `None` for a function the compiler generated.
-    pub id: Option<u32>,
-    /// The name that the key of the entry spells, if it is a function of the contract.
+    /// The name that the key of the entry spells, if it is a function of the contract rather than
+    /// one the compiler generated.
     pub name: Option<String>,
     /// The stack words the function takes.
     pub parameter_slots: usize,
@@ -73,8 +72,7 @@ impl CallConvention {
 
     /// The index of the return address in `stack`, which enters a function that takes
     /// `parameter_slots` words.
-    #[expect(clippy::unused_self)]
-    const fn return_address_index(self, stack: &[U256], parameter_slots: usize) -> Option<usize> {
+    const fn return_address_index(stack: &[U256], parameter_slots: usize) -> Option<usize> {
         stack.len().checked_sub(parameter_slots + 1)
     }
 
@@ -105,17 +103,18 @@ pub struct InternalCall {
     pub call: DecodedInternalCall,
 }
 
-/// An entry with the function that it runs.
-pub type ResolvedEntry = (FunctionEntry, FunctionInfo);
+/// The stack words that a function takes and returns, with the function.
+pub type ResolvedEntry = (usize, usize, FunctionInfo);
 
 /// What the tracker knows about the contract whose steps it walks.
 pub struct TrackerContext<'a> {
     /// The functions of the code that ran.
     pub code: &'a CodeFunctions,
     /// Names the function that a call to the entry at an offset runs, among the entries there.
-    /// Returns the entry that the function belongs to with the function, or `None` for an entry
-    /// that is not shown.
+    /// Returns `None` for an entry that is not shown.
     pub resolve: &'a dyn Fn(u32, &[FunctionEntry]) -> Option<ResolvedEntry>,
+    /// Whether the code is creation code, which no dispatcher enters.
+    pub is_create: bool,
     /// The stack layout of the code, if known. Without it the arguments are not decoded.
     pub convention: Option<CallConvention>,
     /// The call data of the call, for `calldata` parameters.
@@ -160,8 +159,8 @@ struct Tracker<'a> {
     context: &'a TrackerContext<'a>,
     frames: Vec<Frame>,
     calls: Vec<InternalCall>,
-    /// The entry and function of each entry offset that a call went to.
-    resolved: HashMap<u32, (FunctionEntry, Option<Arc<FunctionInfo>>)>,
+    /// The stack words and function of each entry offset that a call went to.
+    resolved: HashMap<u32, (usize, usize, Option<Arc<FunctionInfo>>)>,
 }
 
 impl Tracker<'_> {
@@ -182,15 +181,17 @@ impl Tracker<'_> {
 
         let context = self.context;
         if let Some(entries) = context.code.entries.get(&landing.pc) {
-            let (entry, function) = self
+            let (parameter_slots, return_slots, function) = self
                 .resolved
                 .entry(landing.pc)
                 .or_insert_with(|| match (context.resolve)(landing.pc, entries) {
-                    Some((entry, function)) => (entry, Some(Arc::new(function))),
-                    None => (entries[0].clone(), None),
+                    Some((parameter_slots, return_slots, function)) => {
+                        (parameter_slots, return_slots, Some(Arc::new(function)))
+                    }
+                    None => (entries[0].parameter_slots, entries[0].return_slots, None),
                 })
                 .clone();
-            self.call(i, entry, function);
+            self.call(i, parameter_slots, return_slots, function);
         } else if let Some(k) = self.frames.iter().rposition(|frame| {
             frame.return_address == target
                 && landed.len() == frame.return_address_index + frame.return_slots
@@ -199,21 +200,25 @@ impl Tracker<'_> {
         } else if let Some((function, parameter_slots, return_slots)) =
             (self.context.from_source_map)(i)
         {
-            let entry = FunctionEntry { id: None, name: None, parameter_slots, return_slots };
-            self.call(i, entry, Some(Arc::new(function)));
+            self.call(i, parameter_slots, return_slots, Some(Arc::new(function)));
         }
     }
 
-    /// Handles the `JUMP` at step `i` to the entry of a function, which the call `function`
-    /// names.
-    fn call(&mut self, i: usize, entry: FunctionEntry, mut function: Option<Arc<FunctionInfo>>) {
+    /// Handles the `JUMP` at step `i` to the entry of a function that takes `parameter_slots` and
+    /// returns `return_slots` stack words, which `function` names.
+    fn call(
+        &mut self,
+        i: usize,
+        parameter_slots: usize,
+        return_slots: usize,
+        mut function: Option<Arc<FunctionInfo>>,
+    ) {
         let entered = &self.steps[i + 1];
         let Some(stack) = entered.stack.as_deref() else { return };
-        let convention = self.context.convention.unwrap_or(CallConvention::SolcLegacy);
         // A function without a return address never returns, like the functions that revert or
         // that end the call, and has no frame.
         let Some(return_address_index) =
-            convention.return_address_index(stack, entry.parameter_slots)
+            CallConvention::return_address_index(stack, parameter_slots)
         else {
             return;
         };
@@ -234,8 +239,11 @@ impl Tracker<'_> {
         }
 
         // The external function that the dispatcher or the call frame enters is the call node
-        // that the trace shows already.
-        if self.frames.is_empty() && function.as_ref().is_some_and(|function| function.is_entry) {
+        // that the trace shows already. Creation code has no dispatcher, so its calls are internal.
+        if !self.context.is_create
+            && self.frames.is_empty()
+            && function.as_ref().is_some_and(|function| function.is_entry)
+        {
             function = None;
         }
         let args = function.as_ref().and_then(|function| {
@@ -250,7 +258,7 @@ impl Tracker<'_> {
             start: i,
             return_address,
             return_address_index,
-            return_slots: entry.return_slots,
+            return_slots,
             function,
             args,
         });
@@ -348,20 +356,30 @@ mod tests {
         parameter_slots: usize,
         f: Arc<FunctionInfo>,
     ) -> Vec<Summary> {
-        let entry =
-            |id| FunctionEntry { id: Some(id), name: None, parameter_slots, return_slots: 1 };
+        track_in(steps, convention, parameter_slots, f, false)
+    }
+
+    fn track_in(
+        steps: &[CallTraceStep],
+        convention: Option<CallConvention>,
+        parameter_slots: usize,
+        f: Arc<FunctionInfo>,
+        is_create: bool,
+    ) -> Vec<Summary> {
+        let entry = || FunctionEntry { name: None, parameter_slots, return_slots: 1 };
         let code = CodeFunctions {
-            entries: HashMap::from([(F, vec![entry(1)]), (G, vec![entry(2)])]),
+            entries: HashMap::from([(F, vec![entry()]), (G, vec![entry()])]),
             jumpdests: HashSet::from([F, G, RET, OTHER_RET]),
         };
         let g = function("g", Some(parameter_slots), false);
-        let resolve = |pc: u32, entries: &[FunctionEntry]| {
+        let resolve = |pc: u32, _: &[FunctionEntry]| {
             let function = if pc == F { &f } else { &g };
-            Some((entries[0].clone(), FunctionInfo::clone(function)))
+            Some((parameter_slots, 1, FunctionInfo::clone(function)))
         };
         let context = TrackerContext {
             code: &code,
             resolve: &resolve,
+            is_create,
             convention,
             calldata: &[],
             from_source_map: &|_| None,
@@ -429,6 +447,19 @@ mod tests {
         assert_eq!(
             track(&steps, legacy, 1, function("f", Some(1), true)),
             [(2, 5, "g".into(), strings(&["8"]), strings(&["9"]))]
+        );
+    }
+
+    #[test]
+    fn creation_code_has_no_dispatcher_to_hide_an_entry_call_from() {
+        let steps = [&jump(F, &[RET.into(), 7])[..], &jump(RET, &[9])[..]].concat();
+        let legacy = Some(CallConvention::SolcLegacy);
+        let f = || function("f", Some(1), true);
+
+        assert_eq!(track(&steps, legacy, 1, f()), []);
+        assert_eq!(
+            track_in(&steps, legacy, 1, f(), true),
+            [(0, 3, "f".into(), strings(&["7"]), strings(&["9"]))]
         );
     }
 
