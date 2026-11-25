@@ -201,7 +201,10 @@ impl DebugRecorder {
                 .expect("EVM memory only grows within a frame");
         }
         open.memory_size = current.len();
-        open.write = memory_write(op, interp.stack().as_slice());
+        // Memory-reading opcodes can expand memory but leave all new bytes zero.
+        open.write = op
+            .memory_write_range(interp.stack().as_slice())
+            .map(|(offset, length)| offset..offset.saturating_add(length));
         #[cfg(test)]
         let memory = current.to_vec();
 
@@ -488,13 +491,6 @@ fn changed(old: &[u8], new: &[u8]) -> Option<std::ops::Range<usize>> {
         old.rchunks(CHUNK).zip(new.rchunks(CHUNK)).enumerate().find(|(_, (a, b))| a != b)?;
     let end = old.len() - index * CHUNK - a.iter().rev().zip(b.iter().rev()).position(differs)?;
     Some(start..end)
-}
-
-/// The destination a memory-writing opcode takes from its pre-execution stack.
-/// Memory-reading opcodes can expand memory but leave all new bytes zero.
-fn memory_write(op: OpCode, stack: &[U256]) -> Option<std::ops::Range<usize>> {
-    let (offset, length) = op.memory_write_range(stack)?;
-    Some(offset..offset.saturating_add(length))
 }
 
 #[cfg(test)]

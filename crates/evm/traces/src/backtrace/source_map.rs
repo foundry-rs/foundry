@@ -92,17 +92,11 @@ impl<'a> PcSourceMapper<'a> {
     fn find_instruction_counter(&self, pc: usize) -> Option<usize> {
         // The instruction map maps IC -> PC, we need the reverse
         // We find the highest IC that has a PC <= our target PC
-        let mut best_ic = None;
-        let mut best_pc = 0;
-
-        for (ic, mapped_pc) in self.ic_pc_map.iter() {
-            if mapped_pc <= pc && mapped_pc >= best_pc {
-                best_pc = mapped_pc;
-                best_ic = Some(ic);
-            }
-        }
-
-        best_ic
+        self.ic_pc_map
+            .iter()
+            .filter(|&(_, mapped_pc)| mapped_pc <= pc)
+            .max_by_key(|&(_, mapped_pc)| mapped_pc)
+            .map(|(ic, _)| ic)
     }
 }
 /// Represents a location in source code.

@@ -66,7 +66,9 @@ impl FoldedSlots {
                     known_contracts.find_by_deployed_code_exact(code.original_byte_slice())
                 && let Some(layout) = &contract.storage_layout
             {
-                let constants = push_immediates(code.original_byte_slice()).collect::<HashSet<_>>();
+                let constants = Instructions::new(code.original_byte_slice(), SpecId::NEXT)
+                    .filter_map(|inst| inst.push_value())
+                    .collect::<HashSet<_>>();
                 let mut keys = literals.clone();
                 keys.extend(constants.iter().copied());
                 let mut keys = keys.into_iter().collect::<Vec<_>>();
@@ -167,11 +169,6 @@ impl FoldedSlots {
 
 fn past_deadline(deadline: Option<Instant>) -> bool {
     deadline.is_some_and(|deadline| Instant::now() >= deadline)
-}
-
-/// Returns the values the `PUSH` instructions in `code` push.
-fn push_immediates(code: &[u8]) -> impl Iterator<Item = U256> {
-    Instructions::new(code, SpecId::NEXT).filter_map(|inst| inst.push_value())
 }
 
 /// Calls `hash` for every candidate key that fits the key type of the mapping at `slot`, descending
