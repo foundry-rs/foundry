@@ -253,6 +253,7 @@ impl SymbolicExecutor {
                             .map_or(&no_contracts, |cheats| &cheats.config.available_artifacts);
                         let error = expected
                             .mismatch_error(reverter, InstrStop::Revert, &retdata, known_contracts)
+                            .flatten()
                             .ok_or(SymbolicError::Unsupported(REASON))?;
                         outcome.state.frame.return_data =
                             SymReturnData::from_concrete_bytes(&mut self.cx, error.abi_encode());

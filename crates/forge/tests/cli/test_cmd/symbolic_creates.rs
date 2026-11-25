@@ -431,6 +431,14 @@ contract SymbolicCreateEip3541 is Test {
         vm.deployCode("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this)));
     }
 
+    function checkDeployCodeRejectedPrefixExpectRevertHaltReason() public {
+        // Like Forge, the reason matches the halt that rejected the runtime.
+        vm.expectRevert(bytes("EvmError: CreateContractStartingWithEF"));
+        address deployed =
+            vm.deployCode("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this)));
+        assert(deployed == address(1));
+    }
+
     function checkDeployCodeRejectedPrefixExpectRevertInCaller() public {
         // The rejected deployment settles the caller's expectation, so its call returns.
         caller.expectRevertDeployCode("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this)));

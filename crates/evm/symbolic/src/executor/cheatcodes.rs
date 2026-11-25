@@ -537,19 +537,36 @@ impl SymbolicExecutor {
                     let known_contracts = executor
                         .cheatcodes
                         .map_or(&no_contracts, |cheats| &cheats.config.available_artifacts);
-                    let error = expected
+                    let mismatch = expected
                         .mismatch_error(reverter, *status, &retdata, known_contracts)
                         .ok_or(SymbolicError::Unsupported(REASON))?;
-                    parent.expected_revert = None;
-                    let return_data =
-                        SymReturnData::from_concrete_bytes(&mut self.cx, error.abi_encode());
-                    revert_cheatcode_call(
-                        &mut self.cx,
-                        &mut parent,
-                        out_offset.clone(),
-                        out_size,
-                        return_data,
-                    )?;
+                    if let Some(error) = mismatch {
+                        parent.expected_revert = None;
+                        let return_data =
+                            SymReturnData::from_concrete_bytes(&mut self.cx, error.abi_encode());
+                        revert_cheatcode_call(
+                            &mut self.cx,
+                            &mut parent,
+                            out_offset.clone(),
+                            out_size,
+                            return_data,
+                        )?;
+                    } else {
+                        // Forge also matches a reason against the halt it names for a rejected
+                        // runtime, which settles the expectation like a revert.
+                        let mut expected = expected.clone();
+                        parent.expected_revert = (!expected.consume_one()).then_some(expected);
+                        let address =
+                            SymExpr::constant(&mut self.cx, address_word(DUMMY_CREATE_ADDRESS));
+                        let return_data = SymReturnData::from_words(&mut self.cx, vec![address]);
+                        complete_cheatcode_call(
+                            &mut self.cx,
+                            &mut parent,
+                            out_offset.clone(),
+                            out_size,
+                            return_data,
+                        )?;
+                    }
                     parents.push_back(parent);
                 }
                 JoinedCallOutcome::Failure(parent)

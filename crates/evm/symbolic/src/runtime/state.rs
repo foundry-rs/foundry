@@ -1593,16 +1593,16 @@ impl ExpectedRevert {
         Some(SymBoolExpr::and(cx, conditions))
     }
 
-    /// Returns the error Forge reverts with when a revert of `retdata`, first failing in
-    /// `reverted_by`, does not meet this expectation, or `None` when it does or the expectation
-    /// is symbolic.
+    /// Returns the error Forge reverts with when a frame ending with `status` and `retdata`, first
+    /// failing in `reverted_by`, does not meet this expectation, `Some(None)` when it does, or
+    /// `None` when the expectation is symbolic.
     pub(crate) fn mismatch_error(
         &self,
         reverted_by: Option<Address>,
         status: InstrStop,
         retdata: &Bytes,
         known_contracts: &Option<ContractsByArtifact>,
-    ) -> Option<Error> {
+    ) -> Option<Option<Error>> {
         let (reason, partial_match) = match &self.data {
             ExpectedRevertData::Any => (None, false),
             ExpectedRevertData::Prefix(data) => (Some(data.as_concrete_slice()?), true),
@@ -1612,7 +1612,7 @@ impl ExpectedRevert {
             Some(reverter) => Some(word_to_address(reverter.as_const()?)),
             None => None,
         };
-        expect_revert_mismatch(
+        Some(expect_revert_mismatch(
             reason,
             partial_match,
             reverter,
@@ -1620,7 +1620,7 @@ impl ExpectedRevert {
             status,
             retdata,
             known_contracts,
-        )
+        ))
     }
 
     pub(crate) const fn mark_deeper_frame_ran(&mut self) {
