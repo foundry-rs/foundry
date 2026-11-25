@@ -6310,6 +6310,7 @@ where
             replay_env.block_env.gas_limit = gas_limit;
         }
         replay_env.block_env.prevrandao = prevrandao;
+        let blob_excess_gas_and_price = replay_env.block_env.blob_excess_gas_and_price;
         replay_env.block_env.difficulty = source_block.header().difficulty();
         apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork>(
             &mut replay_env,
@@ -6317,6 +6318,8 @@ where
             source_chain_id,
             self.networks,
         );
+        replay_env.block_env.difficulty = source_block.header().difficulty();
+        replay_env.block_env.blob_excess_gas_and_price = blob_excess_gas_and_price;
         let arbitrum_rpc_block_number = arbitrum_block_numbers.map(|(rpc, evm)| {
             replay_env.block_env.number = evm;
             rpc

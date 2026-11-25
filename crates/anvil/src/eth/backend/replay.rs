@@ -225,7 +225,6 @@ pub(crate) fn execute_historical_replay<N: AnvilEvmNetwork>(
 mod tests {
     use super::*;
     use alloy_consensus::{SignableTransaction, TxEip1559};
-    use alloy_network::AnyRpcBlock;
     use alloy_primitives::{Signature, U256};
     use alloy_rpc_types::BlockTransactions;
     use foundry_primitives::TxCip64;
