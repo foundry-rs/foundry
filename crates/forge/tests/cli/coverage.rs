@@ -2857,6 +2857,7 @@ import "../src/M.sol";
 
 contract MTest is M {
     function testGo() public {
+        new C().go(true);
         new C().go(false);
         _b(1);
         _b(2);
@@ -2869,7 +2870,7 @@ contract MTest is M {
         cmd.arg("coverage").arg("--no-isolate"),
         str![[r#"
 ...
-BRDA:8,0,0,0
+BRDA:8,0,0,1
 ...
 "#]],
     );
