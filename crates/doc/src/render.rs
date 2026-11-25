@@ -9,13 +9,10 @@ use foundry_common::sh_warn;
 use markdown::{ParseOptions, mdast::Node, to_mdast};
 use solar::{
     ast::{
-        CommentKind, ContractKind, DocComments, FunctionKind, Item, ItemContract, ItemFunction,
-        ItemKind, NatSpecKind, ParameterList, SourceUnit, Span, VariableDefinition,
+        CommentKind, ContractKind, DocComments, EnumVariant, FunctionKind, Item, ItemContract,
+        ItemFunction, ItemKind, NatSpecKind, ParameterList, SourceUnit, Span, VariableDefinition,
     },
-    interface::{
-        Ident,
-        source_map::{FileName, SourceFile},
-    },
+    interface::source_map::{FileName, SourceFile},
     sema::{Gcx, hir},
 };
 use std::{
@@ -165,7 +162,11 @@ fn render_contract<'ast, 'gcx>(
                 // inheritance only runs when the variable has no local NatSpec at all.
                 let vid = hir_id.and_then(|cid| {
                     gcx.hir.contract(cid).items.iter().find_map(|&item| match item {
-                        hir::ItemId::Variable(id) if gcx.hir.variable(id).span == *span => Some(id),
+                        hir::ItemId::Variable(id)
+                            if gcx.hir.variable(id).span.lo() == span.lo() =>
+                        {
+                            Some(id)
+                        }
                         _ => None,
                     })
                 });
@@ -1017,7 +1018,11 @@ fn write_struct_properties_table(
     writeln!(out).unwrap();
 }
 
-fn write_enum_variants_table(out: &mut String, variants: &[Ident], comments: &CommentData) {
+fn write_enum_variants_table(
+    out: &mut String,
+    variants: &[EnumVariant<'_>],
+    comments: &CommentData,
+) {
     if variants.is_empty() {
         return;
     }
@@ -1026,7 +1031,7 @@ fn write_enum_variants_table(out: &mut String, variants: &[Ident], comments: &Co
     writeln!(out, "| Name | Description |").unwrap();
     writeln!(out, "| ---- | ----------- |").unwrap();
     for variant in variants {
-        let name = variant.as_str();
+        let name = variant.name.as_str();
         let desc =
             comments.params.iter().find(|(n, _)| n == name).map(|(_, d)| d.as_str()).unwrap_or("");
         let name = escape_table_cell(name);

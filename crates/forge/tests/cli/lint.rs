@@ -486,7 +486,7 @@ note[function-init-state]: state variable initializer depends on a non-pure func
   [FILE]:5:5
   │
 5 │     address bob = makeAddr("bob");
-  │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   │
   ╰ help: https://getfoundry.sh/forge/linting/function-init-state
 
@@ -1827,7 +1827,10 @@ contract Broken {
 {
   "$message_type": "diagnostic",
   "message": "unresolved symbol `missing`",
-  "code": null,
+  "code": {
+    "code": "7576",
+    "explanation": null
+  },
   "level": "error",
   "spans": [
     {
@@ -1853,7 +1856,7 @@ contract Broken {
     }
   ],
   "children": [],
-  "rendered": "error: unresolved symbol `missing`\n  ╭▸ src/Broken.sol:6:25\n  │\n6 │         uint256 value = missing;\n  ╰╴                        ━━━━━━━\n\n"
+  "rendered": "  ╭▸ src/Broken.sol:6:25\n  │\n6 │         uint256 value = missing;\n  ╰╴                        ━━━━━━━\n\nerror[7576]: unresolved symbol `missing`\n"
 }
 "#]])
         .stderr_eq("");
@@ -2591,7 +2594,7 @@ warning[uninitialized-state]: state variable is read but never written
   [FILE]:5:5
   │
 5 │     uint256 public reported;
-  │     ━━━━━━━━━━━━━━━━━━━━━━━━
+  │     ━━━━━━━━━━━━━━━━━━━━━━━
   │
   ╰ help: https://getfoundry.sh/forge/linting/uninitialized-state
 
