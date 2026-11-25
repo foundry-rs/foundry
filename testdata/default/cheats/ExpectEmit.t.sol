@@ -59,6 +59,13 @@ contract Emitter {
         inner.emitEvent(topic1, topic2, topic3, data);
     }
 
+    function emitHereAndNested(Emitter inner, uint256 topic1, uint256 topic2, uint256 topic3, uint256 data)
+        public
+    {
+        emit Something(topic1, topic2, topic3, data);
+        inner.emitEvent(topic1, topic2, topic3, data);
+    }
+
     function getVar() public view returns (uint256) {
         return 1;
     }
@@ -456,5 +463,13 @@ contract ExpectEmitCountTest is Test {
         vm.expectEmit(address(emitter), count);
         emit Something(1, 2, 3, 4);
         emitter.emitNEvents(1, 2, 3, 4, count);
+    }
+
+    /// Without an emitter, matching logs from different emitters add up to the count.
+    function testCountEmitsAcrossEmitters() public {
+        Emitter other = new Emitter();
+        vm.expectEmit(2);
+        emit Something(1, 2, 3, 4);
+        emitter.emitHereAndNested(other, 1, 2, 3, 4);
     }
 }
