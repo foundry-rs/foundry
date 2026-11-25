@@ -3291,6 +3291,121 @@ BRDA:12,0,0,3
     assert_lcov(cmd.forge_fuse().args(optimized).arg("--use").arg(&solar), expected);
 }
 
+// The run of an inlined function is the arm's only when nothing else enters it: a loop in the
+// function, a function with the same body, which the optimizer can merge, and a dead arm next to a
+// live function with the same body must not change the arm's count.
+#[forgetest]
+fn if_arm_run_is_not_shared_with_loops_or_equal_bodies_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Shared.sol",
+        r#"
+contract Looped {
+    uint256 public t;
+    function loopy() internal { for (uint256 i; i < 3; i++) { t += 1; } }
+    function live() external { if (true) { loopy(); } }
+}
+contract Equal {
+    uint256 public t;
+    function a() internal { t += 1; }
+    function b() internal { t += 1; }
+    function live() external { if (true) { a(); } }
+    function other() external { b(); }
+}
+contract Dead {
+    uint256 public t;
+    function a() internal { t += 1; }
+    function b() internal { t += 1; }
+    function never() internal { if (true) { a(); } }
+    function other() external { b(); }
+}
+"#,
+    );
+    prj.add_test(
+        "Shared.t.sol",
+        r#"
+import "../src/Shared.sol";
+
+contract SharedTest {
+    function testAll() public {
+        Looped looped = new Looped();
+        Equal equal = new Equal();
+        Dead dead = new Dead();
+        for (uint256 i = 0; i < 3; i++) {
+            looped.live();
+            equal.live();
+        }
+        for (uint256 i = 0; i < 5; i++) {
+            equal.other();
+            dead.other();
+        }
+    }
+}
+"#,
+    );
+
+    assert_lcov(
+        cmd.args(["coverage", "--no-isolate", "--keep-optimizer", "--optimize"]),
+        str![[r#"
+...
+BRDA:7,0,0,3
+...
+BRDA:13,1,0,3
+...
+BRDA:20,2,0,-
+...
+"#]],
+    );
+}
+
+// A function that only fails has nothing but its failure stub, which is then the run of the arm
+// that calls it, and the arm still counts it.
+#[forgetest]
+fn if_arm_calling_a_function_that_only_fails_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Fail.sol",
+        r#"
+contract Fail {
+    function fail() internal pure {
+        revert();
+    }
+
+    function live() external pure {
+        if (true) {
+            fail();
+        }
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Fail.t.sol",
+        r#"
+import "../src/Fail.sol";
+
+contract FailTest {
+    function testLive() public {
+        Fail f = new Fail();
+        for (uint256 i = 0; i < 3; i++) {
+            try f.live() {} catch {}
+        }
+    }
+}
+"#,
+    );
+
+    let solar = prj.ensure_foundry_bin("solar");
+    assert_lcov(
+        cmd.args(["coverage", "--no-isolate", "--keep-optimizer", "--optimize"])
+            .arg("--use")
+            .arg(&solar),
+        str![[r#"
+...
+BRDA:10,0,0,3
+...
+"#]],
+    );
+}
+
 #[forgetest]
 fn identical_bytecodes(prj: _, cmd: _) {
     prj.insert_ds_test();

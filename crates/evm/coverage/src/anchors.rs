@@ -851,9 +851,16 @@ impl<'a> AnchorIndex<'a> {
                 self.starts_in_range(ic, callee)
                     && self.source_map[ic].length() != callee.len()
                     && self.source_map[ic].offset() < callee.bytes.end
-                    && !in_reverting_run(&self.reverting_runs, ic)
             })
             .collect::<Vec<_>>();
+        // The overflow check's failure stub can follow the run. A function that only fails has
+        // nothing but the stub, which is then its run.
+        let live = body
+            .iter()
+            .copied()
+            .filter(|&ic| !in_reverting_run(&self.reverting_runs, ic))
+            .collect::<Vec<_>>();
+        let body = if live.is_empty() { body } else { live };
         let (&first, &last) = (body.iter().min()?, body.iter().max()?);
         // Code between the first and last instruction that is mapped elsewhere belongs to another
         // copy or a nested call.
@@ -866,7 +873,16 @@ impl<'a> AnchorIndex<'a> {
         }
         // The run is entered once per arm. A first instruction that a later jump returns to, such
         // as a loop header, runs more often than the arm, even behind unmapped `JUMPDEST`s. A jump
-        // from before it, such as a dispatcher's, only enters the run.
+        // from before it only enters the run when it is the dispatcher's, which is mapped to no
+        // source or to the whole contract, and not another function's call or a merged copy.
+        let enters = |push: usize| {
+            self.source_map.get(push).is_some_and(|element| {
+                element.index().is_none()
+                    || (element.index() == Some(arm.source_id as u32)
+                        && element.offset() <= arm.bytes.start
+                        && element.offset() + element.length() >= arm.bytes.end)
+            })
+        };
         let mut ic = first;
         loop {
             let pc = *self.pcs.get(ic)?;
@@ -875,7 +891,7 @@ impl<'a> AnchorIndex<'a> {
                 if self.address_pushes[start..]
                     .iter()
                     .take_while(|&&(target, _)| target == pc)
-                    .any(|&(_, push)| push >= ic)
+                    .any(|&(_, push)| push >= ic || !enters(push))
                 {
                     return None;
                 }
