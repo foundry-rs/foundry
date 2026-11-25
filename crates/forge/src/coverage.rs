@@ -12,7 +12,7 @@ use foundry_compilers::artifacts::Source;
 use semver::Version;
 use serde::{Serialize, ser::SerializeSeq};
 use std::{
-    collections::{BTreeMap, hash_map},
+    collections::BTreeMap,
     io::Write,
     path::{Path, PathBuf},
 };
@@ -524,20 +524,20 @@ impl CoverageReporter for BytecodeReporter {
 
         fs::create_dir_all(&self.destdir)?;
 
-        let no_source_elements = Vec::new();
         let mut line_number_cache = LineNumberCache::new(self.root.clone());
 
         for (contract_id, hits) in &report.bytecode_hits {
             let mut formatted = String::new();
 
             let source_elements =
-                report.source_maps.get(contract_id).map(|sm| &sm.1).unwrap_or(&no_source_elements);
+                report.source_maps.get(contract_id).map(|sm| sm.1.as_slice()).unwrap_or_default();
 
             let ops = Instructions::new(hits.bytecode(), SpecId::NEXT);
             for (inst, source_element) in std::iter::zip(ops, source_elements) {
                 let pc = inst.pc;
-                let hits =
-                    hits.get(pc as u32).map(|h| format!("[{h:03}]")).unwrap_or("     ".to_owned());
+                let hits = hits
+                    .get(pc as u32)
+                    .map_or_else(|| "     ".to_owned(), |hits| format!("[{hits:03}]"));
                 let source_id = source_element.index();
                 let source_path = source_id
                     .and_then(|i| report.get_source_path(&contract_id.build_id, i as usize));
@@ -590,22 +590,17 @@ impl LineNumberCache {
     }
 
     pub fn get_position(&mut self, path: &Path, offset: usize) -> eyre::Result<(usize, usize)> {
-        let line_offsets = match self.line_offsets.entry(path.to_path_buf()) {
-            hash_map::Entry::Occupied(o) => o.into_mut(),
-            hash_map::Entry::Vacant(v) => {
-                let text = fs::read_to_string(self.root.join(path))?;
-                let mut line_offsets = vec![0];
-                for line in text.lines() {
-                    let line_offset = line.as_ptr() as usize - text.as_ptr() as usize;
-                    line_offsets.push(line_offset);
-                }
-                v.insert(line_offsets)
+        if !self.line_offsets.contains_key(path) {
+            let text = fs::read_to_string(self.root.join(path))?;
+            let mut line_offsets = vec![0];
+            for line in text.lines() {
+                let line_offset = line.as_ptr() as usize - text.as_ptr() as usize;
+                line_offsets.push(line_offset);
             }
-        };
-        let lo = match line_offsets.binary_search(&offset) {
-            Ok(lo) => lo,
-            Err(lo) => lo - 1,
-        };
+            self.line_offsets.insert(path.to_path_buf(), line_offsets);
+        }
+        let line_offsets = &self.line_offsets[path];
+        let lo = line_offsets.binary_search(&offset).unwrap_or_else(|lo| lo - 1);
         let pos = offset - line_offsets.get(lo).unwrap() + 1;
         Ok((lo, pos))
     }
