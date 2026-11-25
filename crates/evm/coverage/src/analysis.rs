@@ -40,6 +40,9 @@ struct SourceVisitor<'gcx> {
     /// Deferred function-call spans, each paired with the contract scope active where the call
     /// was collected, so scope travels with the span to the delayed HIR resolution pass.
     function_calls: Vec<(Span, Arc<str>)>,
+    /// Whether any call was collected, including those of contracts dropped afterwards, which
+    /// still count as calls to the functions they name.
+    has_calls: bool,
     function_call_scopes: FxHashMap<Span, Arc<str>>,
     /// The span of the statement that follows each `if` statement in its block.
     stmts_after_if: FxHashMap<Span, Span>,
@@ -196,6 +199,7 @@ impl<'gcx> SourceVisitor<'gcx> {
             branch_kinds: Default::default(),
             all_lines: Default::default(),
             function_calls: Default::default(),
+            has_calls: false,
             function_call_scopes: Default::default(),
             stmts_after_if: Default::default(),
             hir_source_ids,
@@ -406,8 +410,9 @@ impl<'gcx> SourceVisitor<'gcx> {
     }
 
     /// Records the functions that a call by name can run, from the functions its callee names
-    /// resolve to. An overloaded name resolves to every overload.
-    fn push_callees(&mut self, call: &hir::Expr<'_>, callee: &hir::Expr<'_>) {
+    /// resolve to. An overloaded name resolves to every overload. A call of a contract that is
+    /// dropped from the report, as a test's, only counts as a call to those functions.
+    fn push_callees(&mut self, call: &hir::Expr<'_>, callee: &hir::Expr<'_>, record: bool) {
         let hir::ExprKind::Ident(res) = &callee.peel_parens().kind else { return };
         let callees = res
             .iter()
@@ -437,7 +442,7 @@ impl<'gcx> SourceVisitor<'gcx> {
             *self.callee_calls.entry(callee_key(callee)).or_default() += calls;
         }
         let callees = callees.into_iter().map(|(callee, _)| callee).collect::<Vec<_>>();
-        if !callees.is_empty() {
+        if record && !callees.is_empty() {
             let bytes = self.gcx.sess.source_map().span_to_source(call.span).unwrap().data;
             self.callees.push((bytes.start as u32..bytes.end as u32, callees));
         }
@@ -637,6 +642,7 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
             ExprKind::Call(callee, _args) => {
                 // Resolve later. Capture the current contract scope so it travels with the span.
                 self.function_calls.push((expr.span, self.contract_name.clone()));
+                self.has_calls = true;
 
                 if let ExprKind::Ident(ident) = &callee.kind {
                     // Might be a require call, add branch coverage.
@@ -794,14 +800,16 @@ impl<'gcx> hir::Visit<'gcx> for SourceVisitor<'gcx> {
         }
         if let hir::ExprKind::Call(lhs, ..) = &expr.kind
             && is_regular_call(lhs)
-            && let Some(scope) = self.function_call_scopes.get(&expr.span).cloned()
         {
-            // Attribute the call with the scope captured where it was collected, not the
-            // visitor's final scope (which leaks across free functions and contracts).
-            let prev = std::mem::replace(&mut self.contract_name, scope);
-            self.push_stmt(expr.span);
-            self.contract_name = prev;
-            self.push_callees(expr, lhs);
+            let scope = self.function_call_scopes.get(&expr.span).cloned();
+            if let Some(scope) = scope.clone() {
+                // Attribute the call with the scope captured where it was collected, not the
+                // visitor's final scope (which leaks across free functions and contracts).
+                let prev = std::mem::replace(&mut self.contract_name, scope);
+                self.push_stmt(expr.span);
+                self.contract_name = prev;
+            }
+            self.push_callees(expr, lhs, scope.is_some());
         }
         self.walk_expr(expr)
     }
@@ -958,7 +966,7 @@ impl SourceAnalysis {
                         }
                     }
 
-                    if !visitor.function_calls.is_empty() || !visitor.revert_guards.is_empty() {
+                    if visitor.has_calls || !visitor.revert_guards.is_empty() {
                         visitor.resolve_function_calls(hir_source_id);
                     }
 

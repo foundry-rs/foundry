@@ -2821,6 +2821,60 @@ BRDA:10,0,0,-
     );
 }
 
+// A test that inherits the source and calls the arm's function directly is not in the report, but
+// its calls still count: in its bytecode the `if` is not compiled, so the arm has no jump and must
+// not take the function's hits.
+#[forgetest]
+fn if_arm_does_not_take_calls_of_an_inheriting_test_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "M.sol",
+        r#"
+abstract contract M {
+    uint256 public total;
+
+    function a(bool b) internal {
+        if (b) {
+            _b(7);
+        }
+    }
+
+    function _b(uint256 x) internal {
+        total |= x;
+    }
+}
+
+contract C is M {
+    function go(bool b) external {
+        a(b);
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "M.t.sol",
+        r#"
+import "../src/M.sol";
+
+contract MTest is M {
+    function testGo() public {
+        new C().go(false);
+        _b(1);
+        _b(2);
+    }
+}
+"#,
+    );
+
+    assert_lcov(
+        cmd.arg("coverage").arg("--no-isolate"),
+        str![[r#"
+...
+BRDA:8,0,0,0
+...
+"#]],
+    );
+}
+
 #[forgetest]
 fn identical_bytecodes(prj: _, cmd: _) {
     prj.insert_ds_test();
