@@ -2722,6 +2722,58 @@ BRDA:12,1,0,2
     );
 }
 
+// An `if` in an internal function that nothing calls is not in the bytecode and has no jump, but
+// the function it calls runs from elsewhere. That run is not the arm's, so the arm stays unhit.
+#[forgetest]
+fn if_arm_in_uncalled_function_does_not_take_another_call_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Unused.sol",
+        r#"
+contract Unused {
+    bool constant OPEN = true;
+
+    uint256 public total;
+
+    function run() external {
+        bump();
+    }
+
+    function never() internal {
+        if (OPEN) {
+            bump();
+        }
+    }
+
+    function bump() internal {
+        total += 1;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Unused.t.sol",
+        r#"
+import "../src/Unused.sol";
+
+contract UnusedTest {
+    function testRun() public {
+        Unused unused = new Unused();
+        for (uint256 i = 0; i < 3; i++) unused.run();
+    }
+}
+"#,
+    );
+
+    assert_lcov(
+        cmd.arg("coverage").arg("--no-isolate"),
+        str![[r#"
+...
+BRDA:14,0,0,-
+...
+"#]],
+    );
+}
+
 #[forgetest]
 fn identical_bytecodes(prj: _, cmd: _) {
     prj.insert_ds_test();

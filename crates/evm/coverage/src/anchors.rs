@@ -99,7 +99,11 @@ pub fn find_anchors(
                 // jump's edge can count it, and when that is ambiguous the arm stays unanchored
                 // instead of taking an instruction that runs with the jump, such as its target.
                 if !arm.is_some_and(|arm| index.has_own_code(arm)) {
-                    return index.if_edge(item_id, path_id, &item.loc, arms).or_else(recover);
+                    return index
+                        .if_edge(item_id, path_id, &item.loc, arms, &|callee| {
+                            analysis.callee_calls(callee)
+                        })
+                        .or_else(recover);
                 }
             }
             match item.kind {
@@ -738,6 +742,7 @@ impl<'a> AnchorIndex<'a> {
         path_id: u32,
         loc: &SourceLocation,
         arms: &IfArms,
+        callee_calls: &dyn Fn(&SourceLocation) -> u32,
     ) -> Option<EdgeAnchor> {
         // The statement's span ends before the `;` that a jump's source element can include.
         let in_condition = |element: &SourceElement| {
@@ -753,7 +758,7 @@ impl<'a> AnchorIndex<'a> {
         // A condition that the optimizer proved has no jump, so the arm runs whenever the `if`
         // does.
         if jumps.is_empty() {
-            return self.if_entry(item_id, path_id, arms);
+            return self.if_entry(item_id, path_id, arms, callee_calls);
         }
         // A check in the condition, such as an array bounds, enum, or call check, cannot enter an
         // arm, unless it is the only jump, as when the arm is a shared `revert`. One side of a
@@ -816,13 +821,24 @@ impl<'a> AnchorIndex<'a> {
     /// A run that only the arm can enter when it is the only call site is not provable from the
     /// source map, so a call that the compiler removed along with its arm can borrow the run of
     /// another call to the same function.
-    fn if_entry(&self, item_id: u32, path_id: u32, arms: &IfArms) -> Option<EdgeAnchor> {
+    fn if_entry(
+        &self,
+        item_id: u32,
+        path_id: u32,
+        arms: &IfArms,
+        callee_calls: &dyn Fn(&SourceLocation) -> u32,
+    ) -> Option<EdgeAnchor> {
         let (arm, callees, other) = match path_id {
             0 => (&arms.then_arm, &arms.then_callees, &arms.else_callees),
             _ => (arms.else_arm.as_ref()?, &arms.else_callees, &arms.then_callees),
         };
         // Arms that call the same function share its run, so it cannot tell which one kept it.
         let [callee] = callees.as_slice() else { return None };
+        // A run that another call can supply, as when the `if` sits in a function that nothing
+        // calls, is not the arm's.
+        if callee_calls(callee) != 1 {
+            return None;
+        }
         if other
             .iter()
             .any(|other| (other.source_id, &other.bytes) == (callee.source_id, &callee.bytes))

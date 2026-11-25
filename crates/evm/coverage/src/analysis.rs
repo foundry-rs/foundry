@@ -48,6 +48,9 @@ struct SourceVisitor<'gcx> {
     /// The byte range of every call by name and the functions it can call, as `(range,
     /// callees)`.
     callees: Vec<(Range<u32>, Vec<SourceLocation>)>,
+    /// How many calls by name resolve to each function, as `(source ID, start, end)` of the
+    /// function.
+    callee_calls: HashMap<(usize, u32, u32), u32>,
     /// Direct revert guards, resolved against HIR after collecting their source items.
     revert_guards: Vec<PendingRevertGuard>,
     current_function: Option<SourceLocation>,
@@ -174,6 +177,10 @@ fn resolve_empty_special_functions(
     resolved
 }
 
+const fn callee_key(loc: &SourceLocation) -> (usize, u32, u32) {
+    (loc.source_id, loc.bytes.start, loc.bytes.end)
+}
+
 impl<'gcx> SourceVisitor<'gcx> {
     fn new(
         source_id: u32,
@@ -192,6 +199,7 @@ impl<'gcx> SourceVisitor<'gcx> {
             stmts_after_if: Default::default(),
             hir_source_ids,
             callees: Default::default(),
+            callee_calls: Default::default(),
             revert_guards: Default::default(),
             current_function: None,
             items: Default::default(),
@@ -413,6 +421,9 @@ impl<'gcx> SourceVisitor<'gcx> {
                 Some(self.location(function.span, source_id, contract.unwrap_or_default().into()))
             })
             .collect::<Vec<_>>();
+        for callee in &callees {
+            *self.callee_calls.entry(callee_key(callee)).or_default() += 1;
+        }
         if !callees.is_empty() {
             let bytes = self.gcx.sess.source_map().span_to_source(call.span).unwrap().data;
             self.callees.push((bytes.start as u32..bytes.end as u32, callees));
@@ -855,6 +866,8 @@ pub struct SourceAnalysis {
     anchor_hints: HashMap<u32, AnchorHints>,
     /// Kinds of the branches that need special anchoring, by source and branch ID.
     branch_kinds: HashMap<(u32, u32), BranchKind>,
+    /// How many calls by name resolve to each function, by [`callee_key`].
+    callee_calls: HashMap<(usize, u32, u32), u32>,
     /// Source ID to `(offset, len)` into `all_items`.
     map: Vec<(u32, u32)>,
     /// Empty receive and fallback items keyed by coverage item ID.
@@ -942,21 +955,31 @@ impl SourceAnalysis {
                         visitor.push_lines();
                         visitor.sort();
                     }
-                    (source_id, visitor.items, visitor.anchor_hints, visitor.branch_kinds)
+                    (
+                        source_id,
+                        visitor.items,
+                        visitor.anchor_hints,
+                        visitor.branch_kinds,
+                        visitor.callee_calls,
+                    )
                 })
                 .collect::<Vec<_>>()
         });
 
         // Create mapping and merge items.
         sourced_items
-            .sort_by_key(|(id, items, _, _)| (*id, items.first().map(|i| i.loc.bytes.start)));
-        let Some(&(max_idx, _, _, _)) = sourced_items.last() else { return Ok(Self::default()) };
+            .sort_by_key(|(id, items, ..)| (*id, items.first().map(|i| i.loc.bytes.start)));
+        let Some(&(max_idx, ..)) = sourced_items.last() else { return Ok(Self::default()) };
         let len = max_idx + 1;
         let mut all_items = Vec::new();
         let mut anchor_hints = HashMap::default();
         let mut map = vec![(u32::MAX, 0); len as usize];
         let mut branch_kinds = HashMap::default();
-        for (idx, items, hints, branches) in sourced_items {
+        let mut callee_calls = HashMap::<_, u32>::default();
+        for (idx, items, hints, branches, calls) in sourced_items {
+            for (callee, count) in calls {
+                *callee_calls.entry(callee).or_default() += count;
+            }
             let base = all_items.len() as u32;
             anchor_hints.extend(hints.into_iter().map(|(id, hint)| (base + id as u32, hint)));
             branch_kinds.extend(branches.into_iter().map(|(branch, kind)| ((idx, branch), kind)));
@@ -998,6 +1021,7 @@ impl SourceAnalysis {
             anchor_hints,
             map,
             branch_kinds,
+            callee_calls,
             empty_special_functions,
             contract_empty_special_functions,
         })
@@ -1005,6 +1029,11 @@ impl SourceAnalysis {
 
     pub(crate) fn anchor_hints(&self, item_id: u32) -> Option<&AnchorHints> {
         self.anchor_hints.get(&item_id)
+    }
+
+    /// Returns how many calls by name in the analyzed sources resolve to the function at `loc`.
+    pub(crate) fn callee_calls(&self, loc: &SourceLocation) -> u32 {
+        self.callee_calls.get(&callee_key(loc)).copied().unwrap_or_default()
     }
 
     pub(crate) fn branch_kind(&self, source_id: u32, branch_id: u32) -> Option<&BranchKind> {
