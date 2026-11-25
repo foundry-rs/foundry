@@ -6,6 +6,7 @@ use foundry_test_utils::{
     util::{SOLC_VERSION, get_vyper},
 };
 use path_slash::PathBufExt;
+use std::fs;
 
 const CONTRACT_A: &str = r#"
 // SPDX-license-identifier: MIT
@@ -365,6 +366,18 @@ fn can_install_list_and_remove_solar(cmd: _) {
     let home = home.path().to_str().unwrap();
 
     cmd.env("HOME", home);
+    cmd.args(["compiler", "install", "solar:0.3.0"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+solar 0.3.0: [..]/.foundry/solar/0.3.0/solar
+
+"#]])
+        .stderr_eq(str![[r#"
+Installing solar 0.3.0
+
+"#]]);
+
+    cmd.forge_fuse().env("HOME", home);
     cmd.args(["compiler", "install", "solar:0.3.0", "--json"]).assert_success().stdout_eq(
         str![[
             r#"[{"compiler":"solar","version":"0.3.0","path":"[..]/.foundry/solar/0.3.0/solar"}]"#
@@ -390,4 +403,30 @@ Removed solar 0.3.0
 Error: solar 0.3.0 is not installed
 
 "#]]);
+}
+
+#[cfg(unix)]
+#[forgetest]
+fn compiler_remove_moves_svm_global_version(cmd: _) {
+    let home = tempfile::tempdir().unwrap();
+    let svm = home.path().join(".svm");
+    for version in ["0.8.29", "0.8.30"] {
+        fs::create_dir_all(svm.join(version)).unwrap();
+        fs::write(svm.join(version).join(format!("solc-{version}")), "").unwrap();
+    }
+    fs::write(svm.join(".global-version"), "0.8.30").unwrap();
+
+    // Build metadata names the same release.
+    cmd.env("HOME", home.path());
+    cmd.args(["compiler", "remove", "0.8.30+commit.73712a01"]).assert_success().stderr_eq(str![[
+        r#"
+Removed solc 0.8.30
+
+"#
+    ]]);
+    assert_eq!(fs::read_to_string(svm.join(".global-version")).unwrap(), "0.8.29");
+
+    cmd.forge_fuse().env("HOME", home.path());
+    cmd.args(["compiler", "remove", "0.8.29"]).assert_success();
+    assert_eq!(fs::read_to_string(svm.join(".global-version")).unwrap(), "");
 }

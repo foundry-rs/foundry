@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand, ValueHint};
 use eyre::Result;
 use foundry_cli::install;
-use foundry_common::{compile::with_compilation_reporter, shell};
+use foundry_common::shell;
 use foundry_compilers::{
     Graph, Project,
     artifacts::EvmVersion,
@@ -226,11 +226,24 @@ impl InstallArgs {
     pub fn run(self) -> Result<()> {
         let mut installed = Vec::with_capacity(self.compilers.len());
         for compiler in self.compilers {
-            let solc = with_compilation_reporter(false, None, || match &compiler {
-                Compiler::Solc(version) => Solc::find_or_install(version),
-                Compiler::Solar(version) => Solc::find_installed_solar(version)
-                    .map_or_else(|| Solc::blocking_install_solar(version), Ok),
-            })?;
+            // The compilation reporter prints download progress to stdout, which carries only
+            // the installed paths.
+            let solc = match &compiler {
+                Compiler::Solc(version) => match Solc::find_svm_installed_version(version)? {
+                    Some(solc) => solc,
+                    None => {
+                        sh_status!("Installing {compiler}")?;
+                        Solc::blocking_install(version)?
+                    }
+                },
+                Compiler::Solar(version) => match Solc::find_installed_solar(version) {
+                    Some(solc) => solc,
+                    None => {
+                        sh_status!("Installing {compiler}")?;
+                        Solc::blocking_install_solar(version)?
+                    }
+                },
+            };
             if !shell::is_json() {
                 sh_println!("{compiler}: {}", solc.solc.display())?;
             }
@@ -309,13 +322,7 @@ impl RemoveArgs {
     pub fn run(self) -> Result<()> {
         for compiler in self.compilers {
             let removed = match &compiler {
-                Compiler::Solc(version) => {
-                    let installed = Solc::installed_versions().contains(version);
-                    if installed {
-                        svm::remove_version(version)?;
-                    }
-                    installed
-                }
+                Compiler::Solc(version) => remove_solc(version)?,
                 Compiler::Solar(version) => Solc::remove_solar(version)?,
             };
             eyre::ensure!(removed, "{compiler} is not installed");
@@ -323,6 +330,24 @@ impl RemoveArgs {
         }
         Ok(())
     }
+}
+
+/// Removes an svm-installed solc release and returns whether it was installed.
+///
+/// Like `svm remove`, a removed global version is replaced by the newest remaining release, or
+/// cleared if none remains, so the svm `solc` shim keeps working.
+fn remove_solc(version: &Version) -> Result<bool> {
+    let mut installed = Solc::installed_versions();
+    let Some(index) = installed.iter().position(|v| v == version) else { return Ok(false) };
+    svm::remove_version(version)?;
+    installed.remove(index);
+    if svm::get_global_version().ok().flatten().as_ref() == Some(version) {
+        match installed.iter().max() {
+            Some(newest) => svm::set_global_version(newest)?,
+            None => svm::unset_global_version()?,
+        }
+    }
+    Ok(true)
 }
 
 /// A solc or Solar release named on the command line.
@@ -373,9 +398,12 @@ fn resolved_compiler_path(
 /// Parses a solc version, `solar`, or a `solar:<version>` pin, with the same rules as the `solc`
 /// config key.
 fn parse_compiler(s: &str) -> Result<Compiler, String> {
+    // Installed releases are named without build metadata, so `0.8.30+commit.73712a01` installs
+    // and removes `0.8.30`.
+    let release = |version: Version| Version::new(version.major, version.minor, version.patch);
     match SolcReq::from(s) {
-        SolcReq::Version(version) => Ok(Compiler::Solc(version)),
-        SolcReq::Solar(version) => Ok(Compiler::Solar(version)),
+        SolcReq::Version(version) => Ok(Compiler::Solc(release(version))),
+        SolcReq::Solar(version) => Ok(Compiler::Solar(release(version))),
         SolcReq::Local(_) if s == "solar" => Solc::released_solar_versions()
             .pop()
             .map(Compiler::Solar)
