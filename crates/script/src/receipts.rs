@@ -97,6 +97,11 @@ pub async fn check_tx_status<N: Network>(
                                 "tx is still known to the node, waiting for receipt"
                             )))
                         }
+                        // Keep the transport error itself in the chain, which the transparent
+                        // wrapper would hide, so `--json` can code it.
+                        PendingTransactionError::TransportError(err) => {
+                            Err(RetryError::Retry(err.into()))
+                        }
                         _ => Err(RetryError::Retry(e.into())),
                     },
                     Ok(None) => Ok(TxStatus::Dropped),

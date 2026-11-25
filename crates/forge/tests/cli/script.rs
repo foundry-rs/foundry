@@ -11879,6 +11879,7 @@ const JSON_FAILURE_SCRIPT: &str = r#"
 interface Vm {
     function createSelectFork(string calldata url) external returns (uint256);
     function envString(string calldata name) external view returns (string memory);
+    function getRawBlockHeader(uint256 blockNumber) external view returns (bytes memory);
     function rpc(string calldata method, string calldata params) external returns (bytes memory);
     function startBroadcast(uint256 privateKey) external;
     function transact(bytes32 txHash) external;
@@ -11921,6 +11922,12 @@ contract CreatesFork is Base {
 contract TransactsUnknown is Base {
     function run() external {
         vm.transact(bytes32(uint256(1)));
+    }
+}
+
+contract ReadsMissingHeader is Base {
+    function run() external view {
+        vm.getRawBlockHeader(999999);
     }
 }
 
@@ -11978,6 +11985,18 @@ async fn script_json_failure_codes(prj: _, cmd: _) {
 "#]]
         .is_jsonlines(),
     );
+
+    // Setting up the compiler fails.
+    cmd.forge_fuse()
+        .args(["script", "Succeeds", "--use", "0.8.999", "--offline", "--json"])
+        .assert_failure()
+        .stdout_eq(
+            str![[r#"
+{"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"compiler.error","message":"can't install missing solc 0.8.999 in offline mode"}],"warnings":[]}
+
+"#]]
+            .is_jsonlines(),
+        );
 
     // `cast wallet session` fails before it runs the inner `forge script`, so the outer one
     // reports the failure.
@@ -12088,6 +12107,16 @@ async fn script_json_rpc_failure_codes_fork(prj: _, cmd: _) {
         .is_jsonlines(),
     );
 
+    // The endpoint answers that it has no such block header.
+    script("ReadsMissingHeader", &["--fork-url", &anvil]).stdout_eq(
+        str![[r#"
+{"success":false,"...":"{...}"}
+{"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"rpc.error","message":"script failed: vm.getRawBlockHeader: block 999999 not found","details":{"data":"{...}","reason":"vm.getRawBlockHeader: block 999999 not found"}}],"warnings":[]}
+
+"#]]
+        .is_jsonlines(),
+    );
+
     // Execution reads storage the endpoint fails to return. The retry layer retries this error and
     // then wraps it, so the code comes from the innermost error.
     api.anvil_set_code(
@@ -12136,6 +12165,20 @@ async fn script_json_rpc_failure_codes_fork(prj: _, cmd: _) {
 "#]]
         .is_jsonlines(),
     );
+
+    // The endpoint fails to return the receipt of a transaction it still knows.
+    let receipt_error = failing("eth_getTransactionReceipt", "receipt unavailable").await;
+    script("Broadcasts", &["--fork-url", &receipt_error, "--broadcast", "--start-fresh"])
+        .stdout_eq(
+            str![[r#"
+{"success":true,"...":"{...}"}
+{"chain":31337,"...":"{...}"}
+{"status":"success","transactions":"[..]/broadcast/Failures.s.sol/31337/run-latest.json","sensitive":"[..]/cache/Failures.s.sol/31337/run-latest.json"}
+{"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"rpc.error","message":"{...}","details":{"code":-32000}}],"warnings":[]}
+
+"#]]
+            .is_jsonlines(),
+        );
 
     // A script that catches the failure and reverts on its own reports its revert.
     script("CatchesForkFailure", &[]).stdout_eq(

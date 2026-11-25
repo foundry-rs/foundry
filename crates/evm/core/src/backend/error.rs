@@ -84,8 +84,8 @@ pub struct TransactionValidationError {
     pub error: HandlerError,
 }
 
-/// A fork's endpoint has no block at the number the fork starts from, such as a load-balanced
-/// endpoint whose backend has not seen that block yet.
+/// A fork's endpoint has no block at a requested number, such as the one the fork starts from on a
+/// load-balanced endpoint whose backend has not seen that block yet.
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
 pub struct ForkBlockNotFound(pub String);
