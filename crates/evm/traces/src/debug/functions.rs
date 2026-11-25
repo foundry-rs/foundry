@@ -295,8 +295,8 @@ impl<'ast> Visit<'ast> for YulFunctions<'_> {
                     name: function.name.to_string(),
                     is_entry: false,
                     is_yul: true,
-                    params: Some(words(&function.parameters)),
-                    returns: Some(words(&function.returns)),
+                    params: Some(words(function.parameters)),
+                    returns: Some(words(function.returns)),
                 }),
             );
         }
