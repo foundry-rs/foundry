@@ -295,6 +295,72 @@ Traces:
 "#]]);
 }
 
+// A qualified type name such as `Types.Amount` is the type of the project of that name if there is
+// one declaration of it, and not a type that the contract or the file of the function declares
+// under the last segment of the name.
+#[forgetest]
+fn qualified_type_of_one_declaration(prj: _, cmd: _) {
+    qualified_types(&prj, "");
+    cmd.args(["test", "-vvvv", "--decode-internal"]).assert_success().stdout_eq(str![[r#"
+...
+    ├─ [..] Qualified::run(1606938044258990275541962092341162602522202993782792835301386 [..]) [staticcall]
+    │   ├─ [..] Qualified::inner(uint256)(1606938044258990275541962092341162602522202993782792835301386 [..])
+    │   │   └─ ← 1606938044258990275541962092341162602522202993782792835301387 [..]
+    │   └─ ← [Return] 1606938044258990275541962092341162602522202993782792835301387 [..]
+...
+"#]]);
+}
+
+#[forgetest]
+fn qualified_type_with_a_local_declaration_of_the_name(prj: _, cmd: _) {
+    qualified_types(&prj, "type Amount is address;");
+    cmd.args(["test", "-vvvv", "--decode-internal"]).assert_success().stdout_eq(str![[r#"
+...
+    ├─ [..] Qualified::run(1606938044258990275541962092341162602522202993782792835301386 [..]) [staticcall]
+    │   ├─ [..] Qualified::inner(<unknown>)
+    │   │   └─ ← <unknown>
+    │   └─ ← [Return] 1606938044258990275541962092341162602522202993782792835301387 [..]
+...
+"#]]);
+}
+
+/// A project where `Qualified` names `Types.Amount`, a `uint256` wrapper, and declares `local`.
+fn qualified_types(prj: &TestProject, local: &str) {
+    prj.add_source("Types.sol", "type Amount is uint256;");
+    prj.add_source(
+        "Qualified.sol",
+        &format!(
+            r#"
+import "./Types.sol" as Types;
+
+contract Qualified {{
+    {local}
+
+    function inner(Types.Amount a) internal pure returns (Types.Amount) {{
+        return Types.Amount.wrap(Types.Amount.unwrap(a) + 1);
+    }}
+
+    function run(uint256 v) external pure returns (uint256) {{
+        return Types.Amount.unwrap(inner(Types.Amount.wrap(v)));
+    }}
+}}
+"#
+        ),
+    );
+    prj.add_test(
+        "Qualified.t.sol",
+        r#"
+import {Qualified} from "src/Qualified.sol";
+
+contract QualifiedTest {
+    function test_qualified() public {
+        new Qualified().run((1 << 200) + 10);
+    }
+}
+"#,
+    );
+}
+
 // solc before 0.8.5 has no `functionDebugData`, so every function, Solidity or Yul, comes from the
 // jump markers of the source map.
 #[forgetest]

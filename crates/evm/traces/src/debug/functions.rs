@@ -75,6 +75,12 @@ impl<'a> TypeScope<'a> {
         }
     }
 
+    fn get_qualified(&self, qualifier: &str, name: &str) -> Option<&'a Option<UserType>> {
+        self.contract_types
+            .get(&(qualifier.to_string(), name.to_string()))
+            .or_else(|| self.project.get(name))
+    }
+
     fn get(&self, name: &str) -> Option<&'a Option<UserType>> {
         self.contracts
             .iter()
@@ -218,6 +224,9 @@ pub enum SourceType {
     Elementary(DynSolType),
     /// A user-defined type, by the last segment of its name.
     Custom(String),
+    /// A user-defined type that a qualifier names, such as `Types.Amount`: the qualifier, which
+    /// can be a contract or an import alias, and the last segment of the name.
+    Qualified(String, String),
     Array(Box<Self>, Option<usize>),
     /// An external function type, which takes an address and a selector.
     ExternalFunction,
@@ -281,7 +290,7 @@ impl SourceType {
     fn resolve(&self, user_types: &TypeScope<'_>) -> Option<DynSolType> {
         match self {
             Self::Elementary(ty) => Some(ty.clone()),
-            Self::Custom(name) => match user_types.get(name)?.as_ref()? {
+            Self::Custom(_) | Self::Qualified(..) => match self.declared(user_types)?.as_ref()? {
                 UserType::Address => Some(DynSolType::Address),
                 UserType::Enum => Some(DynSolType::Uint(8)),
                 UserType::Value(ty) => Some(ty.clone()),
@@ -303,7 +312,7 @@ impl SourceType {
     fn abi_name(&self, user_types: &TypeScope<'_>, depth: usize) -> Option<String> {
         match self {
             Self::Elementary(ty) => Some(ty.sol_type_name().into_owned()),
-            Self::Custom(name) => match user_types.get(name)?.as_ref()? {
+            Self::Custom(_) | Self::Qualified(..) => match self.declared(user_types)?.as_ref()? {
                 UserType::Address => Some("address".to_string()),
                 UserType::Enum => Some("uint8".to_string()),
                 UserType::Value(ty) => Some(ty.sol_type_name().into_owned()),
@@ -328,10 +337,24 @@ impl SourceType {
         }
     }
 
+    /// The user-defined type that the name refers to, if there is one that is known to be it. A
+    /// qualified name is a type of the qualifier if that is a contract that declares it, and
+    /// otherwise the type of the project of that name, if it has one declaration: the declarations
+    /// of the contract and the file of the function are not what it names.
+    fn declared<'a>(&self, scope: &TypeScope<'a>) -> Option<&'a Option<UserType>> {
+        match self {
+            Self::Custom(name) => scope.get(name),
+            Self::Qualified(qualifier, name) => scope.get_qualified(qualifier, name),
+            _ => None,
+        }
+    }
+
     /// Whether the type is a struct or an array of structs.
     fn is_struct(&self, user_types: &TypeScope<'_>) -> bool {
         match self {
-            Self::Custom(name) => matches!(user_types.get(name), Some(Some(UserType::Struct(_)))),
+            Self::Custom(_) | Self::Qualified(..) => {
+                matches!(self.declared(user_types), Some(Some(UserType::Struct(_))))
+            }
             Self::Array(element, _) => element.is_struct(user_types),
             _ => false,
         }
@@ -619,10 +642,11 @@ fn source_type(ty: &Type<'_>) -> SourceType {
             };
             SourceType::Array(Box::new(source_type(&array.element)), size)
         }
-        TypeKind::Custom(path) => path
-            .segments()
-            .last()
-            .map_or(SourceType::Other, |last| SourceType::Custom(last.to_string())),
+        TypeKind::Custom(path) => match path.segments() {
+            [.., qualifier, last] => SourceType::Qualified(qualifier.to_string(), last.to_string()),
+            [last] => SourceType::Custom(last.to_string()),
+            [] => SourceType::Other,
+        },
         TypeKind::Function(function) if function.visibility() == Some(Visibility::External) => {
             SourceType::ExternalFunction
         }
@@ -723,5 +747,29 @@ mod tests {
         // A struct that contains itself has no finite spelling here.
         assert_eq!(abi(custom("Cyclic")), None);
         assert_eq!(abi(custom("Missing")), None);
+    }
+
+    #[test]
+    fn a_qualified_type_is_not_a_declaration_of_the_contract_or_file() {
+        let amount = |ty| Some(UserType::Value(ty));
+        // The project has two `Amount` types, and the contract of the function declares one.
+        let project = UserTypes::from([("Amount".into(), None)]);
+        let contract_types = HashMap::from([
+            (("Local".into(), "Amount".into()), amount(DynSolType::Address)),
+            (("Types".into(), "Amount".into()), amount(DynSolType::Uint(256))),
+        ]);
+        let scope = TypeScope {
+            contracts: vec!["Local".into()],
+            contract_types: &contract_types,
+            file: &[],
+            project: &project,
+        };
+        let qualified = |qualifier: &str| SourceType::Qualified(qualifier.into(), "Amount".into());
+
+        assert_eq!(SourceType::Custom("Amount".into()).resolve(&scope), Some(DynSolType::Address));
+        // The qualifier is a contract that declares the type.
+        assert_eq!(qualified("Types").resolve(&scope), Some(DynSolType::Uint(256)));
+        // The qualifier is an import alias: the name is ambiguous in the project.
+        assert_eq!(qualified("Imported").resolve(&scope), None);
     }
 }
