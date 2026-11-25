@@ -1134,6 +1134,23 @@ async fn test_scroll_fork_transaction_hash_replay_skips_beacon_root() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_rollback_restores_ordinary_block_gas_limit() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+    api.mine_one().await.unwrap();
+    let first = api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
+
+    api.evm_set_block_gas_limit(U256::from(12_345_678u64)).unwrap();
+    api.mine_one().await.unwrap();
+    api.anvil_rollback(Some(1)).await.unwrap();
+    api.mine_one().await.unwrap();
+
+    let remined = api.block_by_number_full(BlockNumberOrTag::Number(2)).await.unwrap().unwrap();
+    assert_eq!(remined.header.gas_limit, first.header.gas_limit);
+    assert_ne!(remined.header.gas_limit, 12_345_678);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_fork_transaction_hash_replay_error_fails_startup() {
     let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
     let origin_provider = origin_handle.http_provider();
