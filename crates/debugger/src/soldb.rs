@@ -192,8 +192,8 @@ fn transaction_trace(
     breakpoints: &Breakpoints,
 ) -> Result<(TransactionTrace, BreakpointSteps)> {
     let nodes = arenas.iter().flat_map(|arena| arena.nodes());
-    let (steps, frames) =
-        nodes.fold((0, 0), |(steps, frames), node| (steps + node.trace.steps.len(), frames + 1));
+    let frames = nodes.clone().count();
+    let steps = nodes.map(|node| node.trace.steps.len()).sum::<usize>();
     let mut builder = TraceBuilder {
         calls: Vec::with_capacity(frames),
         creations: Vec::with_capacity(frames),
@@ -294,9 +294,7 @@ impl TraceBuilder {
         for order in ordering {
             match order {
                 TraceMemberOrder::Step(_) => {
-                    if next_step < steps.len() {
-                        let (done, rest) = steps.split_at_mut(next_step + 1);
-                        let step = &mut done[next_step];
+                    if let Some((step, rest)) = steps[next_step..].split_first_mut() {
                         let pc = step.pc as usize;
                         if self.breakpoints.contains_key(&(address, pc)) && !hits.contains(&pc) {
                             hits.push(pc);
@@ -593,21 +591,17 @@ fn executed_programs<'a>(
             && let code_hash = keccak256(code)
             && seen.insert((trace.address, init, code_hash))
             && let Some(sources_for_name) = sources.get_sources(name)
-            && let Some((artifact, source)) = sources_for_name.into_iter().find(|(artifact, _)| {
-                if init {
-                    artifact.source_map.is_some()
-                } else {
-                    artifact.source_map_runtime.is_some()
-                }
-            })
+            && let Some((artifact, source, source_map, pc_ic_map)) =
+                sources_for_name.into_iter().find_map(|(artifact, source)| {
+                    let (source_map, pc_ic_map) = if init {
+                        (artifact.source_map.as_ref(), artifact.pc_ic_map.as_ref())
+                    } else {
+                        (artifact.source_map_runtime.as_ref(), artifact.pc_ic_map_runtime.as_ref())
+                    };
+                    Some((artifact, source, source_map?, pc_ic_map))
+                })
             && let Some(build_sources) = sources.sources_by_id.get(&artifact.build_id)
         {
-            let (source_map, pc_ic_map) = if init {
-                (artifact.source_map.as_ref(), artifact.pc_ic_map.as_ref())
-            } else {
-                (artifact.source_map_runtime.as_ref(), artifact.pc_ic_map_runtime.as_ref())
-            };
-            let Some(source_map) = source_map else { continue };
             let storage_layout = known_contracts
                 .find_by_name_or_identifier(name)
                 .ok()
@@ -638,17 +632,17 @@ fn contract_debug_info(
     program: &ExecutedProgram<'_>,
     source_cache: &mut SourceCache,
 ) -> Option<ContractDebugInfo> {
-    let mut instructions = Vec::new();
     let mut used_sources = BTreeSet::new();
-    for inst in Instructions::new(program.code, SpecId::NEXT) {
-        let pc = inst.pc;
-        let index =
-            if program.solc { program.pc_ic_map.and_then(|map| map.ic(pc)) } else { Some(pc) };
-        if let Some(element) = index.and_then(|index| program.source_map.get(index)) {
+    let instructions = Instructions::new(program.code, SpecId::NEXT)
+        .filter_map(|inst| {
+            let pc = inst.pc;
+            let index =
+                if program.solc { program.pc_ic_map.and_then(|map| map.ic(pc)) } else { Some(pc) };
+            let element = index.and_then(|index| program.source_map.get(index))?;
             let context = instruction_context(element, program.build_sources, &mut used_sources);
-            instructions.extend(Instruction::from_bytecode(program.code, pc, context));
-        }
-    }
+            Instruction::from_bytecode(program.code, pc, context)
+        })
+        .collect::<Vec<_>>();
     if instructions.is_empty() {
         return None;
     }
@@ -808,9 +802,10 @@ pub(crate) fn write_bundle(
         } else {
             hex::encode_prefixed(address)
         };
-        fs::create_dir_all(dir.join(&debug_dir))?;
+        let debug_dir_path = dir.join(&debug_dir);
+        fs::create_dir_all(&debug_dir_path)?;
         write_json_file(
-            &dir.join(&debug_dir).join("combined.json"),
+            &debug_dir_path.join("combined.json"),
             &json!({
                 "sourceList": contract.source_list,
                 "contracts": { contract.key: contract.fields },
