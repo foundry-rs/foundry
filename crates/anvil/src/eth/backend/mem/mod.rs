@@ -8274,6 +8274,9 @@ where
                     self.evm_env.read().block_env.gas_limit
                 } else {
                     self.get_block(common_block.header.number().saturating_add(1))
+                        .filter(|child| {
+                            *self.fork_replayed_block_hash.lock() != Some(child.header.hash_slow())
+                        })
                         .map(|child| child.header.gas_limit())
                         .unwrap_or_else(|| node_config.gas_limit())
                 },
