@@ -106,6 +106,16 @@ pub struct InternalCall {
 /// The stack words that a function takes and returns, with the function.
 pub type ResolvedEntry = (usize, usize, FunctionInfo);
 
+/// A function that the source map found, with its stack layout.
+pub struct SourceMapFunction {
+    pub function: FunctionInfo,
+    /// The stack words it takes and returns.
+    pub parameter_slots: usize,
+    pub return_slots: usize,
+    /// The order of its arguments on the stack, if known.
+    pub convention: Option<CallConvention>,
+}
+
 /// What the tracker knows about the contract whose steps it walks.
 pub struct TrackerContext<'a> {
     /// The functions of the code that ran.
@@ -120,9 +130,8 @@ pub struct TrackerContext<'a> {
     /// The call data of the call, for `calldata` parameters.
     pub calldata: &'a [u8],
     /// Finds the function that the `JUMP` at a step enters from the source map, for a function
-    /// that `functionDebugData` does not list. Returns the function, its parameter slots and its
-    /// return slots.
-    pub from_source_map: &'a dyn Fn(usize) -> Option<(FunctionInfo, usize, usize)>,
+    /// that `functionDebugData` does not list.
+    pub from_source_map: &'a dyn Fn(usize) -> Option<SourceMapFunction>,
 }
 
 /// A call that has not returned.
@@ -198,12 +207,9 @@ impl Tracker<'_> {
                 && landed.len() == frame.return_address_index + frame.return_slots
         }) {
             self.ret(i, k);
-        } else if let Some((function, parameter_slots, return_slots)) =
-            (self.context.from_source_map)(i)
-        {
-            // Yul functions take their first argument on top, as the via-IR code generator does.
-            let convention = Some(CallConvention::SolcViaIr);
-            self.call(i, parameter_slots, return_slots, Some(Arc::new(function)), convention);
+        } else if let Some(found) = (self.context.from_source_map)(i) {
+            let function = Some(Arc::new(found.function));
+            self.call(i, found.parameter_slots, found.return_slots, function, found.convention);
         }
     }
 
@@ -498,24 +504,39 @@ mod tests {
     }
 
     #[test]
-    fn functions_found_from_the_source_map_take_the_first_argument_on_top() {
-        // `sub2(10, 3)`, a Yul function, enters with `[ret, 3, 10]`.
+    fn functions_found_from_the_source_map_report_their_argument_order() {
+        // `sub2(10, 3)` enters with `[ret, 3, 10]` if the first argument is on top.
         let steps = [jump(F, &[RET.into(), 3, 10]), jump(RET, &[7])].concat();
         let code = CodeFunctions { entries: HashMap::new(), jumpdests: HashSet::from([F, RET]) };
-        let from_source_map =
-            |_: usize| Some((FunctionInfo::clone(&function("sub2", Some(2), false)), 2, 1));
-        let context = TrackerContext {
-            code: &code,
-            resolve: &|_, _| None,
-            is_create: false,
-            convention: Some(CallConvention::SolcLegacy),
-            calldata: &[],
-            from_source_map: &from_source_map,
+        let calls = |convention| {
+            let from_source_map = |_: usize| {
+                Some(SourceMapFunction {
+                    function: FunctionInfo::clone(&function("sub2", Some(2), false)),
+                    parameter_slots: 2,
+                    return_slots: 1,
+                    convention,
+                })
+            };
+            let context = TrackerContext {
+                code: &code,
+                resolve: &|_, _| None,
+                is_create: false,
+                // The convention of the contract does not apply to them.
+                convention: Some(CallConvention::SolcLegacy),
+                calldata: &[],
+                from_source_map: &from_source_map,
+            };
+            track_internal_calls(&steps, &context)
         };
-        let calls = track_internal_calls(&steps, &context);
 
-        assert_eq!(calls[0].call.args, strings(&["10", "3"]));
-        assert_eq!(calls[0].call.return_data, strings(&["7"]));
+        // A Yul function takes the first argument on top, like via-IR functions.
+        let yul = calls(Some(CallConvention::SolcViaIr));
+        assert_eq!(yul[0].call.args, strings(&["10", "3"]));
+        assert_eq!(yul[0].call.return_data, strings(&["7"]));
+        // A legacy Solidity function takes it at the bottom.
+        let solidity = calls(Some(CallConvention::SolcLegacy));
+        assert_eq!(solidity[0].call.args, strings(&["3", "10"]));
+        assert_eq!(calls(None)[0].call.args, None);
     }
 
     #[test]

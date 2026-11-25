@@ -39,6 +39,8 @@ pub enum UserType {
 pub struct SourceFunction {
     /// The contract that defines it. Free functions have none.
     pub contract: Option<String>,
+    /// Whether the contract is a library, whose selectors spell types by their qualified names.
+    pub in_library: bool,
     /// The name of the function, modifier, or variable.
     pub name: String,
     /// Whether the dispatcher or the call frame itself enters it, which is then the external call
@@ -97,9 +99,14 @@ impl SourceFunction {
         };
         let params = resolve(&self.params);
         let canonical = canonical_signature(&self.name, params.as_deref());
+        // A library selector spells some types differently, and a `storage` pointer parameter
+        // only exists in libraries.
+        let has_selector = self.is_entry
+            && !self.in_library
+            && !params.iter().flatten().any(|param| param.storage == Some(Storage::Storage));
         let selector = canonical
             .as_deref()
-            .filter(|_| self.is_entry)
+            .filter(|_| has_selector)
             .map(|signature| keccak256(signature)[..4].try_into().expect("four bytes"));
         let signature = canonical.unwrap_or_else(|| self.name.clone());
         let name = match &self.contract {
@@ -153,8 +160,15 @@ pub fn collect(
             ItemKind::Contract(contract) => {
                 let name = contract.name.to_string();
                 user_types.push((name.clone(), UserType::Address));
+                let library = contract.kind.is_library();
                 for member in contract.body.iter() {
-                    collect_item(member, Some(&name), start(member), functions, user_types);
+                    collect_item(
+                        member,
+                        Some((&name, library)),
+                        start(member),
+                        functions,
+                        user_types,
+                    );
                 }
             }
             _ => collect_item(item, None, start(item), functions, user_types),
@@ -164,7 +178,7 @@ pub fn collect(
 
 fn collect_item(
     item: &Item<'_>,
-    contract: Option<&str>,
+    contract: Option<(&str, bool)>,
     start: Option<usize>,
     functions: &mut HashMap<usize, Arc<SourceFunction>>,
     user_types: &mut Vec<(String, UserType)>,
@@ -177,7 +191,8 @@ fn collect_item(
                 Some(Visibility::Public | Visibility::External)
             );
             Some(SourceFunction {
-                contract: contract.map(str::to_string),
+                contract: contract.map(|(name, _)| name.to_string()),
+                in_library: contract.is_some_and(|(_, library)| library),
                 name: name.to_string(),
                 is_entry: function.kind == FunctionKind::Function && public,
                 params: Some(params(function.header.parameters.vars)),
@@ -190,7 +205,8 @@ fn collect_item(
             if contract.is_some() && variable.visibility == Some(Visibility::Public) =>
         {
             variable.name.map(|name| SourceFunction {
-                contract: contract.map(str::to_string),
+                contract: contract.map(|(name, _)| name.to_string()),
+                in_library: contract.is_some_and(|(_, library)| library),
                 name: name.to_string(),
                 is_entry: true,
                 params: None,

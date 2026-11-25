@@ -18,7 +18,7 @@ use foundry_compilers::{
 pub use functions::{FunctionInfo, SourceFunction, UserType, UserTypes};
 use functions::{names_agree, without_number};
 pub use internal_calls::{CallConvention, CodeFunctions, FunctionEntry};
-use internal_calls::{ResolvedEntry, TrackerContext, track_internal_calls};
+use internal_calls::{ResolvedEntry, SourceMapFunction, TrackerContext, track_internal_calls};
 pub use recording::{
     DebugRecording, DebugStepSink, RecordedFrame, StepConverter, StepStorage, quantity, step_record,
 };
@@ -191,7 +191,7 @@ fn source_map_function(
     sources: &ContractSources,
     artifact: &ArtifactData,
     step: usize,
-) -> Option<(FunctionInfo, usize, usize)> {
+) -> Option<SourceMapFunction> {
     let src_map = |step: usize| {
         sources.source_mapping_in(
             artifact,
@@ -216,28 +216,36 @@ fn source_map_function(
         source_span(&source.source, loc.offset() as usize, loc.length() as usize)?;
     let definition = definition.replace('\n', "");
     let head = definition.split('{').next().unwrap_or_default();
-    let (params, returns) = if let Some((inputs, outputs)) = head.split_once("->") {
-        // Yul functions have no types: every value is a word.
+    // Functions of the Solidity AST are Solidity functions, and the others are Yul functions.
+    let offset = SourceEdit::original_offset(&source.source_edits, loc.offset() as usize);
+    let is_yul = !source.functions.contains_key(&offset);
+    let (params, returns, convention) = if is_yul {
+        // Yul functions have no types: every value is a word. They take their first argument on
+        // top, as via-IR functions do.
         let words = |names: &str| {
             let count = names.split(',').filter(|name| !name.trim().is_empty()).count();
             vec![Param { ty: Some(DynSolType::Uint(256)), storage: None }; count]
         };
-        (words(inputs.split_once('(')?.1.split(')').next()?), words(outputs))
+        let (inputs, outputs) = head.split_once("->").unwrap_or((head, ""));
+        let inputs = words(inputs.split_once('(')?.1.split(')').next()?);
+        (inputs, words(outputs), Some(CallConvention::SolcViaIr))
     } else {
         let (inputs, outputs) = parse_types(&definition);
-        (inputs.as_ref().map(params_from)?, outputs.as_ref().map(params_from).unwrap_or_default())
+        let inputs = inputs.as_ref().map(params_from)?;
+        let outputs = outputs.as_ref().map(params_from).unwrap_or_default();
+        (inputs, outputs, CallConvention::solc(artifact.via_ir))
     };
     let slots = |params: &[Param]| params.iter().map(Param::slots).sum();
     let (parameter_slots, return_slots) = (slots(&params), slots(&returns));
 
-    let info = FunctionInfo {
+    let function = FunctionInfo {
         name,
         params: Some(params),
         returns: Some(returns),
         is_entry: false,
         selector: None,
     };
-    Some((info, parameter_slots, return_slots))
+    Some(SourceMapFunction { function, parameter_slots, return_slots, convention })
 }
 
 /// Returns whether both source elements refer to the same source location.
@@ -482,6 +490,7 @@ mod tests {
     fn defined(name: &str) -> SourceFunction {
         SourceFunction {
             contract: Some("C".into()),
+            in_library: false,
             name: name.into(),
             is_entry: false,
             params: None,
