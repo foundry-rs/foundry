@@ -8,7 +8,6 @@
 
 use super::Param;
 use alloy_dyn_abi::{DynSolType, parser::Storage};
-use alloy_primitives::keccak256;
 use solar::{
     ast::{
         DataLocation, ElementaryType, ExprKind, FunctionKind, ImportItems, Item, ItemKind, LitKind,
@@ -30,8 +29,8 @@ pub enum UserType {
     Enum,
     /// A user-defined value type of an elementary type.
     Value(DynSolType),
-    /// A struct with the types of its fields, which the ABI treats as a tuple.
-    Struct(Vec<SourceType>),
+    /// A struct, which does not have a single stack word to decode.
+    Struct,
 }
 
 /// A function, modifier, or public state variable getter.
@@ -39,8 +38,6 @@ pub enum UserType {
 pub struct SourceFunction {
     /// The contract that defines it. Free functions have none.
     pub contract: Option<String>,
-    /// Whether the contract is a library, whose selectors spell types by their qualified names.
-    pub in_library: bool,
     /// The name of the function, modifier, or variable.
     pub name: String,
     /// Whether the dispatcher or the call frame itself enters it, which is then the external call
@@ -62,17 +59,16 @@ pub struct FunctionInfo {
     pub params: Option<Vec<Param>>,
     /// The return values, or `None` if they are unknown.
     pub returns: Option<Vec<Param>>,
+    /// The name that the function is declared with, which the ABI spells too.
+    pub declared_name: String,
     /// Whether the dispatcher or the call frame itself enters it.
     pub is_entry: bool,
-    /// The selector that the dispatcher enters it with, if it is an entry and its parameter
-    /// types are known.
-    pub selector: Option<[u8; 4]>,
 }
 
 impl FunctionInfo {
     /// A function that only the name is known of.
     pub fn untyped(name: String, is_entry: bool) -> Self {
-        Self { name, params: None, returns: None, is_entry, selector: None }
+        Self { declared_name: name.clone(), name, params: None, returns: None, is_entry }
     }
 }
 
@@ -84,7 +80,7 @@ pub(super) struct SourceParam {
 
 /// A type as spelled in the source.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum SourceType {
+enum SourceType {
     Elementary(DynSolType),
     /// A user-defined type, by the last segment of its name.
     Custom(String),
@@ -100,25 +96,22 @@ impl SourceFunction {
             params.as_ref().map(|params| {
                 params
                     .iter()
-                    .map(|param| Param {
-                        ty: param.ty.resolve(user_types, 0),
-                        storage: param.storage,
-                    })
+                    .map(|param| Param { ty: param.ty.resolve(user_types), storage: param.storage })
                     .collect::<Vec<_>>()
             })
         };
         let params = resolve(&self.params);
-        let canonical = canonical_signature(&self.name, params.as_deref());
-        // A library selector spells some types differently, and a `storage` pointer parameter
-        // only exists in libraries.
-        let has_selector = self.is_entry
-            && !self.in_library
-            && !params.iter().flatten().any(|param| param.storage == Some(Storage::Storage));
-        let selector = canonical
-            .as_deref()
-            .filter(|_| has_selector)
-            .and_then(|signature| keccak256(signature).first_chunk().copied());
-        let signature = canonical.unwrap_or_else(|| self.name.clone());
+        // A parameter type without a canonical name leaves the name without types.
+        let types = params.as_deref().and_then(|params| {
+            params
+                .iter()
+                .map(|param| param.ty.as_ref().map(DynSolType::sol_type_name))
+                .collect::<Option<Vec<_>>>()
+        });
+        let signature = match types {
+            Some(types) => format!("{}({})", self.name, types.join(",")),
+            None => self.name.clone(),
+        };
         let name = match &self.contract {
             Some(contract) => format!("{contract}::{signature}"),
             None => signature,
@@ -127,34 +120,24 @@ impl SourceFunction {
             name,
             params,
             returns: resolve(&self.returns),
+            declared_name: self.name.clone(),
             is_entry: self.is_entry,
-            selector,
         }
     }
 }
 
-/// How deep a struct can nest in the types that are resolved, as structs can contain themselves.
-const MAX_TYPE_DEPTH: usize = 8;
-
 impl SourceType {
-    fn resolve(&self, user_types: &UserTypes, depth: usize) -> Option<DynSolType> {
-        if depth > MAX_TYPE_DEPTH {
-            return None;
-        }
+    fn resolve(&self, user_types: &UserTypes) -> Option<DynSolType> {
         match self {
             Self::Elementary(ty) => Some(ty.clone()),
             Self::Custom(name) => match user_types.get(name)?.as_ref()? {
                 UserType::Address => Some(DynSolType::Address),
                 UserType::Enum => Some(DynSolType::Uint(8)),
                 UserType::Value(ty) => Some(ty.clone()),
-                UserType::Struct(fields) => fields
-                    .iter()
-                    .map(|field| field.resolve(user_types, depth + 1))
-                    .collect::<Option<Vec<_>>>()
-                    .map(DynSolType::Tuple),
+                UserType::Struct => None,
             },
             Self::Array(element, size) => {
-                let element = Box::new(element.resolve(user_types, depth)?);
+                let element = Box::new(element.resolve(user_types)?);
                 Some(match size {
                     Some(size) => DynSolType::FixedArray(element, *size),
                     None => DynSolType::Array(element),
@@ -180,15 +163,8 @@ pub fn collect(
             ItemKind::Contract(contract) => {
                 let name = contract.name.to_string();
                 user_types.push((name.clone(), Some(UserType::Address)));
-                let library = contract.kind.is_library();
                 for member in contract.body.iter() {
-                    collect_item(
-                        member,
-                        Some((&name, library)),
-                        start(member),
-                        functions,
-                        user_types,
-                    );
+                    collect_item(member, Some(&name), start(member), functions, user_types);
                 }
             }
             ItemKind::Import(import) => {
@@ -205,7 +181,7 @@ pub fn collect(
 
 fn collect_item(
     item: &Item<'_>,
-    contract: Option<(&str, bool)>,
+    contract: Option<&str>,
     start: Option<usize>,
     functions: &mut HashMap<usize, Arc<SourceFunction>>,
     user_types: &mut Vec<(String, Option<UserType>)>,
@@ -218,8 +194,7 @@ fn collect_item(
                 Some(Visibility::Public | Visibility::External)
             );
             Some(SourceFunction {
-                contract: contract.map(|(name, _)| name.to_string()),
-                in_library: contract.is_some_and(|(_, library)| library),
+                contract: contract.map(str::to_string),
                 name: name.to_string(),
                 is_entry: function.kind == FunctionKind::Function && public,
                 params: Some(params(function.header.parameters.vars)),
@@ -232,8 +207,7 @@ fn collect_item(
             if contract.is_some() && variable.visibility == Some(Visibility::Public) =>
         {
             variable.name.map(|name| SourceFunction {
-                contract: contract.map(|(name, _)| name.to_string()),
-                in_library: contract.is_some_and(|(_, library)| library),
+                contract: contract.map(str::to_string),
                 name: name.to_string(),
                 is_entry: true,
                 params: None,
@@ -245,8 +219,7 @@ fn collect_item(
             None
         }
         ItemKind::Struct(item) => {
-            let fields = item.fields.iter().map(|field| source_type(&field.ty)).collect();
-            user_types.push((item.name.to_string(), Some(UserType::Struct(fields))));
+            user_types.push((item.name.to_string(), Some(UserType::Struct)));
             None
         }
         ItemKind::Udvt(item) => {
@@ -310,27 +283,6 @@ fn source_type(ty: &Type<'_>) -> SourceType {
     }
 }
 
-/// Formats `name(types)`, or `None` when a parameter type is unknown.
-fn canonical_signature(name: &str, params: Option<&[Param]>) -> Option<String> {
-    let types = params?
-        .iter()
-        .map(|param| param.ty.as_ref().map(abi_type_name))
-        .collect::<Option<Vec<_>>>()?;
-    Some(format!("{name}({})", types.join(",")))
-}
-
-/// The name of a type in a function signature, with a tuple as `(a,b)`.
-fn abi_type_name(ty: &DynSolType) -> String {
-    match ty {
-        DynSolType::Tuple(fields) => {
-            format!("({})", fields.iter().map(abi_type_name).collect::<Vec<_>>().join(","))
-        }
-        DynSolType::Array(element) => format!("{}[]", abi_type_name(element)),
-        DynSolType::FixedArray(element, size) => format!("{}[{size}]", abi_type_name(element)),
-        _ => ty.sol_type_name().into_owned(),
-    }
-}
-
 /// The name that solc's `functionDebugData` key spells for a function with the AST id `id`:
 /// `@name_id` in legacy codegen, and `fun_name`, `modifier_name` or `getter_fun_name` in via-IR
 /// codegen. The via-IR names of functions that share a name end in a number as well, and drop
@@ -371,24 +323,6 @@ pub fn without_number(name: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn signatures_spell_tuples_and_arrays_in_the_abi_form() {
-        let uint = DynSolType::Uint(256);
-        let param = |ty| Param { ty: Some(ty), storage: None };
-        let one = DynSolType::Tuple(vec![uint.clone()]);
-        let two = DynSolType::Tuple(vec![uint.clone(), DynSolType::Address]);
-        let params = [
-            param(one),
-            param(DynSolType::Array(Box::new(two))),
-            param(DynSolType::FixedArray(Box::new(uint), 3)),
-        ];
-
-        assert_eq!(
-            canonical_signature("f", Some(&params)).as_deref(),
-            Some("f((uint256),(uint256,address)[],uint256[3])")
-        );
-    }
 
     #[test]
     fn names_of_function_debug_data_keys() {

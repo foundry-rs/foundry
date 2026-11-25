@@ -1038,6 +1038,7 @@ mod tests {
                 via_ir: Some(false),
                 functions: Default::default(),
                 functions_runtime: Default::default(),
+                selectors: Default::default(),
             }],
         );
         let mut arena = CallTraceArena::default();

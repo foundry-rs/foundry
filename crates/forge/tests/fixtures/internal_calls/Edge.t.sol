@@ -34,6 +34,34 @@ contract Edge {
     }
 }
 
+contract A {
+    struct Item {
+        uint256 value;
+    }
+
+    uint256 public x;
+
+    function setItem(Item memory item) public {
+        x = item.value;
+    }
+
+    fallback() external {
+        setItem(Item(1));
+    }
+}
+
+contract B {
+    struct Item {
+        address value;
+    }
+
+    address public x;
+
+    function setItem(Item memory item) public {
+        x = item.value;
+    }
+}
+
 contract EdgeTest {
     function test_ends_in_a_function() public {
         new Edge().runEnds();
@@ -46,5 +74,11 @@ contract EdgeTest {
 
     function test_struct_entry_is_the_external_call() public {
         new Edge().setItem(Item(5));
+    }
+
+    function test_same_named_structs() public {
+        (bool ok,) = address(new A()).call("");
+        require(ok);
+        new B();
     }
 }

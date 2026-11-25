@@ -93,8 +93,8 @@ impl CallConvention {
 pub struct InternalCall {
     /// The step of the `JUMP` into the function.
     pub start: usize,
-    /// The step of the `JUMPDEST` that the function returned to, or the number of steps if the
-    /// call ended inside the function, which is one past the last step.
+    /// The step of the `JUMPDEST` that the function returned to, or the step before the jump that
+    /// took over the frame of a function that does not return.
     pub end: usize,
     /// The function and its decoded arguments and return values.
     pub call: DecodedInternalCall,
@@ -126,6 +126,9 @@ pub struct TrackerContext<'a> {
     pub convention: Option<CallConvention>,
     /// The call data of the call, for `calldata` parameters.
     pub calldata: &'a [u8],
+    /// Whether the call data selects the external function with a declared name, which the
+    /// dispatcher then enters.
+    pub is_dispatched: &'a dyn Fn(&str) -> bool,
     /// Finds the function that the `JUMP` at a step enters from the source map, for a function
     /// that `functionDebugData` does not list.
     pub from_source_map: &'a dyn Fn(usize) -> Option<SourceMapFunction>,
@@ -248,13 +251,11 @@ impl Tracker<'_> {
         // The external function that the dispatcher enters is the call node that the trace
         // shows already. Creation code has no dispatcher, so its calls are internal. In the
         // fallback and receive functions, which no dispatcher enters, a call to a public function
-        // is internal unless the selector of the call data picks that function.
-        let calldata = self.context.calldata;
+        // is internal unless the call data selects that function.
         if !self.context.is_create
             && self.frames.is_empty()
             && function.as_ref().is_some_and(|function| {
-                function.is_entry
-                    && function.selector.is_none_or(|selector| calldata.starts_with(&selector))
+                function.is_entry && (self.context.is_dispatched)(&function.declared_name)
             })
         {
             function = None;
@@ -302,13 +303,10 @@ impl Tracker<'_> {
         self.calls.push(InternalCall { start: frame.start, end, call });
     }
 
-    /// Ends the frames that are still open when the call ends, by a revert, a halt, or a return
-    /// from inside the functions.
-    fn finish(mut self) -> Vec<InternalCall> {
-        let end = self.steps.len();
-        while let Some(frame) = self.frames.pop() {
-            self.close(frame, end, None);
-        }
+    /// The calls that returned. The frames that are still open when the call ends, by a revert,
+    /// a halt, or a return from inside the functions, are not shown, as the recorded steps end
+    /// before the calls and logs that follow the last jump.
+    fn finish(self) -> Vec<InternalCall> {
         self.calls
     }
 }
@@ -360,10 +358,10 @@ mod tests {
         let params = params.and_then(uint);
         Arc::new(FunctionInfo {
             name: name.into(),
+            declared_name: name.into(),
             params,
             returns: uint(1),
             is_entry,
-            selector: None,
         })
     }
 
@@ -374,7 +372,7 @@ mod tests {
         parameter_slots: usize,
         f: Arc<FunctionInfo>,
     ) -> Vec<Summary> {
-        track_in(steps, convention, parameter_slots, f, (false, &[]))
+        track_in(steps, convention, parameter_slots, f, (false, &|_| true))
     }
 
     fn track_in(
@@ -382,7 +380,7 @@ mod tests {
         convention: Option<CallConvention>,
         parameter_slots: usize,
         f: Arc<FunctionInfo>,
-        (is_create, calldata): (bool, &[u8]),
+        (is_create, is_dispatched): (bool, &dyn Fn(&str) -> bool),
     ) -> Vec<Summary> {
         let entry = || FunctionEntry { name: None, parameter_slots, return_slots: 1 };
         let code = CodeFunctions {
@@ -399,7 +397,8 @@ mod tests {
             resolve: &resolve,
             is_create,
             convention,
-            calldata,
+            calldata: &[],
+            is_dispatched,
             from_source_map: &|_| None,
         };
         track_internal_calls(steps, &context)
@@ -469,14 +468,11 @@ mod tests {
     }
 
     #[test]
-    fn a_function_that_the_call_ends_in_ends_after_the_last_step() {
+    fn a_function_that_the_call_ends_in_is_not_shown() {
         let steps = jump(F, &[RET.into(), 7]);
         let legacy = Some(CallConvention::SolcLegacy);
 
-        assert_eq!(
-            track(&steps, legacy, 1, function("f", Some(1), false)),
-            [(0, 2, "f".into(), strings(&["7"]), None)]
-        );
+        assert_eq!(track(&steps, legacy, 1, function("f", Some(1), false)), []);
     }
 
     #[test]
@@ -487,25 +483,21 @@ mod tests {
 
         assert_eq!(track(&steps, legacy, 1, f()), []);
         assert_eq!(
-            track_in(&steps, legacy, 1, f(), (true, &[])),
+            track_in(&steps, legacy, 1, f(), (true, &|_| true)),
             [(0, 3, "f".into(), strings(&["7"]), strings(&["9"]))]
         );
     }
 
     #[test]
-    fn only_the_function_that_the_selector_picks_is_the_dispatcher_entry() {
-        let steps = [&jump(F, &[RET.into(), 7])[..], &jump(RET, &[9])[..]].concat();
+    fn only_the_function_that_the_call_data_selects_is_the_dispatcher_entry() {
+        let steps = [jump(F, &[RET.into(), 7]), jump(RET, &[9])].concat();
         let legacy = Some(CallConvention::SolcLegacy);
-        let f = || {
-            let mut f = FunctionInfo::clone(&function("f", Some(1), true));
-            f.selector = Some([1, 2, 3, 4]);
-            Arc::new(f)
-        };
+        let f = || function("f", Some(1), true);
 
-        assert_eq!(track_in(&steps, legacy, 1, f(), (false, &[1, 2, 3, 4, 0])), []);
-        // The call data picks another function, as in a fallback function that calls `f`.
+        assert_eq!(track_in(&steps, legacy, 1, f(), (false, &|name| name == "f")), []);
+        // The call data selects another function, as in a fallback function that calls `f`.
         assert_eq!(
-            track_in(&steps, legacy, 1, f(), (false, &[5, 6, 7, 8])),
+            track_in(&steps, legacy, 1, f(), (false, &|name| name == "g")),
             [(0, 3, "f".into(), strings(&["7"]), strings(&["9"]))]
         );
     }
@@ -531,6 +523,7 @@ mod tests {
                 // The convention of the contract does not apply to them.
                 convention: Some(CallConvention::SolcLegacy),
                 calldata: &[],
+                is_dispatched: &|_| true,
                 from_source_map: &from_source_map,
             };
             track_internal_calls(&steps, &context)

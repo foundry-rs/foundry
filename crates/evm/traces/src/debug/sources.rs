@@ -11,7 +11,8 @@ use foundry_common::{
 use foundry_compilers::{
     Artifact, ProjectCompileOutput,
     artifacts::{
-        Bytecode, ContractBytecodeSome, FunctionDebugData, Libraries, Source, Sources,
+        Bytecode, ConfigurableContractArtifact, ContractBytecodeSome, FunctionDebugData, Libraries,
+        Source, Sources,
         sourcemap::{SourceElement, SourceMap},
     },
     buildinfo::SourceEdit,
@@ -122,16 +123,16 @@ pub struct ArtifactData {
     pub functions: CodeFunctions,
     /// The functions of the runtime code.
     pub functions_runtime: CodeFunctions,
+    /// The names of the external functions by selector, from the ABI.
+    pub selectors: HashMap<[u8; 4], String>,
 }
 
 impl ArtifactData {
     fn new(
         bytecode: ContractBytecodeSome,
+        artifact: &ConfigurableContractArtifact,
         build_id: String,
         file_id: u32,
-        via_ir: Option<bool>,
-        [function_debug_data, function_debug_data_runtime]: [Option<&BTreeMap<String, FunctionDebugData>>;
-            2],
     ) -> Result<Self> {
         let parse = |b: &Bytecode, name: &str| {
             // Only parse source map if it's not empty.
@@ -165,12 +166,25 @@ impl ArtifactData {
             pc_ic_map_runtime,
             build_id,
             file_id,
-            via_ir,
-            functions: CodeFunctions { entries: entries(function_debug_data), jumpdests },
+            // Solc records `viaIR` in the metadata settings only when it is enabled.
+            via_ir: artifact
+                .metadata
+                .as_ref()
+                .map(|metadata| metadata.settings.via_ir.unwrap_or_default()),
+            functions: CodeFunctions {
+                entries: entries(artifact.function_debug_data.as_ref()),
+                jumpdests,
+            },
             functions_runtime: CodeFunctions {
-                entries: entries(function_debug_data_runtime),
+                entries: entries(artifact.deployed_function_debug_data.as_ref()),
                 jumpdests: jumpdests_runtime,
             },
+            selectors: artifact
+                .abi
+                .iter()
+                .flat_map(|abi| abi.functions())
+                .map(|function| (function.selector().0, function.name.clone()))
+                .collect(),
         })
     }
 
@@ -252,31 +266,16 @@ impl ContractSources {
             .map(|(id, artifact)| {
                 let mut new_artifact = None;
                 if let Some(file_id) = artifact.id {
-                    // Solc records `viaIR` in the metadata settings only when it is enabled.
-                    let via_ir = artifact
-                        .metadata
-                        .as_ref()
-                        .map(|metadata| metadata.settings.via_ir.unwrap_or_default());
-                    let function_debug_data = [
-                        artifact.function_debug_data.as_ref(),
-                        artifact.deployed_function_debug_data.as_ref(),
-                    ];
-                    let artifact = if let Some((linker, libraries)) = link_data.as_ref() {
+                    let linked = if let Some((linker, libraries)) = link_data.as_ref() {
                         linker.link(id, libraries)?
                     } else {
                         artifact.get_contract_bytecode()
                     };
-                    let bytecode = compact_to_contract(artifact.into_contract_bytecode())?;
+                    let bytecode = compact_to_contract(linked.into_contract_bytecode())?;
 
                     new_artifact = Some((
                         id.name.clone(),
-                        ArtifactData::new(
-                            bytecode,
-                            id.build_id.clone(),
-                            file_id,
-                            via_ir,
-                            function_debug_data,
-                        )?,
+                        ArtifactData::new(bytecode, artifact, id.build_id.clone(), file_id)?,
                     ));
                 } else {
                     warn!(id = id.identifier(), "source not found");

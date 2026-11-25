@@ -3,9 +3,7 @@ mod internal_calls;
 mod recording;
 mod sources;
 
-use crate::{
-    CallTraceNode, CallTraceStep, DecodedInternalCall, DecodedTraceStep, TraceMemberOrder,
-};
+use crate::{CallTraceNode, DecodedInternalCall, DecodedTraceStep};
 use alloy_dyn_abi::{
     DynSolType, DynSolValue, Specifier,
     parser::{Parameters, Storage},
@@ -61,6 +59,12 @@ impl DebugTraceIdentifier {
                 .all(|step| jumpdests.contains(&step.pc))
         };
         let Some(artifact) = sources.find_artifact(contract_name, is_create, ran) else { return };
+        // Without an ABI every external function counts as dispatched.
+        let selected =
+            node.trace.data.first_chunk().and_then(|selector| artifact.selectors.get(selector));
+        let is_dispatched = |name: &str| {
+            artifact.selectors.is_empty() || selected.is_some_and(|selected| selected == name)
+        };
         let resolve = |pc: u32, entries: &[FunctionEntry]| {
             resolve_entry(sources, artifact, is_create, pc, entries)
         };
@@ -70,32 +74,10 @@ impl DebugTraceIdentifier {
             is_create,
             convention: CallConvention::solc(artifact.via_ir),
             calldata: node.trace.data.as_ref(),
+            is_dispatched: &is_dispatched,
             from_source_map: &|step| source_map_function(node, sources, artifact, step),
         };
         let calls = track_internal_calls(&node.trace.steps, &context);
-        // The recorded steps end at the last jump, before the calls and logs that follow it. A
-        // function that the call ends in, by a revert or a halt, ends at a step after them all.
-        let end_of_call = node.trace.steps.len();
-        if let Some(last) = node.trace.steps.last()
-            && calls.iter().any(|call| call.end == end_of_call)
-        {
-            let step = CallTraceStep {
-                pc: last.pc,
-                op: last.op,
-                stack: None,
-                push_stack: None,
-                memory: None,
-                gas_remaining: node.trace.gas_limit.saturating_sub(node.trace.gas_used),
-                gas_refund_counter: last.gas_refund_counter,
-                storage_change: None,
-                gas_cost: 0,
-                state_gas_reservoir: None,
-                status: last.status,
-                extra: None,
-            };
-            node.trace.steps.push(step);
-            node.ordering.push(TraceMemberOrder::Step(end_of_call));
-        }
         for internal_call in calls {
             *node.trace.steps[internal_call.start].decoded_mut() =
                 DecodedTraceStep::InternalCall(internal_call.call, internal_call.end);
@@ -259,11 +241,9 @@ fn source_map_function(
     let (parameter_slots, return_slots) = (slots(&params), slots(&returns));
 
     let function = FunctionInfo {
-        name,
         params: Some(params),
         returns: Some(returns),
-        is_entry: false,
-        selector: None,
+        ..FunctionInfo::untyped(name, false)
     };
     Some(SourceMapFunction { function, parameter_slots, return_slots, convention })
 }
@@ -403,8 +383,6 @@ fn decode_parameter(
     let input = stack_words.first()?;
 
     match (ty, storage) {
-        // Struct fields are not decoded.
-        (DynSolType::Tuple(_), _) => None,
         // HACK: alloy parser treats user-defined types as uint8: https://github.com/alloy-rs/core/pull/386
         //
         // filter out `uint8` params which are marked as storage, memory, or calldata as this
@@ -448,8 +426,6 @@ fn decode_from_memory(ty: &DynSolType, memory: &[u8], location: usize) -> Option
     let first_word = memory_range(memory, location, 32)?;
 
     match ty {
-        // The layout of a struct in memory is not decoded.
-        DynSolType::Tuple(_) => None,
         // For `string` and `bytes` layout is a word with length followed by the data
         DynSolType::String | DynSolType::Bytes => {
             let length: usize = U256::from_be_slice(first_word).try_into().ok()?;
@@ -514,7 +490,6 @@ mod tests {
     fn defined(name: &str) -> SourceFunction {
         SourceFunction {
             contract: Some("C".into()),
-            in_library: false,
             name: name.into(),
             is_entry: false,
             params: None,
