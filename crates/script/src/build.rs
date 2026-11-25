@@ -46,7 +46,6 @@ use foundry_evm::{
 };
 use foundry_linking::Linker;
 use foundry_wallets::{MultiWalletOpts, wallet_browser::signer::BrowserSigner};
-use itertools::Itertools;
 use std::{
     path::{Path, PathBuf},
     str::FromStr,
@@ -451,11 +450,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
             match errors.len() {
                 0 => {}
                 1 => return Err(errors.remove(0)),
-                _ => {
-                    // Keep the first error itself, so callers can tell why the RPC failed.
-                    let message = errors.iter().format("\n").to_string();
-                    return Err(errors.swap_remove(0).wrap_err(message));
-                }
+                _ => return Err(crate::joined(errors)),
             }
         }
         // Resume refuses new operations after a recorded revert. Saved attempts after it are still

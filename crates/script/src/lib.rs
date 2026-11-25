@@ -1522,6 +1522,19 @@ fn flattened(message: String, cause: &(dyn std::error::Error + 'static)) -> eyre
     }
 }
 
+/// Joins the errors of several sequences into one with all their messages, keeping the `--json`
+/// code of the first that is not an RPC failure, since a revert does not call for a retry, or else
+/// of the first.
+fn joined(mut errors: Vec<eyre::Report>) -> eyre::Report {
+    let message = errors.iter().map(ToString::to_string).collect::<Vec<_>>().join("\n");
+    let is_rpc_failure = |err: &eyre::Report| match err.downcast_ref::<JsonError>() {
+        Some(json) => json.errors[0].code.starts_with("rpc."),
+        None => rpc_failure_in(err.as_ref()).is_some(),
+    };
+    let index = errors.iter().position(|err| !is_rpc_failure(err)).unwrap_or(0);
+    errors.swap_remove(index).wrap_err(message)
+}
+
 /// Prints the `--json` failure envelope of `err`, whose message is the text of the whole error.
 fn print_json_failure(err: &eyre::Report) -> Result<()> {
     let message = err.to_string();
@@ -3097,5 +3110,16 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(state.script_config.evm_opts.sender, key_address);
+    }
+
+    #[test]
+    fn joined_codes_a_revert_before_an_rpc_failure() {
+        let rpc = || eyre::Report::from(json_failure(JsonMessage::error("rpc.error", "receipt")));
+        let err = joined(vec![rpc(), eyre::eyre!("Transaction Failure: 0x01")]);
+        assert_eq!(err.to_string(), "receipt\nTransaction Failure: 0x01");
+        assert!(err.downcast_ref::<JsonError>().is_none());
+
+        let err = joined(vec![rpc(), rpc()]);
+        assert_eq!(err.downcast_ref::<JsonError>().unwrap().errors[0].code, "rpc.error");
     }
 }

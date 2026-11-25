@@ -11970,6 +11970,14 @@ contract Broadcasts is Base {
         payable(address(0xdead)).transfer(1);
     }
 }
+
+contract BroadcastsTwice is Base {
+    function run() external {
+        vm.startBroadcast(0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80);
+        payable(address(0xdead)).transfer(1);
+        payable(address(0xbeef)).transfer(1);
+    }
+}
 "#;
 
 // With `--json`, a failure ends stdout with an envelope whose code tells reverts and config
@@ -12198,6 +12206,38 @@ async fn script_json_rpc_failure_codes_fork(prj: _, cmd: _) {
 "#]]
             .is_jsonlines(),
         );
+
+    // One transaction reverted on chain and the other's receipt failed. Sending the transactions
+    // again would not help, so the failure is not coded as an RPC failure.
+    let reverted = Arc::new(std::sync::Mutex::new(None::<Value>));
+    let mixed = spawn_rpc_proxy_mapping_method(
+        anvil.clone(),
+        "eth_getTransactionReceipt",
+        move |params, mut receipt| {
+            if receipt.is_null() {
+                return receipt;
+            }
+            let mut reverted = reverted.lock().unwrap();
+            if *reverted.get_or_insert_with(|| params[0].clone()) == params[0] {
+                receipt["status"] = "0x0".into();
+                receipt
+            } else {
+                "not a receipt".into()
+            }
+        },
+    )
+    .await;
+    script("BroadcastsTwice", &["--fork-url", &mixed, "--broadcast", "--start-fresh"]).stdout_eq(
+        str![[r#"
+{"success":true,"...":"{...}"}
+{"chain":31337,"...":"{...}"}
+{"chain":"anvil-hardhat","status":"failed","...":"{...}"}
+{"status":"success","transactions":"[..]/broadcast/Failures.s.sol/31337/run-latest.json","sensitive":"[..]/cache/Failures.s.sol/31337/run-latest.json"}
+{"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"script.error","message":"{...}"}],"warnings":[]}
+
+"#]]
+        .is_jsonlines(),
+    );
 
     // A script that catches the failure and reverts on its own reports its revert.
     script("CatchesForkFailure", &[]).stdout_eq(
