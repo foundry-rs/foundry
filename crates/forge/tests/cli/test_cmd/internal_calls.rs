@@ -26,6 +26,8 @@ const PARAMS: (&str, &str) =
     ("Params.t.sol", include_str!("../../fixtures/internal_calls/Params.t.sol"));
 const PUBLIC: (&str, &str) =
     ("Public.t.sol", include_str!("../../fixtures/internal_calls/Public.t.sol"));
+const MATRIX: (&str, &str) =
+    ("Matrix.t.sol", include_str!("../../fixtures/internal_calls/Matrix.t.sol"));
 const C: (&str, &str) = ("C.t.sol", include_str!("../../fixtures/internal_calls/C.t.sol"));
 
 #[forgetest]
@@ -196,6 +198,52 @@ fn public_via_ir_optimized(prj: _, cmd: _) {
         PUBLIC,
         (true, true),
         file!["../../fixtures/internal_calls/public_via_ir_optimized.txt"],
+    );
+}
+
+// Every combination of a public function that calls itself or an overload of itself, which the
+// dispatcher's entry into the external function must not hide.
+#[forgetest]
+fn matrix_legacy(prj: _, cmd: _) {
+    assert_internal_calls(
+        &prj,
+        &mut cmd,
+        MATRIX,
+        (false, false),
+        file!["../../fixtures/internal_calls/matrix_legacy.txt"],
+    );
+}
+
+#[forgetest]
+fn matrix_legacy_optimized(prj: _, cmd: _) {
+    assert_internal_calls(
+        &prj,
+        &mut cmd,
+        MATRIX,
+        (false, true),
+        file!["../../fixtures/internal_calls/matrix_legacy_optimized.txt"],
+    );
+}
+
+#[forgetest]
+fn matrix_via_ir(prj: _, cmd: _) {
+    assert_internal_calls(
+        &prj,
+        &mut cmd,
+        MATRIX,
+        (true, false),
+        file!["../../fixtures/internal_calls/matrix_via_ir.txt"],
+    );
+}
+
+#[forgetest]
+fn matrix_via_ir_optimized(prj: _, cmd: _) {
+    assert_internal_calls(
+        &prj,
+        &mut cmd,
+        MATRIX,
+        (true, true),
+        file!["../../fixtures/internal_calls/matrix_via_ir_optimized.txt"],
     );
 }
 
