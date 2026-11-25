@@ -1282,8 +1282,8 @@ pub struct Backend<N: Network> {
     new_block_listeners: Arc<Mutex<Vec<UnboundedSender<ChainNotification>>>>,
     /// Keeps track of active state snapshots at a specific block.
     active_state_snapshots: Arc<Mutex<HashMap<U256, StateSnapshot>>>,
-    /// Hash of the block produced by the last transaction-hash fork replay.
-    fork_replayed_block_hash: Arc<Mutex<Option<B256>>>,
+    /// Hash and local gas limit of the block produced by the last transaction-hash fork replay.
+    fork_replayed_block: Arc<Mutex<Option<(B256, u64)>>>,
     enable_steps_tracing: bool,
     print_logs: bool,
     print_traces: bool,
@@ -1338,7 +1338,7 @@ impl<N: Network> Clone for Backend<N> {
             genesis: self.genesis.clone(),
             new_block_listeners: self.new_block_listeners.clone(),
             active_state_snapshots: self.active_state_snapshots.clone(),
-            fork_replayed_block_hash: self.fork_replayed_block_hash.clone(),
+            fork_replayed_block: self.fork_replayed_block.clone(),
             enable_steps_tracing: self.enable_steps_tracing,
             print_logs: self.print_logs,
             print_traces: self.print_traces,
@@ -4849,7 +4849,7 @@ impl<N: Network> Backend<N> {
             fees,
             genesis,
             active_state_snapshots: Arc::new(Mutex::new(Default::default())),
-            fork_replayed_block_hash: Arc::new(Mutex::new(None)),
+            fork_replayed_block: Arc::new(Mutex::new(None)),
             enable_steps_tracing,
             print_logs,
             print_traces,
@@ -5847,11 +5847,11 @@ impl<N: Network> Backend<N> {
                 // ensures prevrandao is set
                 prevrandao: Some(block.header.mix_hash().unwrap_or_default()),
                 // Keep previous `beneficiary` and `basefee` value
-                gas_limit: if *self.fork_replayed_block_hash.lock() == Some(block.header.hash) {
-                    env.block_env.gas_limit
-                } else {
-                    block.header.gas_limit()
-                },
+                gas_limit: self
+                    .fork_replayed_block
+                    .lock()
+                    .and_then(|(hash, gas)| (hash == block.header.hash).then_some(gas))
+                    .unwrap_or_else(|| block.header.gas_limit()),
                 beneficiary: env.block_env.beneficiary,
                 basefee: env.block_env.basefee,
                 ..Default::default()
@@ -6314,6 +6314,7 @@ where
         // Execute the prefix with the source block's coinbase so priority fees, COINBASE, and the
         // header miner match the source. Later blocks keep the local beneficiary.
         replay_env.block_env.beneficiary = beneficiary;
+        let local_gas_limit = replay_env.block_env.gas_limit;
         if gas_limit != 0 {
             replay_env.block_env.gas_limit = gas_limit;
         }
@@ -6482,7 +6483,7 @@ where
 
         evm_env.block_env.difficulty = U256::ZERO;
         *self.evm_env.write() = evm_env;
-        *self.fork_replayed_block_hash.lock() = Some(block_hash);
+        *self.fork_replayed_block.lock() = Some((block_hash, local_gas_limit));
         self.time.reset(timestamp);
         self.time.set_next_block_timestamp(next_timestamp)?;
 
@@ -8262,33 +8263,31 @@ where
         };
 
         // Acquire the only awaited mutation lock before publishing any part of the rewind.
-        let replayed =
-            *self.fork_replayed_block_hash.lock() == Some(common_block.header.hash_slow());
+        let replayed_gas_limit = self
+            .fork_replayed_block
+            .lock()
+            .and_then(|(hash, gas)| (hash == common_block.header.hash_slow()).then_some(gas));
         let (rollback_gas_limit, rollback_base_fee) = if self
             .get_fork()
             .is_some_and(|fork| fork.block_number() == common_block.header.number())
         {
             let node_config = self.node_config.read().await;
             (
-                if replayed {
-                    self.evm_env.read().block_env.gas_limit
-                } else {
+                replayed_gas_limit.unwrap_or_else(|| {
                     self.get_block(common_block.header.number().saturating_add(1))
                         .filter(|child| {
-                            *self.fork_replayed_block_hash.lock() != Some(child.header.hash_slow())
+                            self.fork_replayed_block
+                                .lock()
+                                .is_none_or(|(hash, _)| hash != child.header.hash_slow())
                         })
                         .map(|child| child.header.gas_limit())
                         .unwrap_or_else(|| node_config.gas_limit())
-                },
+                }),
                 node_config.base_fee.unwrap_or_default(),
             )
         } else {
             (
-                if replayed {
-                    self.evm_env.read().block_env.gas_limit
-                } else {
-                    common_block.header.gas_limit()
-                },
+                replayed_gas_limit.unwrap_or_else(|| common_block.header.gas_limit()),
                 common_block.header.base_fee_per_gas().unwrap_or_default(),
             )
         };
