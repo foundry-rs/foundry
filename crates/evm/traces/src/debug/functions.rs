@@ -12,10 +12,13 @@ use solar::{
     ast::{
         DataLocation, ElementaryType, ExprKind, FunctionKind, ImportItems, Item, ItemKind, LitKind,
         SourceUnit, Type, TypeKind, VariableDefinition, Visibility,
+        visit::Visit,
+        yul::{self, StmtKind as YulStmtKind},
     },
-    interface::source_map::SourceMap,
+    data_structures::Never,
+    interface::{Ident, source_map::SourceMap},
 };
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, ops::ControlFlow, sync::Arc};
 
 /// The user-defined types of the sources by name, or `None` for a name that two types share.
 pub type UserTypes = HashMap<String, Option<UserType>>;
@@ -33,7 +36,7 @@ pub enum UserType {
     Struct,
 }
 
-/// A function, modifier, or public state variable getter.
+/// A function, modifier, public state variable getter, or Yul function.
 #[derive(Clone, Debug)]
 pub struct SourceFunction {
     /// The contract that defines it. Free functions have none.
@@ -43,6 +46,9 @@ pub struct SourceFunction {
     /// Whether the dispatcher or the call frame itself enters it, which is then the external call
     /// that the trace shows already, such as a public function or getter.
     pub is_entry: bool,
+    /// Whether it is a function of an inline assembly block. Those have no types: every value is
+    /// a word.
+    pub is_yul: bool,
     /// The parameters, or `None` for a getter, whose parameters the AST does not list.
     pub(super) params: Option<Vec<SourceParam>>,
     /// The return values, or `None` for a getter.
@@ -76,6 +82,8 @@ impl FunctionInfo {
 pub(super) struct SourceParam {
     ty: SourceType,
     storage: Option<Storage>,
+    /// The number of stack words the value takes.
+    slots: usize,
 }
 
 /// A type as spelled in the source.
@@ -85,7 +93,9 @@ enum SourceType {
     /// A user-defined type, by the last segment of its name.
     Custom(String),
     Array(Box<Self>, Option<usize>),
-    /// A mapping or function type.
+    /// An external function type, which takes an address and a selector.
+    ExternalFunction,
+    /// A mapping or internal function type.
     Other,
 }
 
@@ -96,13 +106,18 @@ impl SourceFunction {
             params.as_ref().map(|params| {
                 params
                     .iter()
-                    .map(|param| Param { ty: param.ty.resolve(user_types), storage: param.storage })
+                    .map(|param| Param {
+                        ty: param.ty.resolve(user_types),
+                        storage: param.storage,
+                        slots: param.slots,
+                    })
                     .collect::<Vec<_>>()
             })
         };
         let params = resolve(&self.params);
-        // A parameter type without a canonical name leaves the name without types.
-        let types = params.as_deref().and_then(|params| {
+        // A parameter type without a canonical name leaves the name without types, and so do Yul
+        // functions, which have none.
+        let types = params.as_deref().filter(|_| !self.is_yul).and_then(|params| {
             params
                 .iter()
                 .map(|param| param.ty.as_ref().map(DynSolType::sol_type_name))
@@ -143,7 +158,20 @@ impl SourceType {
                     None => DynSolType::Array(element),
                 })
             }
-            Self::Other => None,
+            Self::ExternalFunction | Self::Other => None,
+        }
+    }
+
+    /// The number of stack words a value of this type takes: calldata arrays, `bytes` and
+    /// `string` take an offset and a length, and external function types an address and a selector.
+    const fn slots(&self, storage: Option<Storage>) -> usize {
+        match (self, storage) {
+            (Self::ExternalFunction, _) => 2,
+            (
+                Self::Elementary(DynSolType::String | DynSolType::Bytes) | Self::Array(_, None),
+                Some(Storage::Calldata),
+            ) => 2,
+            _ => 1,
         }
     }
 }
@@ -151,20 +179,19 @@ impl SourceType {
 /// Collects the functions and user-defined types of a parsed source file.
 ///
 /// `functions` maps the byte offset of each definition in the source to the function.
-pub fn collect(
-    ast: &SourceUnit<'_>,
+pub fn collect<'ast>(
+    ast: &'ast SourceUnit<'ast>,
     source_map: &SourceMap,
     functions: &mut HashMap<usize, Arc<SourceFunction>>,
     user_types: &mut Vec<(String, Option<UserType>)>,
 ) {
-    let start = |item: &Item<'_>| source_map.span_to_range(item.span).ok().map(|r| r.start);
     for item in ast.items.iter() {
         match &item.kind {
             ItemKind::Contract(contract) => {
                 let name = contract.name.to_string();
                 user_types.push((name.clone(), Some(UserType::Address)));
                 for member in contract.body.iter() {
-                    collect_item(member, Some(&name), start(member), functions, user_types);
+                    collect_item(member, Some(&name), source_map, functions, user_types);
                 }
             }
             ItemKind::Import(import) => {
@@ -174,20 +201,22 @@ pub fn collect(
                     user_types.extend(aliases.map(|alias| (alias.to_string(), None)));
                 }
             }
-            _ => collect_item(item, None, start(item), functions, user_types),
+            _ => collect_item(item, None, source_map, functions, user_types),
         }
     }
 }
 
-fn collect_item(
-    item: &Item<'_>,
+fn collect_item<'ast>(
+    item: &'ast Item<'ast>,
     contract: Option<&str>,
-    start: Option<usize>,
+    source_map: &SourceMap,
     functions: &mut HashMap<usize, Arc<SourceFunction>>,
     user_types: &mut Vec<(String, Option<UserType>)>,
 ) {
     let function = match &item.kind {
         ItemKind::Function(function) => {
+            let mut yul = YulFunctions { contract, source_map, functions };
+            let _ = yul.visit_item_function(function);
             let Some(name) = &function.header.name else { return };
             let public = matches!(
                 function.header.visibility(),
@@ -197,6 +226,7 @@ fn collect_item(
                 contract: contract.map(str::to_string),
                 name: name.to_string(),
                 is_entry: function.kind == FunctionKind::Function && public,
+                is_yul: false,
                 params: Some(params(function.header.parameters.vars)),
                 returns: Some(
                     function.header.returns.as_ref().map_or_else(Vec::new, |r| params(r.vars)),
@@ -210,6 +240,7 @@ fn collect_item(
                 contract: contract.map(str::to_string),
                 name: name.to_string(),
                 is_entry: true,
+                is_yul: false,
                 params: None,
                 returns: None,
             })
@@ -230,20 +261,59 @@ fn collect_item(
         }
         _ => None,
     };
-    if let (Some(function), Some(start)) = (function, start) {
-        functions.insert(start, Arc::new(function));
+    if let Some(function) = function
+        && let Ok(range) = source_map.span_to_range(item.span)
+    {
+        functions.insert(range.start, Arc::new(function));
+    }
+}
+
+/// Collects the functions of the inline assembly blocks of a function body.
+struct YulFunctions<'a> {
+    contract: Option<&'a str>,
+    source_map: &'a SourceMap,
+    functions: &'a mut HashMap<usize, Arc<SourceFunction>>,
+}
+
+impl<'ast> Visit<'ast> for YulFunctions<'_> {
+    type BreakValue = Never;
+
+    fn visit_yul_stmt(&mut self, stmt: &'ast yul::Stmt<'ast>) -> ControlFlow<Self::BreakValue> {
+        if let YulStmtKind::FunctionDef(function) = &stmt.kind
+            && let Ok(range) = self.source_map.span_to_range(stmt.span)
+        {
+            let word = || SourceParam {
+                ty: SourceType::Elementary(DynSolType::Uint(256)),
+                storage: None,
+                slots: 1,
+            };
+            let words = |names: &[Ident]| names.iter().map(|_| word()).collect();
+            self.functions.insert(
+                range.start,
+                Arc::new(SourceFunction {
+                    contract: self.contract.map(str::to_string),
+                    name: function.name.to_string(),
+                    is_entry: false,
+                    is_yul: true,
+                    params: Some(words(&function.parameters)),
+                    returns: Some(words(&function.returns)),
+                }),
+            );
+        }
+        self.walk_yul_stmt(stmt)
     }
 }
 
 fn params(vars: &[VariableDefinition<'_>]) -> Vec<SourceParam> {
     vars.iter()
-        .map(|var| SourceParam {
-            ty: source_type(&var.ty),
-            storage: var.data_location.map(|location| match location {
+        .map(|var| {
+            let ty = source_type(&var.ty);
+            let storage = var.data_location.map(|location| match location {
                 DataLocation::Memory => Storage::Memory,
                 DataLocation::Calldata => Storage::Calldata,
                 DataLocation::Storage | DataLocation::Transient => Storage::Storage,
-            }),
+            });
+            SourceParam { slots: ty.slots(storage), ty, storage }
         })
         .collect()
 }
@@ -279,6 +349,9 @@ fn source_type(ty: &Type<'_>) -> SourceType {
             .segments()
             .last()
             .map_or(SourceType::Other, |last| SourceType::Custom(last.to_string())),
+        TypeKind::Function(function) if function.visibility() == Some(Visibility::External) => {
+            SourceType::ExternalFunction
+        }
         TypeKind::Function(_) | TypeKind::Mapping(_) => SourceType::Other,
     }
 }

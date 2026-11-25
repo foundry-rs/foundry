@@ -4,17 +4,11 @@ mod recording;
 mod sources;
 
 use crate::{CallTraceNode, DecodedInternalCall, DecodedTraceStep};
-use alloy_dyn_abi::{
-    DynSolType, DynSolValue, Specifier,
-    parser::{Parameters, Storage},
-};
+use alloy_dyn_abi::{DynSolType, DynSolValue, parser::Storage};
 use alloy_primitives::U256;
 use evm2::interpreter::opcode::OpCode;
 use foundry_common::fmt::format_token;
-use foundry_compilers::{
-    artifacts::sourcemap::{Jump, SourceElement},
-    buildinfo::SourceEdit,
-};
+use foundry_compilers::{artifacts::sourcemap::Jump, buildinfo::SourceEdit};
 pub use functions::{FunctionInfo, SourceFunction, UserType, UserTypes};
 use functions::{names_agree, without_number};
 pub use internal_calls::{CallConvention, CodeFunctions, FunctionEntry};
@@ -162,27 +156,8 @@ pub struct Param {
     pub ty: Option<DynSolType>,
     /// The data location.
     pub storage: Option<Storage>,
-}
-
-impl Param {
     /// The number of stack words the value takes.
-    const fn slots(&self) -> usize {
-        match (&self.ty, self.storage) {
-            (
-                Some(DynSolType::String | DynSolType::Bytes | DynSolType::Array(_)),
-                Some(Storage::Calldata),
-            ) => 2,
-            _ => 1,
-        }
-    }
-}
-
-fn params_from(parameters: &Parameters<'_>) -> Vec<Param> {
-    parameters
-        .params
-        .iter()
-        .map(|param| Param { ty: param.resolve().ok(), storage: param.storage })
-        .collect()
+    pub slots: usize,
 }
 
 /// Finds the internal function that a `JUMP` enters from the jump marker and the source location
@@ -217,112 +192,22 @@ fn source_map_function(
         return None;
     }
 
-    let name = parse_function_from_loc(source, &loc)?;
-    let (definition, _) =
-        source_span(&source.source, loc.offset() as usize, loc.length() as usize)?;
-    let definition = definition.replace('\n', "");
-    let head = definition.split('{').next().unwrap_or_default();
-    // Functions of the Solidity AST are Solidity functions, and the others are Yul functions.
     let offset = SourceEdit::original_offset(&source.source_edits, loc.offset() as usize);
-    let is_yul = !source.functions.contains_key(&offset);
-    let (params, returns, convention) = if is_yul {
-        // Yul functions have no types: every value is a word. They take their first argument on
-        // top, as via-IR functions do.
-        let words = |names: &str| {
-            let count = names.split(',').filter(|name| !name.trim().is_empty()).count();
-            vec![Param { ty: Some(DynSolType::Uint(256)), storage: None }; count]
-        };
-        let (inputs, outputs) = head.split_once("->").unwrap_or((head, ""));
-        let inputs = words(inputs.split_once('(')?.1.split(')').next()?);
-        (inputs, words(outputs), Some(CallConvention::SolcViaIr))
+    let defined = source.functions.get(&offset)?;
+    let function = defined.info(&sources.user_types);
+    let slots = |params: &Option<Vec<Param>>| params.iter().flatten().map(|p| p.slots).sum();
+    // Yul functions take their first argument on top, as via-IR functions do.
+    let convention = if defined.is_yul {
+        Some(CallConvention::SolcViaIr)
     } else {
-        let (inputs, outputs) = parse_types(&definition);
-        let inputs = inputs.as_ref().map(params_from)?;
-        let outputs = outputs.as_ref().map(params_from).unwrap_or_default();
-        (inputs, outputs, CallConvention::solc(artifact.via_ir))
+        CallConvention::solc(artifact.via_ir)
     };
-    let slots = |params: &[Param]| params.iter().map(Param::slots).sum();
-    let (parameter_slots, return_slots) = (slots(&params), slots(&returns));
-
-    let function = FunctionInfo {
-        params: Some(params),
-        returns: Some(returns),
-        ..FunctionInfo::untyped(name, false)
-    };
-    Some(SourceMapFunction { function, parameter_slots, return_slots, convention })
-}
-
-/// Tries to parse the function name from the source code and detect the contract name which
-/// contains the given function.
-///
-/// Returns a string in the format `Contract::function(types)` when parameters can be resolved,
-/// falling back to `Contract::function`.
-fn parse_function_from_loc(source: &SourceData, loc: &SourceElement) -> Option<String> {
-    let start = loc.offset() as usize;
-    let (source_part, end) = source_span(&source.source, start, loc.length() as usize)?;
-
-    if !source_part.starts_with("function") {
-        return None;
-    }
-    let function_name = source_part.split_once("function")?.1.split('(').next()?.trim();
-    let contract_name = source.find_contract_name(start, end)?;
-
-    Some(internal_function_identifier(contract_name, function_name, source_part))
-}
-
-fn internal_function_identifier(
-    contract_name: &str,
-    function_name: &str,
-    source_part: &str,
-) -> String {
-    let signature = canonical_function_signature(function_name, source_part)
-        .unwrap_or_else(|| function_name.to_string());
-    format!("{contract_name}::{signature}")
-}
-
-fn canonical_function_signature(function_name: &str, source_part: &str) -> Option<String> {
-    let source_part = source_part.replace('\n', "");
-    let (inputs, _) = parse_types(&source_part);
-    let inputs = inputs?;
-    let types =
-        inputs.params.iter().map(|param| param.resolve().ok()).collect::<Option<Vec<_>>>()?;
-    Some(function_signature(function_name, &types))
-}
-
-/// Formats an ABI-style function signature from a name and canonical parameter types.
-pub fn function_signature(function_name: &str, types: &[DynSolType]) -> String {
-    let mut signature = String::new();
-    signature.push_str(function_name);
-    signature.push('(');
-    for (i, ty) in types.iter().enumerate() {
-        if i > 0 {
-            signature.push(',');
-        }
-        signature.push_str(&ty.sol_type_name());
-    }
-    signature.push(')');
-    signature
-}
-
-fn source_span(source: &str, start: usize, len: usize) -> Option<(&str, usize)> {
-    let end = start.checked_add(len)?;
-
-    Some((source.get(start..end)?, end))
-}
-
-/// Parses function input and output types into [Parameters].
-fn parse_types(source: &str) -> (Option<Parameters<'_>>, Option<Parameters<'_>>) {
-    let inputs = source.find('(').and_then(|params_start| {
-        let params_end = params_start + source[params_start..].find(')')?;
-        Parameters::parse(&source[params_start..params_end + 1]).ok()
-    });
-    let outputs = source.find("returns").and_then(|returns_start| {
-        let return_params_start = returns_start + source[returns_start..].find('(')?;
-        let return_params_end = return_params_start + source[return_params_start..].find(')')?;
-        Parameters::parse(&source[return_params_start..return_params_end + 1]).ok()
-    });
-
-    (inputs, outputs)
+    Some(SourceMapFunction {
+        parameter_slots: slots(&function.params),
+        return_slots: slots(&function.returns),
+        function,
+        convention,
+    })
 }
 
 /// Decodes parameters from the stack words they take, in parameter order, and from memory and
@@ -335,7 +220,7 @@ pub fn decode_parameters(
     memory: Option<&[u8]>,
     calldata: Option<&[u8]>,
 ) -> Option<Vec<String>> {
-    if words.len() != params.iter().map(Param::slots).sum::<usize>() {
+    if words.len() != params.iter().map(|param| param.slots).sum::<usize>() {
         return None;
     }
 
@@ -343,7 +228,7 @@ pub fn decode_parameters(
     let mut decoded = Vec::with_capacity(params.len());
 
     for param in params {
-        let slots = param.slots();
+        let slots = param.slots;
         let input = &words[input_idx..input_idx + slots];
         input_idx += slots;
         let Some(ty) = &param.ty else {
@@ -464,9 +349,20 @@ fn memory_range(memory: &[u8], start: usize, len: usize) -> Option<&[u8]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_dyn_abi::{
+        Specifier,
+        parser::{ParameterSpecifier, Parameters},
+    };
 
     fn params(source: &str) -> Vec<Param> {
-        params_from(&Parameters::parse(source).unwrap())
+        let parameters = Parameters::parse(source).unwrap();
+        let param = |param: &ParameterSpecifier<'_>| {
+            let ty = param.resolve().ok();
+            let two = matches!(ty, Some(DynSolType::Bytes | DynSolType::Array(_)))
+                && param.storage == Some(Storage::Calldata);
+            Param { ty, storage: param.storage, slots: if two { 2 } else { 1 } }
+        };
+        parameters.params.iter().map(param).collect()
     }
 
     fn entry(name: &str) -> FunctionEntry {
@@ -478,6 +374,7 @@ mod tests {
             contract: Some("C".into()),
             name: name.into(),
             is_entry: false,
+            is_yul: false,
             params: None,
             returns: None,
         }
@@ -506,25 +403,6 @@ mod tests {
         // Functions with other names would show the name of the source map for both.
         assert!(matches!(choose_entry(&[&a, &b], Some(&defined("a"))), Choice::Hidden));
         assert!(matches!(choose_entry(&[&a, &b], None), Choice::Hidden));
-    }
-
-    #[test]
-    fn source_span_returns_none_for_invalid_ranges() {
-        assert_eq!(source_span("abcdef", 2, 3), Some(("cde", 5)));
-        assert_eq!(source_span("abcdef", 7, 1), None);
-        assert_eq!(source_span("abcdef", usize::MAX, 1), None);
-    }
-
-    #[test]
-    fn internal_function_identifier_includes_canonical_signature() {
-        assert_eq!(
-            internal_function_identifier(
-                "DebugMe",
-                "foo",
-                "function foo(uint256 amount, bool ok) internal returns (uint256) {",
-            ),
-            "DebugMe::foo(uint256,bool)"
-        );
     }
 
     #[test]

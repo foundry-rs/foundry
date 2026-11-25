@@ -236,9 +236,10 @@ impl Tracker<'_> {
         // The external function that the dispatcher enters is the call node that the trace
         // shows already. Creation code has no dispatcher, so its calls are internal. In the
         // fallback and receive functions, which no dispatcher enters, a call to a public function
-        // is internal unless the call data selects that function.
+        // is internal unless the call data selects that function. The dispatcher can run inside
+        // helper functions, which are not shown.
         if !self.context.is_create
-            && self.frames.is_empty()
+            && self.frames.iter().all(|frame| frame.function.is_none())
             && function.as_ref().is_some_and(|function| {
                 function.is_entry && (self.context.is_dispatched)(&function.declared_name)
             })
@@ -335,7 +336,7 @@ mod tests {
     }
 
     fn uint(count: usize) -> Option<Vec<Param>> {
-        Some(vec![Param { ty: Some(DynSolType::Uint(256)), storage: None }; count])
+        Some(vec![Param { ty: Some(DynSolType::Uint(256)), storage: None, slots: 1 }; count])
     }
 
     fn function(name: &str, params: Option<usize>, is_entry: bool) -> FunctionInfo {

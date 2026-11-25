@@ -1020,7 +1020,6 @@ mod tests {
                 source: Arc::new("contract C {}".to_string()),
                 language: Default::default(),
                 path: PathBuf::from("src/C.sol"),
-                contract_definitions: Vec::new(),
                 functions: Default::default(),
                 user_types: Vec::new(),
                 source_edits: Vec::new(),

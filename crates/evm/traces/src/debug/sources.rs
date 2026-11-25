@@ -26,7 +26,6 @@ use serde::Deserialize;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fmt::Write,
-    ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -36,9 +35,6 @@ pub struct SourceData {
     pub source: Arc<String>,
     pub language: MultiCompilerLanguage,
     pub path: PathBuf,
-    /// Maps contract name to (start, end) of the contract definition in the source code.
-    /// This is useful for determining which contract contains given function definition.
-    pub contract_definitions: Vec<(String, Range<usize>)>,
     /// Maps the byte offset of a function, modifier, or public state variable definition to it.
     pub functions: HashMap<usize, Arc<SourceFunction>>,
     /// The user-defined types that the source declares.
@@ -57,48 +53,22 @@ impl SourceData {
         root: &Path,
         source_edits: Vec<SourceEdit>,
     ) -> Self {
-        let mut contract_definitions = Vec::new();
         let mut functions = HashMap::new();
         let mut user_types = Vec::new();
 
-        match language {
-            MultiCompilerLanguage::Vyper(_) => {
-                // Vyper contracts have the same name as the file name.
-                if let Some(name) = path.file_stem().map(|s| s.to_string_lossy().to_string()) {
-                    contract_definitions.push((name, 0..source.len()));
-                }
-            }
-            MultiCompilerLanguage::Solc(_) => {
-                let r = output.parser().solc().compiler().enter(|compiler| -> Option<()> {
-                    let (_, source) = compiler.gcx().get_ast_source(root.join(&path))?;
-                    let source_map = compiler.sess().source_map();
-                    let ast = source.ast.as_ref()?;
-                    for item in ast.items.iter() {
-                        if let solar::ast::ItemKind::Contract(contract) = &item.kind {
-                            let Ok(contract_range) = source_map.span_to_range(item.span) else {
-                                continue;
-                            };
-                            contract_definitions.push((contract.name.to_string(), contract_range));
-                        }
-                    }
-                    collect(ast, source_map, &mut functions, &mut user_types);
-                    Some(())
-                });
-                if r.is_none() {
-                    warn!("failed to parse contract definitions for {}", path.display());
-                }
+        if matches!(language, MultiCompilerLanguage::Solc(_)) {
+            let r = output.parser().solc().compiler().enter(|compiler| -> Option<()> {
+                let (_, source) = compiler.gcx().get_ast_source(root.join(&path))?;
+                let ast = source.ast.as_ref()?;
+                collect(ast, compiler.sess().source_map(), &mut functions, &mut user_types);
+                Some(())
+            });
+            if r.is_none() {
+                warn!("failed to parse functions and types for {}", path.display());
             }
         }
 
-        Self { source, language, path, contract_definitions, functions, user_types, source_edits }
-    }
-
-    /// Finds name of contract that contains given loc.
-    pub fn find_contract_name(&self, start: usize, end: usize) -> Option<&str> {
-        self.contract_definitions
-            .iter()
-            .find(|(_, r)| start >= r.start && end <= r.end)
-            .map(|(name, _)| name.as_str())
+        Self { source, language, path, functions, user_types, source_edits }
     }
 }
 
@@ -283,7 +253,7 @@ impl ContractSources {
 
         // Not all source files produce artifacts, so we are populating sources by using build
         // infos.
-        let mut files: BTreeMap<PathBuf, Arc<SourceData>> = BTreeMap::new();
+        let mut files: BTreeMap<PathBuf, Vec<Arc<SourceData>>> = BTreeMap::new();
         let mut removed_files = HashSet::new();
         for (build_id, build) in output.builds() {
             for (source_id, path) in &build.source_id_to_path {
@@ -295,8 +265,14 @@ impl ContractSources {
                     continue;
                 }
 
-                let source_data = match files.entry(path.clone()) {
-                    std::collections::btree_map::Entry::Vacant(entry) => {
+                // Builds of one file can edit it differently, such as two solc versions that
+                // compile a shared test file with different generated deployment code. The edits
+                // map the source locations of their build, so each set of edits has its own data.
+                let edits = build.source_edits.get(source_id).map_or(&[][..], Vec::as_slice);
+                let variants = files.entry(path.clone()).or_default();
+                let source_data = match variants.iter().find(|data| data.source_edits == edits) {
+                    Some(source_data) => source_data.clone(),
+                    None => {
                         let source = Source::read(path).wrap_err_with(|| {
                             format!("failed to read artifact source file for `{}`", path.display())
                         })?;
@@ -307,12 +283,11 @@ impl ContractSources {
                             build.language,
                             stripped,
                             root,
-                            build.source_edits.get(source_id).cloned().unwrap_or_default(),
+                            edits.to_vec(),
                         ));
-                        entry.insert(source_data.clone());
+                        variants.push(source_data.clone());
                         source_data
                     }
-                    std::collections::btree_map::Entry::Occupied(entry) => entry.get().clone(),
                 };
                 self.sources_by_id
                     .entry(build_id.clone())
@@ -321,7 +296,7 @@ impl ContractSources {
             }
         }
 
-        for source_data in files.values() {
+        for source_data in files.values().filter_map(|variants| variants.first()) {
             for (name, ty) in &source_data.user_types {
                 self.add_user_type(name.clone(), ty.clone());
             }
@@ -516,7 +491,6 @@ mod tests {
                 source: Arc::new(text.to_string()),
                 language: Default::default(),
                 path: PathBuf::from(path),
-                contract_definitions: Vec::new(),
                 functions: HashMap::new(),
                 user_types: Vec::new(),
                 source_edits: Vec::new(),
