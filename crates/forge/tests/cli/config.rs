@@ -4574,7 +4574,8 @@ No files changed, compilation skipped
 #[forgetest]
 fn absolute_source_metadata_warns_without_remappings(prj: _, cmd: _) {
     let external = tempfile::tempdir().unwrap();
-    let source = external.path().join("External.sol");
+    let source =
+        foundry_common::fs::canonicalize_path(external.path()).unwrap().join("External.sol");
     fs::write(
         &source,
         "// SPDX-License-Identifier: MIT\npragma solidity >=0.8.0; contract External {}\n",
