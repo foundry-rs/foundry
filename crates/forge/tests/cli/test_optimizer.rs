@@ -5799,3 +5799,93 @@ Script ran successfully.
 ...
 "#]]);
 }
+
+// <https://github.com/foundry-rs/foundry/issues/18716>
+// A reverting constructor satisfies `expectRevert` without ending the test early.
+#[forgetest_init]
+fn preprocess_contract_with_expect_revert_ctor(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.dynamic_test_linking = true;
+    });
+
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public number;
+
+    constructor(uint256 start) {
+        require(start >= 3);
+        number = start;
+    }
+}
+    "#,
+    );
+
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract CounterTest is Test {
+    function test_continues_after_revert() public {
+        vm.expectRevert();
+        new Counter(0);
+        assertTrue(false);
+    }
+
+    function test_keeps_address_when_not_reverting() public {
+        vm.expectRevert(uint64(0));
+        Counter counter = new Counter(5);
+        assertEq(counter.number(), 5);
+    }
+
+    function test_expect_create_when_not_reverting() public {
+        vm.expectCreate(type(Counter).runtimeCode, address(this));
+        vm.expectRevert(uint64(0));
+        new Counter(5);
+    }
+
+    function test_salt_continues_after_revert() public {
+        vm.expectRevert();
+        new Counter{salt: 0}(0);
+        assertTrue(false);
+    }
+
+    function test_salt_keeps_address_when_not_reverting() public {
+        vm.expectRevert(uint64(0));
+        Counter counter = new Counter{salt: 0}(5);
+        assertEq(counter.number(), 5);
+    }
+
+    function test_loop() public {
+        for (uint256 i = 0; i < 7; i++) {
+            vm.expectRevert();
+            new Counter(i);
+        }
+    }
+}
+    "#,
+    );
+
+    let expected = str![[r#"
+...
+Ran 6 tests for test/Counter.t.sol:CounterTest
+[FAIL: assertion failed] test_continues_after_revert() ([GAS])
+[PASS] test_expect_create_when_not_reverting() ([GAS])
+[PASS] test_keeps_address_when_not_reverting() ([GAS])
+[FAIL: next call did not revert as expected] test_loop() ([GAS])
+[FAIL: assertion failed] test_salt_continues_after_revert() ([GAS])
+[PASS] test_salt_keeps_address_when_not_reverting() ([GAS])
+Suite result: FAILED. 3 passed; 3 failed; 0 skipped; [ELAPSED]
+...
+"#]];
+    cmd.args(["test"]).assert_failure().stdout_eq(expected.clone());
+
+    // A salted create redirected to the CREATE2 factory behaves the same.
+    prj.update_config(|config| {
+        config.always_use_create_2_factory = true;
+    });
+    cmd.forge_fuse().args(["test"]).assert_failure().stdout_eq(expected);
+}

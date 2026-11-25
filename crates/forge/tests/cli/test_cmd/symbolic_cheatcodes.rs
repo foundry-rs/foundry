@@ -5483,14 +5483,14 @@ Ran 17 tests for test/SymbolicExpectRevertReverter.t.sol:SymbolicExpectRevertRev
 [PASS] checkDelegateCaller() ([METRICS])
 [FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkDelegateLibrary() ([METRICS])
 [PASS] checkDeployCodeHaltCheatcode() ([METRICS])
-[FAIL: Reverter != expected reverter: 0x7109709ECfa91a80626fF3989D68f67F5b1DD12D != 0x000000000000000000000000000000000000dEaD; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkDeployCodeHaltOther() ([METRICS])
+[PASS] checkDeployCodeHaltOther() ([METRICS])
 [PASS] checkMockedInner() ([METRICS])
 [FAIL: Reverter != expected reverter: 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f != 0x2e234DAe75C793f67A35089C9d99245E1C58470b; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMockedOuter() ([METRICS])
 [PASS] checkNestedInner() ([METRICS])
 [FAIL: Reverter != expected reverter: 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f != 0x2e234DAe75C793f67A35089C9d99245E1C58470b; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkNestedOuter() ([METRICS])
 [PASS] checkValueTransferInner() ([METRICS])
 [FAIL: Reverter != expected reverter: 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f != 0x2e234DAe75C793f67A35089C9d99245E1C58470b; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkValueTransferOuter() ([METRICS])
-Suite result: FAILED. 9 passed; 8 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 10 passed; 7 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
