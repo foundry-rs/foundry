@@ -5823,7 +5823,6 @@ dependencies = [
  "alloy-rpc-types",
  "alloy-signer",
  "alloy-signer-local",
- "alloy-transport",
  "anvil",
  "async-lsp",
  "axum",
