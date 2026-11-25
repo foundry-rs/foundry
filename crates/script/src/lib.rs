@@ -485,6 +485,9 @@ impl ScriptArgs {
         if shell::is_json() {
             config.live_logs = false;
         }
+        if config.tracing.decode_internal && !args.debug {
+            config.enable_internal_call_artifacts();
+        }
         if args.debug {
             if !config.extra_output.contains(&ContractOutputSelection::StorageLayout) {
                 config.extra_output.push(ContractOutputSelection::StorageLayout);

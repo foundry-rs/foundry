@@ -1,3 +1,8 @@
+use super::{
+    CodeFunctions, FunctionEntry,
+    functions::{SourceFunction, UserType, UserTypes, collect, name_of_key},
+};
+use evm2::interpreter::opcode::OpCode;
 use eyre::{Context, Result};
 use foundry_common::{
     compact_to_contract, external_compiler::is_external_artifact, is_deploy_helper_path,
@@ -6,13 +11,14 @@ use foundry_common::{
 use foundry_compilers::{
     Artifact, ProjectCompileOutput,
     artifacts::{
-        Bytecode, ContractBytecodeSome, Libraries, Source, Sources,
+        Bytecode, ContractBytecodeSome, FunctionDebugData, Libraries, Source, Sources,
         sourcemap::{SourceElement, SourceMap},
     },
+    buildinfo::SourceEdit,
     multi::MultiCompilerLanguage,
 };
 use foundry_config::read_build_info_input;
-use foundry_evm_core::ic::PcIcMap;
+use foundry_evm_core::{bytecode::InstIter, ic::PcIcMap};
 use foundry_linking::Linker;
 use rayon::prelude::*;
 use serde::Deserialize;
@@ -32,6 +38,13 @@ pub struct SourceData {
     /// Maps contract name to (start, end) of the contract definition in the source code.
     /// This is useful for determining which contract contains given function definition.
     pub contract_definitions: Vec<(String, Range<usize>)>,
+    /// Maps the byte offset of a function, modifier, or public state variable definition to it.
+    pub functions: HashMap<usize, Arc<SourceFunction>>,
+    /// The user-defined types that the source declares.
+    pub user_types: Vec<(String, UserType)>,
+    /// The edits that a preprocessor made to the source before compilation, sorted by start
+    /// offset. The compiler's source locations refer to the edited source.
+    pub source_edits: Vec<SourceEdit>,
 }
 
 impl SourceData {
@@ -41,8 +54,11 @@ impl SourceData {
         language: MultiCompilerLanguage,
         path: PathBuf,
         root: &Path,
+        source_edits: Vec<SourceEdit>,
     ) -> Self {
         let mut contract_definitions = Vec::new();
+        let mut functions = HashMap::new();
+        let mut user_types = Vec::new();
 
         match language {
             MultiCompilerLanguage::Vyper(_) => {
@@ -55,7 +71,8 @@ impl SourceData {
                 let r = output.parser().solc().compiler().enter(|compiler| -> Option<()> {
                     let (_, source) = compiler.gcx().get_ast_source(root.join(&path))?;
                     let source_map = compiler.sess().source_map();
-                    for item in source.ast.as_ref()?.items.iter() {
+                    let ast = source.ast.as_ref()?;
+                    for item in ast.items.iter() {
                         if let solar::ast::ItemKind::Contract(contract) = &item.kind {
                             let Some(contract_range) = span_to_range(source_map, item.span) else {
                                 continue;
@@ -63,6 +80,7 @@ impl SourceData {
                             contract_definitions.push((contract.name.to_string(), contract_range));
                         }
                     }
+                    collect(ast, source_map, &mut functions, &mut user_types);
                     Some(())
                 });
                 if r.is_none() {
@@ -71,7 +89,7 @@ impl SourceData {
             }
         }
 
-        Self { source, language, path, contract_definitions }
+        Self { source, language, path, contract_definitions, functions, user_types, source_edits }
     }
 
     /// Finds name of contract that contains given loc.
@@ -100,14 +118,25 @@ pub struct ArtifactData {
     pub file_id: u32,
     /// Whether the contract was compiled through the via-IR pipeline, if the metadata says.
     pub via_ir: Option<bool>,
+    /// The functions of the creation code.
+    pub functions: CodeFunctions,
+    /// The functions of the runtime code.
+    pub functions_runtime: CodeFunctions,
 }
 
 impl ArtifactData {
+    /// The functions of the creation code if `init_code`, otherwise of the runtime code.
+    pub const fn functions(&self, init_code: bool) -> &CodeFunctions {
+        if init_code { &self.functions } else { &self.functions_runtime }
+    }
+
     fn new(
         bytecode: ContractBytecodeSome,
         build_id: String,
         file_id: u32,
         via_ir: Option<bool>,
+        [function_debug_data, function_debug_data_runtime]: [Option<&BTreeMap<String, FunctionDebugData>>;
+            2],
     ) -> Result<Self> {
         let parse = |b: &Bytecode, name: &str| {
             // Only parse source map if it's not empty.
@@ -120,17 +149,19 @@ impl ArtifactData {
             };
 
             // Only parse bytecode if it's not empty, stripping placeholders if necessary.
-            let pc_ic_map = strip_bytecode_placeholders(&b.object)
-                .and_then(|bytes| (!bytes.is_empty()).then(|| PcIcMap::new(bytes.as_ref())));
+            let code = strip_bytecode_placeholders(&b.object).filter(|bytes| !bytes.is_empty());
+            let pc_ic_map = code.as_ref().map(|bytes| PcIcMap::new(bytes.as_ref()));
+            let jumpdests =
+                code.as_ref().map(|bytes| jumpdests(bytes.as_ref())).unwrap_or_default();
 
-            source_map.map(|source_map| (source_map, pc_ic_map))
+            source_map.map(|source_map| (source_map, pc_ic_map, jumpdests))
         };
-        let (source_map, pc_ic_map) = parse(&bytecode.bytecode, "creation")?;
-        let (source_map_runtime, pc_ic_map_runtime) = bytecode
+        let (source_map, pc_ic_map, jumpdests) = parse(&bytecode.bytecode, "creation")?;
+        let (source_map_runtime, pc_ic_map_runtime, jumpdests_runtime) = bytecode
             .deployed_bytecode
             .bytecode
             .map(|b| parse(&b, "runtime"))
-            .unwrap_or_else(|| Ok((None, None)))?;
+            .unwrap_or_else(|| Ok((None, None, HashSet::new())))?;
 
         Ok(Self {
             source_map,
@@ -140,8 +171,43 @@ impl ArtifactData {
             build_id,
             file_id,
             via_ir,
+            functions: CodeFunctions { entries: entries(function_debug_data), jumpdests },
+            functions_runtime: CodeFunctions {
+                entries: entries(function_debug_data_runtime),
+                jumpdests: jumpdests_runtime,
+            },
         })
     }
+}
+
+/// The offsets of the `JUMPDEST`s in `code`.
+fn jumpdests(code: &[u8]) -> HashSet<u32> {
+    InstIter::new(code)
+        .with_pc()
+        .filter(|(_, inst)| inst.opcode == OpCode::JUMPDEST)
+        .map(|(pc, _)| pc as u32)
+        .collect()
+}
+
+/// The functions that `functionDebugData` places in the code, by entry offset.
+///
+/// An entry the compiler inlined has no offset.
+fn entries(data: Option<&BTreeMap<String, FunctionDebugData>>) -> HashMap<u32, Vec<FunctionEntry>> {
+    let mut entries = HashMap::<u32, Vec<FunctionEntry>>::new();
+    for (key, function) in data.into_iter().flatten() {
+        let (Some(entry_point), Some(parameter_slots), Some(return_slots)) =
+            (function.entry_point, function.parameter_slots, function.return_slots)
+        else {
+            continue;
+        };
+        entries.entry(entry_point).or_default().push(FunctionEntry {
+            id: function.id,
+            name: function.id.and_then(|id| name_of_key(key, id)),
+            parameter_slots: parameter_slots as usize,
+            return_slots: return_slots as usize,
+        });
+    }
+    entries
 }
 
 /// Container with artifacts data useful for identifying individual execution steps.
@@ -151,6 +217,8 @@ pub struct ContractSources {
     pub sources_by_id: HashMap<String, HashMap<u32, Arc<SourceData>>>,
     /// Map over contract name -> Vec<(bytecode, build_id, file_id)>
     pub artifacts_by_name: HashMap<String, Vec<ArtifactData>>,
+    /// The user-defined types of all sources by name, which function parameters refer to.
+    pub user_types: UserTypes,
 }
 
 impl ContractSources {
@@ -176,10 +244,11 @@ impl ContractSources {
             (linker, libraries)
         });
 
-        let artifacts: Vec<_> = output
+        let artifact_ids = output
             .artifact_ids()
             .filter(|(id, _)| !is_external_artifact(&id.build_id))
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>();
+        let artifacts: Vec<_> = artifact_ids
             .par_iter()
             .map(|(id, artifact)| {
                 let mut new_artifact = None;
@@ -189,6 +258,10 @@ impl ContractSources {
                         .metadata
                         .as_ref()
                         .map(|metadata| metadata.settings.via_ir.unwrap_or_default());
+                    let function_debug_data = [
+                        artifact.function_debug_data.as_ref(),
+                        artifact.deployed_function_debug_data.as_ref(),
+                    ];
                     let artifact = if let Some((linker, libraries)) = link_data.as_ref() {
                         linker.link(id, libraries)?
                     } else {
@@ -198,7 +271,13 @@ impl ContractSources {
 
                     new_artifact = Some((
                         id.name.clone(),
-                        ArtifactData::new(bytecode, id.build_id.clone(), file_id, via_ir)?,
+                        ArtifactData::new(
+                            bytecode,
+                            id.build_id.clone(),
+                            file_id,
+                            via_ir,
+                            function_debug_data,
+                        )?,
                     ));
                 } else {
                     warn!(id = id.identifier(), "source not found");
@@ -238,6 +317,7 @@ impl ContractSources {
                             build.language,
                             stripped,
                             root,
+                            build.source_edits.get(source_id).cloned().unwrap_or_default(),
                         ));
                         entry.insert(source_data.clone());
                         source_data
@@ -248,6 +328,12 @@ impl ContractSources {
                     .entry(build_id.clone())
                     .or_default()
                     .insert(*source_id, source_data);
+            }
+        }
+
+        for source_data in files.values() {
+            for (name, ty) in &source_data.user_types {
+                self.add_user_type(name.clone(), Some(ty.clone()));
             }
         }
 
@@ -294,9 +380,26 @@ impl ContractSources {
         }
     }
 
+    /// Records a user-defined type. A name that two different types have resolves to none.
+    fn add_user_type(&mut self, name: String, ty: Option<UserType>) {
+        match self.user_types.entry(name) {
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(ty);
+            }
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                if entry.get() != &ty {
+                    entry.insert(None);
+                }
+            }
+        }
+    }
+
     /// Merges given contract sources.
     pub fn merge(&mut self, sources: Self) {
         self.sources_by_id.extend(sources.sources_by_id);
+        for (name, ty) in sources.user_types {
+            self.add_user_type(name, ty);
+        }
         for (name, artifacts) in sources.artifacts_by_name {
             self.artifacts_by_name.entry(name).or_default().extend(artifacts);
         }
@@ -314,6 +417,16 @@ impl ContractSources {
                 Some((artifact, source.as_ref()))
             })
         })
+    }
+
+    /// Returns the artifact of a contract that has the most information about its functions: the
+    /// first with entry points for the code, or else the first.
+    pub fn find_artifact(&self, name: &str, init_code: bool) -> Option<&ArtifactData> {
+        let artifacts = self.artifacts_by_name.get(name)?;
+        artifacts
+            .iter()
+            .find(|artifact| !artifact.functions(init_code).entries.is_empty())
+            .or_else(|| artifacts.first())
     }
 
     /// Returns all (name, bytecode, source) sets.
@@ -390,6 +503,9 @@ mod tests {
                 language: Default::default(),
                 path: PathBuf::from(path),
                 contract_definitions: Vec::new(),
+                functions: HashMap::new(),
+                user_types: Vec::new(),
+                source_edits: Vec::new(),
             })
         };
         let mut sources = ContractSources::default();

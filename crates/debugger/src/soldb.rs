@@ -1021,6 +1021,9 @@ mod tests {
                 language: Default::default(),
                 path: PathBuf::from("src/C.sol"),
                 contract_definitions: Vec::new(),
+                functions: Default::default(),
+                user_types: Vec::new(),
+                source_edits: Vec::new(),
             }),
         );
         sources.artifacts_by_name.insert(
@@ -1033,6 +1036,8 @@ mod tests {
                 build_id: "build".to_string(),
                 file_id: 0,
                 via_ir: Some(false),
+                functions: Default::default(),
+                functions_runtime: Default::default(),
             }],
         );
         let mut arena = CallTraceArena::default();

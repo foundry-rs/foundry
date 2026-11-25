@@ -71,6 +71,9 @@ pub(crate) async fn handle_traces(
         // Status prose goes to stderr so `--json` output on stdout stays machine-readable.
         let _ = sh_status!("Compiling project to generate artifacts");
         let mut config = config.clone();
+        if tracing.decode_internal && !debug {
+            config.enable_internal_call_artifacts();
+        }
         if debug {
             if !config.extra_output.contains(&ContractOutputSelection::StorageLayout) {
                 config.extra_output.push(ContractOutputSelection::StorageLayout);

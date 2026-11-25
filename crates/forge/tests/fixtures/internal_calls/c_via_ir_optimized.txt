@@ -1,0 +1,97 @@
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 9 tests for test/C.t.sol:CTest
+[PASS] test_add() ([GAS])
+Traces:
+  [..] CTest::test_add()
+    ├─ [..] → new C@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 893 bytes of code
+    ├─ [..] C::runAdd(3, 4) [staticcall]
+    │   └─ ← [Return] 7
+    └─ ← [Stop]
+
+[PASS] test_asm() ([GAS])
+Traces:
+  [..] CTest::test_asm()
+    ├─ [..] → new C@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 893 bytes of code
+    ├─ [..] C::runAsm(3) [staticcall]
+    │   └─ ← [Return] 6
+    └─ ← [Stop]
+
+[PASS] test_fact() ([GAS])
+Traces:
+  [..] CTest::test_fact()
+    ├─ [..] → new C@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 893 bytes of code
+    ├─ [..] C::runFact(3) [staticcall]
+    │   ├─ [..] C::fact(uint256)(3)
+    │   │   ├─ [..] C::fact(uint256)(2)
+    │   │   │   ├─ [..] C::fact(uint256)(1)
+    │   │   │   │   ├─ [..] C::fact(uint256)(0)
+    │   │   │   │   │   └─ ← 1
+    │   │   │   │   └─ ← 1
+    │   │   │   └─ ← 2
+    │   │   └─ ← 6
+    │   └─ ← [Return] 6
+    └─ ← [Stop]
+
+[PASS] test_lib() ([GAS])
+Traces:
+  [..] CTest::test_lib()
+    ├─ [..] → new C@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 893 bytes of code
+    ├─ [..] C::runLib(3) [staticcall]
+    │   └─ ← [Return] 9
+    └─ ← [Stop]
+
+[PASS] test_mod() ([GAS])
+Traces:
+  [..] CTest::test_mod()
+    ├─ [..] → new C@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 893 bytes of code
+    ├─ [..] C::runMod(1)
+    │   └─ ← [Return] 1
+    └─ ← [Stop]
+
+[PASS] test_ptr() ([GAS])
+Traces:
+  [..] CTest::test_ptr()
+    ├─ [..] → new C@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 893 bytes of code
+    ├─ [..] C::runPtr(5, true)
+    │   └─ ← [Return] 10
+    └─ ← [Stop]
+
+[PASS] test_super() ([GAS])
+Traces:
+  [..] CTest::test_super()
+    ├─ [..] → new C@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 893 bytes of code
+    ├─ [..] C::runSuper(3)
+    │   └─ ← [Return] 26
+    └─ ← [Stop]
+
+[PASS] test_tail() ([GAS])
+Traces:
+  [..] CTest::test_tail()
+    ├─ [..] → new C@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 893 bytes of code
+    ├─ [..] C::runTail(5)
+    │   └─ ← [Return] 18
+    └─ ← [Stop]
+
+[PASS] test_tiny() ([GAS])
+Traces:
+  [..] CTest::test_tiny()
+    ├─ [..] → new C@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 893 bytes of code
+    ├─ [..] C::runTiny(7) [staticcall]
+    │   └─ ← [Return] 21
+    └─ ← [Stop]
+
+Suite result: ok. 9 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 9 tests passed, 0 failed, 0 skipped (9 total tests)

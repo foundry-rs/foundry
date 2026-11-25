@@ -1252,6 +1252,15 @@ impl TestArgs {
         {
             config.extra_output.push(ContractOutputSelection::StorageLayout);
         }
+        // The debugger decodes internal calls from compiler sources itself.
+        let decode_internal = config.tracing.decode_internal
+            || self.tracing.decode_internal
+            || self.flamegraph
+            || self.flamechart
+            || self.evm_profile.is_some();
+        if decode_internal && !self.debug {
+            config.enable_internal_call_artifacts();
+        }
         if self.debug {
             // Full build infos keep the sources the compiler saw, which dynamic test linking
             // rewrites in test files.

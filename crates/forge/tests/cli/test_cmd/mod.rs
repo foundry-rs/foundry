@@ -34,6 +34,7 @@ mod fork_prefetch;
 mod fork_state_by_number;
 mod fuzz;
 mod halts;
+mod internal_calls;
 mod invariant;
 mod logs;
 mod mutation;

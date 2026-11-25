@@ -22,10 +22,14 @@ use evm2::{
 use eyre::{OptionExt, Result};
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
-    Artifact, Project, ProjectBuilder, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
+    Artifact, ConfigurableArtifacts, Project, ProjectBuilder, ProjectCompileOutput,
+    ProjectPathsConfig, SolcConfig,
     artifacts::{
         BytecodeObject, Contract, Error as SolcError, SecondarySourceLocation, Severity, Source,
-        output_selection::OutputSelection,
+        output_selection::{
+            BytecodeOutputSelection, ContractOutputSelection, DeployedBytecodeOutputSelection,
+            OutputSelection,
+        },
         remappings::{RelativeRemapping, Remapping},
     },
     compilers::{
@@ -962,6 +966,16 @@ pub fn etherscan_project(metadata: &Metadata, target_path: &Path) -> Result<Proj
 
     let compiler = MultiCompiler { solc: Some(SolcCompiler::Specific(solc)), vyper: None };
 
+    // The debugger decodes internal calls with the function tables.
+    let artifacts = ConfigurableArtifacts::new(
+        [
+            ContractOutputSelection::from(BytecodeOutputSelection::FunctionDebugData),
+            ContractOutputSelection::from(DeployedBytecodeOutputSelection::FunctionDebugData),
+        ],
+        [],
+    );
+    let settings = settings.with_extra_output(artifacts.output_selection());
+
     Ok(ProjectBuilder::<MultiCompiler>::default()
         .settings(MultiCompilerSettings {
             solc: SolcSettings {
@@ -970,6 +984,7 @@ pub fn etherscan_project(metadata: &Metadata, target_path: &Path) -> Result<Proj
             },
             ..Default::default()
         })
+        .artifacts(artifacts)
         .paths(paths)
         .ephemeral()
         .no_artifacts()

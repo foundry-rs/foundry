@@ -24,7 +24,10 @@ use foundry_compilers::{
         BytecodeHash, Contract, DebuggingSettings, EvmVersion, Libraries, ModelCheckerSettings,
         ModelCheckerTarget, Optimizer, OptimizerDetails, RevertStrings, Settings, SettingsMetadata,
         Severity,
-        output_selection::{ContractOutputSelection, OutputSelection},
+        output_selection::{
+            BytecodeOutputSelection, ContractOutputSelection, DeployedBytecodeOutputSelection,
+            OutputSelection,
+        },
         remappings::{RelativeRemapping, Remapping},
         serde_helpers,
     },
@@ -2334,6 +2337,23 @@ impl Config {
             CliSettings { extra_args: self.extra_args.clone(), ..Default::default() };
 
         Ok(SolcSettings { settings, cli_settings })
+    }
+
+    /// Requests what internal call decoding reads from the artifacts: the `functionDebugData` of
+    /// the creation and the runtime code, which lists the functions.
+    ///
+    /// The tables are small, but they change the compiler output selection, so the first run
+    /// that needs them compiles the files it runs again.
+    pub fn enable_internal_call_artifacts(&mut self) {
+        let function_debug_data = [
+            ContractOutputSelection::from(BytecodeOutputSelection::FunctionDebugData),
+            ContractOutputSelection::from(DeployedBytecodeOutputSelection::FunctionDebugData),
+        ];
+        for selection in function_debug_data {
+            if !self.extra_output.contains(&selection) {
+                self.extra_output.push(selection);
+            }
+        }
     }
 
     /// Enables build infos for a debug run, which reads the compiled sources from them. Unless
@@ -6591,6 +6611,28 @@ mod tests {
         let mut config = Config { build_info: true, ..Config::default() };
         config.enable_debug_build_info().unwrap();
         assert!(requests_ast(&config));
+    }
+
+    #[test]
+    fn internal_call_artifacts_request_both_function_tables_only() {
+        let requested = |config: &Config| {
+            let settings = config.solc_settings().unwrap().settings;
+            let outputs = settings.output_selection.as_ref()["*"].clone();
+            (
+                outputs.contains_key(""),
+                outputs["*"].iter().any(|output| output == "evm.bytecode.functionDebugData"),
+                outputs["*"]
+                    .iter()
+                    .any(|output| output == "evm.deployedBytecode.functionDebugData"),
+            )
+        };
+
+        let mut config = Config::default();
+        assert_eq!(requested(&config), (false, false, false));
+        config.enable_internal_call_artifacts();
+        config.enable_internal_call_artifacts();
+        assert_eq!(requested(&config), (false, true, true));
+        assert_eq!(config.extra_output.len(), 2);
     }
 
     #[test]
