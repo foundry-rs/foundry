@@ -119,16 +119,18 @@ pub fn rpc_failure_in(error: &(dyn std::error::Error + 'static)) -> Option<RpcFa
             return match database {
                 DatabaseError::GetAccount(.., error)
                 | DatabaseError::GetStorage(.., error)
-                | DatabaseError::GetBlockHash(_, error)
                 | DatabaseError::GetFullBlock(_, error)
                 | DatabaseError::AnyRequest(error) => {
                     Some(rpc_failure((**error).as_ref()).unwrap_or_default())
                 }
-                // Without a transport error, the endpoint answered that it has no such transaction.
-                DatabaseError::GetTransaction(_, error) => Some(
-                    rpc_failure((**error).as_ref())
-                        .unwrap_or(RpcFailure { answered: true, ..Default::default() }),
-                ),
+                // Without a transport error, the endpoint answered, such as with no transaction or
+                // no ancestor block.
+                DatabaseError::GetTransaction(_, error) | DatabaseError::GetBlockHash(_, error) => {
+                    Some(
+                        rpc_failure((**error).as_ref())
+                            .unwrap_or(RpcFailure { answered: true, ..Default::default() }),
+                    )
+                }
                 DatabaseError::BlockNotFound(_) => {
                     Some(RpcFailure { answered: true, ..Default::default() })
                 }
@@ -139,4 +141,17 @@ pub fn rpc_failure_in(error: &(dyn std::error::Error + 'static)) -> Option<RpcFa
         }
     }
     rpc_failure(error)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn missing_ancestor_block_is_answered() {
+        let error =
+            DatabaseError::GetBlockHash(1, Arc::new(eyre::eyre!("anchored block 1 not found")));
+        assert_eq!(rpc_failure_in(&error).unwrap().kind(), "rpc.error");
+    }
 }

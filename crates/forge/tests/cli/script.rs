@@ -12015,6 +12015,16 @@ Context:
 - environment variable not found
 
 "#]]);
+    cmd.forge_fuse()
+        .args(["script", "Succeeds", "--broadcast", "--session", "--json"])
+        .assert_failure()
+        .stdout_eq(
+            str![[r#"
+{"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"config.error","message":"environment variable `MISSING_RPC_KEY` not found; environment variable not found"}],"warnings":[]}
+
+"#]]
+            .is_jsonlines(),
+        );
 }
 
 // With `--json`, an RPC failure is coded `rpc.error` when the endpoint answered with an error and

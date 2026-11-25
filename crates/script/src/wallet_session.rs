@@ -4,7 +4,7 @@
 //! `cast wallet session --for` invocation and keeps those wrapper details out of the main script
 //! execution flow.
 
-use crate::ScriptArgs;
+use crate::{ScriptArgs, coded};
 use alloy_primitives::Address;
 use clap::Args;
 use eyre::{Result, WrapErr};
@@ -276,7 +276,8 @@ impl ScriptArgs {
         *program = forge_program;
         let inner = quote_command(&inner)?;
 
-        let (config, evm_opts) = self.load_config_and_evm_opts()?;
+        let (config, evm_opts) =
+            self.load_config_and_evm_opts().map_err(|err| coded(err, "config.error"))?;
         let session = &self.wallet_session;
         let mut args = vec![OsString::from("wallet"), OsString::from("session")];
         push_arg(&mut args, "--profile", Config::selected_profile().to_string());

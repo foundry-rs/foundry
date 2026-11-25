@@ -547,7 +547,15 @@ fn rpc_error_code_from_body(body: &str) -> Option<i64> {
     // first complete JSON value instead of requiring the entire body to be JSON.
     let value =
         serde_json::Deserializer::from_str(body).into_iter::<serde_json::Value>().next()?.ok()?;
-    let error = value.get("error").unwrap_or(&value);
+    let error = match value.get("error") {
+        Some(error) => error,
+        // A bare JSON-RPC error has a message, unlike other bodies with a `code`, such as a
+        // gateway's.
+        None => {
+            value.get("message")?.as_str()?;
+            &value
+        }
+    };
     error.get("code")?.as_i64()
 }
 
@@ -714,6 +722,19 @@ mod tests {
         assert!(!is_rpc_method_not_found(&internal_error));
         assert!(!is_rpc_method_not_found(&http_internal_error));
         assert!(!is_rpc_method_not_found(&transport_error));
+    }
+
+    #[test]
+    fn gateway_error_code_is_not_a_json_rpc_code() {
+        let error = alloy_transport::TransportErrorKind::http_error(
+            401,
+            r#"{"code":401,"title":"Unauthorized","type":"about:blank","status":401}"#.to_string(),
+        );
+        let failure = rpc_failure(&error).unwrap();
+        assert_eq!(
+            (failure.kind(), failure.code, failure.status),
+            ("rpc.transport", None, Some(401))
+        );
     }
 
     #[test]
