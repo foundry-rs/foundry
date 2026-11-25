@@ -101,7 +101,8 @@ fn resolve_entry(
     let (entry, function) = match choose_entry(&named, defined.as_deref())? {
         Choice::Function(entry, function) => (entry, function.info(&sources.user_types)),
         Choice::Ambiguous(entry, function) => {
-            let name = function.qualified_name();
+            // The entries do not tell which contract's function ran.
+            let name = function.name.clone();
             let is_entry = function.is_entry;
             (entry, FunctionInfo { name, params: None, returns: None, is_entry, selector: None })
         }
@@ -121,7 +122,8 @@ enum Choice<'a> {
     /// The function that the source map and the key agree on.
     Function(&'a FunctionEntry, &'a SourceFunction),
     /// Functions that the compiler merged into one entry, which share a name, such as overloads
-    /// that differ in a type only. The call does not tell which of them ran.
+    /// that differ in a type only, or functions of other contracts. The call does not tell which
+    /// of them ran.
     Ambiguous(&'a FunctionEntry, &'a SourceFunction),
     /// The name of the key, if the source map has no function that agrees with it.
     KeyName(&'a FunctionEntry),
@@ -131,7 +133,8 @@ enum Choice<'a> {
 /// `defined` at the offset in the source.
 ///
 /// The compiler merges functions with the same code into one entry, and the call does not tell
-/// which of them ran. Such a call is shown only if they share a name, and then without types.
+/// which of them ran. Such a call is shown only if they share a name, and then without types or
+/// contract.
 fn choose_entry<'a>(
     named: &[&'a FunctionEntry],
     defined: Option<&'a SourceFunction>,

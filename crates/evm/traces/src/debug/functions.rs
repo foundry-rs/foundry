@@ -85,14 +85,6 @@ enum SourceType {
 }
 
 impl SourceFunction {
-    /// `Contract::name`, or `name` for a free function.
-    pub fn qualified_name(&self) -> String {
-        match &self.contract {
-            Some(contract) => format!("{contract}::{}", self.name),
-            None => self.name.clone(),
-        }
-    }
-
     /// Resolves the types of the parameters and return values.
     pub fn info(&self, user_types: &UserTypes) -> FunctionInfo {
         let resolve = |params: &Option<Vec<SourceParam>>| {
@@ -293,7 +285,9 @@ pub fn name_of_key(key: &str, id: u32) -> Option<String> {
         .or_else(|| key.strip_prefix("getter_fun_"))
         .or_else(|| key.strip_prefix("modifier_"))
         .or_else(|| key.strip_prefix("fun_"))?;
-    Some(name.strip_suffix(&format!("_{id}")).unwrap_or(name).to_string())
+    // The fallback function has no name.
+    let name = name.strip_suffix(&format!("_{id}")).unwrap_or(name);
+    (!name.is_empty()).then(|| name.to_string())
 }
 
 /// Whether the name that a key spells is the name of the function `name`, up to the leading
@@ -328,6 +322,7 @@ mod tests {
         assert_eq!(name_of_key("modifier_onlyPositive", 52).as_deref(), Some("onlyPositive"));
         assert_eq!(name_of_key("getter_fun_s", 31).as_deref(), Some("s"));
         assert_eq!(name_of_key("abi_decode_t_uint256", 1), None);
+        assert_eq!(name_of_key("fun_", 90), None);
     }
 
     #[test]
