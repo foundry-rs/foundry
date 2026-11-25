@@ -922,7 +922,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         worker_plan,
                         invariant_contract.clone(),
                         fuzz_fixtures,
-                        fuzz_state.fork(),
+                        fuzz_state.clone(),
                         progress,
                         &campaign_state,
                         worker_campaign_seed,

@@ -22,6 +22,7 @@ use foundry_common::{
 };
 use foundry_config::FuzzDictionaryConfig;
 use foundry_evm_core::eip2935::is_history_storage_address;
+use itertools::Itertools;
 use std::{cell::RefCell, fmt, rc::Rc, sync::Arc};
 
 #[cfg(test)]
@@ -106,10 +107,6 @@ impl EvmFuzzState {
             inner: FuzzStateInner::Invariant(Rc::new(RefCell::new((*self.inner).clone()))),
             deployed_libs: self.deployed_libs,
         }
-    }
-
-    pub fn fork(&self) -> Self {
-        Self { inner: Arc::clone(&self.inner), deployed_libs: self.deployed_libs.clone() }
     }
 
     #[cfg(test)]
@@ -418,7 +415,7 @@ impl FuzzDictionary {
 
         // We need at least some state data if DB is empty,
         // otherwise we can't select random data for state fuzzing.
-        if self.values().is_empty() {
+        if self.is_empty() {
             // Prefill with a random address.
             self.insert_value(Address::random().into_word());
         }
@@ -437,13 +434,12 @@ impl FuzzDictionary {
         result: &Bytes,
         run_depth: u32,
     ) {
+        // Decode result and collect samples to be used in subsequent fuzz runs.
         if let Some(function) = function
             && !function.outputs.is_empty()
+            && let Ok(decoded_result) = function.abi_decode_output(result)
         {
-            // Decode result and collect samples to be used in subsequent fuzz runs.
-            if let Ok(decoded_result) = function.abi_decode_output(result) {
-                self.insert_sample_values(decoded_result, run_depth);
-            }
+            self.insert_sample_values(decoded_result, run_depth);
         }
     }
 
@@ -511,28 +507,16 @@ impl FuzzDictionary {
         log: &Log,
         samples: &mut Vec<DynSolValue>,
     ) -> bool {
-        let mut matched = matched_events.iter().peekable();
-        let mut anonymous = anonymous_events.iter().peekable();
-        while matched.peek().is_some() || anonymous.peek().is_some() {
-            let event = match (matched.peek(), anonymous.peek()) {
-                (Some(matched_event), Some(anonymous_event)) => {
-                    if matched_event.order() < anonymous_event.order() {
-                        matched.next().unwrap()
-                    } else {
-                        anonymous.next().unwrap()
-                    }
-                }
-                (Some(_), None) => matched.next().unwrap(),
-                (None, Some(_)) => anonymous.next().unwrap(),
-                (None, None) => unreachable!(),
-            };
-            if let Ok(decoded_event) = event.event().decode_log(log) {
-                samples.extend(decoded_event.indexed);
-                samples.extend(decoded_event.body);
-                return true;
-            }
-        }
-        false
+        let Some(decoded_event) = matched_events
+            .iter()
+            .merge_by(anonymous_events, |matched, anonymous| matched.order() < anonymous.order())
+            .find_map(|event| event.event().decode_log(log).ok())
+        else {
+            return false;
+        };
+        samples.extend(decoded_event.indexed);
+        samples.extend(decoded_event.body);
+        true
     }
 
     /// Insert values from the accounts and storage loaded by a call into fuzz dictionary.
@@ -643,8 +627,7 @@ impl FuzzDictionary {
     }
 
     fn collect_push_bytes(&mut self, code: &[u8]) {
-        let len = code.len().min(PUSH_BYTE_ANALYSIS_LIMIT);
-        let code = &code[..len];
+        let code = &code[..code.len().min(PUSH_BYTE_ANALYSIS_LIMIT)];
         let mut seen = HashSet::default();
         for inst in Instructions::new(code, SpecId::NEXT) {
             if self.values_full() {

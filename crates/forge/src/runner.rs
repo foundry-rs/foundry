@@ -5886,7 +5886,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 .setup
                 .fuzz_state
                 .get_or_init(|| self.build_fuzz_state_uncached(false, config))
-                .fork();
+                .clone();
         }
 
         self.build_fuzz_state_uncached(invariant, config)
