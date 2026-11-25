@@ -5,6 +5,7 @@ use alloy_primitives::bytes;
 use alloy_signer::SignerSync;
 use anvil::eth::pool::transactions::TransactionOrder;
 use foundry_common::HYPERLIQUID_SYSTEM_ADDRESS;
+use foundry_compilers::artifacts::BytecodeHash;
 use foundry_test_utils::rpc::{spawn_rpc_proxy_canned_method, spawn_rpc_proxy_mapping_method};
 
 // <https://github.com/foundry-rs/foundry/issues/2705>
@@ -1177,6 +1178,69 @@ src/b/Token.sol:12 in set  (step [..])
    12 |         value = newValue;
 Exiting debugger.
 
+"#]]);
+}
+
+// Without the metadata hash, both `Token` runtimes are identical. `src/b` Token is created in an
+// earlier transaction, so the call can't tell which one ran and shows neither source.
+#[forgetest]
+async fn cast_run_debug_soldb_same_name_identical_runtime(prj: _, cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    prj.update_config(|config| config.bytecode_hash = BytecodeHash::None);
+    add_metadata_only_tokens(&prj);
+
+    let b = forge_create(&mut cmd, &endpoint, &["src/b/Token.sol:Token"]);
+    let set =
+        cast_send(&mut cmd, &endpoint, &[b["deployedTo"].as_str().unwrap(), "set(uint256)", "7"]);
+
+    cast_run_debug(&mut cmd, &prj, &endpoint, &b, "break src/b/Token.sol:8\ncontinue\nquit\n")
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Breakpoint #1 set at src/b/Token.sol:8
+Breakpoint #1 hit at step [..], src/b/Token.sol:8
+src/b/Token.sol:8 in constructor  (step [..])
+    8 |         value = 2;
+Exiting debugger.
+
+"#]]);
+
+    cast_run_debug(&mut cmd, &prj, &endpoint, &set, "break src/a/Token.sol:12\ncontinue\nquit\n")
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+No sources matched the executed contracts; stepping is by instruction.
+...
+"#]]);
+}
+
+// Same as above with a differently named contract. The trace identifier names the address after
+// one of the identical runtimes, so the name can't settle the tie either.
+#[forgetest]
+async fn cast_run_debug_soldb_other_name_identical_runtime(prj: _, cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    prj.update_config(|config| config.bytecode_hash = BytecodeHash::None);
+    add_metadata_only_tokens(&prj);
+    prj.add_source(
+        "Other.sol",
+        &metadata_only_token(3).replace("contract Token", "contract Other"),
+    );
+
+    let other = forge_create(&mut cmd, &endpoint, &["src/Other.sol:Other"]);
+    let set = cast_send(
+        &mut cmd,
+        &endpoint,
+        &[other["deployedTo"].as_str().unwrap(), "set(uint256)", "7"],
+    );
+
+    cast_run_debug(&mut cmd, &prj, &endpoint, &set, "break src/a/Token.sol:12\ncontinue\nquit\n")
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+No sources matched the executed contracts; stepping is by instruction.
+...
 "#]]);
 }
 

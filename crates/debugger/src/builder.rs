@@ -217,13 +217,11 @@ fn identify_code<'a>(
     code: &[u8],
 ) -> Option<ContractIdentity<'a>> {
     // Artifacts can share a runtime, e.g. with `bytecode_hash = "none"` and different
-    // constructors, so ties go to the artifact that created the address, else to its name.
-    let preferred = |id: &ArtifactId| match creator {
-        Some(creator) => id == creator,
-        None => address_name == Some(&id.name),
-    };
-    // If the metadata-only matches leave more than one candidate, we can't tell which ran, so none
-    // is used.
+    // constructors, so ties go to the artifact that created the address. The address name doesn't
+    // break ties: for local artifacts it comes from matching this same code.
+    let preferred = |id: &ArtifactId| creator == Some(id);
+    // If the matches leave more than one candidate, e.g. contracts created in an earlier
+    // transaction, we can't tell which ran, so none is used.
     if let Ok(Some((id, _))) =
         known_contracts.find_by_deployed_code_exact_unambiguous_preferred(code, preferred)
     {
