@@ -142,8 +142,14 @@ pub fn track_internal_calls(
     steps: &[CallTraceStep],
     context: &TrackerContext<'_>,
 ) -> Vec<InternalCall> {
-    let mut tracker =
-        Tracker { steps, context, frames: Vec::new(), calls: Vec::new(), resolved: HashMap::new() };
+    let mut tracker = Tracker {
+        steps,
+        context,
+        frames: Vec::new(),
+        calls: Vec::new(),
+        resolved: HashMap::new(),
+        entered: false,
+    };
     for (i, step) in steps.iter().enumerate() {
         if step.op == OpCode::JUMP {
             tracker.jump(i);
@@ -159,6 +165,8 @@ struct Tracker<'a> {
     calls: Vec<InternalCall>,
     /// The stack words and function of each entry offset that a call went to.
     resolved: HashMap<u32, (usize, usize, Option<Arc<FunctionInfo>>)>,
+    /// Whether the external function that the call node runs has been entered.
+    entered: bool,
 }
 
 impl Tracker<'_> {
@@ -237,14 +245,17 @@ impl Tracker<'_> {
         // shows already. Creation code has no dispatcher, so its calls are internal. In the
         // fallback and receive functions, which no dispatcher enters, a call to a public function
         // is internal unless the call data selects that function. The dispatcher can run inside
-        // helper functions, which are not shown.
+        // helper functions, which are not shown. Only the first entry is hidden, so that a public
+        // function that calls itself, or another function of the same name, shows its inner calls.
         if !self.context.is_create
+            && !self.entered
             && self.frames.iter().all(|frame| frame.function.is_none())
             && function.as_ref().is_some_and(|function| {
                 function.is_entry && (self.context.is_dispatched)(&function.declared_name)
             })
         {
             function = None;
+            self.entered = true;
         }
         let args = function.as_ref().and_then(|function| {
             let convention = convention?;
@@ -484,6 +495,24 @@ mod tests {
         assert_eq!(
             track_in(&steps, legacy, 1, f(), (false, &|name| name == "g")),
             [(0, 3, "f".into(), strings(&["7"]), strings(&["9"]))]
+        );
+    }
+
+    #[test]
+    fn only_the_first_entry_call_is_hidden() {
+        // A public `f` that the dispatcher enters and that calls itself.
+        let steps = [
+            jump(F, &[RET.into(), 7]),
+            jump(F, &[OTHER_RET.into(), 5]),
+            jump(OTHER_RET, &[6]),
+            jump(RET, &[9]),
+        ]
+        .concat();
+        let legacy = Some(CallConvention::SolcLegacy);
+
+        assert_eq!(
+            track(&steps, legacy, 1, function("f", Some(1), true)),
+            [(2, 5, "f".into(), strings(&["5"]), strings(&["6"]))]
         );
     }
 
