@@ -1567,11 +1567,12 @@ mod tests {
                 if let Some(callee) = &hints.unique_callee {
                     let item = &visitor.items[id];
                     assert!(matches!(item.kind, CoverageItemKind::Statement));
-                    let text = &main[item.loc.bytes()];
                     assert!(calls.iter().any(|(&call, location)| {
-                        location.bytes == callee.bytes
+                        let call = gcx.sess.source_map().span_to_source(call).unwrap();
+                        call.file.name == source.file.name
+                            && call.data == item.loc.bytes()
+                            && location.bytes == callee.bytes
                             && location.source_id == callee.source_id
-                            && gcx.sess.source_map().span_to_snippet(call).unwrap() == text
                     }));
                 }
             }
