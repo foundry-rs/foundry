@@ -47,7 +47,18 @@ type EdgeAnchor = (ItemAnchor, Option<u32>, Vec<(u32, bool)>);
 fn jump_destination(immediate: &[u8]) -> eyre::Result<u32> {
     // We do not support program counters bigger than u32.
     ensure!(immediate.len() <= 4, "jump destination overflow");
-    Ok(immediate.iter().fold(0, |acc, &byte| acc << 8 | byte as u32))
+    Ok(be_u32(immediate))
+}
+
+/// Reads big-endian bytes, at most four, as a number.
+fn be_u32(bytes: &[u8]) -> u32 {
+    bytes.iter().fold(0, |acc, &byte| acc << 8 | byte as u32)
+}
+
+/// Returns the pushes in `sorted`, ordered by target pc, that push `pc`.
+fn pushes_to(sorted: &[(u32, usize)], pc: u32) -> impl Iterator<Item = usize> + '_ {
+    let start = sorted.partition_point(|&(target, _)| target < pc);
+    sorted[start..].iter().take_while(move |&&(target, _)| target == pc).map(|&(_, push)| push)
 }
 
 /// Attempts to find anchors for the given items using the given source map and bytecode.
@@ -274,7 +285,7 @@ impl<'a> AnchorIndex<'a> {
             }
             prev_target = (opcode::PUSH1..=opcode::PUSH4)
                 .contains(&inst.opcode.get())
-                .then(|| inst.immediate.iter().fold(0, |acc, &byte| acc << 8 | byte as usize));
+                .then(|| be_u32(inst.immediate) as usize);
             match inst.opcode.get() {
                 opcode::REVERT | opcode::INVALID => {
                     reverting_runs.push(run_start..ic + 1);
@@ -302,7 +313,7 @@ impl<'a> AnchorIndex<'a> {
                     branches.push((ic, next_pc, inst.immediate));
                 }
                 if inst.immediate.len() <= 4 {
-                    let target = inst.immediate.iter().fold(0, |acc, &byte| acc << 8 | byte as u32);
+                    let target = be_u32(inst.immediate);
                     let feeds_jump = matches!(jump, Some(opcode::JUMP | opcode::JUMPI));
                     pushes.push((target, ic, feeds_jump));
                     if feeds_jump {
@@ -525,7 +536,7 @@ impl<'a> AnchorIndex<'a> {
     fn block_maps_inside(&self, pc: u32, loc: &SourceLocation) -> bool {
         let Some(start) = self.ic_pc_map.ic(pc as usize) else { return false };
         for (ic, next) in self.ic_pc_map.iter().skip(start) {
-            if self.source_map.get(ic).is_some_and(|element| is_within_source_span(element, loc)) {
+            if self.maps_inside(ic, loc) {
                 return true;
             }
             if matches!(
@@ -603,11 +614,8 @@ impl<'a> AnchorIndex<'a> {
         let mut ic = instruction;
         loop {
             if let Some(pc) = self.ic_pc_map.pc(ic).map(|pc| pc as u32) {
-                let start = self.address_pushes.partition_point(|&(target, _)| target < pc);
-                for element in self.address_pushes[start..]
-                    .iter()
-                    .take_while(|&&(target, _)| target == pc)
-                    .filter_map(|&(_, push)| self.push_element(push))
+                for element in
+                    pushes_to(&self.address_pushes, pc).filter_map(|push| self.push_element(push))
                 {
                     any = true;
                     all &= inside(element);
@@ -635,11 +643,8 @@ impl<'a> AnchorIndex<'a> {
     /// Returns whether a static jump mapped outside `loc` targets `instruction`.
     fn is_jumped_to_from_outside(&self, instruction: usize, loc: &SourceLocation) -> bool {
         let Some(pc) = self.ic_pc_map.pc(instruction).map(|pc| pc as u32) else { return false };
-        let start = self.jumps.partition_point(|&(target, _)| target < pc);
-        self.jumps[start..]
-            .iter()
-            .take_while(|&&(target, _)| target == pc)
-            .filter_map(|&(_, push)| self.push_element(push))
+        pushes_to(&self.jumps, pc)
+            .filter_map(|push| self.push_element(push))
             .any(|element| !is_within_source_span(element, loc))
     }
 
@@ -675,11 +680,8 @@ impl<'a> AnchorIndex<'a> {
         if self.bytecode.get(pc as usize) != Some(&opcode::JUMPDEST) {
             return Ok(Vec::new());
         }
-        let start = self.jumps.partition_point(|&(target, _)| target < pc);
-        self.jumps[start..]
-            .iter()
-            .take_while(|&&(target, _)| target == pc)
-            .map(|&(_, push)| {
+        pushes_to(&self.jumps, pc)
+            .map(|push| {
                 let jump = self.ic_pc_map.pc(push + 1).unwrap_or_default() as u32;
                 let conditional = self.bytecode[jump as usize] == opcode::JUMPI;
                 ensure!(
@@ -787,13 +789,11 @@ impl<'a> AnchorIndex<'a> {
         let anchors = ItemAnchor::from_branch(item_id, jump, immediate).ok()?;
         let (fallthrough, taken) = &anchors;
         let pc = fallthrough.instruction;
-        let pushes = |pushes: &[(u32, usize)]| {
-            pushes.partition_point(|&(target, _)| target <= pc)
-                - pushes.partition_point(|&(target, _)| target < pc)
-        };
         // A push of its address that no jump consumes, such as a return address, can enter it.
         let op = self.bytecode.get(pc as usize)?;
-        if *op == opcode::JUMPDEST && pushes(&self.address_pushes) != pushes(&self.jumps) {
+        if *op == opcode::JUMPDEST
+            && pushes_to(&self.address_pushes, pc).count() != pushes_to(&self.jumps, pc).count()
+        {
             return None;
         }
         let entries = self.fallthrough_entries(&anchors).ok()?;
