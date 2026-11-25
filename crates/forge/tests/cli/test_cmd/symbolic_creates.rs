@@ -409,14 +409,16 @@ contract SymbolicCreateEip3541 is Test {
 
     DeployCodeCaller caller = new DeployCodeCaller();
 
-    function checkDeployCodeRejectedPrefixKeepsExpectRevert() public {
+    function checkDeployCodeRejectedPrefixSettlesExpectRevert() public {
         string memory what = "SymbolicCreateEip3541.t.sol:MarkThenReject";
-        // The cheatcode revert leaves `vm.expectRevert` pending, so the nested call meets it.
+        // Like a native CREATE, the rejected deployment settles `vm.expectRevert`.
         vm.expectRevert(address(vm));
-        try vm.deployCode(what, abi.encode(address(this))) returns (address) {
+        assert(vm.deployCode(what, abi.encode(address(this))) == address(1));
+        try caller.deployCode(what, abi.encode(address(this))) returns (address) {
             assert(false);
-        } catch {}
-        caller.deployCode(what, abi.encode(address(this)));
+        } catch (bytes memory err) {
+            assert(keccak256(err) == keccak256(hex"ef"));
+        }
     }
 
     function checkDeployCodeRejectedPrefixExpectRevertAny() public {
@@ -429,19 +431,22 @@ contract SymbolicCreateEip3541 is Test {
         vm.deployCode("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this)));
     }
 
+    function checkDeployCodeRejectedPrefixExpectRevertHaltReason() public {
+        // Like Forge, the reason matches the halt that rejected the runtime.
+        vm.expectRevert(bytes("EvmError: CreateContractStartingWithEF"));
+        address deployed =
+            vm.deployCode("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this)));
+        assert(deployed == address(1));
+    }
+
     function checkDeployCodeRejectedPrefixExpectRevertInCaller() public {
-        // The caller's own frame reverts after the cheatcode revert, so its call returns.
+        // The rejected deployment settles the caller's expectation, so its call returns.
         caller.expectRevertDeployCode("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this)));
     }
 
-    function checkDeployCodeRejectedPrefixExpectRevertOutlivesCaller() public {
-        // The caller returns with its expectation pending after a deeper frame ran.
-        try caller.expectRevertCatchDeployCode("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this))) {
-            assert(false);
-        } catch (bytes memory err) {
-            assert(keccak256(err) == keccak256(abi.encodeWithSignature(
-                "CheatcodeError(string)", "next call did not revert as expected")));
-        }
+    function checkDeployCodeRejectedPrefixExpectRevertSettledInCaller() public {
+        // The rejected deployment settles the caller's expectation, so the caller returns.
+        caller.expectRevertCatchDeployCode("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this)));
     }
 
     function checkOverlappingExpectRevertOnDeployCode() public {
@@ -450,7 +455,7 @@ contract SymbolicCreateEip3541 is Test {
     }
 
     function checkAssumeNoRevertMissWithExpectRevert() public {
-        // The assumption handles the uncaught revert, so the expectation does not.
+        // The rejected deployment settles the expectation before the assumption sees a revert.
         vm.assumeNoRevert(VmSafe.PotentialRevert(address(0x1234), false, ""));
         vm.expectRevert();
         vm.deployCode("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this)));
@@ -468,7 +473,7 @@ contract SymbolicCreateEip3541 is Test {
     }
 
     function checkHaltAfterRejectedDeployCodeInCaller() public {
-        // Forge matches the caller's halt against its pending expectation and returns.
+        // The rejected deployment settles the caller's expectation, so the caller's halt fails it.
         (bool ok,) = address(caller).call(abi.encodeCall(
             DeployCodeCaller.expectRevertCatchDeployCodeThenHalt,
             ("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this)))));
@@ -503,13 +508,13 @@ contract SymbolicCreateEip3541 is Test {
     }
 
     function checkDeployCodeRejectedPrefixExpectRevertMismatchInCaller() public {
-        // The caller's expectation fails when its frame reverts, which the test can catch.
+        // The caller's expectation fails at the rejected deployment, which the test can catch.
         (bool ok, bytes memory err) = address(caller).call(abi.encodeCall(
             DeployCodeCaller.expectOtherRevertDeployCode,
             ("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this)))));
         assert(!ok);
         assert(keccak256(err) == keccak256(abi.encodeWithSignature(
-            "CheatcodeError(string)", "Error != expected error: EvmError: Revert != other")));
+            "CheatcodeError(string)", "Error != expected error: EvmError: CreateContractStartingWithEF != other")));
     }
 
     function checkRejectedPrefixExpectedCallsAndRevert() public {
@@ -732,12 +737,12 @@ contract DeployCodeCaller {
     .failure()
     .stdout_eq(str![[r#"
 ...
-[FAIL: incomplete symbolic execution (RevertAll): all symbolic paths reverted] checkAssumeNoRevertMissWithExpectRevert() ([METRICS])
-[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectRevert pending after vm.assumeNoRevert] checkAssumeNoRevertMissWithExpectRevertInCaller() ([METRICS])
-[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectRevert pending at an exceptional halt] checkHaltAfterRejectedDeployCodeInCaller() ([METRICS])
-[FAIL: call reverted as expected, but without data; counterexample: 		[SENDER] [SENDER] calldata=0xe668c5ba args=[]] checkMismatchedExpectRevertOnDeployCode() ([METRICS])
+[PASS] checkAssumeNoRevertMissWithExpectRevert() ([METRICS])
+[PASS] checkAssumeNoRevertMissWithExpectRevertInCaller() ([METRICS])
+[PASS] checkHaltAfterRejectedDeployCodeInCaller() ([METRICS])
+[FAIL: Error != expected error: EvmError: CreateContractStartingWithEF != other; counterexample: 		[SENDER] [SENDER] calldata=0xe668c5ba args=[]] checkMismatchedExpectRevertOnDeployCode() ([METRICS])
 [FAIL: Error != expected error: vm.expectRevert: you must call another function prior to expecting a second revert != other; counterexample: 		[SENDER] [SENDER] calldata=0x67563089 args=[]] checkOverlappingExpectRevertOnDeployCode() ([METRICS])
-[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectRevert mismatch data] checkSymbolicMismatchInCaller(uint256) ([METRICS])
+[PASS] checkSymbolicMismatchInCaller(uint256) ([METRICS])
 ...
 "#]]);
 
