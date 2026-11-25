@@ -984,7 +984,8 @@ fn return_description<'a>(
 
     return_name
         .and_then(|return_name| desc.strip_prefix(return_name))
-        .and_then(strip_one_ws).unwrap_or(desc)
+        .and_then(strip_one_ws)
+        .unwrap_or(desc)
 }
 
 fn strip_one_ws(s: &str) -> Option<&str> {
