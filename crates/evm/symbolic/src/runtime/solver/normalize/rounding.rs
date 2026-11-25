@@ -6,7 +6,7 @@
 use super::{
     ConstraintContext, HashMap, MAX_LOCAL_ANALYSIS_NODES, SymBinOp, SymBoolExpr, SymBoolExprKind,
     SymCmpOp, SymExpr, SymExprKind, U256, WordInterval, euclidean_sum_dividend,
-    word_division_operands,
+    rounded_down_dividend,
 };
 
 /// `anchor - below <= rounded <= anchor + above` over mathematical integers.
@@ -146,12 +146,14 @@ impl ConstraintContext {
     /// if `x * y` wraps. With a nonzero `y + z` that cannot wrap, `x * y / (y + z) <= x`, strictly
     /// for nonzero `x` and `z`. The Euclidean sum `(a / d) * d + a % d` is `a`, so each summand is
     /// at most the other's complement. With a nonzero divisor, `a / d <= (a - 1) / d + 1`, also
-    /// when selected by `a != 0`, and `(x * y + c) / d <= x` once `y <= d` and `c < d`,
-    /// also with `x` replaced by a factor proved at most `x`.
+    /// when selected by `a != 0`, and `(x * y + c) / d <= x` once `y <= d` and `c < d`, also with
+    /// `x * y` rounded down to a multiple `(x * y / t) * t` and with `x` replaced by a factor
+    /// proved at most `x`.
     /// Another conjunct's cross-multiplied `x * k <= y * l` also decides `x <= y` once `k` is
     /// positive, `l <= k`, and `x * k` cannot wrap.
     /// The shares `w * a / k + w * b / k <= w` once `a + b <= k`, and `n <= ceil(n / d) * d` for a
-    /// nonzero `d` once the multiple cannot wrap.
+    /// nonzero `d` once the multiple cannot wrap. With a nonzero `d` and an `n + d` that cannot
+    /// wrap, `n / d <= (n + d - 1) / d <= n / d + 1`.
     /// A weighted average `(p * u + q * v) / k` with `u + v <= k` is at most a bound on `p` and
     /// `q`.
     pub(super) fn division_comparison_value(&self, expr: &SymBoolExpr) -> Option<bool> {
@@ -259,6 +261,26 @@ impl ConstraintContext {
         {
             return Some(false);
         }
+        // With `n = q * d + r` and `r < d`, `(n + d - 1) / d` is `q` or `q + 1`, so it lies between
+        // `n / d` and `n / d + 1`. A wrapped `n + d` breaks the lower bound and lets `n / d + 1`
+        // wrap at `n = MAX`, `d = 1`. A zero `d` makes both quotients all ones, which breaks the
+        // upper bound.
+        let ceiling = match large.kind() {
+            SymExprKind::BinOp(SymBinOp::Add, quotient, one)
+                if one.as_const() == Some(U256::ONE) =>
+            {
+                quotient.udiv_operands().filter(|&floor| ceil_sum_operands(small) == Some(floor))
+            }
+            _ => ceil_sum_operands(large).filter(|&floor| small.udiv_operands() == Some(floor)),
+        };
+        if let Some((n, d)) = ceiling
+            && self
+                .interval_cached(d, intervals, remaining)
+                .is_some_and(|range| !range.min.is_zero())
+            && self.sum_cannot_wrap(n, d, intervals, remaining)
+        {
+            return Some(false);
+        }
         let mut interval = |expr: &SymExpr| self.interval_cached(expr, intervals, remaining);
         let nonzero = |range: Option<WordInterval>| range.is_some_and(|range| !range.min.is_zero());
         match small.kind() {
@@ -333,16 +355,12 @@ impl ConstraintContext {
                         self.division_order(factor, large, intervals, remaining)
                     })
                 };
-                // `round_down(n, t) <= n` (zero when `t == 0`), so dividing the rounded product
-                // is bounded by `n / d`. The EVM `DIV` may still carry its `t == 0` guard.
-                let peeled = match dividend.kind() {
-                    SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
-                        [(left, right), (right, left)].into_iter().find_map(|(quotient, factor)| {
-                            word_division_operands(quotient)
-                                .and_then(|(n, t)| (t == factor).then_some(n))
-                        })
-                    }
-                    _ => None,
+                // `round_down(n, t) <= n` (zero when `t == 0`), so a rounded product of `x * y`
+                // is bounded as well, as when a share amount rounded down is converted back.
+                let mut bounded = |dividend: &SymExpr, addend: Option<&SymExpr>| {
+                    bounded(dividend, addend).or_else(|| {
+                        rounded_down_dividend(dividend).and_then(|n| bounded(n, addend))
+                    })
                 };
                 let rounded_up = match dividend.kind() {
                     SymExprKind::BinOp(SymBinOp::Add, a, b) => [(a, b), (b, a)]
@@ -360,9 +378,7 @@ impl ConstraintContext {
                     }
                     _ => None,
                 };
-                rounded_up
-                    .or_else(|| peeled.and_then(|peeled| bounded(peeled, None)))
-                    .or_else(|| bounded(dividend, None))
+                rounded_up.or_else(|| bounded(dividend, None))
             }
             // `(x / d) * k <= x` once `k <= d`.
             SymExprKind::BinOp(SymBinOp::Mul, left, right) => [(left, right), (right, left)]
