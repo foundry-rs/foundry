@@ -147,3 +147,16 @@ bb1:
 
 "#]]);
 }
+
+#[casttest]
+fn disassemble_spec_names(cmd: _) {
+    cmd.args(["disassemble", "44e600e780e88e00"]).assert_success().stdout_eq(str![[r#"
+bb0:
+  0000  PREVRANDAO
+  0001  DUPN 145
+  0003  SWAPN 17
+  0005  EXCHANGE 1, 2
+  0007  STOP
+
+"#]]);
+}

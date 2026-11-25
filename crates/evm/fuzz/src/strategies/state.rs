@@ -652,6 +652,7 @@ impl FuzzDictionary {
             }
             // Don't add 0 to the dictionary as it's already present.
             if !inst.immediate.is_empty()
+                && inst.immediate.len() == inst.opcode.immediate_size() as usize
                 && let Some(push_value) = U256::try_from_be_slice(inst.immediate)
                 && !push_value.is_zero()
             {
@@ -1046,6 +1047,16 @@ mod tests {
         assert_eq!(dictionary.config.max_fuzz_dictionary_values, 1);
         assert_eq!(dictionary.state_values.as_slice(), &[B256::ZERO]);
         assert!(!dictionary.insert_value(B256::with_last_byte(1)));
+        assert_eq!(dictionary.state_values.as_slice(), &[B256::ZERO]);
+    }
+
+    #[test]
+    fn truncated_push_is_not_collected() {
+        let mut dictionary = FuzzDictionary::default();
+
+        // `PUSH2 0x01` is cut off by the end of the code.
+        dictionary.collect_push_bytes(&[0x61, 0x01]);
+
         assert_eq!(dictionary.state_values.as_slice(), &[B256::ZERO]);
     }
 

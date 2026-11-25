@@ -542,7 +542,7 @@ impl CoverageReporter for BytecodeReporter {
                 let source_path = source_id
                     .and_then(|i| report.get_source_path(&contract_id.build_id, i as usize));
 
-                let code = format!("{pc:08x}: {inst}");
+                let code = format!("{pc:08x}: {}", inst.display(SpecId::DEFAULT));
                 let start = source_element.offset() as usize;
                 let end = (source_element.offset() + source_element.length()) as usize;
 
