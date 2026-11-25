@@ -2985,6 +2985,71 @@ BRDA:14,0,0,-
     );
 }
 
+// The function pointer's value can be returned from a source without any call, which is walked
+// all the same.
+#[forgetest]
+fn if_arm_does_not_take_function_pointer_from_another_file_lcov(prj: _, cmd: _) {
+    prj.update_config(|config| config.via_ir = true);
+    prj.add_source(
+        "Base.sol",
+        r#"
+abstract contract Base {
+    uint256 public total;
+
+    function bump() internal {
+        total |= 7;
+    }
+
+    function never() internal {
+        if (true) {
+            bump();
+        }
+    }
+
+    function pointer() internal virtual returns (function() internal);
+
+    function run() external {
+        pointer()();
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "Derived.sol",
+        r#"
+import "./Base.sol";
+
+contract Derived is Base {
+    function pointer() internal pure override returns (function() internal) {
+        return bump;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Pointer.t.sol",
+        r#"
+import "../src/Derived.sol";
+
+contract PointerTest {
+    function testRun() public {
+        Derived derived = new Derived();
+        derived.run();
+    }
+}
+"#,
+    );
+
+    assert_lcov(
+        cmd.args(["coverage", "--no-isolate", "--keep-optimizer", "--optimize"]),
+        str![[r#"
+...
+BRDA:12,0,0,-
+...
+"#]],
+    );
+}
+
 // An arm of an `if` with a proved condition has no jump, and it takes the hits of the function it
 // calls only when nothing else can run that function. Every `never` below is not compiled and its
 // function runs another way, so no arm may report hits, while the live control reports its own.
