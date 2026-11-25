@@ -935,10 +935,18 @@ impl ScriptArgs {
                 .inputs
                 .iter()
                 .zip(values)
-                .map(|(param, value)| {
+                .enumerate()
+                .map(|(i, (param, value))| {
                     let ty = param.resolve()?;
+                    let name =
+                        if param.name.is_empty() { i.to_string() } else { param.name.clone() };
+                    // `parse_json_as` would encode `null` as the string "null".
+                    eyre::ensure!(
+                        !contains_json_null(value),
+                        "argument `{name}` {ty}: JSON null is not supported"
+                    );
                     parse_json_as(value, &ty)
-                        .map_err(|e| eyre::eyre!("argument `{}` {ty}: {e}", param.name))
+                        .map_err(|e| eyre::eyre!("argument `{name}` {ty}: {e}"))
                 })
                 .collect::<Result<Vec<_>>>()?;
             func.abi_encode_input(&values)?
@@ -1498,6 +1506,16 @@ const fn script_trace_requirements(config: &Config, debug: bool) -> TraceRequire
         } else {
             InternalTraceMode::None
         })
+}
+
+/// Returns whether `value` is or contains a JSON `null`.
+fn contains_json_null(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Null => true,
+        serde_json::Value::Array(values) => values.iter().any(contains_json_null),
+        serde_json::Value::Object(map) => map.values().any(contains_json_null),
+        _ => false,
+    }
 }
 
 #[cfg(test)]
