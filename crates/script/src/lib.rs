@@ -33,7 +33,7 @@ use foundry_cli::{
     utils::LoadConfig,
 };
 use foundry_common::{
-    ContractsByArtifact, FoundryTransactionBuilder, SELECTOR_LEN,
+    ContractsByArtifact, FoundryTransactionBuilder, SELECTOR_LEN, TransactionMaybeSigned,
     abi::{encode_function_args, get_func},
     compile::ContractSizeLimits,
     provider::ProviderBuilder,
@@ -1158,12 +1158,14 @@ impl<N: Network> ScriptResult<N> {
 }
 
 #[derive(Serialize)]
-#[serde(bound = "")]
+#[serde(bound = "N::TransactionRequest: Serialize, N::TxEnvelope: Serialize")]
 struct JsonResult<'a, N: Network> {
     logs: Vec<String>,
     returns: &'a HashMap<String, NestedValue>,
     #[serde(flatten)]
     result: &'a ScriptResult<N>,
+    /// Transactions the script recorded for broadcast, before on-chain simulation.
+    broadcastable_transactions: Vec<&'a TransactionMaybeSigned<N>>,
 }
 
 #[derive(Clone, Debug)]

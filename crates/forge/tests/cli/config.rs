@@ -1306,6 +1306,48 @@ shared/=deps-a/a/lib/shared/src/
     cmd.forge_fuse().arg("remappings").assert_success().stdout_eq(expected);
 }
 
+// The compiler names a dependency's files that it imports from its own root, like `src/X.sol`,
+// outside the dependency's context, so its nested copies follow the root's remapping there. Other
+// dependencies keep their nested copies.
+#[forgetest]
+fn nested_copy_follows_root_for_dependency_importing_own_root(prj: _, cmd: _) {
+    for (path, content) in [
+        ("lib/shared/src/Types.sol", "struct S { uint256 x; }"),
+        ("lib/a/lib/shared/src/Types.sol", "struct S { uint256 x; uint256 y; }"),
+        ("lib/a/src/Helper.sol", "library Helper {}"),
+        (
+            "lib/a/src/A.sol",
+            r#"import {S} from "shared/Types.sol"; import "src/Helper.sol"; library A { function f(S memory s) internal pure returns (uint256) { return s.x; } }"#,
+        ),
+        ("lib/b/lib/shared/src/Types.sol", "struct T { uint256 z; }"),
+        (
+            "lib/b/src/B.sol",
+            r#"/* import "src/B.sol"; */ import {T} from "shared/Types.sol"; import "c/C.sol"; contract B { T t; }"#,
+        ),
+        // The root build never reaches this script, so it must not unscope `lib/b`.
+        ("lib/b/src/scripts/Deploy.s.sol", r#"import "src/B.sol";"#),
+        // Only `lib/b/lib/c` imports from its own root, so `lib/b` stays scoped.
+        ("lib/b/lib/c/src/D.sol", "library D {}"),
+        ("lib/b/lib/c/src/C.sol", r#"import "src/D.sol"; library C {}"#),
+    ] {
+        prj.create_file(path, &format!("pragma solidity ^0.8.0; {content}\n"));
+    }
+    prj.add_source(
+        "UsesShared.sol",
+        r#"import {S} from "shared/Types.sol"; import {A} from "a/A.sol"; import {B} from "b/B.sol"; contract UsesShared { function g(S memory s) external pure returns (uint256) { return A.f(s); } }"#,
+    );
+
+    cmd.arg("remappings").assert_success().stdout_eq(str![[r#"
+lib/b/:shared/=lib/b/lib/shared/src/
+a/=lib/a/src/
+b/=lib/b/src/
+c/=lib/b/lib/c/src/
+shared/=lib/shared/src/
+
+"#]]);
+    cmd.forge_fuse().arg("build").assert_success();
+}
+
 #[forgetest]
 fn scoped_npm_context_preserves_hoisted_sibling_fallback(prj: _, cmd: _) {
     let owner = prj.root().join("node_modules/@bananapus/router-terminal-v6");
@@ -4430,4 +4472,43 @@ openzeppelin-contracts/=lib/openzeppelin-contracts/contracts/
         .stderr_eq("");
     cmd.forge_fuse().args(["build", "--force"]).assert_success().stderr_eq("");
     cmd.forge_fuse().arg("build").assert_success().stderr_eq("");
+}
+
+// A config passed with `FOUNDRY_CONFIG` configures only the project. Dependencies keep their own
+// `foundry.toml`, so `--root` with an external config detects the same remappings as a build in the
+// project. <https://github.com/foundry-rs/foundry/issues/18677>
+#[forgetest]
+fn external_config_keeps_dependency_remappings(prj: _, cmd: _) {
+    let dep = prj.root().join("lib/dep");
+    pretty_err(&dep, fs::create_dir_all(dep.join("contracts")));
+    pretty_err(&dep, fs::create_dir_all(dep.join("lib/x")));
+    pretty_err(
+        &dep,
+        fs::write(
+            dep.join(Config::FILE_NAME),
+            "[profile.default]\nsrc = \"contracts\"\nremappings = [\"@x/=lib/x/\"]\n",
+        ),
+    );
+    pretty_err(&dep, fs::write(dep.join("lib/x/X.sol"), "library X {}\n"));
+    pretty_err(
+        &dep,
+        fs::write(dep.join("contracts/D.sol"), "import \"@x/X.sol\";\nlibrary D {}\n"),
+    );
+    let external = tempfile::tempdir().unwrap();
+    let config = external.path().join(Config::FILE_NAME);
+    fs::write(&config, "[profile.default]\nsrc = \"src\"\nlibs = [\"lib\"]\n").unwrap();
+
+    cmd.arg("remappings").assert_success().stdout_eq(str![[r#"
+@x/=lib/dep/lib/x/
+dep/=lib/dep/contracts/
+x/=lib/dep/lib/x/
+
+"#]]);
+    cmd.forge_fuse().env("FOUNDRY_CONFIG", &config);
+    cmd.args(["remappings", "--root"]).arg(prj.root()).assert_success().stdout_eq(str![[r#"
+@x/=lib/dep/lib/x/
+dep/=lib/dep/contracts/
+x/=lib/dep/lib/x/
+
+"#]]);
 }
