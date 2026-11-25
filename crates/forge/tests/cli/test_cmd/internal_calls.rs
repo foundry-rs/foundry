@@ -24,6 +24,8 @@ const TARGET: (&str, &str) =
     ("Target.t.sol", include_str!("../../fixtures/internal_calls/Target.t.sol"));
 const PARAMS: (&str, &str) =
     ("Params.t.sol", include_str!("../../fixtures/internal_calls/Params.t.sol"));
+const PUBLIC: (&str, &str) =
+    ("Public.t.sol", include_str!("../../fixtures/internal_calls/Public.t.sol"));
 const C: (&str, &str) = ("C.t.sol", include_str!("../../fixtures/internal_calls/C.t.sol"));
 
 #[forgetest]
@@ -148,6 +150,52 @@ fn params_via_ir(prj: _, cmd: _) {
         PARAMS,
         (true, false),
         file!["../../fixtures/internal_calls/params_via_ir.txt"],
+    );
+}
+
+// A public function that calls itself, or another public function of the same name, shows its
+// inner calls, also if the compiler inlined the dispatcher.
+#[forgetest]
+fn public_legacy(prj: _, cmd: _) {
+    assert_internal_calls(
+        &prj,
+        &mut cmd,
+        PUBLIC,
+        (false, false),
+        file!["../../fixtures/internal_calls/public_legacy.txt"],
+    );
+}
+
+#[forgetest]
+fn public_legacy_optimized(prj: _, cmd: _) {
+    assert_internal_calls(
+        &prj,
+        &mut cmd,
+        PUBLIC,
+        (false, true),
+        file!["../../fixtures/internal_calls/public_legacy_optimized.txt"],
+    );
+}
+
+#[forgetest]
+fn public_via_ir(prj: _, cmd: _) {
+    assert_internal_calls(
+        &prj,
+        &mut cmd,
+        PUBLIC,
+        (true, false),
+        file!["../../fixtures/internal_calls/public_via_ir.txt"],
+    );
+}
+
+#[forgetest]
+fn public_via_ir_optimized(prj: _, cmd: _) {
+    assert_internal_calls(
+        &prj,
+        &mut cmd,
+        PUBLIC,
+        (true, true),
+        file!["../../fixtures/internal_calls/public_via_ir_optimized.txt"],
     );
 }
 

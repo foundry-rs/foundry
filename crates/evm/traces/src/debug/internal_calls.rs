@@ -15,7 +15,7 @@
 //! call that the trace shows already, so it is not shown either. Via-IR codegen calls modifiers
 //! like functions, so they appear as calls there. Legacy codegen inlines them.
 
-use super::{DecodedInternalCall, decode_parameters, functions::FunctionInfo};
+use super::{DecodedInternalCall, args_match_calldata, decode_parameters, functions::FunctionInfo};
 use crate::CallTraceStep;
 use alloy_primitives::U256;
 use evm2::interpreter::opcode::OpCode;
@@ -241,29 +241,39 @@ impl Tracker<'_> {
             self.close(top, i - 1, None);
         }
 
-        // The external function that the dispatcher enters is the call node that the trace
-        // shows already. Creation code has no dispatcher, so its calls are internal. In the
-        // fallback and receive functions, which no dispatcher enters, a call to a public function
-        // is internal unless the call data selects that function. The dispatcher can run inside
-        // helper functions, which are not shown. Only the first entry is hidden, so that a public
-        // function that calls itself, or another function of the same name, shows its inner calls.
-        if !self.context.is_create
-            && !self.entered
-            && self.frames.iter().all(|frame| frame.function.is_none())
-            && function.as_ref().is_some_and(|function| {
-                function.is_entry && (self.context.is_dispatched)(&function.declared_name)
-            })
-        {
-            function = None;
-            self.entered = true;
-        }
-        let args = function.as_ref().and_then(|function| {
+        let mut args = function.as_ref().and_then(|function| {
             let convention = convention?;
             let params = function.params.as_deref()?;
             let words = convention.arguments(stack, return_address_index);
             let memory = entered.memory.as_ref().map(|memory| memory.as_bytes().as_ref());
             decode_parameters(params, &words, memory, Some(self.context.calldata))
         });
+
+        // The external function that the dispatcher enters is the call node that the trace
+        // shows already. Creation code has no dispatcher, so its calls are internal. In the
+        // fallback and receive functions, which no dispatcher enters, a call to a public function
+        // is internal unless the call data selects that function. The dispatcher can run inside
+        // helper functions, which are not shown. Only the first entry is hidden, so that a public
+        // function that calls itself, or another function of the same name, shows its inner
+        // calls. If the compiler inlined the dispatcher, the first entry can be such a call, and
+        // then its arguments are not those of the call data.
+        if !self.context.is_create
+            && !self.entered
+            && self.frames.iter().all(|frame| frame.function.is_none())
+            && let Some(info) = &function
+            && info.is_entry
+            && (self.context.is_dispatched)(&info.declared_name)
+            && match (&info.params, &args) {
+                (Some(params), Some(args)) => {
+                    args_match_calldata(params, args, self.context.calldata)
+                }
+                _ => true,
+            }
+        {
+            function = None;
+            args = None;
+            self.entered = true;
+        }
 
         self.frames.push(Frame {
             start: i,
@@ -322,6 +332,13 @@ mod tests {
     const G: u32 = 40;
     const RET: u32 = 50;
     const OTHER_RET: u32 = 60;
+
+    /// The call data of a call to `f(7)`, with a selector of four bytes.
+    const CALLDATA: [u8; 36] = {
+        let mut calldata = [0; 36];
+        calldata[35] = 7;
+        calldata
+    };
 
     fn step(pc: u32, op: OpCode, stack: &[u64]) -> CallTraceStep {
         CallTraceStep {
@@ -393,7 +410,7 @@ mod tests {
             resolve: &resolve,
             is_create,
             convention,
-            calldata: &[],
+            calldata: &CALLDATA,
             is_dispatched,
             from_source_map: &|_| None,
         };
@@ -513,6 +530,24 @@ mod tests {
         assert_eq!(
             track(&steps, legacy, 1, function("f", Some(1), true)),
             [(2, 5, "f".into(), strings(&["5"]), strings(&["6"]))]
+        );
+    }
+
+    #[test]
+    fn an_inlined_dispatcher_leaves_a_call_with_other_arguments_shown() {
+        // The call data holds `f(7)`, and the first jump to `f` is its recursive call `f(5)`.
+        let steps = [jump(F, &[RET.into(), 5]), jump(RET, &[6])].concat();
+        let legacy = Some(CallConvention::SolcLegacy);
+
+        assert_eq!(
+            track(&steps, legacy, 1, function("f", Some(1), true)),
+            [(0, 3, "f".into(), strings(&["5"]), strings(&["6"]))]
+        );
+        // A public function of the same name with more parameters does not decode the call data.
+        let steps = [jump(F, &[RET.into(), 7, 8]), jump(RET, &[6])].concat();
+        assert_eq!(
+            track(&steps, legacy, 2, function("f", Some(2), true)),
+            [(0, 3, "f".into(), strings(&["7", "8"]), strings(&["6"]))]
         );
     }
 

@@ -1,0 +1,34 @@
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 2 tests for test/Public.t.sol:PublicTest
+[PASS] test_public_overload() ([GAS])
+Traces:
+  [..] PublicTest::test_public_overload()
+    ├─ [..] → new Public@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 784 bytes of code
+    ├─ [..] Public::f(4) [staticcall]
+    │   ├─ [..] Public::f(uint256,uint256)(4, 2)
+    │   │   └─ ← 8
+    │   └─ ← [Return] 9
+    └─ ← [Stop]
+
+[PASS] test_recursive_public_function() ([GAS])
+Traces:
+  [..] PublicTest::test_recursive_public_function()
+    ├─ [..] → new Public@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 784 bytes of code
+    ├─ [..] Public::fact(3) [staticcall]
+    │   ├─ [..] Public::fact(uint256)(2)
+    │   │   ├─ [..] Public::fact(uint256)(1)
+    │   │   │   ├─ [..] Public::fact(uint256)(0)
+    │   │   │   │   └─ ← 1
+    │   │   │   └─ ← 1
+    │   │   └─ ← 2
+    │   └─ ← [Return] 6
+    └─ ← [Stop]
+
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)

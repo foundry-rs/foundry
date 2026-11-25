@@ -210,6 +210,26 @@ fn source_map_function(
     })
 }
 
+/// Whether `args`, the decoded arguments of a call to a public function, are the arguments that
+/// the call data holds for it. They are not if the call data does not decode with the types of
+/// the parameters, or decodes to other values. An argument or type that is not known matches.
+pub fn args_match_calldata(params: &[Param], args: &[String], calldata: &[u8]) -> bool {
+    let Some(types) = params.iter().map(|param| param.ty.clone()).collect::<Option<Vec<_>>>()
+    else {
+        return true;
+    };
+    let Ok(DynSolValue::Tuple(values)) =
+        DynSolType::Tuple(types).abi_decode_params(calldata.get(4..).unwrap_or_default())
+    else {
+        return false;
+    };
+    values.len() == args.len()
+        && values
+            .iter()
+            .zip(args)
+            .all(|(value, arg)| arg == "<unknown>" || format_token(value) == *arg)
+}
+
 /// Decodes parameters from the stack words they take, in parameter order, and from memory and
 /// call data.
 ///
