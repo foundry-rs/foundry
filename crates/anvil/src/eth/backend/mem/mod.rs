@@ -1214,6 +1214,8 @@ struct StateSnapshot {
     fees: FeeSnapshot,
     time: TimeSnapshot,
     next_block: NextBlockOverrides,
+    /// Local gas limit of the snapshot block, when it is a transaction-hash fork replay block.
+    replayed_gas_limit: Option<u64>,
 }
 
 #[cfg(test)]
@@ -2163,6 +2165,7 @@ impl<N: Network> Backend<N> {
                 fees: self.fees.snapshot(),
                 time: self.time.snapshot(),
                 next_block: self.cheats.next_block_overrides(),
+                replayed_gas_limit: self.fork_replayed_blocks.lock().get(&hash).copied(),
             },
         );
         id
@@ -5769,7 +5772,7 @@ impl<N: Network> Backend<N> {
     where
         N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
     {
-        let Some((num, hash, fees, time, next_block)) =
+        let Some((num, hash, fees, time, next_block, replayed_gas_limit)) =
             self.active_state_snapshots.lock().get(&id).map(|snapshot| {
                 (
                     snapshot.block_number,
@@ -5777,6 +5780,7 @@ impl<N: Network> Backend<N> {
                     snapshot.fees,
                     snapshot.time,
                     snapshot.next_block,
+                    snapshot.replayed_gas_limit,
                 )
             })
         else {
@@ -5847,12 +5851,7 @@ impl<N: Network> Backend<N> {
                 // ensures prevrandao is set
                 prevrandao: Some(block.header.mix_hash().unwrap_or_default()),
                 // Keep previous `beneficiary` and `basefee` value
-                gas_limit: self
-                    .fork_replayed_blocks
-                    .lock()
-                    .get(&block.header.hash)
-                    .copied()
-                    .unwrap_or_else(|| block.header.gas_limit()),
+                gas_limit: replayed_gas_limit.unwrap_or_else(|| block.header.gas_limit()),
                 beneficiary: env.block_env.beneficiary,
                 basefee: env.block_env.basefee,
                 ..Default::default()
