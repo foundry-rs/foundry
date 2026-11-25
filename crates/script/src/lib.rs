@@ -483,8 +483,11 @@ impl ScriptArgs {
                 config.extra_output.push(ContractOutputSelection::StorageLayout);
             }
             // Full build infos keep the sources the compiler saw, which dynamic test linking
-            // rewrites in scripts.
-            if let Err(error) = config.enable_debug_build_info() {
+            // rewrites in scripts. Getting them evicts cache entries, which `--no-compile` must
+            // not write.
+            if !args.no_compile
+                && let Err(error) = config.enable_debug_build_info()
+            {
                 let _ = sh_warn!(
                     "the debugger may show source files that differ from the compiled ones: {error:#}"
                 );

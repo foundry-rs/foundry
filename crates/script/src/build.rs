@@ -226,6 +226,11 @@ impl<FEN: FoundryEvmNetwork> PreprocessedState<FEN> {
             !(args.no_compile && script_config.config.force),
             "`--no-compile` cannot be used with `force`"
         );
+        // Decoding external storage compiles verified sources during execution.
+        eyre::ensure!(
+            !(args.no_compile && script_config.config.decode_external_storage),
+            "`--no-compile` cannot be used with `decode_external_storage`"
+        );
         let mut project = script_config.config.project()?;
         eyre::ensure!(
             !args.no_compile || project.cached,

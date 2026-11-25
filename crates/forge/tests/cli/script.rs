@@ -11907,4 +11907,29 @@ src/Foo.sol
 [COMPILING_FILES] with [SOLC_VERSION]
 ...
 "#]]);
+
+    // `--debug` needs storage layouts the build lacks, and reports them stale without touching
+    // the cache, so a later cached run still works.
+    let script = prj.add_script("Bar.s.sol", "contract Bar { function run() external {} }");
+    cmd.forge_fuse().arg("build").assert_success();
+    let cache = fs::read(prj.cache()).unwrap();
+    cmd.forge_fuse()
+        .arg("script")
+        .arg(&script)
+        .args(["--no-compile", "--debug", "--dump", "dump.json"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: compilation disabled by --no-compile; sources need compiling:
+...
+"#]]);
+    assert_eq!(fs::read(prj.cache()).unwrap(), cache);
+    cmd.forge_fuse().arg("script").arg(&script).arg("--no-compile").assert_success();
+
+    prj.update_config(|config| config.decode_external_storage = true);
+    cmd.forge_fuse().arg("script").arg(&script).arg("--no-compile").assert_failure().stderr_eq(
+        str![[r#"
+Error: `--no-compile` cannot be used with `decode_external_storage`
+
+"#]],
+    );
 }
