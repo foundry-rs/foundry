@@ -679,6 +679,7 @@ pub enum AbiSubcommand {
     /// Examples:
     /// - cast abi-encode "transfer(address,uint256)" $ADDRESS 100
     /// - cast abi-encode --packed "f(string,uint64)" hello 100
+    /// - cast abi-encode --file args.txt "f(bytes,uint64)"
     #[command(verbatim_doc_comment, visible_alias = "ae")]
     AbiEncode {
         /// The function signature.
@@ -691,6 +692,11 @@ pub enum AbiSubcommand {
         /// The arguments of the function.
         #[arg(allow_hyphen_values = true)]
         args: Vec<String>,
+
+        /// Read one argument per line from a file. Surrounding whitespace and blank lines are
+        /// ignored.
+        #[arg(long, value_name = "PATH", conflicts_with = "args")]
+        file: Option<PathBuf>,
     },
 
     /// ABI encode an event and its arguments to generate topics and data.

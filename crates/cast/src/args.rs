@@ -59,6 +59,7 @@ use foundry_primitives::{FoundryNetwork, FoundryTxEnvelope};
 use rayon::prelude::*;
 use serde::Serialize;
 use std::{
+    path::PathBuf,
     str::FromStr,
     sync::atomic::{AtomicBool, Ordering},
     time::Instant,
@@ -371,20 +372,22 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::Abi(AbiSubcommand::DecodeAbi { sig, calldata, input }) => {
             print_tokens(&abi_decode_calldata(&sig, &calldata, input, false)?)?;
         }
-        CastSubcommand::Abi(AbiSubcommand::AbiEncode { sig, packed, args }) => {
+        CastSubcommand::Abi(AbiSubcommand::AbiEncode { sig, packed, args, file }) => {
+            let file_args = file.map(read_abi_args_file).transpose()?;
+            let values = file_args.as_deref().unwrap_or(&args);
             let out = if packed {
                 // If the signature is a tuple, we need to prefix it to make it a function
                 let sig = if sig.trim_start().starts_with('(') { format!("foo{sig}") } else { sig };
 
                 let func = get_func(&sig)?;
-                let encoded = encode_function_args_packed(&func, &args).map_err(|e| {
+                let encoded = encode_function_args_packed(&func, values).map_err(|e| {
                     let e = with_trailing_flag_hint(e, func.inputs.len(), &args);
                     eyre::eyre!("Could not ABI encode the function and arguments: {e}")
                 })?;
                 hex::encode_prefixed(encoded)
             } else {
                 let func = get_func(&sig)?;
-                let encoded = encode_function_args_raw(&func, &args).map_err(|e| {
+                let encoded = encode_function_args_raw(&func, values).map_err(|e| {
                     let e = with_trailing_flag_hint(e, func.inputs.len(), &args);
                     eyre::eyre!("Could not ABI encode the function and arguments: {e}")
                 })?;
@@ -455,12 +458,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let func = get_func(&sig)?;
             let encoded = match file {
                 Some(file_path) => {
-                    let args = fs::read_to_string(file_path)?
-                        .lines()
-                        .map(str::trim)
-                        .filter(|line| !line.is_empty())
-                        .map(String::from)
-                        .collect::<Vec<_>>();
+                    let args = read_abi_args_file(file_path)?;
                     encode_function_args(&func, &args)?
                 }
                 None => encode_function_args(&func, &args)
@@ -1718,6 +1716,15 @@ fn find_optimized_selector(
 
 fn strip_0x(s: &str) -> &str {
     s.strip_prefix("0x").unwrap_or(s)
+}
+
+fn read_abi_args_file(path: PathBuf) -> Result<Vec<String>> {
+    Ok(fs::read_to_string(path)?
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(String::from)
+        .collect())
 }
 
 /// Points out a flag that was read as an extra ABI argument.
