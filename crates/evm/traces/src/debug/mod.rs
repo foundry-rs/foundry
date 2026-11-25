@@ -167,7 +167,13 @@ pub struct Param {
 impl Param {
     /// The number of stack words the value takes.
     fn slots(&self) -> usize {
-        self.ty.as_ref().map_or(1, |ty| stack_slots(ty, self.storage))
+        match (&self.ty, self.storage) {
+            (
+                Some(DynSolType::String | DynSolType::Bytes | DynSolType::Array(_)),
+                Some(Storage::Calldata),
+            ) => 2,
+            _ => 1,
+        }
     }
 }
 
@@ -206,7 +212,8 @@ fn source_map_function(
     // This usually means that this is a jump into the external function which is an
     // entrypoint for the current frame. We don't want to include this to avoid
     // duplicating traces.
-    if same_loc(&loc, &jump) {
+    if loc.offset() == jump.offset() && loc.length() == jump.length() && loc.index() == jump.index()
+    {
         return None;
     }
 
@@ -243,11 +250,6 @@ fn source_map_function(
         ..FunctionInfo::untyped(name, false)
     };
     Some(SourceMapFunction { function, parameter_slots, return_slots, convention })
-}
-
-/// Returns whether both source elements refer to the same source location.
-fn same_loc(loc: &SourceElement, other: &SourceElement) -> bool {
-    loc.offset() == other.offset() && loc.length() == other.length() && loc.index() == other.index()
 }
 
 /// Tries to parse the function name from the source code and detect the contract name which
@@ -360,16 +362,6 @@ pub fn decode_parameters(
     Some(decoded)
 }
 
-const fn stack_slots(ty: &DynSolType, storage: Option<Storage>) -> usize {
-    match (ty, storage) {
-        (
-            DynSolType::String | DynSolType::Bytes | DynSolType::Array(_),
-            Some(Storage::Calldata),
-        ) => 2,
-        _ => 1,
-    }
-}
-
 fn decode_parameter(
     ty: &DynSolType,
     storage: Option<Storage>,
@@ -406,13 +398,12 @@ fn decode_from_calldata(
             let length: usize = stack_words.get(1)?.try_into().ok()?;
             let data = memory_range(calldata, offset, length)?;
 
-            match ty {
-                DynSolType::Bytes => Some(DynSolValue::Bytes(data.to_vec())),
+            Some(match ty {
                 DynSolType::String => {
-                    Some(DynSolValue::String(String::from_utf8_lossy(data).to_string()))
+                    DynSolValue::String(String::from_utf8_lossy(data).into_owned())
                 }
-                _ => unreachable!(),
-            }
+                _ => DynSolValue::Bytes(data.to_vec()),
+            })
         }
         _ => None,
     }
@@ -428,39 +419,37 @@ fn decode_from_memory(ty: &DynSolType, memory: &[u8], location: usize) -> Option
             let length: usize = U256::from_be_slice(first_word).try_into().ok()?;
             let data = memory_range(memory, location.checked_add(32)?, length)?;
 
-            match ty {
-                DynSolType::Bytes => Some(DynSolValue::Bytes(data.to_vec())),
+            Some(match ty {
                 DynSolType::String => {
-                    Some(DynSolValue::String(String::from_utf8_lossy(data).to_string()))
+                    DynSolValue::String(String::from_utf8_lossy(data).into_owned())
                 }
-                _ => unreachable!(),
-            }
+                _ => DynSolValue::Bytes(data.to_vec()),
+            })
         }
         // Dynamic arrays are encoded as a word with length followed by words with elements
         // Fixed arrays are encoded as words with elements
         DynSolType::Array(inner) | DynSolType::FixedArray(inner, _) => {
-            let (length, start) = match ty {
-                DynSolType::FixedArray(_, length) => (*length, location),
-                DynSolType::Array(_) => {
-                    (U256::from_be_slice(first_word).try_into().ok()?, location.checked_add(32)?)
-                }
-                _ => unreachable!(),
+            let (length, start) = if let DynSolType::FixedArray(_, length) = ty {
+                (*length, location)
+            } else {
+                (U256::from_be_slice(first_word).try_into().ok()?, location.checked_add(32)?)
             };
             memory_range(memory, start, length.checked_mul(32)?)?;
-            let mut decoded = Vec::with_capacity(length);
-
-            for i in 0..length {
-                let offset = start.checked_add(i.checked_mul(32)?)?;
-                let location = match inner.as_ref() {
-                    // Arrays of variable length types are arrays of pointers to the values
-                    DynSolType::String | DynSolType::Bytes | DynSolType::Array(_) => {
-                        U256::from_be_slice(memory_range(memory, offset, 32)?).try_into().ok()?
-                    }
-                    _ => offset,
-                };
-
-                decoded.push(decode_from_memory(inner, memory, location)?);
-            }
+            let decoded = (0..length)
+                .map(|i| {
+                    let offset = start.checked_add(i.checked_mul(32)?)?;
+                    let location = match inner.as_ref() {
+                        // Arrays of variable length types are arrays of pointers to the values
+                        DynSolType::String | DynSolType::Bytes | DynSolType::Array(_) => {
+                            U256::from_be_slice(memory_range(memory, offset, 32)?)
+                                .try_into()
+                                .ok()?
+                        }
+                        _ => offset,
+                    };
+                    decode_from_memory(inner, memory, location)
+                })
+                .collect::<Option<Vec<_>>>()?;
 
             Some(DynSolValue::Array(decoded))
         }

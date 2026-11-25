@@ -75,7 +75,7 @@ impl SourceData {
                     let ast = source.ast.as_ref()?;
                     for item in ast.items.iter() {
                         if let solar::ast::ItemKind::Contract(contract) = &item.kind {
-                            let Some(contract_range) = span_to_range(source_map, item.span) else {
+                            let Ok(contract_range) = source_map.span_to_range(item.span) else {
                                 continue;
                             };
                             contract_definitions.push((contract.name.to_string(), contract_range));
@@ -100,13 +100,6 @@ impl SourceData {
             .find(|(_, r)| start >= r.start && end <= r.end)
             .map(|(name, _)| name.as_str())
     }
-}
-
-fn span_to_range(
-    source_map: &solar::interface::source_map::SourceMap,
-    span: solar::interface::Span,
-) -> Option<Range<usize>> {
-    source_map.span_to_range(span).ok()
 }
 
 #[derive(Clone, Debug)]
