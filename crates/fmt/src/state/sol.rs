@@ -532,7 +532,7 @@ impl<'ast> State<'_, 'ast> {
         self.word(" {");
         self.hardbreak_if_nonempty();
         let mut printed = false;
-        for (pos, ident) in variants.iter().delimited() {
+        for (pos, ast::EnumVariant { name: ident, .. }) in variants.iter().delimited() {
             self.print_comments(ident.span.lo(), CommentConfig::default());
             self.print_ident(ident);
             if !pos.is_last {
