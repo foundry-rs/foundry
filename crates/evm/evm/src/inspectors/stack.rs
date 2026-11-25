@@ -2808,6 +2808,9 @@ impl InspectorStackInner {
         // SAFETY: `evm` runs over the lifecycle's owned databases, and so does the frame EVM,
         // which only lives for this call; its inspector is released before its state moves back.
         let mut frame = unsafe { backend.backend().lifecycle().begin_frame_evm(evm, env) };
+        // Align network state (e.g. Monad reserve policy) onto the frame EVM's configured
+        // hardfork before the message runs under `vm.setEvmVersion` or similar handoffs.
+        TypesFor::<FEN>::align_frame_spec(&mut frame);
         let create2_redirects =
             cheatcodes.as_deref().map_or(0, |cheats| cheats.pending_create2_redirects.len());
         frame.set_inspector(InspectorStackRefMut {

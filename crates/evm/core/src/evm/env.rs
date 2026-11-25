@@ -152,6 +152,11 @@ pub trait FoundryExecutionHooks: EvmTypes {
         Self::refresh_transaction(evm);
     }
 
+    /// Aligns network state derived from the running transaction onto a frame EVM whose
+    /// configured hardfork differs from the enclosing transaction, such as after
+    /// `vm.setEvmVersion`. Default is a no-op; Monad refreshes reserve-balance policy flags.
+    fn align_frame_spec(_evm: &mut Evm<'_, Self>) {}
+
     /// Returns how many levels below the transaction its handler runs `tx`'s top-level calls,
     /// such as one for Tempo's AA transactions. A nested transaction lowers its initial call
     /// depth by it, so its calls keep their depth in the surrounding trace.

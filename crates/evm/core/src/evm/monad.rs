@@ -28,7 +28,10 @@ use monad_evm2::{
     MonadChainContext, MonadEvmExt, MonadEvmFactory, MonadEvmTypes, MonadHardfork,
     MonadPrecompiles, MonadTxResultExt, monad_memory_limit, monad_tx_registry, monad_version,
     protocol_system_call,
-    reserve_balance::{rebase_reserve_balance_with_originals, sync_reserve_balance},
+    reserve_balance::{
+        rebase_reserve_balance_with_originals, reconfigure_reserve_balance_for_spec,
+        sync_reserve_balance,
+    },
     staking::constants::SYSTEM_ADDRESS,
 };
 
@@ -229,5 +232,14 @@ impl FoundryExecutionHooks for MonadEvmTypes {
         // including accounts first debited after the switch. Accepted writes are not new debits.
         // A database error surfaces again when execution next reads the account.
         let _ = rebase_reserve_balance_with_originals(evm, original);
+    }
+
+    fn align_frame_spec(evm: &mut Evm<'_, Self>) {
+        // `vm.setEvmVersion` builds a frame EVM with a new config hardfork while cloning the
+        // enclosing transaction's reserve tracker. Refresh hardfork-derived policy so
+        // Eight→Nine (and reverse) frames enforce the same rules as a transaction started
+        // directly under the target hardfork.
+        let spec = evm.config_spec_id();
+        let _ = reconfigure_reserve_balance_for_spec(evm, spec);
     }
 }
