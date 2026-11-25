@@ -36,7 +36,8 @@ pub struct ExpectedEmit {
     pub found: bool,
     /// Number of times the log is expected to be emitted
     pub count: u64,
-    /// Number of matching logs counted so far, from any emitter.
+    /// Number of matching logs counted so far, from any emitter. Read only when `address` is
+    /// `None`.
     pub matched_logs: u64,
     /// Stores mismatch details if a log didn't match.
     pub mismatch_error: Option<EmitMismatch>,
@@ -165,7 +166,7 @@ pub(crate) fn observe_log(tracker: &mut ExpectedEmitTracker, log: &Log) -> Optio
             counted
         }
     };
-    event_to_fill_or_check.matched_logs += counted as u64;
+    event_to_fill_or_check.matched_logs += u64::from(counted);
 
     event_to_fill_or_check.found = || -> bool {
         if !checks_topics_and_data(event_to_fill_or_check.checks, expected, log) {
@@ -753,10 +754,12 @@ mod tests {
     #[test]
     fn counts_matching_logs_across_emitters() {
         let a = log(EMITTER, vec![TOPIC_A], b"a");
+        let b = log(EMITTER, vec![TOPIC_B], b"b");
         let from_other = log(OTHER, vec![TOPIC_A], b"a");
         let mut tracker = ExpectedEmitTracker::new();
         expect_with(&mut tracker, Some(&a), ALL, None, 2, false);
 
+        assert_eq!(observe_log(&mut tracker, &b), None);
         assert_eq!(observe_log(&mut tracker, &a), None);
         assert_eq!(found(&tracker), [false]);
         assert_eq!(observe_log(&mut tracker, &from_other), None);
