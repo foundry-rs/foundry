@@ -247,10 +247,10 @@ fn matrix_via_ir_optimized(prj: _, cmd: _) {
     );
 }
 
-// A type that a function names through an import alias is not the declaration of that name
-// elsewhere, so its type is unknown rather than taken from the other declaration.
+// A type that a function names through an import alias is the aliased type, and not the
+// declaration of that name elsewhere in the project.
 #[forgetest]
-fn import_alias_types_are_unknown(prj: _, cmd: _) {
+fn import_alias_types_are_the_aliased_type(prj: _, cmd: _) {
     prj.add_source("Types.sol", "type TokenId is uint256;");
     prj.add_source("Other.sol", "type Amount is address;");
     prj.add_source(
@@ -287,17 +287,16 @@ Traces:
   [..] AliasTest::test_alias()
 ...
     ├─ [..] Alias::run(10) [staticcall]
-    │   ├─ [..] Alias::inner(<unknown>)
-    │   │   └─ ← <unknown>
+    │   ├─ [..] Alias::inner(uint256)(10)
+    │   │   └─ ← 10
     │   └─ ← [Return] 10
     └─ ← [Stop]
 ...
 "#]]);
 }
 
-// A qualified type name such as `Types.Amount` is the type of the project of that name if there is
-// one declaration of it, and not a type that the contract or the file of the function declares
-// under the last segment of the name.
+// A qualified type name such as `Types.Amount` is the type that the name resolves to, and not a
+// type that the contract or the file of the function declares under the last segment of the name.
 #[forgetest]
 fn qualified_type_of_one_declaration(prj: _, cmd: _) {
     qualified_types(&prj, "");
@@ -317,8 +316,8 @@ fn qualified_type_with_a_local_declaration_of_the_name(prj: _, cmd: _) {
     cmd.args(["test", "-vvvv", "--decode-internal"]).assert_success().stdout_eq(str![[r#"
 ...
     ├─ [..] Qualified::run(1606938044258990275541962092341162602522202993782792835301386 [..]) [staticcall]
-    │   ├─ [..] Qualified::inner(<unknown>)
-    │   │   └─ ← <unknown>
+    │   ├─ [..] Qualified::inner(uint256)(1606938044258990275541962092341162602522202993782792835301386 [..])
+    │   │   └─ ← 1606938044258990275541962092341162602522202993782792835301387 [..]
     │   └─ ← [Return] 1606938044258990275541962092341162602522202993782792835301387 [..]
 ...
 "#]]);

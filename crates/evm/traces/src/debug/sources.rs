@@ -1,15 +1,14 @@
 use super::{
     CodeFunctions, FunctionEntry, UnlistedFunction,
     functions::{
-        Declarations, DeclaredType, SourceFunction, UserType, UserTypes, collect,
-        collect_call_sites, name_of_key,
+        Declarations, SourceFunction, collect, collect_call_sites, name_of_key, resolve_types,
     },
 };
 use evm2::interpreter::opcode::OpCode;
 use eyre::{Context, Result};
 use foundry_common::{
     compact_to_contract, external_compiler::is_external_artifact, is_deploy_helper_path,
-    strip_bytecode_placeholders,
+    namespaced_storage, strip_bytecode_placeholders,
 };
 use foundry_compilers::{
     Artifact, ProjectCompileOutput,
@@ -43,8 +42,6 @@ pub struct SourceData {
     pub functions: HashMap<usize, Arc<SourceFunction>>,
     /// The name that each call expression calls, by the byte offset where it starts.
     pub call_sites: HashMap<usize, String>,
-    /// The user-defined types that the source declares.
-    pub user_types: Vec<DeclaredType>,
     /// The base contracts of the contracts that the source declares, by name.
     pub contract_bases: Vec<(String, Vec<String>)>,
     /// The edits that a preprocessor made to the source before compilation, sorted by start
@@ -66,10 +63,14 @@ impl SourceData {
 
         if matches!(language, MultiCompilerLanguage::Solc(_)) {
             let r = output.parser().solc().compiler().enter(|compiler| -> Option<()> {
-                let (_, source) = compiler.gcx().get_ast_source(root.join(&path))?;
+                let gcx = compiler.gcx();
+                let (_, source) = gcx.get_ast_source(root.join(&path))?;
                 let ast = source.ast.as_ref()?;
                 let source_map = compiler.sess().source_map();
-                collect(ast, source_map, &mut declarations);
+                // The types are Solar's own, if the sources are lowered to HIR, and unknown
+                // otherwise.
+                let types = resolve_types(gcx, source_map, root.join(&path));
+                collect(ast, source_map, &types, &mut declarations);
                 collect_call_sites(ast, source_map, &mut call_sites);
                 Some(())
             });
@@ -78,17 +79,8 @@ impl SourceData {
             }
         }
 
-        let Declarations { functions, types: user_types, bases: contract_bases } = declarations;
-        Self {
-            source,
-            language,
-            path,
-            functions,
-            call_sites,
-            user_types,
-            contract_bases,
-            source_edits,
-        }
+        let Declarations { functions, bases: contract_bases } = declarations;
+        Self { source, language, path, functions, call_sites, contract_bases, source_edits }
     }
 }
 
@@ -222,6 +214,15 @@ fn code_functions(
     code
 }
 
+/// Lowers the parsed Solidity sources of `output` to Solar's HIR, which resolves the types of the
+/// functions, unless that has happened. Call it before building [`ContractSources`] from `output`:
+/// if the sources are not lowered, or cannot be, the types of the functions are unknown.
+pub fn lower_sources(output: &mut ProjectCompileOutput) {
+    output.parser_mut().solc_mut().compiler_mut().enter_mut(|compiler| {
+        let _ = namespaced_storage::lower(compiler);
+    });
+}
+
 /// A function of the sources that has a body, for finding the functions that have the same code.
 #[derive(Clone, Debug)]
 pub struct BodyFunction {
@@ -239,10 +240,6 @@ pub struct ContractSources {
     pub sources_by_id: HashMap<String, HashMap<u32, Arc<SourceData>>>,
     /// Map over contract name -> Vec<(bytecode, build_id, file_id)>
     pub artifacts_by_name: HashMap<String, Vec<ArtifactData>>,
-    /// The user-defined types of all sources by name, which function parameters refer to.
-    pub user_types: UserTypes,
-    /// The types that contracts declare, by contract and name, or `None` for two declarations.
-    pub contract_types: HashMap<(String, String), Option<UserType>>,
     /// The bases of the contracts by name.
     pub bases: HashMap<String, Vec<String>>,
     /// The functions of all sources by the hash of their body, which functions with the same code
@@ -351,16 +348,6 @@ impl ContractSources {
         }
 
         for source_data in files.values().filter_map(|variants| variants.first()) {
-            for declared in &source_data.user_types {
-                self.add_user_type(declared.name.clone(), declared.ty.clone());
-                if let Some(contract) = &declared.contract {
-                    self.add_contract_type(
-                        contract.clone(),
-                        declared.name.clone(),
-                        declared.ty.clone(),
-                    );
-                }
-            }
             for (contract, bases) in &source_data.contract_bases {
                 let known = self.bases.entry(contract.clone()).or_default();
                 for base in bases {
@@ -432,18 +419,6 @@ impl ContractSources {
         }
     }
 
-    /// Records a type that a contract declares. Two declarations of a name resolve to none.
-    fn add_contract_type(&mut self, contract: String, name: String, ty: Option<UserType>) {
-        self.contract_types
-            .entry((contract, name))
-            .and_modify(|known| {
-                if *known != ty {
-                    *known = None;
-                }
-            })
-            .or_insert(ty);
-    }
-
     /// The contract and the contracts it inherits from.
     pub fn contract_and_bases(&self, contract: &str) -> Vec<String> {
         let mut contracts = vec![contract.to_string()];
@@ -463,12 +438,6 @@ impl ContractSources {
     /// Merges given contract sources.
     pub fn merge(&mut self, sources: Self) {
         self.sources_by_id.extend(sources.sources_by_id);
-        for (name, ty) in sources.user_types {
-            self.add_user_type(name, ty);
-        }
-        for ((contract, name), ty) in sources.contract_types {
-            self.add_contract_type(contract, name, ty);
-        }
         for (contract, bases) in sources.bases {
             let known = self.bases.entry(contract).or_default();
             for base in bases {
@@ -591,18 +560,6 @@ impl ContractSources {
                     .map(|source| (source_element.clone(), source.as_ref()))
             })
     }
-
-    /// Records a user-defined type. A name that two different types have resolves to none.
-    fn add_user_type(&mut self, name: String, ty: Option<UserType>) {
-        self.user_types
-            .entry(name)
-            .and_modify(|known| {
-                if *known != ty {
-                    *known = None;
-                }
-            })
-            .or_insert(ty);
-    }
 }
 
 /// The compiler input of a build info, which only full build infos have.
@@ -624,7 +581,6 @@ mod tests {
                 path: PathBuf::from(path),
                 functions: HashMap::new(),
                 call_sites: HashMap::new(),
-                user_types: Vec::new(),
                 contract_bases: Vec::new(),
                 source_edits: Vec::new(),
             })

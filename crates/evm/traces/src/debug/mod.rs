@@ -9,16 +9,14 @@ use alloy_primitives::U256;
 use evm2::interpreter::opcode::OpCode;
 use foundry_common::fmt::format_token;
 use foundry_compilers::{artifacts::sourcemap::Jump, buildinfo::SourceEdit};
-pub use functions::{
-    AbiType, DeclaredType, FunctionInfo, SourceFunction, TypeScope, UserType, UserTypes,
-};
+pub use functions::{AbiType, FunctionInfo, SourceFunction};
 use functions::{names_agree, without_number};
 pub use internal_calls::{CallConvention, CodeFunctions, FunctionEntry, UnlistedFunction};
 use internal_calls::{ResolvedEntry, SourceMapFunction, TrackerContext, track_internal_calls};
 pub use recording::{
     DebugRecording, DebugStepSink, RecordedFrame, StepConverter, StepStorage, quantity, step_record,
 };
-pub use sources::{ArtifactData, ContractSources, SourceData, function_id};
+pub use sources::{ArtifactData, ContractSources, SourceData, function_id, lower_sources};
 use std::sync::Arc;
 
 #[derive(Clone, Debug)]
@@ -125,11 +123,7 @@ fn resolve_entry(
     let defined = source.and_then(|source| source.functions.get(&offset)).map(Arc::as_ref);
     let defined_id = source.map_or(0, |source| function_id(&source.path, offset));
     let mut function = match choose_entry(&named, defined) {
-        Choice::Function(function) => {
-            // `defined` is `Some` if the source is.
-            let scope = type_scope(sources, source?, function.contract.as_deref());
-            function.info(&scope)
-        }
+        Choice::Function(function) => function.info(),
         // The entries do not tell which contract's function ran.
         Choice::Ambiguous(function) => {
             FunctionInfo::untyped(function.name.clone(), function.is_entry)
@@ -166,20 +160,6 @@ fn resolve_entry(
         .map(|unlisted| unlisted.name.clone())
         .collect();
     Some((entry.parameter_slots, entry.return_slots, function))
-}
-
-/// The user-defined types that a function of `contract` sees in `source`.
-fn type_scope<'a>(
-    sources: &'a ContractSources,
-    source: &'a SourceData,
-    contract: Option<&str>,
-) -> TypeScope<'a> {
-    TypeScope {
-        contracts: contract.map_or_else(Vec::new, |contract| sources.contract_and_bases(contract)),
-        contract_types: &sources.contract_types,
-        file: &source.user_types,
-        project: &sources.user_types,
-    }
 }
 
 /// What a call to an entry runs.
@@ -261,7 +241,7 @@ fn source_map_function(
 
     let offset = SourceEdit::original_offset(&source.source_edits, loc.offset() as usize);
     let defined = source.functions.get(&offset)?;
-    let function = defined.info(&type_scope(sources, source, defined.contract.as_deref()));
+    let function = defined.info();
     let slots = |params: &Option<Vec<Param>>| params.iter().flatten().map(|p| p.slots).sum();
     // Yul functions take their first argument on top, as via-IR functions do.
     let convention = if defined.is_yul {

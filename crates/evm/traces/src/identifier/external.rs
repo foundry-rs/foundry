@@ -1,5 +1,8 @@
 use super::{IdentifiedAddress, TraceIdentifier};
-use crate::{CallTraceNode, debug::ContractSources};
+use crate::{
+    CallTraceNode,
+    debug::{ContractSources, lower_sources},
+};
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::{
     Address,
@@ -233,8 +236,9 @@ impl ExternalIdentifier {
         for (idx, res) in outputs.into_iter().enumerate() {
             let (addr, metadata) = &contracts_info[idx];
             let name = &metadata.contract_name;
-            let (project, output, _) =
+            let (project, mut output, _) =
                 res.wrap_err_with(|| format!("Failed to compile contract {name} at {addr}"))?;
+            lower_sources(&mut output);
             sources
                 .insert(&output, project.root(), None)
                 .wrap_err_with(|| format!("Failed to insert contract {name} at {addr}"))?;

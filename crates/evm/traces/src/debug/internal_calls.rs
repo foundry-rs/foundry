@@ -631,7 +631,7 @@ mod tests {
         let shown = [(0, 3, "f".into(), strings(&["7"]), strings(&["4"]))];
         assert_eq!(calls(AbiType::Known("int256".into())), shown);
         // A struct is a tuple in the ABI.
-        assert_eq!(calls(AbiType::Tuple), shown);
+        assert_eq!(calls(AbiType::Known("(uint256)".into())), shown);
         assert_eq!(calls(AbiType::Unknown), []);
     }
 
@@ -688,10 +688,10 @@ mod tests {
         assert!(!function(vec![known("uint256")]).matches_signature("g(uint256)"));
         assert!(function(vec![]).matches_signature("f()"));
         assert!(
-            function(vec![AbiType::Tuple, known("uint256")])
+            function(vec![known("(uint256,address)[]"), known("uint256")])
                 .matches_signature("f((uint256,address)[],uint256)")
         );
-        assert!(!function(vec![AbiType::Tuple]).matches_signature("f(uint256)"));
+        assert!(!function(vec![known("(uint256)")]).matches_signature("f((int256))"));
         // Without the parameters only the name counts.
         assert!(FunctionInfo::untyped("f".into(), true).matches_signature("f(uint256)"));
     }

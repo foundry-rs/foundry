@@ -10,7 +10,7 @@ use foundry_evm::{
     opts::ForkEndpointIdentity,
     traces::{
         CallTraceDecoderBuilder, DebugTraceIdentifier, TraceContext,
-        debug::ContractSources,
+        debug::{ContractSources, lower_sources},
         erc8021::Attribution,
         identifier::{SignaturesIdentifier, TraceIdentifiers},
     },
@@ -89,6 +89,7 @@ pub(crate) async fn handle_traces(
         let project = config.project()?;
         let compiler = ProjectCompiler::new();
         let mut output = compiler.compile(&project)?;
+        lower_sources(&mut output);
         let mut sources = ContractSources::from_project_output(&output, project.root(), None)?;
         if debug {
             sources.insert_compiled_sources(&project.paths.build_infos);

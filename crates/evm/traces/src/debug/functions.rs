@@ -4,20 +4,25 @@
 //! solc's `functionDebugData` lists an internal function by the offset of its entry `JUMPDEST`,
 //! and the source map puts that instruction at the start of the function's definition. The Solar
 //! AST that Foundry parses for every source file holds the definition there, with the contract it
-//! is in, its name, and its parameters and their types.
+//! is in, its name, and its parameters. Solar resolves the types of the parameters when it lowers
+//! the sources to its HIR, which is what the types of the functions come from.
 
 use super::Param;
 use alloy_dyn_abi::{DynSolType, parser::Storage};
 use solar::{
     ast::{
-        DataLocation, ElementaryType, Expr, ExprKind, FunctionKind, ImportItems, Item,
-        ItemFunction, ItemKind, LitKind, SourceUnit, Type, TypeKind, VariableDefinition,
-        Visibility,
+        DataLocation, ElementaryType, Expr, ExprKind, FunctionKind, Item, ItemFunction, ItemKind,
+        SourceUnit, Type, TypeKind, VariableDefinition, Visibility,
         visit::Visit,
         yul::{self, StmtKind as YulStmtKind},
     },
     data_structures::Never,
     interface::{Ident, source_map::SourceMap},
+    sema::{
+        Gcx,
+        hir::ItemId,
+        ty::{Ty, TyKind},
+    },
 };
 use std::{
     collections::HashMap,
@@ -26,86 +31,27 @@ use std::{
     sync::Arc,
 };
 
-/// The user-defined types of the sources by name, or `None` for a name that two types share.
-pub type UserTypes = HashMap<String, Option<UserType>>;
-
-/// A user-defined type that a source declares, in a contract or at the top level of the file.
-#[derive(Clone, Debug)]
-pub struct DeclaredType {
-    /// The contract that declares it.
-    pub contract: Option<String>,
-    pub name: String,
-    /// The type, or `None` if the name is not known to be one, such as an import alias.
-    pub ty: Option<UserType>,
-}
-
-/// What a source declares: its functions by the offset of their definition, its types, and the
-/// bases of its contracts.
+/// What a source declares: its functions by the offset of their definition, and the bases of its
+/// contracts.
 #[derive(Debug, Default)]
 pub struct Declarations {
     pub functions: HashMap<usize, Arc<SourceFunction>>,
-    pub types: Vec<DeclaredType>,
     pub bases: Vec<(String, Vec<String>)>,
 }
 
-/// The user-defined types that a function sees, from the nearest scope out: the types of its
-/// contract and the contracts that it inherits from, those of its file, and then the types of the
-/// project that have one declaration of that name.
-pub struct TypeScope<'a> {
-    /// The contract of the function and its bases.
-    pub contracts: Vec<String>,
-    /// The types declared in contracts by contract and name, or `None` for two declarations.
-    pub contract_types: &'a HashMap<(String, String), Option<UserType>>,
-    /// The types declared in the file of the function.
-    pub file: &'a [DeclaredType],
-    /// The types of the project by name.
-    pub project: &'a UserTypes,
+/// The types of the parameters and return values of a function that Solar resolved.
+#[derive(Clone, Debug)]
+pub struct ResolvedTypes {
+    params: Vec<ResolvedType>,
+    returns: Vec<ResolvedType>,
 }
 
-impl<'a> TypeScope<'a> {
-    /// A scope of the types of the project only.
-    pub fn project(project: &'a UserTypes) -> Self {
-        static NONE: std::sync::OnceLock<HashMap<(String, String), Option<UserType>>> =
-            std::sync::OnceLock::new();
-        Self {
-            contracts: Vec::new(),
-            contract_types: NONE.get_or_init(HashMap::new),
-            file: &[],
-            project,
-        }
-    }
-
-    fn get_qualified(&self, qualifier: &str, name: &str) -> Option<&'a Option<UserType>> {
-        self.contract_types
-            .get(&(qualifier.to_string(), name.to_string()))
-            .or_else(|| self.project.get(name))
-    }
-
-    fn get(&self, name: &str) -> Option<&'a Option<UserType>> {
-        self.contracts
-            .iter()
-            .find_map(|contract| self.contract_types.get(&(contract.clone(), name.to_string())))
-            .or_else(|| {
-                self.file
-                    .iter()
-                    .find(|declared| declared.contract.is_none() && declared.name == name)
-                    .map(|declared| &declared.ty)
-            })
-            .or_else(|| self.project.get(name))
-    }
-}
-
-/// A user-defined type and how it appears in function signatures.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum UserType {
-    /// A contract, interface, or library, which the ABI treats as an address.
-    Address,
-    /// An enum, which the ABI treats as `uint8`.
-    Enum,
-    /// A user-defined value type of an elementary type.
-    Value(DynSolType),
-    /// A struct, which does not have a single stack word to decode, with the types of its fields.
-    Struct(Vec<SourceType>),
+/// The type of a parameter or return value that Solar resolved.
+#[derive(Clone, Debug)]
+struct ResolvedType {
+    /// The type that its stack words can be decoded as. Structs and function types are not.
+    decodable: Option<DynSolType>,
+    abi: AbiType,
 }
 
 /// A function, modifier, public state variable getter, or Yul function.
@@ -156,17 +102,15 @@ pub struct FunctionInfo {
 /// What the ABI spells for a parameter of a function.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AbiType {
-    /// A canonical type name, such as `uint256[]`.
+    /// The name that the ABI spells, such as `uint256[]` or `(uint256,address)` for a struct.
     Known(String),
-    /// A struct, or an array of structs, which the ABI spells as a tuple.
-    Tuple,
-    /// Another type that the AST does not tell the ABI type of.
+    /// A type that Solar did not resolve.
     Unknown,
 }
 
 impl FunctionInfo {
     /// Whether `signature`, as the ABI spells it, can be the signature of this function. The
-    /// parameters that are not known match any type, or any tuple if they are structs.
+    /// parameters that are not known match any type.
     pub fn matches_signature(&self, signature: &str) -> bool {
         let Some((name, arguments)) = signature.split_once('(') else { return false };
         if name != self.declared_name {
@@ -189,7 +133,6 @@ impl FunctionInfo {
         let matches = types.iter().all(|ty| {
             arguments.next().is_some_and(|argument| match ty {
                 AbiType::Known(known) => known == argument,
-                AbiType::Tuple => argument.contains('('),
                 AbiType::Unknown => true,
             })
         });
@@ -212,44 +155,29 @@ impl FunctionInfo {
 
 #[derive(Clone, Debug)]
 pub(super) struct SourceParam {
-    ty: SourceType,
+    ty: ResolvedType,
     storage: Option<Storage>,
     /// The number of stack words the value takes.
     slots: usize,
 }
 
-/// A type as spelled in the source.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum SourceType {
-    Elementary(DynSolType),
-    /// A user-defined type, by the last segment of its name.
-    Custom(String),
-    /// A user-defined type that a qualifier names, such as `Types.Amount`: the qualifier, which
-    /// can be a contract or an import alias, and the last segment of the name.
-    Qualified(String, String),
-    Array(Box<Self>, Option<usize>),
-    /// An external function type, which takes an address and a selector.
-    ExternalFunction,
-    /// A mapping or internal function type.
-    Other,
-}
-
 impl SourceFunction {
-    /// Resolves the types of the parameters and return values.
-    pub fn info(&self, user_types: &TypeScope<'_>) -> FunctionInfo {
-        let resolve = |params: &Option<Vec<SourceParam>>| {
+    /// The types of the parameters and return values.
+    pub fn info(&self) -> FunctionInfo {
+        let params = |params: &Option<Vec<SourceParam>>| {
             params.as_ref().map(|params| {
                 params
                     .iter()
                     .map(|param| Param {
-                        ty: param.ty.resolve(user_types),
+                        ty: param.ty.decodable.clone(),
                         storage: param.storage,
                         slots: param.slots,
                     })
                     .collect::<Vec<_>>()
             })
         };
-        let params = resolve(&self.params);
+        let params_and_returns = (params(&self.params), params(&self.returns));
+        let (params, returns) = params_and_returns;
         // A parameter type without a canonical name leaves the name without types, and so do Yul
         // functions, which have none.
         let types = params.as_deref().filter(|_| !self.is_yul).and_then(|params| {
@@ -259,16 +187,11 @@ impl SourceFunction {
                 .collect::<Option<Vec<_>>>()
         });
         let signature = types.map(|types| format!("{}({})", self.name, types.join(",")));
-        let abi_types = self.params.as_ref().filter(|_| !self.is_yul).map(|params| {
-            params
-                .iter()
-                .map(|param| match param.ty.abi_name(user_types, 0) {
-                    Some(name) => AbiType::Known(name),
-                    None if param.ty.is_struct(user_types) => AbiType::Tuple,
-                    None => AbiType::Unknown,
-                })
-                .collect()
-        });
+        let abi_types = self
+            .params
+            .as_ref()
+            .filter(|_| !self.is_yul)
+            .map(|params| params.iter().map(|param| param.ty.abi.clone()).collect());
         let spelled = signature.as_ref().unwrap_or(&self.name);
         let name = match &self.contract {
             Some(contract) => format!("{contract}::{spelled}"),
@@ -277,7 +200,7 @@ impl SourceFunction {
         FunctionInfo {
             name,
             params,
-            returns: resolve(&self.returns),
+            returns,
             declared_name: self.name.clone(),
             abi_types,
             is_entry: self.is_entry,
@@ -286,111 +209,130 @@ impl SourceFunction {
     }
 }
 
-impl SourceType {
-    fn resolve(&self, user_types: &TypeScope<'_>) -> Option<DynSolType> {
-        match self {
-            Self::Elementary(ty) => Some(ty.clone()),
-            Self::Custom(_) | Self::Qualified(..) => match self.declared(user_types)?.as_ref()? {
-                UserType::Address => Some(DynSolType::Address),
-                UserType::Enum => Some(DynSolType::Uint(8)),
-                UserType::Value(ty) => Some(ty.clone()),
-                UserType::Struct(_) => None,
-            },
-            Self::Array(element, size) => {
-                let element = Box::new(element.resolve(user_types)?);
-                Some(match size {
-                    Some(size) => DynSolType::FixedArray(element, *size),
-                    None => DynSolType::Array(element),
-                })
-            }
-            Self::ExternalFunction | Self::Other => None,
+/// Resolves the types of the parameters and return values of the functions of a source, by the
+/// offset of the function, with the types that Solar resolved when it lowered the sources to HIR.
+/// A source that is not lowered has none.
+pub fn resolve_types(
+    gcx: Gcx<'_>,
+    source_map: &SourceMap,
+    path: impl Into<solar::interface::source_map::FileName>,
+) -> HashMap<usize, ResolvedTypes> {
+    let mut resolved = HashMap::new();
+    if gcx.stage().is_none_or(|stage| stage.is_parsing()) {
+        return resolved;
+    }
+    let Some((_, source)) = gcx.get_hir_source(path) else { return resolved };
+    let mut function = |id| {
+        let function = gcx.hir.function(id);
+        if function.gettee.is_some() {
+            return;
+        }
+        let Ok(range) = source_map.span_to_range(function.span) else { return };
+        let types = |variables: &[solar::sema::hir::VariableId]| {
+            variables
+                .iter()
+                .map(|&variable| resolve_type(gcx, gcx.type_of_item(variable.into())))
+                .collect()
+        };
+        resolved.insert(
+            range.start,
+            ResolvedTypes { params: types(function.parameters), returns: types(function.returns) },
+        );
+    };
+    for item in source.items {
+        match item {
+            ItemId::Function(id) => function(*id),
+            ItemId::Contract(id) => gcx.hir.contract(*id).functions().for_each(&mut function),
+            _ => {}
         }
     }
+    resolved
+}
 
-    /// The name that the ABI spells for the type, with structs as tuples of their fields, or
-    /// `None` if it is not known. `depth` stops structs that contain themselves.
-    fn abi_name(&self, user_types: &TypeScope<'_>, depth: usize) -> Option<String> {
-        match self {
-            Self::Elementary(ty) => Some(ty.sol_type_name().into_owned()),
-            Self::Custom(_) | Self::Qualified(..) => match self.declared(user_types)?.as_ref()? {
-                UserType::Address => Some("address".to_string()),
-                UserType::Enum => Some("uint8".to_string()),
-                UserType::Value(ty) => Some(ty.sol_type_name().into_owned()),
-                UserType::Struct(fields) if depth < 8 => {
-                    let fields = fields
-                        .iter()
-                        .map(|field| field.abi_name(user_types, depth + 1))
-                        .collect::<Option<Vec<_>>>()?;
-                    Some(format!("({})", fields.join(",")))
-                }
-                UserType::Struct(_) => None,
-            },
-            Self::Array(element, size) => {
-                let element = element.abi_name(user_types, depth)?;
-                Some(match size {
-                    Some(size) => format!("{element}[{size}]"),
-                    None => format!("{element}[]"),
-                })
-            }
-            Self::ExternalFunction => Some("function".to_string()),
-            Self::Other => None,
-        }
-    }
-
-    /// The user-defined type that the name refers to, if there is one that is known to be it. A
-    /// qualified name is a type of the qualifier if that is a contract that declares it, and
-    /// otherwise the type of the project of that name, if it has one declaration: the declarations
-    /// of the contract and the file of the function are not what it names.
-    fn declared<'a>(&self, scope: &TypeScope<'a>) -> Option<&'a Option<UserType>> {
-        match self {
-            Self::Custom(name) => scope.get(name),
-            Self::Qualified(qualifier, name) => scope.get_qualified(qualifier, name),
-            _ => None,
-        }
-    }
-
-    /// Whether the type is a struct or an array of structs.
-    fn is_struct(&self, user_types: &TypeScope<'_>) -> bool {
-        match self {
-            Self::Custom(_) | Self::Qualified(..) => {
-                matches!(self.declared(user_types), Some(Some(UserType::Struct(_))))
-            }
-            Self::Array(element, _) => element.is_struct(user_types),
-            _ => false,
-        }
-    }
-
-    /// The number of stack words a value of this type takes: calldata arrays, `bytes` and
-    /// `string` take an offset and a length, and external function types an address and a selector.
-    const fn slots(&self, storage: Option<Storage>) -> usize {
-        match (self, storage) {
-            (Self::ExternalFunction, _) => 2,
-            (
-                Self::Elementary(DynSolType::String | DynSolType::Bytes) | Self::Array(_, None),
-                Some(Storage::Calldata),
-            ) => 2,
-            _ => 1,
-        }
+fn resolve_type<'gcx>(gcx: Gcx<'gcx>, ty: Ty<'gcx>) -> ResolvedType {
+    match dyn_type(gcx, ty, 0) {
+        Some(dyn_type) => ResolvedType {
+            abi: AbiType::Known(abi_name(&dyn_type)),
+            decodable: Some(dyn_type).filter(|ty| !has_tuple_or_function(ty)),
+        },
+        None => ResolvedType { decodable: None, abi: AbiType::Unknown },
     }
 }
 
-/// Collects the functions and user-defined types of a parsed source file.
+/// The type that the ABI has for a type of Solar: user-defined value types are their underlying
+/// type, enums `uint8`, contracts `address`, and structs tuples of their fields. `depth` stops the
+/// structs that contain themselves.
+fn dyn_type<'gcx>(gcx: Gcx<'gcx>, ty: Ty<'gcx>, depth: usize) -> Option<DynSolType> {
+    Some(match ty.kind {
+        TyKind::Elementary(ty) => elementary(ty),
+        TyKind::Ref(inner, _) | TyKind::Udvt(inner, _) => return dyn_type(gcx, inner, depth),
+        TyKind::Array(element, size) => {
+            DynSolType::FixedArray(Box::new(dyn_type(gcx, element, depth)?), size.try_into().ok()?)
+        }
+        TyKind::DynArray(element) => DynSolType::Array(Box::new(dyn_type(gcx, element, depth)?)),
+        TyKind::Struct(id) if depth < 8 => DynSolType::Tuple(
+            gcx.struct_field_types(id)
+                .iter()
+                .map(|field| dyn_type(gcx, *field, depth + 1))
+                .collect::<Option<Vec<_>>>()?,
+        ),
+        TyKind::Enum(_) => DynSolType::Uint(8),
+        TyKind::Contract(_) => DynSolType::Address,
+        TyKind::Fn(function) if function.is_external() => DynSolType::Function,
+        _ => return None,
+    })
+}
+
+const fn elementary(ty: ElementaryType) -> DynSolType {
+    match ty {
+        ElementaryType::Address(_) => DynSolType::Address,
+        ElementaryType::Bool => DynSolType::Bool,
+        ElementaryType::String => DynSolType::String,
+        ElementaryType::Bytes => DynSolType::Bytes,
+        ElementaryType::Int(size) => DynSolType::Int(size.bits() as usize),
+        ElementaryType::UInt(size) => DynSolType::Uint(size.bits() as usize),
+        ElementaryType::FixedBytes(size) => DynSolType::FixedBytes(size.bytes() as usize),
+    }
+}
+
+/// The name that the ABI spells for a type, with structs as tuples.
+fn abi_name(ty: &DynSolType) -> String {
+    match ty {
+        DynSolType::Tuple(fields) => {
+            format!("({})", fields.iter().map(abi_name).collect::<Vec<_>>().join(","))
+        }
+        DynSolType::Array(element) => format!("{}[]", abi_name(element)),
+        DynSolType::FixedArray(element, size) => format!("{}[{size}]", abi_name(element)),
+        DynSolType::Function => "function".to_string(),
+        ty => ty.sol_type_name().into_owned(),
+    }
+}
+
+/// Whether the words of a value of the type are a pointer or a function: not a value to decode.
+fn has_tuple_or_function(ty: &DynSolType) -> bool {
+    match ty {
+        DynSolType::Tuple(_) | DynSolType::Function => true,
+        DynSolType::Array(element) | DynSolType::FixedArray(element, _) => {
+            has_tuple_or_function(element)
+        }
+        _ => false,
+    }
+}
+
+/// Collects the functions of a parsed source file, with the types that `types` has for them by the
+/// offset of their definition.
 ///
-/// `functions` maps the byte offset of each definition in the source to the function.
+/// `declarations.functions` maps the byte offset of each definition in the source to the function.
 pub fn collect<'ast>(
     ast: &'ast SourceUnit<'ast>,
     source_map: &SourceMap,
+    types: &HashMap<usize, ResolvedTypes>,
     declarations: &mut Declarations,
 ) {
     for item in ast.items.iter() {
         match &item.kind {
             ItemKind::Contract(contract) => {
                 let name = contract.name.to_string();
-                declarations.types.push(DeclaredType {
-                    contract: None,
-                    name: name.clone(),
-                    ty: Some(UserType::Address),
-                });
                 let bases = contract
                     .bases
                     .iter()
@@ -398,21 +340,10 @@ pub fn collect<'ast>(
                     .collect();
                 declarations.bases.push((name.clone(), bases));
                 for member in contract.body.iter() {
-                    collect_item(member, Some(&name), source_map, declarations);
+                    collect_item(member, Some(&name), source_map, types, declarations);
                 }
             }
-            ItemKind::Import(import) => {
-                // An alias can name any type, so a type of that name is not known by its name.
-                if let ImportItems::Aliases(aliases) = &import.items {
-                    let aliases = aliases.iter().filter_map(|(_, alias)| alias.as_ref());
-                    declarations.types.extend(aliases.map(|alias| DeclaredType {
-                        contract: None,
-                        name: alias.to_string(),
-                        ty: None,
-                    }));
-                }
-            }
-            _ => collect_item(item, None, source_map, declarations),
+            _ => collect_item(item, None, source_map, types, declarations),
         }
     }
 }
@@ -421,15 +352,10 @@ fn collect_item<'ast>(
     item: &'ast Item<'ast>,
     contract: Option<&str>,
     source_map: &SourceMap,
+    types: &HashMap<usize, ResolvedTypes>,
     declarations: &mut Declarations,
 ) {
-    let declare = |declarations: &mut Declarations, name: String, ty: UserType| {
-        declarations.types.push(DeclaredType {
-            contract: contract.map(str::to_string),
-            name,
-            ty: Some(ty),
-        });
-    };
+    let Ok(range) = source_map.span_to_range(item.span) else { return };
     let function = match &item.kind {
         ItemKind::Function(function) => {
             let mut yul =
@@ -440,16 +366,18 @@ fn collect_item<'ast>(
                 function.header.visibility(),
                 Some(Visibility::Public | Visibility::External)
             );
+            let returns = function.header.returns.as_ref().map_or(&[][..], |r| r.vars);
+            let resolved = types.get(&range.start);
+            let parameters = params(function.header.parameters.vars, resolved.map(|r| &r.params));
+            let returns = params(returns, resolved.map(|r| &r.returns));
             Some(SourceFunction {
                 contract: contract.map(str::to_string),
                 name: name.to_string(),
                 is_entry: function.kind == FunctionKind::Function && public,
                 is_yul: false,
-                body_hash: body_hash(function, source_map),
-                params: Some(params(function.header.parameters.vars)),
-                returns: Some(
-                    function.header.returns.as_ref().map_or_else(Vec::new, |r| params(r.vars)),
-                ),
+                body_hash: body_hash(function, source_map, &parameters, &returns),
+                params: Some(parameters),
+                returns: Some(returns),
             })
         }
         ItemKind::Variable(variable)
@@ -465,26 +393,9 @@ fn collect_item<'ast>(
                 returns: None,
             })
         }
-        ItemKind::Enum(item) => {
-            declare(declarations, item.name.to_string(), UserType::Enum);
-            None
-        }
-        ItemKind::Struct(item) => {
-            let fields = item.fields.iter().map(|field| source_type(&field.ty)).collect();
-            declare(declarations, item.name.to_string(), UserType::Struct(fields));
-            None
-        }
-        ItemKind::Udvt(item) => {
-            if let SourceType::Elementary(ty) = source_type(&item.ty) {
-                declare(declarations, item.name.to_string(), UserType::Value(ty));
-            }
-            None
-        }
         _ => None,
     };
-    if let Some(function) = function
-        && let Ok(range) = source_map.span_to_range(item.span)
-    {
+    if let Some(function) = function {
         declarations.functions.insert(range.start, Arc::new(function));
     }
 }
@@ -534,7 +445,10 @@ impl<'ast> Visit<'ast> for YulFunctions<'_> {
             && let Ok(range) = self.source_map.span_to_range(stmt.span)
         {
             let word = || SourceParam {
-                ty: SourceType::Elementary(DynSolType::Uint(256)),
+                ty: ResolvedType {
+                    decodable: Some(DynSolType::Uint(256)),
+                    abi: AbiType::Known("uint256".to_string()),
+                },
                 storage: None,
                 slots: 1,
             };
@@ -559,7 +473,12 @@ impl<'ast> Visit<'ast> for YulFunctions<'_> {
 /// Hashes the body of a function and the types of its parameters and return values, with the names
 /// of the parameters and return values replaced by their positions, so that functions with the
 /// same code have the same hash.
-fn body_hash(function: &ItemFunction<'_>, source_map: &SourceMap) -> Option<u64> {
+fn body_hash(
+    function: &ItemFunction<'_>,
+    source_map: &SourceMap,
+    params: &[SourceParam],
+    returns: &[SourceParam],
+) -> Option<u64> {
     function.body.as_ref()?;
     let body = source_map.span_to_snippet(function.body_span).ok()?;
     let names = function
@@ -572,9 +491,8 @@ fn body_hash(function: &ItemFunction<'_>, source_map: &SourceMap) -> Option<u64>
         .collect::<Vec<_>>();
     let mut hasher = DefaultHasher::new();
     // The code depends on the types of the parameters and return values as well.
-    let returns = function.header.returns.iter().flat_map(|returns| returns.vars.iter());
-    for var in function.header.parameters.vars.iter().chain(returns) {
-        format!("{:?}{:?}", source_type(&var.ty), var.data_location).hash(&mut hasher);
+    for param in params.iter().chain(returns) {
+        format!("{:?}{:?}", param.ty.abi, param.storage).hash(&mut hasher);
     }
     let mut word = String::new();
     // Hash the words and the other characters of the body, skipping white space.
@@ -601,56 +519,45 @@ fn body_hash(function: &ItemFunction<'_>, source_map: &SourceMap) -> Option<u64>
     Some(hasher.finish())
 }
 
-fn params(vars: &[VariableDefinition<'_>]) -> Vec<SourceParam> {
+/// The parameters or return values that `vars` define, with the types that Solar resolved if it
+/// resolved as many.
+fn params(
+    vars: &[VariableDefinition<'_>],
+    resolved: Option<&Vec<ResolvedType>>,
+) -> Vec<SourceParam> {
+    let resolved = resolved.filter(|resolved| resolved.len() == vars.len());
     vars.iter()
-        .map(|var| {
-            let ty = source_type(&var.ty);
+        .enumerate()
+        .map(|(i, var)| {
             let storage = var.data_location.map(|location| match location {
                 DataLocation::Memory => Storage::Memory,
                 DataLocation::Calldata => Storage::Calldata,
                 DataLocation::Storage | DataLocation::Transient => Storage::Storage,
             });
-            SourceParam { slots: ty.slots(storage), ty, storage }
+            let ty = resolved
+                .map_or(ResolvedType { decodable: None, abi: AbiType::Unknown }, |resolved| {
+                    resolved[i].clone()
+                });
+            SourceParam { slots: slots(&var.ty, storage), ty, storage }
         })
         .collect()
 }
 
-fn source_type(ty: &Type<'_>) -> SourceType {
-    match &ty.kind {
-        TypeKind::Elementary(ty) => SourceType::Elementary(match *ty {
-            ElementaryType::Address(_) => DynSolType::Address,
-            ElementaryType::Bool => DynSolType::Bool,
-            ElementaryType::String => DynSolType::String,
-            ElementaryType::Bytes => DynSolType::Bytes,
-            ElementaryType::Int(size) => DynSolType::Int(size.bits() as usize),
-            ElementaryType::UInt(size) => DynSolType::Uint(size.bits() as usize),
-            ElementaryType::FixedBytes(size) => DynSolType::FixedBytes(size.bytes() as usize),
-        }),
-        TypeKind::Array(array) => {
-            let size = match &array.size {
-                None => None,
-                Some(size) => {
-                    if let ExprKind::Lit(lit, _) = &size.kind
-                        && let LitKind::Number(number) = &lit.kind
-                        && let Ok(size) = usize::try_from(*number)
-                    {
-                        Some(size)
-                    } else {
-                        return SourceType::Other;
-                    }
-                }
-            };
-            SourceType::Array(Box::new(source_type(&array.element)), size)
+/// The number of stack words a value of the type takes: calldata arrays, `bytes` and `string` take
+/// an offset and a length, and external function types an address and a selector.
+fn slots(ty: &Type<'_>, storage: Option<Storage>) -> usize {
+    match (&ty.kind, storage) {
+        (TypeKind::Function(function), _)
+            if function.visibility() == Some(Visibility::External) =>
+        {
+            2
         }
-        TypeKind::Custom(path) => match path.segments() {
-            [.., qualifier, last] => SourceType::Qualified(qualifier.to_string(), last.to_string()),
-            [last] => SourceType::Custom(last.to_string()),
-            [] => SourceType::Other,
-        },
-        TypeKind::Function(function) if function.visibility() == Some(Visibility::External) => {
-            SourceType::ExternalFunction
-        }
-        TypeKind::Function(_) | TypeKind::Mapping(_) => SourceType::Other,
+        (
+            TypeKind::Elementary(ElementaryType::String | ElementaryType::Bytes),
+            Some(Storage::Calldata),
+        ) => 2,
+        (TypeKind::Array(array), Some(Storage::Calldata)) if array.size.is_none() => 2,
+        _ => 1,
     }
 }
 
@@ -718,58 +625,110 @@ mod tests {
         assert!(!names_agree("step_2", "stop"));
     }
 
-    #[test]
-    fn structs_are_spelled_as_tuples_of_their_fields() {
-        let word = |bits| SourceType::Elementary(DynSolType::Uint(bits));
-        let user_types = UserTypes::from([
-            ("Unsigned".into(), Some(UserType::Struct(vec![word(256)]))),
-            (
-                "Signed".into(),
-                Some(UserType::Struct(vec![SourceType::Elementary(DynSolType::Int(256))])),
-            ),
-            (
-                "Nested".into(),
-                Some(UserType::Struct(vec![SourceType::Custom("Unsigned".into()), word(8)])),
-            ),
-            ("Cyclic".into(), Some(UserType::Struct(vec![SourceType::Custom("Cyclic".into())]))),
-        ]);
-        let scope = TypeScope::project(&user_types);
-        let abi = |ty: SourceType| ty.abi_name(&scope, 0);
-        let custom = |name: &str| SourceType::Custom(name.into());
+    /// Parses `source` as `test.sol`, and lowers it if `lower`.
+    fn compiler(source: &str, lower: bool) -> solar::sema::Compiler {
+        use solar::{interface::Session, sema::Compiler};
+        let mut compiler =
+            Compiler::new(Session::builder().with_buffer_emitter(Default::default()).build());
+        compiler.enter_mut(|compiler| {
+            let file = compiler
+                .sess()
+                .source_map()
+                .new_source_file(std::path::PathBuf::from("test.sol"), source)
+                .unwrap();
+            let mut parser = compiler.parse();
+            parser.add_file(file);
+            parser.parse();
+            if lower {
+                let _ = compiler.lower_asts();
+            }
+        });
+        compiler
+    }
 
-        assert_eq!(abi(custom("Unsigned")).as_deref(), Some("(uint256)"));
-        assert_eq!(abi(custom("Signed")).as_deref(), Some("(int256)"));
-        assert_eq!(abi(custom("Nested")).as_deref(), Some("((uint256),uint8)"));
+    const TYPES: &str = "
+type Amount is uint256;
+enum Kind { A, B }
+interface Token {}
+struct Inner { uint8 x; }
+struct Outer { Inner inner; address[] list; Amount amount; }
+contract C {
+    function f(
+        Amount a,
+        Kind k,
+        Token t,
+        Outer memory o,
+        uint256[2][] calldata array,
+        function(uint256) external callback,
+        mapping(uint256 => uint256) storage map,
+        string calldata text
+    ) internal returns (Outer[] memory, int8) {}
+}
+";
+
+    #[test]
+    fn types_are_resolved_by_solar_to_the_types_of_the_abi() {
+        let resolved = |lower| {
+            compiler(TYPES, lower).enter(|compiler| {
+                resolve_types(
+                    compiler.gcx(),
+                    compiler.sess().source_map(),
+                    std::path::PathBuf::from("test.sol"),
+                )
+            })
+        };
+        let known = |name: &str| AbiType::Known(name.into());
+        let at = TYPES.find("function f").unwrap();
+
+        let resolved = resolved(true);
+        let function = &resolved[&at];
+        let abi =
+            |types: &[ResolvedType]| types.iter().map(|ty| ty.abi.clone()).collect::<Vec<_>>();
         assert_eq!(
-            abi(SourceType::Array(Box::new(custom("Unsigned")), Some(2))).as_deref(),
-            Some("(uint256)[2]")
+            abi(&function.params),
+            [
+                known("uint256"),
+                known("uint8"),
+                known("address"),
+                known("((uint8),address[],uint256)"),
+                known("uint256[2][]"),
+                known("function"),
+                AbiType::Unknown,
+                known("string"),
+            ]
         );
-        // A struct that contains itself has no finite spelling here.
-        assert_eq!(abi(custom("Cyclic")), None);
-        assert_eq!(abi(custom("Missing")), None);
+        assert_eq!(abi(&function.returns), [known("((uint8),address[],uint256)[]"), known("int8")]);
+        // Only the values with words to decode are decoded: not structs, function types, or what
+        // has no ABI type.
+        let decodable = function.params.iter().map(|ty| ty.decodable.clone()).collect::<Vec<_>>();
+        assert_eq!(
+            decodable,
+            [
+                Some(DynSolType::Uint(256)),
+                Some(DynSolType::Uint(8)),
+                Some(DynSolType::Address),
+                None,
+                Some(DynSolType::Array(Box::new(DynSolType::FixedArray(
+                    Box::new(DynSolType::Uint(256)),
+                    2
+                )))),
+                None,
+                None,
+                Some(DynSolType::String),
+            ]
+        );
     }
 
     #[test]
-    fn a_qualified_type_is_not_a_declaration_of_the_contract_or_file() {
-        let amount = |ty| Some(UserType::Value(ty));
-        // The project has two `Amount` types, and the contract of the function declares one.
-        let project = UserTypes::from([("Amount".into(), None)]);
-        let contract_types = HashMap::from([
-            (("Local".into(), "Amount".into()), amount(DynSolType::Address)),
-            (("Types".into(), "Amount".into()), amount(DynSolType::Uint(256))),
-        ]);
-        let scope = TypeScope {
-            contracts: vec!["Local".into()],
-            contract_types: &contract_types,
-            file: &[],
-            project: &project,
-        };
-        let qualified = |qualifier: &str| SourceType::Qualified(qualifier.into(), "Amount".into());
+    fn types_of_sources_that_are_not_lowered_are_unknown() {
+        let resolved = compiler(TYPES, false).enter(|compiler| {
+            resolve_types(
+                compiler.gcx(),
+                compiler.sess().source_map(),
+                std::path::PathBuf::from("test.sol"),
+            )
+        });
 
-        assert_eq!(SourceType::Custom("Amount".into()).resolve(&scope), Some(DynSolType::Address));
-        // The qualifier is a contract that declares the type.
-        assert_eq!(qualified("Types").resolve(&scope), Some(DynSolType::Uint(256)));
-        // The qualifier is an import alias: the name is ambiguous in the project.
-        assert_eq!(qualified("Imported").resolve(&scope), None);
+        assert!(resolved.is_empty());
     }
 }

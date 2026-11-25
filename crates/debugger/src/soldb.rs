@@ -1022,7 +1022,6 @@ mod tests {
                 path: PathBuf::from("src/C.sol"),
                 functions: Default::default(),
                 call_sites: Default::default(),
-                user_types: Vec::new(),
                 contract_bases: Vec::new(),
                 source_edits: Vec::new(),
             }),
