@@ -111,7 +111,7 @@ impl DebugRecorder {
 
     /// The table to append to, taken from the sink on first use.
     fn table(&mut self) -> &mut StepTable {
-        if self.table.is_none() {
+        self.table.get_or_insert_with(|| {
             // A recorder of another stack that has not finished holds the shared table, so this
             // one records into a table of its own.
             let table = self.sink.take().unwrap_or_else(|| {
@@ -119,9 +119,8 @@ impl DebugRecorder {
                 self.sink.take().unwrap_or_default()
             });
             self.first_step = table.len();
-            self.table = Some(table);
-        }
-        self.table.as_mut().unwrap()
+            table
+        })
     }
 
     /// Opens a frame at journal depth `depth`, as the tracer opens a node.
@@ -226,7 +225,7 @@ impl DebugRecorder {
             op::SWAPN | op::EXCHANGE => stack.len(),
             _ => read,
         };
-        self.shared = stack.len() - changed.min(stack.len());
+        self.shared = stack.len().saturating_sub(changed);
         let inputs_len = read.min(stack.len()).min(STORAGE_INPUTS);
         let mut inputs = [U256::ZERO; STORAGE_INPUTS];
         inputs[..inputs_len].copy_from_slice(&stack[stack.len() - inputs_len..]);
@@ -254,21 +253,17 @@ impl DebugRecorder {
     /// Ends the pending step after its instruction ran.
     fn end_step<T: EvmTypes>(&mut self, interp: &mut Interpreter<'_, '_, T>) {
         let Some(step) = self.pending.take() else { return };
-        let status = interp.result().err();
-        let had_value = if step.op == OpCode::SSTORE {
-            let journal = interp.host().state().journal();
-            (journal.len() != step.journal_len)
-                .then(|| match journal.last() {
-                    Some(JournalEntry::StorageChange { previous, .. }) => Some(*previous),
-                    _ => None,
-                })
-                .flatten()
-        } else {
-            None
-        };
+        let result = interp.result();
+        let status = result.err();
+        let had_value = (step.op == OpCode::SSTORE)
+            .then(|| interp.host().state().journal())
+            .filter(|journal| journal.len() != step.journal_len)
+            .and_then(|journal| match journal.last() {
+                Some(JournalEntry::StorageChange { previous, .. }) => Some(*previous),
+                _ => None,
+            });
         // As the tracer: the reentrancy sentry halts before any charge, and any other out-of-gas
         // step consumes the whole remainder it started with.
-        let result = interp.result();
         let gas_cost = if result == Err(InstrStop::ReentrancySentryOOG) {
             0
         } else if result.is_err_and(InstrStop::is_out_of_gas) {
@@ -280,7 +275,7 @@ impl DebugRecorder {
         let after = after.as_slice();
         // The frame runs another step unless this one ended it; that step starts with the value
         // a load pushed on top.
-        let loaded = status.is_none().then(|| after.last().copied()).flatten();
+        let loaded = after.last().copied().filter(|_| status.is_none());
         self.append(step, status, gas_cost, loaded, had_value);
     }
 
