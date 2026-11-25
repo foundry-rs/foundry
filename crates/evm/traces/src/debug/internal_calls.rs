@@ -191,7 +191,8 @@ impl Tracker<'_> {
                     None => (entries[0].parameter_slots, entries[0].return_slots, None),
                 })
                 .clone();
-            self.call(i, parameter_slots, return_slots, function);
+            let convention = self.context.convention;
+            self.call(i, parameter_slots, return_slots, function, convention);
         } else if let Some(k) = self.frames.iter().rposition(|frame| {
             frame.return_address == target
                 && landed.len() == frame.return_address_index + frame.return_slots
@@ -200,7 +201,9 @@ impl Tracker<'_> {
         } else if let Some((function, parameter_slots, return_slots)) =
             (self.context.from_source_map)(i)
         {
-            self.call(i, parameter_slots, return_slots, Some(Arc::new(function)));
+            // Yul functions take their first argument on top, as the via-IR code generator does.
+            let convention = Some(CallConvention::SolcViaIr);
+            self.call(i, parameter_slots, return_slots, Some(Arc::new(function)), convention);
         }
     }
 
@@ -212,6 +215,7 @@ impl Tracker<'_> {
         parameter_slots: usize,
         return_slots: usize,
         mut function: Option<Arc<FunctionInfo>>,
+        convention: Option<CallConvention>,
     ) {
         let entered = &self.steps[i + 1];
         let Some(stack) = entered.stack.as_deref() else { return };
@@ -238,16 +242,22 @@ impl Tracker<'_> {
             self.close(top, i - 1, None);
         }
 
-        // The external function that the dispatcher or the call frame enters is the call node
-        // that the trace shows already. Creation code has no dispatcher, so its calls are internal.
+        // The external function that the dispatcher enters is the call node that the trace
+        // shows already. Creation code has no dispatcher, so its calls are internal. In the
+        // fallback and receive functions, which no dispatcher enters, a call to a public function
+        // is internal unless the selector of the call data picks that function.
+        let calldata = self.context.calldata;
         if !self.context.is_create
             && self.frames.is_empty()
-            && function.as_ref().is_some_and(|function| function.is_entry)
+            && function.as_ref().is_some_and(|function| {
+                function.is_entry
+                    && function.selector.is_none_or(|selector| calldata.starts_with(&selector))
+            })
         {
             function = None;
         }
         let args = function.as_ref().and_then(|function| {
-            let convention = self.context.convention?;
+            let convention = convention?;
             let params = function.params.as_deref()?;
             let words = convention.arguments(stack, return_address_index);
             let memory = entered.memory.as_ref().map(|memory| memory.as_bytes().as_ref());
@@ -346,7 +356,13 @@ mod tests {
 
     fn function(name: &str, params: Option<usize>, is_entry: bool) -> Arc<FunctionInfo> {
         let params = params.and_then(uint);
-        Arc::new(FunctionInfo { name: name.into(), params, returns: uint(1), is_entry })
+        Arc::new(FunctionInfo {
+            name: name.into(),
+            params,
+            returns: uint(1),
+            is_entry,
+            selector: None,
+        })
     }
 
     /// Tracks `steps` of code with `f` and `g` that take `parameter_slots` words and return one.
@@ -356,7 +372,7 @@ mod tests {
         parameter_slots: usize,
         f: Arc<FunctionInfo>,
     ) -> Vec<Summary> {
-        track_in(steps, convention, parameter_slots, f, false)
+        track_in(steps, convention, parameter_slots, f, (false, &[]))
     }
 
     fn track_in(
@@ -364,7 +380,7 @@ mod tests {
         convention: Option<CallConvention>,
         parameter_slots: usize,
         f: Arc<FunctionInfo>,
-        is_create: bool,
+        (is_create, calldata): (bool, &[u8]),
     ) -> Vec<Summary> {
         let entry = || FunctionEntry { name: None, parameter_slots, return_slots: 1 };
         let code = CodeFunctions {
@@ -381,7 +397,7 @@ mod tests {
             resolve: &resolve,
             is_create,
             convention,
-            calldata: &[],
+            calldata,
             from_source_map: &|_| None,
         };
         track_internal_calls(steps, &context)
@@ -458,9 +474,48 @@ mod tests {
 
         assert_eq!(track(&steps, legacy, 1, f()), []);
         assert_eq!(
-            track_in(&steps, legacy, 1, f(), true),
+            track_in(&steps, legacy, 1, f(), (true, &[])),
             [(0, 3, "f".into(), strings(&["7"]), strings(&["9"]))]
         );
+    }
+
+    #[test]
+    fn only_the_function_that_the_selector_picks_is_the_dispatcher_entry() {
+        let steps = [&jump(F, &[RET.into(), 7])[..], &jump(RET, &[9])[..]].concat();
+        let legacy = Some(CallConvention::SolcLegacy);
+        let f = || {
+            let mut f = FunctionInfo::clone(&function("f", Some(1), true));
+            f.selector = Some([1, 2, 3, 4]);
+            Arc::new(f)
+        };
+
+        assert_eq!(track_in(&steps, legacy, 1, f(), (false, &[1, 2, 3, 4, 0])), []);
+        // The call data picks another function, as in a fallback function that calls `f`.
+        assert_eq!(
+            track_in(&steps, legacy, 1, f(), (false, &[5, 6, 7, 8])),
+            [(0, 3, "f".into(), strings(&["7"]), strings(&["9"]))]
+        );
+    }
+
+    #[test]
+    fn functions_found_from_the_source_map_take_the_first_argument_on_top() {
+        // `sub2(10, 3)`, a Yul function, enters with `[ret, 3, 10]`.
+        let steps = [jump(F, &[RET.into(), 3, 10]), jump(RET, &[7])].concat();
+        let code = CodeFunctions { entries: HashMap::new(), jumpdests: HashSet::from([F, RET]) };
+        let from_source_map =
+            |_: usize| Some((FunctionInfo::clone(&function("sub2", Some(2), false)), 2, 1));
+        let context = TrackerContext {
+            code: &code,
+            resolve: &|_, _| None,
+            is_create: false,
+            convention: Some(CallConvention::SolcLegacy),
+            calldata: &[],
+            from_source_map: &from_source_map,
+        };
+        let calls = track_internal_calls(&steps, &context);
+
+        assert_eq!(calls[0].call.args, strings(&["10", "3"]));
+        assert_eq!(calls[0].call.return_data, strings(&["7"]));
     }
 
     #[test]

@@ -966,9 +966,11 @@ pub fn etherscan_project(metadata: &Metadata, target_path: &Path) -> Result<Proj
 
     let compiler = MultiCompiler { solc: Some(SolcCompiler::Specific(solc)), vyper: None };
 
-    // The debugger decodes internal calls with the function tables.
+    // The debugger decodes internal calls with the function tables, and reads the stack layout
+    // from the metadata.
     let artifacts = ConfigurableArtifacts::new(
         [
+            ContractOutputSelection::Metadata,
             ContractOutputSelection::from(BytecodeOutputSelection::FunctionDebugData),
             ContractOutputSelection::from(DeployedBytecodeOutputSelection::FunctionDebugData),
         ],

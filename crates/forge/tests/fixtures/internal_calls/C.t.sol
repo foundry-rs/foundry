@@ -88,6 +88,19 @@ contract C is Base {
         }
     }
 
+    function asmSub(uint256 x) internal pure returns (uint256 r) {
+        assembly {
+            function sub2(a, b) -> c {
+                c := sub(a, b)
+            }
+            r := sub2(x, 3)
+        }
+    }
+
+    function runAsmSub(uint256 x) external pure returns (uint256) {
+        return asmSub(x);
+    }
+
     function runLib(uint256 x) external pure returns (uint256) {
         return L.sq(x);
     }
@@ -102,6 +115,10 @@ contract C is Base {
 }
 
 contract CTest {
+    function test_asm_sub() public {
+        new C().runAsmSub(10);
+    }
+
     function test_add() public {
         new C().runAdd(3, 4);
     }

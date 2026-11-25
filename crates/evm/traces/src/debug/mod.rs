@@ -103,11 +103,14 @@ fn resolve_entry(
         Choice::Ambiguous(entry, function) => {
             let name = function.qualified_name();
             let is_entry = function.is_entry;
-            (entry, FunctionInfo { name, params: None, returns: None, is_entry })
+            (entry, FunctionInfo { name, params: None, returns: None, is_entry, selector: None })
         }
         Choice::KeyName(entry) => {
             let name = without_number(entry.name.as_deref()?).to_string();
-            (entry, FunctionInfo { name, params: None, returns: None, is_entry: false })
+            (
+                entry,
+                FunctionInfo { name, params: None, returns: None, is_entry: false, selector: None },
+            )
         }
     };
     Some((entry.parameter_slots, entry.return_slots, function))
@@ -224,7 +227,13 @@ fn source_map_function(
     let slots = |params: &[Param]| params.iter().map(Param::slots).sum();
     let (parameter_slots, return_slots) = (slots(&params), slots(&returns));
 
-    let info = FunctionInfo { name, params: Some(params), returns: Some(returns), is_entry: false };
+    let info = FunctionInfo {
+        name,
+        params: Some(params),
+        returns: Some(returns),
+        is_entry: false,
+        selector: None,
+    };
     Some((info, parameter_slots, return_slots))
 }
 

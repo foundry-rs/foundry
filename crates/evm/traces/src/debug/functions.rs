@@ -8,6 +8,7 @@
 
 use super::Param;
 use alloy_dyn_abi::{DynSolType, parser::Storage};
+use alloy_primitives::keccak256;
 use solar::{
     ast::{
         DataLocation, ElementaryType, ExprKind, FunctionKind, Item, ItemKind, LitKind, SourceUnit,
@@ -61,6 +62,9 @@ pub struct FunctionInfo {
     pub returns: Option<Vec<Param>>,
     /// Whether the dispatcher or the call frame itself enters it.
     pub is_entry: bool,
+    /// The selector that the dispatcher enters it with, if it is an entry and its parameter
+    /// types are known.
+    pub selector: Option<[u8; 4]>,
 }
 
 #[derive(Clone, Debug)]
@@ -100,12 +104,23 @@ impl SourceFunction {
             })
         };
         let params = resolve(&self.params);
-        let signature = signature(&self.name, params.as_deref());
+        let canonical = canonical_signature(&self.name, params.as_deref());
+        let selector = canonical
+            .as_deref()
+            .filter(|_| self.is_entry)
+            .map(|signature| keccak256(signature)[..4].try_into().expect("four bytes"));
+        let signature = canonical.unwrap_or_else(|| self.name.clone());
         let name = match &self.contract {
             Some(contract) => format!("{contract}::{signature}"),
             None => signature,
         };
-        FunctionInfo { name, params, returns: resolve(&self.returns), is_entry: self.is_entry }
+        FunctionInfo {
+            name,
+            params,
+            returns: resolve(&self.returns),
+            is_entry: self.is_entry,
+            selector,
+        }
     }
 }
 
@@ -259,18 +274,13 @@ fn source_type(ty: &Type<'_>) -> SourceType {
     }
 }
 
-/// Formats `name(types)`, or `name` when a parameter type is unknown.
-fn signature(name: &str, params: Option<&[Param]>) -> String {
-    let types = params.and_then(|params| {
-        params
-            .iter()
-            .map(|param| param.ty.as_ref().map(DynSolType::sol_type_name))
-            .collect::<Option<Vec<_>>>()
-    });
-    match types {
-        Some(types) => format!("{name}({})", types.join(",")),
-        None => name.to_string(),
-    }
+/// Formats `name(types)`, or `None` when a parameter type is unknown.
+fn canonical_signature(name: &str, params: Option<&[Param]>) -> Option<String> {
+    let types = params?
+        .iter()
+        .map(|param| param.ty.as_ref().map(DynSolType::sol_type_name))
+        .collect::<Option<Vec<_>>>()?;
+    Some(format!("{name}({})", types.join(",")))
 }
 
 /// The name that solc's `functionDebugData` key spells for a function with the AST id `id`:
