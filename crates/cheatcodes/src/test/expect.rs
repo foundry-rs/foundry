@@ -518,6 +518,7 @@ fn expect_logo_uri_updated<FEN: FoundryEvmNetwork>(
         anonymous: false,
         found: false,
         count: 1,
+        matched_logs: 0,
         mismatch_error: None,
     };
     ccx.state.expected_emits.push_back((expected_emit, Default::default()));
@@ -906,6 +907,7 @@ fn expect_emit<FEN: FoundryEvmNetwork>(
         log: None,
         anonymous,
         count,
+        matched_logs: 0,
         mismatch_error: None,
     };
     if let Some(found_emit_pos) = state.expected_emits.iter().position(|(emit, _)| emit.found) {

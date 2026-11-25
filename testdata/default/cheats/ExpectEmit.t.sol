@@ -59,9 +59,7 @@ contract Emitter {
         inner.emitEvent(topic1, topic2, topic3, data);
     }
 
-    function emitHereAndNested(Emitter inner, uint256 topic1, uint256 topic2, uint256 topic3, uint256 data)
-        public
-    {
+    function emitHereAndNested(Emitter inner, uint256 topic1, uint256 topic2, uint256 topic3, uint256 data) public {
         emit Something(topic1, topic2, topic3, data);
         inner.emitEvent(topic1, topic2, topic3, data);
     }

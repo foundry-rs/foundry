@@ -36,6 +36,8 @@ pub struct ExpectedEmit {
     pub found: bool,
     /// Number of times the log is expected to be emitted
     pub count: u64,
+    /// Number of matching logs counted so far, from any emitter.
+    pub matched_logs: u64,
     /// Stores mismatch details if a log didn't match.
     pub mismatch_error: Option<EmitMismatch>,
 }
@@ -152,19 +154,18 @@ pub(crate) fn observe_log(tracker: &mut ExpectedEmitTracker, log: &Log) -> Optio
     };
 
     // Increment/set `count` for `log.address` and `log.data`
-    match count_map.entry(log.address) {
-        Entry::Occupied(mut entry) => {
-            let log_count_map = entry.get_mut();
-            log_count_map.insert(&log.data);
-        }
+    let counted = match count_map.entry(log.address) {
+        Entry::Occupied(mut entry) => entry.get_mut().insert(&log.data),
         Entry::Vacant(entry) => {
             let mut log_count_map = LogCountMap::new(&event_to_fill_or_check);
-            if log_count_map.satisfies_checks(&log.data) {
-                log_count_map.insert(&log.data);
+            let counted = log_count_map.insert(&log.data);
+            if counted {
                 entry.insert(log_count_map);
             }
+            counted
         }
-    }
+    };
+    event_to_fill_or_check.matched_logs += counted as u64;
 
     event_to_fill_or_check.found = || -> bool {
         if !checks_topics_and_data(event_to_fill_or_check.checks, expected, log) {
@@ -182,8 +183,12 @@ pub(crate) fn observe_log(tracker: &mut ExpectedEmitTracker, log: &Log) -> Optio
             return false;
         }
 
-        matched_count(event_to_fill_or_check.address, &count_map, Some(&log.data))
-            >= event_to_fill_or_check.count
+        // Without an emitter, matching logs from all emitters add up to the count.
+        let matched = match event_to_fill_or_check.address {
+            Some(emitter) => count_map.get(&emitter).map_or(0, |log_map| log_map.count(&log.data)),
+            None => event_to_fill_or_check.matched_logs,
+        };
+        matched >= event_to_fill_or_check.count
     }();
 
     // If we found the event, we can push it to the back of the queue
@@ -664,6 +669,7 @@ mod tests {
                 anonymous,
                 found: false,
                 count,
+                matched_logs: 0,
                 mismatch_error: None,
             },
             Default::default(),

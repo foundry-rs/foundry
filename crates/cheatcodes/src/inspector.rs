@@ -4421,6 +4421,7 @@ mod tests {
                 anonymous: false,
                 found: false,
                 count: 1,
+                matched_logs: 0,
                 mismatch_error: None,
             },
             Default::default(),
