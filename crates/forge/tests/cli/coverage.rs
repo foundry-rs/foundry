@@ -2774,6 +2774,53 @@ BRDA:14,0,0,-
     );
 }
 
+// A public function also runs from outside, so the only internal call to it does not own its hits.
+#[forgetest]
+fn if_arm_calling_public_function_does_not_take_external_calls_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Public.sol",
+        r#"
+contract Public {
+    bool constant OPEN = true;
+
+    uint256 public total;
+
+    function never() internal {
+        if (OPEN) {
+            bump();
+        }
+    }
+
+    function bump() public {
+        total += 1;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Public.t.sol",
+        r#"
+import "../src/Public.sol";
+
+contract PublicTest {
+    function testBump() public {
+        Public target = new Public();
+        for (uint256 i = 0; i < 3; i++) target.bump();
+    }
+}
+"#,
+    );
+
+    assert_lcov(
+        cmd.arg("coverage").arg("--no-isolate"),
+        str![[r#"
+...
+BRDA:10,0,0,-
+...
+"#]],
+    );
+}
+
 #[forgetest]
 fn identical_bytecodes(prj: _, cmd: _) {
     prj.insert_ds_test();

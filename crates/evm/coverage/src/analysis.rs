@@ -49,7 +49,8 @@ struct SourceVisitor<'gcx> {
     /// callees)`.
     callees: Vec<(Range<u32>, Vec<SourceLocation>)>,
     /// How many calls by name resolve to each function, as `(source ID, start, end)` of the
-    /// function.
+    /// function. A function that outside callers can reach counts twice per call, so it never
+    /// counts as called once.
     callee_calls: HashMap<(usize, u32, u32), u32>,
     /// Direct revert guards, resolved against HIR after collecting their source items.
     revert_guards: Vec<PendingRevertGuard>,
@@ -418,12 +419,24 @@ impl<'gcx> SourceVisitor<'gcx> {
             .filter_map(|function| {
                 let &source_id = self.hir_source_ids.get(&function.source)?;
                 let contract = function.contract.map(|id| self.gcx.hir.contract(id).name.as_str());
-                Some(self.location(function.span, source_id, contract.unwrap_or_default().into()))
+                // A function that can be called from outside also runs from there.
+                let calls = if matches!(
+                    function.visibility,
+                    ast::Visibility::Internal | ast::Visibility::Private
+                ) {
+                    1
+                } else {
+                    2
+                };
+                let location =
+                    self.location(function.span, source_id, contract.unwrap_or_default().into());
+                Some((location, calls))
             })
             .collect::<Vec<_>>();
-        for callee in &callees {
-            *self.callee_calls.entry(callee_key(callee)).or_default() += 1;
+        for (callee, calls) in &callees {
+            *self.callee_calls.entry(callee_key(callee)).or_default() += calls;
         }
+        let callees = callees.into_iter().map(|(callee, _)| callee).collect::<Vec<_>>();
         if !callees.is_empty() {
             let bytes = self.gcx.sess.source_map().span_to_source(call.span).unwrap().data;
             self.callees.push((bytes.start as u32..bytes.end as u32, callees));
