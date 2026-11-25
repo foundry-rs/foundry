@@ -1,3 +1,7 @@
+struct Item {
+    uint256 id;
+}
+
 contract Public {
     function fact(uint256 n) public pure returns (uint256) {
         return n == 0 ? 1 : n * fact(n - 1);
@@ -17,6 +21,14 @@ contract Public {
 
     function h(int256 x) public pure returns (int256) {
         return x + 1;
+    }
+
+    function k(uint256 x) external pure returns (uint256) {
+        return k(Item(x));
+    }
+
+    function k(Item memory item) public pure returns (uint256) {
+        return item.id + 1;
     }
 
     function read(uint256[2][2] memory xs) public pure returns (uint256) {
@@ -39,5 +51,9 @@ contract PublicTest {
 
     function test_nested_fixed_array_argument() public {
         new Public().read([[uint256(1), 2], [uint256(3), 4]]);
+    }
+
+    function test_overloads_with_a_struct() public {
+        new Public().k(uint256(3));
     }
 }

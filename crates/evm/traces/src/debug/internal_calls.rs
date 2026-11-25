@@ -320,7 +320,7 @@ impl Tracker<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::debug::Param;
+    use crate::debug::{AbiType, Param};
     use alloy_dyn_abi::DynSolType;
     use evm2::interpreter::InstrStop;
 
@@ -371,7 +371,7 @@ mod tests {
         FunctionInfo {
             name: name.into(),
             declared_name: name.into(),
-            signature: None,
+            abi_types: None,
             params,
             returns: uint(1),
             is_entry,
@@ -556,19 +556,43 @@ mod tests {
 
     #[test]
     fn overloads_with_the_same_arguments_are_told_apart_by_signature() {
-        // The call data selects `f(uint256)`, and the first jump is the call of `f(int256)` with
-        // the same word.
+        // The call data selects `f(uint256)`, and the first jump is the call of another overload
+        // with the word of the call data.
         let steps = [jump(F, &[RET.into(), 7]), jump(RET, &[4])].concat();
         let legacy = Some(CallConvention::SolcLegacy);
-        let f = |signature: &str| FunctionInfo {
-            signature: Some(signature.into()),
-            ..function("f", Some(1), true)
-        };
-        let selects = |function: &FunctionInfo| function.signature.as_deref() == Some("f(uint256)");
-        let calls = |signature| track_in(&steps, legacy, 1, f(signature), (false, &selects));
+        let f = |ty| FunctionInfo { abi_types: Some(vec![ty]), ..function("f", Some(1), true) };
+        let selects = |function: &FunctionInfo| function.matches_signature("f(uint256)");
+        let calls = |ty| track_in(&steps, legacy, 1, f(ty), (false, &selects));
 
-        assert_eq!(calls("f(uint256)"), []);
-        assert_eq!(calls("f(int256)"), [(0, 3, "f".into(), strings(&["7"]), strings(&["4"]))]);
+        assert_eq!(calls(AbiType::Known("uint256".into())), []);
+        let shown = [(0, 3, "f".into(), strings(&["7"]), strings(&["4"]))];
+        assert_eq!(calls(AbiType::Known("int256".into())), shown);
+        // A struct is a tuple in the ABI.
+        assert_eq!(calls(AbiType::Tuple), shown);
+        assert_eq!(calls(AbiType::Unknown), []);
+    }
+
+    #[test]
+    fn matches_a_signature_by_name_and_parameter_types() {
+        let function = |types| FunctionInfo {
+            abi_types: Some(types),
+            ..FunctionInfo::untyped("f".into(), true)
+        };
+        let known = |ty: &str| AbiType::Known(ty.into());
+
+        assert!(
+            function(vec![known("uint256"), known("bytes")]).matches_signature("f(uint256,bytes)")
+        );
+        assert!(!function(vec![known("uint256")]).matches_signature("f(uint256,bytes)"));
+        assert!(!function(vec![known("uint256")]).matches_signature("g(uint256)"));
+        assert!(function(vec![]).matches_signature("f()"));
+        assert!(
+            function(vec![AbiType::Tuple, known("uint256")])
+                .matches_signature("f((uint256,address)[],uint256)")
+        );
+        assert!(!function(vec![AbiType::Tuple]).matches_signature("f(uint256)"));
+        // Without the parameters only the name counts.
+        assert!(FunctionInfo::untyped("f".into(), true).matches_signature("f(uint256)"));
     }
 
     #[test]

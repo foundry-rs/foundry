@@ -67,13 +67,55 @@ pub struct FunctionInfo {
     pub returns: Option<Vec<Param>>,
     /// The name that the function is declared with, which the ABI spells too.
     pub declared_name: String,
-    /// `name(types)` as the ABI spells it, or `None` when a parameter type is not known.
-    pub signature: Option<String>,
+    /// What the ABI spells for each parameter, or `None` if the parameters are not known.
+    pub abi_types: Option<Vec<AbiType>>,
     /// Whether the dispatcher or the call frame itself enters it.
     pub is_entry: bool,
 }
 
+/// What the ABI spells for a parameter of a function.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AbiType {
+    /// A canonical type name, such as `uint256[]`.
+    Known(String),
+    /// A struct, or an array of structs, which the ABI spells as a tuple.
+    Tuple,
+    /// Another type that the AST does not tell the ABI type of.
+    Unknown,
+}
+
 impl FunctionInfo {
+    /// Whether `signature`, as the ABI spells it, can be the signature of this function. The
+    /// parameters that are not known match any type, or any tuple if they are structs.
+    pub fn matches_signature(&self, signature: &str) -> bool {
+        let Some((name, arguments)) = signature.split_once('(') else { return false };
+        if name != self.declared_name {
+            return false;
+        }
+        let Some(types) = &self.abi_types else { return true };
+        let Some(arguments) = arguments.strip_suffix(')') else { return false };
+        // Split at the commas outside tuples.
+        let mut depth = 0;
+        let mut arguments = arguments
+            .split(|c| {
+                match c {
+                    '(' => depth += 1,
+                    ')' => depth -= 1,
+                    _ => {}
+                }
+                c == ',' && depth == 0
+            })
+            .filter(|argument| !argument.is_empty());
+        let matches = types.iter().all(|ty| {
+            arguments.next().is_some_and(|argument| match ty {
+                AbiType::Known(known) => known == argument,
+                AbiType::Tuple => argument.contains('('),
+                AbiType::Unknown => true,
+            })
+        });
+        matches && arguments.next().is_none()
+    }
+
     /// A function that only the name is known of.
     pub fn untyped(name: String, is_entry: bool) -> Self {
         Self {
@@ -81,7 +123,7 @@ impl FunctionInfo {
             name,
             params: None,
             returns: None,
-            signature: None,
+            abi_types: None,
             is_entry,
         }
     }
@@ -133,6 +175,16 @@ impl SourceFunction {
                 .collect::<Option<Vec<_>>>()
         });
         let signature = types.map(|types| format!("{}({})", self.name, types.join(",")));
+        let abi_types = self.params.as_ref().filter(|_| !self.is_yul).map(|params| {
+            params
+                .iter()
+                .map(|param| match param.ty.resolve(user_types) {
+                    Some(ty) => AbiType::Known(ty.sol_type_name().into_owned()),
+                    None if param.ty.is_struct(user_types) => AbiType::Tuple,
+                    None => AbiType::Unknown,
+                })
+                .collect()
+        });
         let spelled = signature.as_ref().unwrap_or(&self.name);
         let name = match &self.contract {
             Some(contract) => format!("{contract}::{spelled}"),
@@ -143,7 +195,7 @@ impl SourceFunction {
             params,
             returns: resolve(&self.returns),
             declared_name: self.name.clone(),
-            signature,
+            abi_types,
             is_entry: self.is_entry,
         }
     }
@@ -167,6 +219,15 @@ impl SourceType {
                 })
             }
             Self::ExternalFunction | Self::Other => None,
+        }
+    }
+
+    /// Whether the type is a struct or an array of structs.
+    fn is_struct(&self, user_types: &UserTypes) -> bool {
+        match self {
+            Self::Custom(name) => matches!(user_types.get(name), Some(Some(UserType::Struct))),
+            Self::Array(element, _) => element.is_struct(user_types),
+            _ => false,
         }
     }
 

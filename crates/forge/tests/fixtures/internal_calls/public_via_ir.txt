@@ -2,21 +2,32 @@
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
-Ran 4 tests for test/Public.t.sol:PublicTest
+Ran 5 tests for test/Public.t.sol:PublicTest
 [PASS] test_nested_fixed_array_argument() ([GAS])
 Traces:
   [..] PublicTest::test_nested_fixed_array_argument()
     ├─ [..] → new Public@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
-    │   └─ ← [Return] 2023 bytes of code
+    │   └─ ← [Return] 2350 bytes of code
     ├─ [..] Public::read([[1, 2], [3, 4]]) [staticcall]
     │   └─ ← [Return] 5
+    └─ ← [Return]
+
+[PASS] test_overloads_with_a_struct() ([GAS])
+Traces:
+  [..] PublicTest::test_overloads_with_a_struct()
+    ├─ [..] → new Public@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 2350 bytes of code
+    ├─ [..] Public::k(3) [staticcall]
+    │   ├─ [..] Public::k(<unknown>)
+    │   │   └─ ← 4
+    │   └─ ← [Return] 4
     └─ ← [Return]
 
 [PASS] test_overloads_with_the_same_argument() ([GAS])
 Traces:
   [..] PublicTest::test_overloads_with_the_same_argument()
     ├─ [..] → new Public@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
-    │   └─ ← [Return] 2023 bytes of code
+    │   └─ ← [Return] 2350 bytes of code
     ├─ [..] Public::h(3) [staticcall]
     │   ├─ [..] Public::h(int256)(3)
     │   │   └─ ← 4
@@ -27,7 +38,7 @@ Traces:
 Traces:
   [..] PublicTest::test_public_overload()
     ├─ [..] → new Public@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
-    │   └─ ← [Return] 2023 bytes of code
+    │   └─ ← [Return] 2350 bytes of code
     ├─ [..] Public::f(4) [staticcall]
     │   ├─ [..] Public::f(uint256,uint256)(4, 2)
     │   │   └─ ← 8
@@ -38,7 +49,7 @@ Traces:
 Traces:
   [..] PublicTest::test_recursive_public_function()
     ├─ [..] → new Public@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
-    │   └─ ← [Return] 2023 bytes of code
+    │   └─ ← [Return] 2350 bytes of code
     ├─ [..] Public::fact(3) [staticcall]
     │   ├─ [..] Public::fact(uint256)(2)
     │   │   ├─ [..] Public::fact(uint256)(1)
@@ -49,6 +60,6 @@ Traces:
     │   └─ ← [Return] 6
     └─ ← [Return]
 
-Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 5 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test suite [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)
+Ran 1 test suite [ELAPSED]: 5 tests passed, 0 failed, 0 skipped (5 total tests)

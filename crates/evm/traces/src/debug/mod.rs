@@ -9,7 +9,7 @@ use alloy_primitives::U256;
 use evm2::interpreter::opcode::OpCode;
 use foundry_common::fmt::format_token;
 use foundry_compilers::{artifacts::sourcemap::Jump, buildinfo::SourceEdit};
-pub use functions::{FunctionInfo, SourceFunction, UserType, UserTypes};
+pub use functions::{AbiType, FunctionInfo, SourceFunction, UserType, UserTypes};
 use functions::{names_agree, without_number};
 pub use internal_calls::{CallConvention, CodeFunctions, FunctionEntry};
 use internal_calls::{ResolvedEntry, SourceMapFunction, TrackerContext, track_internal_calls};
@@ -57,13 +57,10 @@ impl DebugTraceIdentifier {
         // Without an ABI every external function counts as dispatched.
         let selected =
             node.trace.data.first_chunk().and_then(|selector| artifact.selectors.get(selector));
-        // The signature tells overloads apart, if the types of the function are known.
+        // The signature tells overloads apart.
         let is_dispatched = |function: &FunctionInfo| {
             artifact.selectors.is_empty()
-                || selected.is_some_and(|selected| match &function.signature {
-                    Some(signature) => selected == signature,
-                    None => selected.split('(').next() == Some(&function.declared_name),
-                })
+                || selected.is_some_and(|selected| function.matches_signature(selected))
         };
         let resolve = |pc: u32, entries: &[FunctionEntry]| {
             resolve_entry(sources, artifact, is_create, pc, entries)
