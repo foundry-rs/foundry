@@ -17,7 +17,6 @@ use super::*;
 use evm2::bytecode::Instructions;
 use foundry_common::slot_identifier::{ENCODING_INPLACE, ENCODING_MAPPING};
 use foundry_compilers::artifacts::{Storage, StorageLayout, StorageType};
-use serde::Deserialize;
 
 const MAX_NESTED_MAPPING_HASHES: usize = 1 << 18;
 
