@@ -68,7 +68,7 @@ impl<FEN: FoundryEvmNetwork> LinkedState<FEN> {
     /// Given linked and compiled artifacts, prepares data we need for execution.
     /// This includes the function to call and the calldata to pass to it.
     pub async fn prepare_execution(self) -> Result<PreExecutionState<FEN>> {
-        let Self { args, script_config, script_wallets, browser_wallet, build_data } = self;
+        let Self { mut args, script_config, script_wallets, browser_wallet, build_data } = self;
 
         let target_contract = build_data.get_target_contract()?;
 

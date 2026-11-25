@@ -13,6 +13,7 @@ extern crate foundry_common;
 extern crate tracing;
 
 use crate::{broadcast::BundledState, runner::ScriptRunner, simulate::PreSimulationState};
+use alloy_dyn_abi::{JsonAbiExt, Specifier};
 use alloy_eips::BlockId;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::{Network, TransactionBuilder};
@@ -62,7 +63,7 @@ use foundry_evm::{
     hardforks::ExecutionSpec,
     inspectors::{
         CheatsConfig,
-        cheatcodes::{BroadcastableTransactions, Wallets},
+        cheatcodes::{BroadcastableTransactions, Wallets, parse_json_as},
     },
     opts::{EvmOpts, ExecutionSpecContext, ForkContext, resolve_execution_spec},
     traces::{InternalTraceMode, TraceRequirements, Traces},
@@ -129,6 +130,16 @@ pub struct ScriptArgs {
 
     /// Arguments to pass to the script function.
     pub args: Vec<String>,
+
+    /// JSON file with the script function arguments as an array, encoded against `--sig`.
+    ///
+    /// Structs are JSON objects keyed by field name.
+    #[arg(long, value_name = "FILE", value_hint = ValueHint::FilePath, conflicts_with = "args")]
+    pub args_json: Option<PathBuf>,
+
+    /// The `--args-json` contents, read on the first script run so reruns reuse them.
+    #[arg(skip)]
+    args_json_value: Option<serde_json::Value>,
 
     /// The name of the contract you want to run.
     #[arg(long, visible_alias = "tc", value_name = "CONTRACT_NAME")]
@@ -867,7 +878,7 @@ impl ScriptArgs {
     /// corresponding function by matching the selector, first 4 bytes in the calldata.
     ///
     /// Note: We assume that the `sig` is already stripped of its prefix, See [`ScriptArgs`]
-    fn get_method_and_calldata(&self, abi: &JsonAbi) -> Result<(Function, Bytes)> {
+    fn get_method_and_calldata(&mut self, abi: &JsonAbi) -> Result<(Function, Bytes)> {
         // Hex shorter than a selector cannot be calldata, so it is treated as a function name.
         if let Ok(decoded) = hex::decode(&self.sig)
             && let Some(selector) = decoded.get(..SELECTOR_LEN)
@@ -879,6 +890,7 @@ impl ScriptArgs {
                         hex::encode(selector)
                     )
                 })?;
+            eyre::ensure!(self.args_json.is_none(), "--args-json cannot be used with raw calldata");
             return Ok((func.clone(), decoded.into()));
         }
 
@@ -903,7 +915,36 @@ impl ScriptArgs {
                 }
             }
         };
-        let data = encode_function_args(func, &self.args)?;
+        if self.args_json_value.is_none()
+            && let Some(path) = &self.args_json
+        {
+            self.args_json_value = Some(foundry_common::fs::read_json_file(path)?);
+        }
+        let data = if let Some(json) = &self.args_json_value {
+            let serde_json::Value::Array(values) = json else {
+                eyre::bail!("--args-json must contain a JSON array of arguments");
+            };
+            eyre::ensure!(
+                values.len() == func.inputs.len(),
+                "--args-json has {} arguments, but `{}` takes {}",
+                values.len(),
+                func.signature(),
+                func.inputs.len()
+            );
+            let values = func
+                .inputs
+                .iter()
+                .zip(values)
+                .map(|(param, value)| {
+                    let ty = param.resolve()?;
+                    parse_json_as(value, &ty)
+                        .map_err(|e| eyre::eyre!("argument `{}` {ty}: {e}", param.name))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            func.abi_encode_input(&values)?
+        } else {
+            encode_function_args(func, &self.args)?
+        };
 
         Ok((func.clone(), data.into()))
     }
@@ -2087,6 +2128,20 @@ mod tests {
         let sig = "0x522bb704000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfFFb92266";
         let args = ScriptArgs::parse_from(["foundry-cli", "Contract.sol", "--sig", sig]);
         assert_eq!(args.sig, sig);
+    }
+
+    // `--resume` with available signers never runs the script, so parsing must not need the file.
+    #[test]
+    fn args_json_is_not_read_at_parse_time() {
+        let args = ScriptArgs::try_parse_from([
+            "foundry-cli",
+            "Contract.sol",
+            "--args-json",
+            "missing.json",
+            "--resume",
+        ])
+        .unwrap();
+        assert_eq!(args.args_json, Some(PathBuf::from("missing.json")));
     }
 
     #[test]
