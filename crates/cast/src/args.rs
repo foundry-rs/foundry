@@ -835,7 +835,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let (provider, who) = rpc_provider_and_address(&rpc, who).await?;
             let code = provider.get_code_at(who).block_id(block.unwrap_or_default()).await?;
             print_scalar(if disassemble {
-                crate::cmd::disassemble(&code)
+                crate::cmd::disassemble(&code)?
             } else {
                 code.to_string()
             })?;
@@ -877,7 +877,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::Query(QuerySubcommand::Disassemble { bytecode }) => {
             let bytecode = stdin::unwrap_line(bytecode)?;
-            print_scalar(crate::cmd::disassemble(&hex::decode(bytecode)?))?;
+            print_scalar(crate::cmd::disassemble(&hex::decode(bytecode)?)?)?;
         }
         CastSubcommand::Query(QuerySubcommand::Selectors { bytecode, resolve }) => {
             let bytecode = stdin::unwrap_line(bytecode)?;
