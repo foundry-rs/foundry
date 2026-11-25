@@ -23,6 +23,7 @@ pub use recording::{
     DebugRecording, DebugStepSink, RecordedFrame, StepConverter, StepStorage, quantity, step_record,
 };
 pub use sources::{ArtifactData, ContractSources, SourceData};
+use std::sync::Arc;
 
 #[derive(Clone, Debug)]
 pub struct DebugTraceIdentifier {
@@ -99,22 +100,23 @@ fn resolve_entry(
     entries: &[FunctionEntry],
 ) -> Option<ResolvedEntry> {
     let named = entries.iter().filter(|entry| entry.name.is_some()).collect::<Vec<_>>();
+    let entry = *named.first()?;
     let defined =
         sources.source_mapping_in(artifact, pc, is_create).and_then(|(element, source)| {
             let offset =
                 SourceEdit::original_offset(&source.source_edits, element.offset() as usize);
-            source.functions.get(&offset).cloned()
+            source.functions.get(&offset).map(Arc::as_ref)
         });
-    let (entry, function) = match choose_entry(&named, defined.as_deref())? {
-        Choice::Function(entry, function) => (entry, function.info(&sources.user_types)),
-        Choice::Ambiguous(entry, function) => {
-            // The entries do not tell which contract's function ran.
-            (entry, FunctionInfo::untyped(function.name.clone(), function.is_entry))
+    let function = match choose_entry(&named, defined) {
+        Choice::Function(function) => function.info(&sources.user_types),
+        // The entries do not tell which contract's function ran.
+        Choice::Ambiguous(function) => {
+            FunctionInfo::untyped(function.name.clone(), function.is_entry)
         }
-        Choice::KeyName(entry) => {
-            let name = without_number(entry.name.as_deref()?).to_string();
-            (entry, FunctionInfo::untyped(name, false))
+        Choice::KeyName => {
+            FunctionInfo::untyped(without_number(entry.name.as_deref()?).to_string(), false)
         }
+        Choice::Hidden => return None,
     };
     Some((entry.parameter_slots, entry.return_slots, function))
 }
@@ -122,40 +124,35 @@ fn resolve_entry(
 /// What a call to an entry runs.
 enum Choice<'a> {
     /// The function that the source map and the key agree on.
-    Function(&'a FunctionEntry, &'a SourceFunction),
+    Function(&'a SourceFunction),
     /// Functions that the compiler merged into one entry, which share a name, such as overloads
     /// that differ in a type only, or functions of other contracts. The call does not tell which
     /// of them ran.
-    Ambiguous(&'a FunctionEntry, &'a SourceFunction),
+    Ambiguous(&'a SourceFunction),
     /// The name of the key, if the source map has no function that agrees with it.
-    KeyName(&'a FunctionEntry),
+    KeyName,
+    /// Merged functions with different names, which the call cannot tell apart.
+    Hidden,
 }
 
-/// Decides what a call to an entry runs, given the entries `named` at its offset and the function
-/// `defined` at the offset in the source.
+/// Decides what a call to an entry runs, given the entries `named` at its offset, of which there
+/// is at least one, and the function `defined` at the offset in the source.
 ///
 /// The compiler merges functions with the same code into one entry, and the call does not tell
 /// which of them ran. Such a call is shown only if they share a name, and then without types or
 /// contract.
-fn choose_entry<'a>(
-    named: &[&'a FunctionEntry],
-    defined: Option<&'a SourceFunction>,
-) -> Option<Choice<'a>> {
-    let first = *named.first()?;
-    let agrees = |entry: &FunctionEntry, function: &SourceFunction| {
+fn choose_entry<'a>(named: &[&FunctionEntry], defined: Option<&'a SourceFunction>) -> Choice<'a> {
+    let agrees = |entry: &&FunctionEntry, function: &SourceFunction| {
         entry.name.as_deref().is_some_and(|key_name| names_agree(key_name, &function.name))
     };
-    if named.len() > 1 {
-        let function = defined?;
-        return named
-            .iter()
-            .all(|entry| agrees(entry, function))
-            .then_some(Choice::Ambiguous(first, function));
+    match (named, defined) {
+        ([entry], Some(function)) if agrees(entry, function) => Choice::Function(function),
+        ([_], _) => Choice::KeyName,
+        (_, Some(function)) if named.iter().all(|entry| agrees(entry, function)) => {
+            Choice::Ambiguous(function)
+        }
+        _ => Choice::Hidden,
     }
-    Some(match defined {
-        Some(function) if agrees(first, function) => Choice::Function(first, function),
-        _ => Choice::KeyName(first),
-    })
 }
 
 /// A parameter or return value of an internal function.
@@ -501,13 +498,10 @@ mod tests {
     fn a_name_that_does_not_agree_gives_the_name_of_the_key() {
         let (a, b) = (entry("a"), entry("b"));
 
-        assert!(matches!(choose_entry(&[&a], Some(&defined("a"))), Some(Choice::Function(..))));
+        assert!(matches!(choose_entry(&[&a], Some(&defined("a"))), Choice::Function(_)));
         // The source map never gives another function than the one of the key.
-        assert!(
-            matches!(choose_entry(&[&b], Some(&defined("a"))), Some(Choice::KeyName(entry)) if entry.name.as_deref() == Some("b"))
-        );
-        assert!(matches!(choose_entry(&[&a], None), Some(Choice::KeyName(_))));
-        assert!(choose_entry(&[], Some(&defined("a"))).is_none());
+        assert!(matches!(choose_entry(&[&b], Some(&defined("a"))), Choice::KeyName));
+        assert!(matches!(choose_entry(&[&a], None), Choice::KeyName));
     }
 
     #[test]
@@ -518,11 +512,11 @@ mod tests {
         // Overloads with the same code: the call does not tell which of them ran.
         assert!(matches!(
             choose_entry(&[&first, &second], Some(&defined("log"))),
-            Some(Choice::Ambiguous(..))
+            Choice::Ambiguous(_)
         ));
         // Functions with other names would show the name of the source map for both.
-        assert!(choose_entry(&[&a, &b], Some(&defined("a"))).is_none());
-        assert!(choose_entry(&[&a, &b], None).is_none());
+        assert!(matches!(choose_entry(&[&a, &b], Some(&defined("a"))), Choice::Hidden));
+        assert!(matches!(choose_entry(&[&a, &b], None), Choice::Hidden));
     }
 
     #[test]

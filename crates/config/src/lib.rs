@@ -26,7 +26,7 @@ use foundry_compilers::{
         Severity,
         output_selection::{
             BytecodeOutputSelection, ContractOutputSelection, DeployedBytecodeOutputSelection,
-            OutputSelection,
+            EvmOutputSelection, OutputSelection,
         },
         remappings::{RelativeRemapping, Remapping},
         serde_helpers,
@@ -809,6 +809,17 @@ pub const STANDALONE_FALLBACK_SECTIONS: &[(&str, &str)] = &[("invariant", "fuzz"
 /// See [Warning::DeprecatedKey]
 pub const DEPRECATIONS: &[(&str, &str)] =
     &[("cancun", "evm_version = Cancun"), ("deny_warnings", "deny = warnings")];
+
+/// The compiler outputs that internal call decoding reads: the `functionDebugData` of the creation
+/// and the runtime code.
+pub const INTERNAL_CALL_OUTPUT: [ContractOutputSelection; 2] = [
+    ContractOutputSelection::Evm(EvmOutputSelection::ByteCode(
+        BytecodeOutputSelection::FunctionDebugData,
+    )),
+    ContractOutputSelection::Evm(EvmOutputSelection::DeployedByteCode(
+        DeployedBytecodeOutputSelection::FunctionDebugData,
+    )),
+];
 
 impl Config {
     /// The default profile: "default"
@@ -2345,11 +2356,7 @@ impl Config {
     /// The tables are small, but they change the compiler output selection, so the first run
     /// that needs them compiles the files it runs again.
     pub fn enable_internal_call_artifacts(&mut self) {
-        let function_debug_data = [
-            ContractOutputSelection::from(BytecodeOutputSelection::FunctionDebugData),
-            ContractOutputSelection::from(DeployedBytecodeOutputSelection::FunctionDebugData),
-        ];
-        for selection in function_debug_data {
+        for selection in INTERNAL_CALL_OUTPUT {
             if !self.extra_output.contains(&selection) {
                 self.extra_output.push(selection);
             }
@@ -6617,7 +6624,7 @@ mod tests {
     fn internal_call_artifacts_request_both_function_tables_only() {
         let requested = |config: &Config| {
             let settings = config.solc_settings().unwrap().settings;
-            let outputs = settings.output_selection.as_ref()["*"].clone();
+            let outputs = &settings.output_selection.as_ref()["*"];
             (
                 outputs.contains_key(""),
                 outputs["*"].iter().any(|output| output == "evm.bytecode.functionDebugData"),

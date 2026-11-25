@@ -27,10 +27,7 @@ use foundry_compilers::{
     artifacts::{
         BytecodeObject, Contract, Error as SolcError, Metadata as SolcMetadata,
         SecondarySourceLocation, Severity, Source,
-        output_selection::{
-            BytecodeOutputSelection, ContractOutputSelection, DeployedBytecodeOutputSelection,
-            OutputSelection,
-        },
+        output_selection::{ContractOutputSelection, OutputSelection},
         remappings::{RelativeRemapping, Remapping},
     },
     compilers::{
@@ -43,7 +40,7 @@ use foundry_compilers::{
     report::{BasicStdoutReporter, NoReporter, Report},
     solc::SolcSettings,
 };
-use foundry_config::{Config, providers::dependency_library_paths};
+use foundry_config::{Config, INTERNAL_CALL_OUTPUT, providers::dependency_library_paths};
 use itertools::Itertools;
 use num_format::{Locale, ToFormattedString};
 use path_slash::PathExt;
@@ -984,11 +981,7 @@ pub fn etherscan_project(metadata: &Metadata, target_path: &Path) -> Result<Proj
     // The debugger decodes internal calls with the function tables, and reads the stack layout
     // from the metadata.
     let artifacts = ConfigurableArtifacts::new(
-        [
-            ContractOutputSelection::Metadata,
-            ContractOutputSelection::from(BytecodeOutputSelection::FunctionDebugData),
-            ContractOutputSelection::from(DeployedBytecodeOutputSelection::FunctionDebugData),
-        ],
+        [ContractOutputSelection::Metadata].into_iter().chain(INTERNAL_CALL_OUTPUT),
         [],
     );
     let settings = settings.with_extra_output(artifacts.output_selection());

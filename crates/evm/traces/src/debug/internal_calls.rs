@@ -67,12 +67,6 @@ impl CallConvention {
         via_ir.map(|via_ir| if via_ir { Self::SolcViaIr } else { Self::SolcLegacy })
     }
 
-    /// The index of the return address in `stack`, which enters a function that takes
-    /// `parameter_slots` words.
-    const fn return_address_index(stack: &[U256], parameter_slots: usize) -> Option<usize> {
-        stack.len().checked_sub(parameter_slots + 1)
-    }
-
     /// The arguments in `stack` in parameter order, given the index of the return address.
     fn arguments(self, stack: &[U256], return_address_index: usize) -> Cow<'_, [U256]> {
         let arguments = &stack[return_address_index + 1..];
@@ -80,11 +74,6 @@ impl CallConvention {
             Self::SolcLegacy => Cow::Borrowed(arguments),
             Self::SolcViaIr => Cow::Owned(arguments.iter().rev().copied().collect()),
         }
-    }
-
-    /// The `return_slots` values that a return leaves on `stack`, in return value order.
-    fn returns(stack: &[U256], return_slots: usize) -> Option<&[U256]> {
-        stack.get(stack.len().checked_sub(return_slots)?..)
     }
 }
 
@@ -206,7 +195,7 @@ impl Tracker<'_> {
             frame.return_address == target
                 && landed.len() == frame.return_address_index + frame.return_slots
         }) {
-            self.ret(i, k);
+            self.ret(i, k, landing);
         } else if let Some(found) = (self.context.from_source_map)(i) {
             let function = Some(Arc::new(found.function));
             self.call(i, found.parameter_slots, found.return_slots, function, found.convention);
@@ -227,9 +216,7 @@ impl Tracker<'_> {
         let Some(stack) = entered.stack.as_deref() else { return };
         // A function without a return address never returns, like the functions that revert or
         // that end the call, and has no frame.
-        let Some(return_address_index) =
-            CallConvention::return_address_index(stack, parameter_slots)
-        else {
+        let Some(return_address_index) = stack.len().checked_sub(parameter_slots + 1) else {
             return;
         };
         let return_address = stack[return_address_index];
@@ -240,11 +227,9 @@ impl Tracker<'_> {
 
         // A call that returns to where the function that made it returns takes over its frame:
         // the caller does not return.
-        if let Some(top) = self.frames.last()
-            && top.return_address == return_address
-            && top.return_address_index == return_address_index
-        {
-            let top = self.frames.pop().expect("checked above");
+        if let Some(top) = self.frames.pop_if(|top| {
+            top.return_address == return_address && top.return_address_index == return_address_index
+        }) {
             self.close(top, i - 1, None);
         }
 
@@ -279,13 +264,12 @@ impl Tracker<'_> {
     }
 
     /// Handles the `JUMP` at step `i` that returns from frame `k`.
-    fn ret(&mut self, i: usize, k: usize) {
+    fn ret(&mut self, i: usize, k: usize, landing: &CallTraceStep) {
         // The frames above `k` never returned: the call left them by a jump that is not a
         // return. They are dropped.
         self.frames.truncate(k + 1);
         let frame = self.frames.pop().expect("truncated to a frame");
-        let steps = self.steps;
-        self.close(frame, i + 1, Some(&steps[i + 1]));
+        self.close(frame, i + 1, Some(landing));
     }
 
     /// Records the call of `frame` that ends at step `end`, with the return values at `landing`,
@@ -294,7 +278,8 @@ impl Tracker<'_> {
         let Some(function) = frame.function else { return };
         let return_data = landing.and_then(|landing| {
             let returns = function.returns.as_deref()?;
-            let words = CallConvention::returns(landing.stack.as_deref()?, frame.return_slots)?;
+            let stack = landing.stack.as_deref()?;
+            let words = &stack[stack.len().checked_sub(frame.return_slots)?..];
             let memory = landing.memory.as_ref().map(|memory| memory.as_bytes().as_ref());
             decode_parameters(returns, words, memory, None)
         });
@@ -345,8 +330,7 @@ mod tests {
 
     /// A `JUMP` to `target` with `stack` below it, and the `JUMPDEST` it lands on.
     fn jump(target: u32, stack: &[u64]) -> [CallTraceStep; 2] {
-        let mut jump = stack.to_vec();
-        jump.push(target.into());
+        let jump = [stack, &[target.into()]].concat();
         [step(1, OpCode::JUMP, &jump), step(target, OpCode::JUMPDEST, stack)]
     }
 
@@ -354,15 +338,15 @@ mod tests {
         Some(vec![Param { ty: Some(DynSolType::Uint(256)), storage: None }; count])
     }
 
-    fn function(name: &str, params: Option<usize>, is_entry: bool) -> Arc<FunctionInfo> {
+    fn function(name: &str, params: Option<usize>, is_entry: bool) -> FunctionInfo {
         let params = params.and_then(uint);
-        Arc::new(FunctionInfo {
+        FunctionInfo {
             name: name.into(),
             declared_name: name.into(),
             params,
             returns: uint(1),
             is_entry,
-        })
+        }
     }
 
     /// Tracks `steps` of code with `f` and `g` that take `parameter_slots` words and return one.
@@ -370,7 +354,7 @@ mod tests {
         steps: &[CallTraceStep],
         convention: Option<CallConvention>,
         parameter_slots: usize,
-        f: Arc<FunctionInfo>,
+        f: FunctionInfo,
     ) -> Vec<Summary> {
         track_in(steps, convention, parameter_slots, f, (false, &|_| true))
     }
@@ -379,7 +363,7 @@ mod tests {
         steps: &[CallTraceStep],
         convention: Option<CallConvention>,
         parameter_slots: usize,
-        f: Arc<FunctionInfo>,
+        f: FunctionInfo,
         (is_create, is_dispatched): (bool, &dyn Fn(&str) -> bool),
     ) -> Vec<Summary> {
         let entry = || FunctionEntry { name: None, parameter_slots, return_slots: 1 };
@@ -390,7 +374,7 @@ mod tests {
         let g = function("g", Some(parameter_slots), false);
         let resolve = |pc: u32, _: &[FunctionEntry]| {
             let function = if pc == F { &f } else { &g };
-            Some((parameter_slots, 1, FunctionInfo::clone(function)))
+            Some((parameter_slots, 1, function.clone()))
         };
         let context = TrackerContext {
             code: &code,
@@ -510,7 +494,7 @@ mod tests {
         let calls = |convention| {
             let from_source_map = |_: usize| {
                 Some(SourceMapFunction {
-                    function: FunctionInfo::clone(&function("sub2", Some(2), false)),
+                    function: function("sub2", Some(2), false),
                     parameter_slots: 2,
                     return_slots: 1,
                     convention,

@@ -147,8 +147,7 @@ impl ArtifactData {
             // Only parse bytecode if it's not empty, stripping placeholders if necessary.
             let code = strip_bytecode_placeholders(&b.object).filter(|bytes| !bytes.is_empty());
             let pc_ic_map = code.as_ref().map(|bytes| PcIcMap::new(bytes.as_ref()));
-            let jumpdests =
-                code.as_ref().map(|bytes| jumpdests(bytes.as_ref())).unwrap_or_default();
+            let jumpdests = code.as_ref().map_or_default(|bytes| jumpdests(bytes.as_ref()));
 
             source_map.map(|source_map| (source_map, pc_ic_map, jumpdests))
         };
@@ -496,16 +495,14 @@ impl ContractSources {
 
     /// Records a user-defined type. A name that two different types have resolves to none.
     fn add_user_type(&mut self, name: String, ty: Option<UserType>) {
-        match self.user_types.entry(name) {
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                entry.insert(ty);
-            }
-            std::collections::hash_map::Entry::Occupied(mut entry) => {
-                if entry.get() != &ty {
-                    entry.insert(None);
+        self.user_types
+            .entry(name)
+            .and_modify(|known| {
+                if *known != ty {
+                    *known = None;
                 }
-            }
-        }
+            })
+            .or_insert(ty);
     }
 }
 
