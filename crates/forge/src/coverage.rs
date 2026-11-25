@@ -154,9 +154,8 @@ impl CoverageReporter for LcovReporter {
             for item in &items {
                 if matches!(item.kind, CoverageItemKind::Branch { .. })
                     && let Some(hits) = line_hits.get_mut(&item.loc.lines.start)
-                    && *hits == 0
                 {
-                    *hits = item.hits;
+                    *hits = (*hits).max(item.hits);
                 }
             }
 

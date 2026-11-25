@@ -848,12 +848,26 @@ impl<'a> AnchorIndex<'a> {
             return None;
         }
         // The run is entered by falling into it. A first instruction that something jumps to, such
-        // as a loop header, runs more often than the arm.
-        let pc = *self.pcs.get(first)?;
-        if self.bytecode.get(pc as usize) == Some(&opcode::JUMPDEST)
-            && self.address_pushes.binary_search_by_key(&pc, |&(target, _)| target).is_ok()
-        {
-            return None;
+        // as a loop header, runs more often than the arm, even behind unmapped `JUMPDEST`s.
+        let mut ic = first;
+        loop {
+            let pc = *self.pcs.get(ic)?;
+            if self.bytecode.get(pc as usize) == Some(&opcode::JUMPDEST)
+                && self.address_pushes.binary_search_by_key(&pc, |&(target, _)| target).is_ok()
+            {
+                return None;
+            }
+            match ic.checked_sub(1) {
+                Some(prev)
+                    if self.source_map.get(prev).is_some_and(|e| e.index().is_none())
+                        && self.pcs.get(prev).is_some_and(|&p| {
+                            self.bytecode.get(p as usize) == Some(&opcode::JUMPDEST)
+                        }) =>
+                {
+                    ic = prev
+                }
+                _ => break,
+            }
         }
         let anchor =
             ItemAnchor::from_instruction(Some(first), self.ic_pc_map, item_id, arm).ok()?;
