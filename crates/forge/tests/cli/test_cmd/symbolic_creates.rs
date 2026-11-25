@@ -499,7 +499,7 @@ contract SymbolicCreateEip3541 is Test {
         }
     }
 
-    function checkMismatchedExpectRevertOnDeployCodeInCaller() public {
+    function checkDeployCodeRejectedPrefixExpectRevertMismatchInCaller() public {
         // The caller's expectation fails at the rejected deployment, which the test can catch.
         (bool ok, bytes memory err) = address(caller).call(abi.encodeCall(
             DeployCodeCaller.expectOtherRevertDeployCode,
@@ -733,9 +733,8 @@ contract DeployCodeCaller {
 [PASS] checkAssumeNoRevertMissWithExpectRevertInCaller() ([METRICS])
 [PASS] checkHaltAfterRejectedDeployCodeInCaller() ([METRICS])
 [FAIL: Error != expected error: EvmError: CreateContractStartingWithEF != other; counterexample: 		[SENDER] [SENDER] calldata=0xe668c5ba args=[]] checkMismatchedExpectRevertOnDeployCode() ([METRICS])
-[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkMismatchedExpectRevertOnDeployCodeInCaller() ([METRICS])
 [FAIL: Error != expected error: vm.expectRevert: you must call another function prior to expecting a second revert != other; counterexample: 		[SENDER] [SENDER] calldata=0x67563089 args=[]] checkOverlappingExpectRevertOnDeployCode() ([METRICS])
-[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkSymbolicMismatchInCaller(uint256) ([METRICS])
+[PASS] checkSymbolicMismatchInCaller(uint256) ([METRICS])
 ...
 "#]]);
 

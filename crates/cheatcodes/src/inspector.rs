@@ -2994,7 +2994,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 // The expectation settles a `deployCode` create, so `deployCode` returns its
                 // result rather than the runtime the create could not deposit.
                 self.deploy_code_output = None;
-                return match revert_handlers::handle_expect_revert(
+                // A create that succeeds under a count 0 expectation continues as any create.
+                let succeeded = outcome.is_success();
+                let settled = match revert_handlers::handle_expect_revert(
                     false,
                     true,
                     self.core.config.internal_expect_revert,
@@ -3011,18 +3013,21 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                             self.expected_revert = Some(expected_revert.clone());
                         }
 
-                        // Only a failed create returns the dummy address; a successful one under
-                        // `vm.expectRevert` with count 0 keeps its address.
-                        if !outcome.is_success() {
+                        if !succeeded {
                             set_return(outcome, retdata);
                             outcome.created_address = address;
+                            self.gas_metering.last_frame_gas = None;
                         }
-                        self.gas_metering.last_frame_gas = None;
+                        !succeeded
                     }
                     Err(err) => {
                         set_revert(outcome, err.abi_encode().into());
+                        true
                     }
                 };
+                if settled {
+                    return;
+                }
             }
         }
 

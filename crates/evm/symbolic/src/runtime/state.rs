@@ -1,6 +1,6 @@
 use super::*;
 use alloy_sol_types::{Revert, SolError};
-use evm2::interpreter::gas::CALL_STIPEND;
+use evm2::interpreter::{InstrStop, gas::CALL_STIPEND};
 use foundry_common::contracts::ContractsByArtifact;
 use foundry_evm::{
     core::backend::GLOBAL_FAIL_SLOT,
@@ -1599,6 +1599,7 @@ impl ExpectedRevert {
     pub(crate) fn mismatch_error(
         &self,
         reverted_by: Option<Address>,
+        status: InstrStop,
         retdata: &Bytes,
         known_contracts: &Option<ContractsByArtifact>,
     ) -> Option<Error> {
@@ -1616,6 +1617,7 @@ impl ExpectedRevert {
             partial_match,
             reverter,
             reverted_by,
+            status,
             retdata,
             known_contracts,
         )

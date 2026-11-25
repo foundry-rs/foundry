@@ -459,20 +459,28 @@ impl SymbolicExecutor {
         }
 
         // Forge settles a `vm.expectRevert` from this frame at the CREATE, as for a native create.
-        let expects_revert = state.expected_revert.is_some();
+        let expected_revert = state.expected_revert.clone();
+        let expects_revert = expected_revert.is_some();
         let mut parents = VecDeque::with_capacity(outcomes.len());
         for mut outcome in outcomes {
             // Like a CREATE, a runtime over the code size limit or starting with 0xEF fails the
             // deployment. Forge reverts the cheatcode with that runtime, or with no data when the
             // CREATE ran as its own transaction or settles a `vm.expectRevert`.
             let runtime = &outcome.state.frame.return_data;
-            let rejected_runtime = matches!(outcome.status, CallStatus::Success)
-                && (runtime_exceeds_code_size_limit(
-                    executor.max_code_size,
-                    executor.spec_id,
-                    runtime,
-                ) || runtime_has_rejected_prefix(&mut self.cx, executor.spec_id, runtime)?);
-            if rejected_runtime {
+            let rejected_runtime = if !matches!(outcome.status, CallStatus::Success) {
+                None
+            } else if runtime_exceeds_code_size_limit(
+                executor.max_code_size,
+                executor.spec_id,
+                runtime,
+            ) {
+                Some(InstrStop::CreateContractSizeLimit)
+            } else if runtime_has_rejected_prefix(&mut self.cx, executor.spec_id, runtime)? {
+                Some(InstrStop::CreateContractStartingWithEF)
+            } else {
+                None
+            };
+            if rejected_runtime.is_some() {
                 outcome.status = CallStatus::Revert;
                 if isolated || expects_revert {
                     outcome.state.frame.return_data = SymReturnData::empty(&mut self.cx);
@@ -489,11 +497,19 @@ impl SymbolicExecutor {
             // settles a `vm.expectRevert`, and the failed cheatcode call for an outer one.
             let failed_callee = match outcome.status {
                 CallStatus::Success => None,
-                CallStatus::Revert if !rejected_runtime => Some(created),
+                CallStatus::Revert if rejected_runtime.is_none() => Some(created),
                 _ if expects_revert => None,
                 CallStatus::Revert | CallStatus::ExceptionalHalt | CallStatus::Failure => {
                     Some(CHEATCODE_ADDRESS)
                 }
+            };
+            // The status and data Forge matches against the expectation, when it can tell them.
+            let settled_revert = match outcome.status {
+                CallStatus::Revert => Some((
+                    rejected_runtime.unwrap_or(InstrStop::Revert),
+                    outcome.state.frame.return_data.clone(),
+                )),
+                _ => None,
             };
             // Like Forge, a cheatcode CREATE leaves `vm.assumeNoRevert` for the next call.
             let joined = self.join_call_outcome(
@@ -505,6 +521,37 @@ impl SymbolicExecutor {
                 None,
             );
             match joined? {
+                // A revert that does not meet the expectation fails the cheatcode call with
+                // Forge's `CheatcodeError`, which a caller can catch.
+                JoinedCallOutcome::Failure(mut parent)
+                    if let Some(expected) = &expected_revert
+                        && let Some((status, return_data)) = &settled_revert =>
+                {
+                    const REASON: &str = "symbolic vm.expectRevert mismatch data";
+                    if return_data.len_word.as_const().is_none() {
+                        return Err(SymbolicError::Unsupported(REASON));
+                    }
+                    let retdata = return_data.read_concrete(&mut self.cx, REASON)?.into();
+                    let reverter = expected.reverted_by(failed_callee, parent.first_failed_callee);
+                    let no_contracts = None;
+                    let known_contracts = executor
+                        .cheatcodes
+                        .map_or(&no_contracts, |cheats| &cheats.config.available_artifacts);
+                    let error = expected
+                        .mismatch_error(reverter, *status, &retdata, known_contracts)
+                        .ok_or(SymbolicError::Unsupported(REASON))?;
+                    parent.expected_revert = None;
+                    let return_data =
+                        SymReturnData::from_concrete_bytes(&mut self.cx, error.abi_encode());
+                    revert_cheatcode_call(
+                        &mut self.cx,
+                        &mut parent,
+                        out_offset.clone(),
+                        out_size,
+                        return_data,
+                    )?;
+                    parents.push_back(parent);
+                }
                 JoinedCallOutcome::Failure(parent)
                 | JoinedCallOutcome::Success { parent, unmet_expected_revert: Some(_), .. } => {
                     *state = parent;
@@ -558,7 +605,7 @@ impl SymbolicExecutor {
                     parents.push_back(parent);
                 }
                 JoinedCallOutcome::Revert { mut parent, child } => {
-                    if rejected_runtime {
+                    if rejected_runtime.is_some() {
                         // Like Forge, the failed cheatcode call is the reverter for
                         // `vm.assumeNoRevert` unless a call reverted earlier, also for an
                         // assumption this frame set.
