@@ -236,10 +236,8 @@ fn key_fits(ty: &StorageType, key: U256) -> bool {
 
 /// Returns `keccak(key . slot)` and its 64-byte preimage.
 fn mapping_preimage(key: U256, slot: U256) -> (U256, [u8; 64]) {
-    let mut bytes = [0u8; 64];
-    bytes[..32].copy_from_slice(B256::from(key).as_slice());
-    bytes[32..].copy_from_slice(B256::from(slot).as_slice());
-    (keccak256(bytes).into(), bytes)
+    let bytes = B256::from(key).concat_const::<32, 64>(B256::from(slot));
+    (keccak256(bytes).into(), bytes.0)
 }
 
 /// Records `keccak(key . slot)` with its preimage and returns the hash.

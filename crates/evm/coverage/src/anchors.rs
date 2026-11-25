@@ -47,9 +47,7 @@ type EdgeAnchor = (ItemAnchor, Option<u32>, Vec<(u32, bool)>);
 fn jump_destination(immediate: &[u8]) -> eyre::Result<u32> {
     // We do not support program counters bigger than u32.
     ensure!(immediate.len() <= 4, "jump destination overflow");
-    let mut pc_bytes = [0u8; 4];
-    pc_bytes[4 - immediate.len()..].copy_from_slice(immediate);
-    Ok(u32::from_be_bytes(pc_bytes))
+    Ok(immediate.iter().fold(0, |acc, &byte| acc << 8 | byte as u32))
 }
 
 /// Attempts to find anchors for the given items using the given source map and bytecode.
