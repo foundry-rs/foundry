@@ -6310,6 +6310,7 @@ where
             replay_env.block_env.gas_limit = gas_limit;
         }
         replay_env.block_env.prevrandao = prevrandao;
+        replay_env.block_env.difficulty = source_block.header().difficulty();
         apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork>(
             &mut replay_env,
             &source_block,
