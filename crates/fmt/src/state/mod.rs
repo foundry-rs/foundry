@@ -369,7 +369,7 @@ impl<'sess> State<'sess, '_> {
     fn print_span(&mut self, span: Span) {
         match self.snippet(span) {
             Some(s) => self.s.word(if matches!(self.config.style, IndentStyle::Tab) {
-                snippet_with_tabs(s.to_owned(), self.config.tab_width)
+                snippet_with_tabs(s, self.config.tab_width)
             } else {
                 s.to_owned()
             }),
@@ -916,7 +916,7 @@ impl<'sess> State<'sess, '_> {
     /// Merges consecutive line comments to avoid orphan words.
     fn merge_comment_lines(&self, lines: &[String], prefix: &str) -> Vec<String> {
         // Do not apply smart merging to block comments
-        if lines.is_empty() || lines.len() < 2 || !prefix.starts_with("//") {
+        if lines.len() < 2 || !prefix.starts_with("//") {
             return lines.to_vec();
         }
 
@@ -1451,7 +1451,7 @@ impl CommentConfig {
     }
 }
 
-fn snippet_with_tabs(s: String, tab_width: usize) -> String {
+fn snippet_with_tabs(s: &str, tab_width: usize) -> String {
     let mut formatted = String::with_capacity(s.len());
     for line in s.split_inclusive('\n') {
         let (line, has_newline) =

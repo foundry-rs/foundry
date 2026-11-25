@@ -167,7 +167,7 @@ impl<'ast> State<'_, 'ast> {
                 match self.config.hex_underscore {
                     config::HexUnderscore::Preserve => {}
                     config::HexUnderscore::Remove | config::HexUnderscore::Bytes => {
-                        let mut clean = s.to_string().replace('_', "");
+                        let mut clean = s.replace('_', "");
                         if matches!(self.config.hex_underscore, config::HexUnderscore::Bytes) {
                             clean =
                                 clean.chars().chunks(2).into_iter().map(|c| c.format("")).join("_");
