@@ -23,7 +23,7 @@ use foundry_evm_networks::NetworkVariant;
 use futures::StreamExt;
 use serde::Serialize;
 use serde_json::Value;
-use std::fmt::{Display, Write};
+use std::fmt::Display;
 
 const MAX_CONCURRENT_RPC_REQUESTS: usize = 5;
 
@@ -184,12 +184,10 @@ pub(crate) async fn resolve_transaction_network(
     Ok(provider.get_chain_id().await?.into())
 }
 
-pub(crate) fn disassemble(code: &[u8]) -> Result<String> {
-    let mut output = String::new();
-    for inst in Instructions::new(code, SpecId::NEXT) {
-        writeln!(output, "{:08x}: {}", inst.pc, inst.display(SpecId::NEXT))?;
-    }
-    Ok(output)
+pub(crate) fn disassemble(code: &[u8]) -> String {
+    Instructions::new(code, SpecId::NEXT)
+        .map(|inst| format!("{:08x}: {}\n", inst.pc, inst.display(SpecId::NEXT)))
+        .collect()
 }
 
 /// Rejects blob options before Base's transaction builder can discard them.
