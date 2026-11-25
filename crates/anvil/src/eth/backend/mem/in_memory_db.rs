@@ -621,6 +621,7 @@ impl Db for MemDb {
             #[cfg(feature = "monad")]
             monad_block_replay_profiles: Default::default(),
             historical_states,
+            fork_replayed_block: None,
         }))
     }
 

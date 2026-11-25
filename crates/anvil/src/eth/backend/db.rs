@@ -1341,6 +1341,9 @@ pub struct SerializableState {
     /// Note: This is an Option for backwards compatibility.
     #[serde(default)]
     pub historical_states: Option<SerializableHistoricalStates>,
+    /// Hash and local gas limit of the last transaction-hash fork replay block.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fork_replayed_block: Option<(B256, u64)>,
 }
 
 impl SerializableState {

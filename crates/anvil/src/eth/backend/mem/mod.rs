@@ -9001,6 +9001,8 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
             state.monad_block_replay_profiles = monad_block_replay_profiles;
             state
         };
+        let mut state = state;
+        state.fork_replayed_block = *self.fork_replayed_block.lock();
         Ok(state)
     }
 
@@ -9021,6 +9023,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
     pub async fn load_state(&self, mut state: SerializableState) -> Result<bool, BlockchainError> {
         let _mining_guard = self.mining.lock().await;
         let mut block_env = state.block.take();
+        *self.fork_replayed_block.lock() = state.fork_replayed_block.take();
         let mut fork_block_boundary = None;
         let mut selected_head = None;
         let mut selected_header = None;
