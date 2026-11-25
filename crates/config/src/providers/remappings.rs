@@ -5,7 +5,10 @@ use figment::{
     Error, Figment, Metadata, Profile, Provider,
     value::{Dict, Map},
 };
-use foundry_compilers::artifacts::remappings::{RelativeRemapping, Remapping, RemappingDiscovery};
+use foundry_compilers::{
+    artifacts::remappings::{RelativeRemapping, Remapping, RemappingDiscovery},
+    resolver::parse::SolData,
+};
 use rayon::prelude::*;
 use std::{
     borrow::Cow,
@@ -484,9 +487,42 @@ impl RemappingsProvider<'_> {
                     PathBuf::from(&r.path),
                 );
             }
+            // The compiler names an owner's files imported from its own root after that root,
+            // outside the owner's context, so it would not apply the owner's scoped aliases to
+            // them.
+            let resolving_remappings = authoritative_remappings
+                .iter()
+                .chain(&global)
+                .chain(&contextual)
+                .chain(&contextual_remappings)
+                .cloned()
+                .chain(lib_remappings.iter().flat_map(|(context, mappings)| {
+                    mappings.iter().map(|(name, path)| Remapping {
+                        context: context.clone(),
+                        name: name.clone(),
+                        path: path.to_string_lossy().into(),
+                    })
+                }))
+                .collect::<Vec<_>>();
+            let mut root_importing_libraries = None;
             for remapping in contextual
                 .into_iter()
-                .filter(|remapping| ambiguous_aliases.contains(&remapping.name))
+                .filter(|remapping| {
+                    ambiguous_aliases.contains(&remapping.name)
+                        && !remapping.context.as_ref().is_some_and(|owner| {
+                            let owner = normalize_remapping_context(&self.root.join(owner));
+                            root_importing_libraries
+                                .get_or_insert_with(|| {
+                                    libraries_imported_from_own_root(
+                                        self.root,
+                                        &self.project_paths,
+                                        &self.lib_paths,
+                                        &resolving_remappings,
+                                    )
+                                })
+                                .contains(&owner)
+                        })
+                })
                 .flat_map(expand_scoped_contextual_remapping)
             {
                 if let Some(overlays) = contextual_overlays(&authoritative_remappings, &remapping) {
@@ -926,6 +962,94 @@ fn normalize_remapping_context(path: &Path) -> PathBuf {
         }
     }
     normalized
+}
+
+/// Returns the library roots that files reached from the root sources import from by paths relative
+/// to that root, such as `import "src/X.sol"`.
+///
+/// No remapping covers those imports, so foundry-compilers resolves them through the library root
+/// as an include path and the compiler names them outside every dependency context. Files the root
+/// build never reaches, such as a dependency's scripts, are not considered.
+fn libraries_imported_from_own_root(
+    root: &Path,
+    project_paths: &[PathBuf],
+    lib_paths: &[PathBuf],
+    remappings: &[Remapping],
+) -> HashSet<PathBuf> {
+    let libs = lib_paths
+        .iter()
+        .map(|lib| normalize_remapping_context(&root.join(lib)))
+        .collect::<Vec<_>>();
+    let remappings = remappings
+        .iter()
+        .map(|remapping| {
+            (
+                remapping
+                    .context
+                    .as_ref()
+                    .map(|context| normalize_remapping_context(&root.join(context))),
+                remapping,
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut pending = project_paths
+        .iter()
+        .flat_map(|path| foundry_compilers::utils::sol_source_files(&root.join(path)))
+        .map(|path| normalize_remapping_context(&path))
+        .collect::<Vec<_>>();
+    let mut visited = HashSet::new();
+    let mut libraries = HashSet::new();
+    while let Some(file) = pending.pop() {
+        if !visited.insert(file.clone()) {
+            continue;
+        }
+        let Ok(source) = fs::read_to_string(&file) else { continue };
+        for import in SolData::parse(&source, &file).imports {
+            let import = import.data().path();
+            let import_str = import.to_string_lossy();
+            let resolved = if matches!(
+                import.components().next(),
+                Some(Component::CurDir | Component::ParentDir)
+            ) {
+                Some(normalize_remapping_context(&file.with_file_name("").join(import)))
+            } else if let Some((_, remapping)) = remappings
+                // Like solc, the longest matching context wins, then the longest alias.
+                .iter()
+                .filter(|(context, remapping)| {
+                    context.as_ref().is_none_or(|context| file.starts_with(context))
+                        && import_str.starts_with(&remapping.name)
+                })
+                .max_by_key(|(context, remapping)| {
+                    (context.as_ref().map(|c| c.components().count()), remapping.name.len())
+                })
+            {
+                // Paths taken from discovered remappings lack the trailing separator.
+                Some(normalize_remapping_context(
+                    &root
+                        .join(&remapping.path)
+                        .join(import_str[remapping.name.len()..].trim_start_matches('/')),
+                ))
+            } else if root.join(import).is_file() {
+                Some(root.join(import))
+            } else if let Some(library) = file
+                .ancestors()
+                // Like foundry-compilers, search from the importing directory's parent up to the
+                // library directory.
+                .skip(2)
+                .take_while(|dir| libs.iter().any(|lib| dir.starts_with(lib) && dir != lib))
+                .find(|dir| dir.join(import).is_file())
+            {
+                // Only this library's files get compiler names outside its context, so a parent
+                // library keeps its scoped aliases.
+                libraries.insert(library.to_path_buf());
+                Some(library.join(import))
+            } else {
+                None
+            };
+            pending.extend(resolved);
+        }
+    }
+    libraries
 }
 
 /// Sorts by descending context depth, then by context, preserving order within each context.

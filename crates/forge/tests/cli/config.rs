@@ -1306,6 +1306,48 @@ shared/=deps-a/a/lib/shared/src/
     cmd.forge_fuse().arg("remappings").assert_success().stdout_eq(expected);
 }
 
+// The compiler names a dependency's files that it imports from its own root, like `src/X.sol`,
+// outside the dependency's context, so its nested copies follow the root's remapping there. Other
+// dependencies keep their nested copies.
+#[forgetest]
+fn nested_copy_follows_root_for_dependency_importing_own_root(prj: _, cmd: _) {
+    for (path, content) in [
+        ("lib/shared/src/Types.sol", "struct S { uint256 x; }"),
+        ("lib/a/lib/shared/src/Types.sol", "struct S { uint256 x; uint256 y; }"),
+        ("lib/a/src/Helper.sol", "library Helper {}"),
+        (
+            "lib/a/src/A.sol",
+            r#"import {S} from "shared/Types.sol"; import "src/Helper.sol"; library A { function f(S memory s) internal pure returns (uint256) { return s.x; } }"#,
+        ),
+        ("lib/b/lib/shared/src/Types.sol", "struct T { uint256 z; }"),
+        (
+            "lib/b/src/B.sol",
+            r#"/* import "src/B.sol"; */ import {T} from "shared/Types.sol"; import "c/C.sol"; contract B { T t; }"#,
+        ),
+        // The root build never reaches this script, so it must not unscope `lib/b`.
+        ("lib/b/src/scripts/Deploy.s.sol", r#"import "src/B.sol";"#),
+        // Only `lib/b/lib/c` imports from its own root, so `lib/b` stays scoped.
+        ("lib/b/lib/c/src/D.sol", "library D {}"),
+        ("lib/b/lib/c/src/C.sol", r#"import "src/D.sol"; library C {}"#),
+    ] {
+        prj.create_file(path, &format!("pragma solidity ^0.8.0; {content}\n"));
+    }
+    prj.add_source(
+        "UsesShared.sol",
+        r#"import {S} from "shared/Types.sol"; import {A} from "a/A.sol"; import {B} from "b/B.sol"; contract UsesShared { function g(S memory s) external pure returns (uint256) { return A.f(s); } }"#,
+    );
+
+    cmd.arg("remappings").assert_success().stdout_eq(str![[r#"
+lib/b/:shared/=lib/b/lib/shared/src/
+a/=lib/a/src/
+b/=lib/b/src/
+c/=lib/b/lib/c/src/
+shared/=lib/shared/src/
+
+"#]]);
+    cmd.forge_fuse().arg("build").assert_success();
+}
+
 #[forgetest]
 fn scoped_npm_context_preserves_hoisted_sibling_fallback(prj: _, cmd: _) {
     let owner = prj.root().join("node_modules/@bananapus/router-terminal-v6");
