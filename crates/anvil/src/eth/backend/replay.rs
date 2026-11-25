@@ -35,6 +35,8 @@ pub(crate) struct HistoricalReplayTransaction {
 pub(crate) struct PreparedForkTransactionReplay {
     pub(crate) transactions: Vec<HistoricalReplayTransaction>,
     pub(crate) beneficiary: Address,
+    pub(crate) gas_limit: u64,
+    pub(crate) prevrandao: Option<B256>,
     pub(crate) timestamp: u64,
     pub(crate) parent_beacon_block_root: Option<B256>,
 }
@@ -78,6 +80,8 @@ pub(crate) fn prepare_fork_transaction_replay(
     let source_hash = replay.source_block.header().hash;
     let source_number = replay.source_block.header().number;
     let beneficiary = replay.source_block.header().beneficiary();
+    let gas_limit = replay.source_block.header().gas_limit();
+    let prevrandao = replay.source_block.header().mix_hash();
     let timestamp = replay.source_block.header().timestamp();
     let parent_beacon_block_root = replay.source_block.header().parent_beacon_block_root();
     let source_transactions = replay
@@ -160,6 +164,8 @@ pub(crate) fn prepare_fork_transaction_replay(
     Ok(PreparedForkTransactionReplay {
         transactions,
         beneficiary,
+        gas_limit,
+        prevrandao,
         timestamp,
         parent_beacon_block_root,
     })

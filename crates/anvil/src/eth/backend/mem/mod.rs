@@ -6267,6 +6267,8 @@ where
         let PreparedForkTransactionReplay {
             transactions,
             beneficiary,
+            gas_limit,
+            prevrandao,
             timestamp,
             parent_beacon_block_root,
         } = prepared;
@@ -6302,6 +6304,8 @@ where
         // Execute the prefix with the source block's coinbase so priority fees, COINBASE, and the
         // header miner match the source. Later blocks keep the local beneficiary.
         replay_env.block_env.beneficiary = beneficiary;
+        replay_env.block_env.gas_limit = gas_limit;
+        replay_env.block_env.prevrandao = prevrandao;
         let arbitrum_rpc_block_number = arbitrum_block_numbers.map(|(rpc, evm)| {
             replay_env.block_env.number = evm;
             rpc
