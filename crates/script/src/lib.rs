@@ -13,7 +13,7 @@ extern crate foundry_common;
 extern crate tracing;
 
 use crate::{broadcast::BundledState, runner::ScriptRunner, simulate::PreSimulationState};
-use alloy_dyn_abi::{JsonAbiExt, Specifier};
+use alloy_dyn_abi::{DynSolType, JsonAbiExt, Specifier};
 use alloy_eips::BlockId;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::{Network, TransactionBuilder};
@@ -942,7 +942,7 @@ impl ScriptArgs {
                         if param.name.is_empty() { i.to_string() } else { param.name.clone() };
                     // `parse_json_as` would encode `null` as the string "null".
                     eyre::ensure!(
-                        !contains_json_null(value),
+                        !contains_json_null(value, &ty),
                         "argument `{name}` {ty}: JSON null is not supported"
                     );
                     parse_json_as(value, &ty)
@@ -1508,12 +1508,24 @@ const fn script_trace_requirements(config: &Config, debug: bool) -> TraceRequire
         })
 }
 
-/// Returns whether `value` is or contains a JSON `null`.
-fn contains_json_null(value: &serde_json::Value) -> bool {
-    match value {
-        serde_json::Value::Null => true,
-        serde_json::Value::Array(values) => values.iter().any(contains_json_null),
-        serde_json::Value::Object(map) => map.values().any(contains_json_null),
+/// Returns whether `value` has a JSON `null` where it would be parsed as `ty`.
+fn contains_json_null(value: &serde_json::Value, ty: &DynSolType) -> bool {
+    match (value, ty) {
+        (serde_json::Value::Null, _) => true,
+        (
+            serde_json::Value::Array(values),
+            DynSolType::Array(ty) | DynSolType::FixedArray(ty, _),
+        ) => values.iter().any(|value| contains_json_null(value, ty)),
+        (serde_json::Value::Array(values), DynSolType::Tuple(types)) => {
+            values.iter().zip(types).any(|(value, ty)| contains_json_null(value, ty))
+        }
+        (serde_json::Value::Object(map), ty) => {
+            ty.as_custom_struct().is_some_and(|(_, fields, types)| {
+                fields.iter().zip(types).any(|(field, ty)| {
+                    map.get(field).is_some_and(|value| contains_json_null(value, ty))
+                })
+            })
+        }
         _ => false,
     }
 }
