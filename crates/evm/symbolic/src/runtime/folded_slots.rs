@@ -17,6 +17,7 @@ use super::*;
 use evm2::bytecode::Instructions;
 use foundry_common::slot_identifier::{ENCODING_INPLACE, ENCODING_MAPPING};
 use foundry_compilers::artifacts::{Storage, StorageLayout, StorageType};
+use serde::Deserialize;
 
 const MAX_NESTED_MAPPING_HASHES: usize = 1 << 18;
 
@@ -200,10 +201,8 @@ fn walk_mapping_slots(
             }
         }
     } else if ty.encoding == ENCODING_INPLACE
-        && let Some(members) = ty
-            .other
-            .get("members")
-            .and_then(|members| serde_json::from_value::<Vec<Storage>>(members.clone()).ok())
+        && let Some(members) =
+            ty.other.get("members").and_then(|members| Vec::<Storage>::deserialize(members).ok())
     {
         for member in &members {
             if let Ok(offset) = member.slot.parse::<U256>() {

@@ -5,7 +5,7 @@
 //! execution helpers.
 
 use evm2::{SpecId, bytecode::Instructions};
-use eyre::Result;
+use eyre::{OptionExt, Result};
 use foundry_compilers::{
     Artifact, ProjectCompileOutput,
     artifacts::{ConfigurableContractArtifact, Source, Sources},
@@ -129,13 +129,17 @@ impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
     pub fn final_pc(&self, contract: &ConfigurableContractArtifact) -> Result<Option<usize>> {
         let deployed_bytecode = contract
             .get_deployed_bytecode()
-            .ok_or_else(|| eyre::eyre!("No deployed bytecode found for `REPL` contract"))?;
+            .ok_or_eyre("No deployed bytecode found for `REPL` contract")?;
         let deployed_bytecode_bytes = deployed_bytecode
             .bytes()
-            .ok_or_else(|| eyre::eyre!("No deployed bytecode found for `REPL` contract"))?;
+            .ok_or_eyre("No deployed bytecode found for `REPL` contract")?;
 
         // Fetch the run function's body statement
         let run_body = self.run_func_body();
+
+        // Find the last statement within the "run()" method and get the program
+        // counter via the source map.
+        let Some(last_stmt) = run_body.last() else { return Ok(None) };
 
         // Record loc of first yul block return statement (if any).
         // This is used to decide which is the final statement within the `run()` method.
@@ -144,11 +148,7 @@ impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
         // Walk the AST of the REPL source to find a top-level `return(...)` call
         // inside any `assembly { ... }` block in `run()`. This lets us pick the
         // meaningful Yul return span even when HIR represents the block coarsely.
-        let last_yul_return_span: Option<Span> = self.first_yul_return_span();
-
-        // Find the last statement within the "run()" method and get the program
-        // counter via the source map.
-        let Some(last_stmt) = run_body.last() else { return Ok(None) };
+        let last_yul_return_span = self.first_yul_return_span();
 
         // If the final statement is some type of block (unchecked or regular),
         // we need to find the final statement within that block. Otherwise, default to
