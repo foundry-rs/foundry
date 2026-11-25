@@ -12,7 +12,7 @@ use alloy_consensus::{
     BlockHeader, Transaction, Typed2718,
     transaction::{Recovered, SignerRecoverable, TxHashRef},
 };
-use alloy_network::{BlockResponse, TransactionResponse};
+use alloy_network::{AnyRpcBlock, BlockResponse, TransactionResponse};
 use alloy_primitives::{Address, B256};
 use anvil_core::eth::transaction::{MaybeImpersonatedTransaction, TransactionInfo};
 use evm2::evm::BlockStateAccumulator;
@@ -37,6 +37,7 @@ pub(crate) struct PreparedForkTransactionReplay {
     pub(crate) beneficiary: Address,
     pub(crate) gas_limit: u64,
     pub(crate) prevrandao: Option<B256>,
+    pub(crate) source_block: AnyRpcBlock,
     pub(crate) timestamp: u64,
     pub(crate) parent_beacon_block_root: Option<B256>,
 }
@@ -166,6 +167,7 @@ pub(crate) fn prepare_fork_transaction_replay(
         beneficiary,
         gas_limit,
         prevrandao,
+        source_block: replay.source_block,
         timestamp,
         parent_beacon_block_root,
     })

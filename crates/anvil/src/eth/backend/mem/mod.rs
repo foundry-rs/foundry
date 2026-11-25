@@ -17,6 +17,7 @@ use crate::{
             },
             env::{
                 BlobExcessGasAndPrice, BlockEnv, CfgEnv, EvmEnv, SpecId,
+                apply_chain_and_block_specific_env_changes_for_chain,
                 apply_chain_specific_tx_replay_env_changes_for_chain, block_env_from_header,
             },
             evm::{
@@ -77,7 +78,7 @@ use alloy_eips::{
 };
 use alloy_genesis::Genesis;
 use alloy_network::{
-    AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType,
+    AnyHeader, AnyNetwork, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType,
     BlockResponse, Network, NetworkTransactionBuilder, ReceiptResponse, UnknownTxEnvelope,
     UnknownTypedTransaction,
 };
@@ -6269,6 +6270,7 @@ where
             beneficiary,
             gas_limit,
             prevrandao,
+            source_block,
             timestamp,
             parent_beacon_block_root,
         } = prepared;
@@ -6304,8 +6306,16 @@ where
         // Execute the prefix with the source block's coinbase so priority fees, COINBASE, and the
         // header miner match the source. Later blocks keep the local beneficiary.
         replay_env.block_env.beneficiary = beneficiary;
-        replay_env.block_env.gas_limit = gas_limit;
+        if gas_limit != 0 {
+            replay_env.block_env.gas_limit = gas_limit;
+        }
         replay_env.block_env.prevrandao = prevrandao;
+        apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork>(
+            &mut replay_env,
+            &source_block,
+            source_chain_id,
+            self.networks,
+        );
         let arbitrum_rpc_block_number = arbitrum_block_numbers.map(|(rpc, evm)| {
             replay_env.block_env.number = evm;
             rpc
