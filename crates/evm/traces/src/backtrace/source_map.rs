@@ -54,15 +54,10 @@ impl<'a> PcSourceMapper<'a> {
         let element = self.source_data.source_map.get(ic)?;
 
         // Get the source file index - returns None if index is -1
-        let source_idx_opt = element.index();
-
-        let source_idx = source_idx_opt? as usize;
-        if source_idx >= self.sources.len() {
-            return None;
-        }
+        let source_idx = element.index()? as usize;
 
         // Get the source file info
-        let (file_path, content, edits) = &self.sources[source_idx];
+        let (file_path, content, edits) = self.sources.get(source_idx)?;
 
         // Convert byte offset to line and column. Offsets refer to the compiled source, which
         // differs from the file on disk when it was preprocessed.
@@ -92,11 +87,7 @@ impl<'a> PcSourceMapper<'a> {
     fn find_instruction_counter(&self, pc: usize) -> Option<usize> {
         // The instruction map maps IC -> PC, we need the reverse
         // We find the highest IC that has a PC <= our target PC
-        self.ic_pc_map
-            .iter()
-            .filter(|&(_, mapped_pc)| mapped_pc <= pc)
-            .max_by_key(|&(_, mapped_pc)| mapped_pc)
-            .map(|(ic, _)| ic)
+        self.ic_pc_map.iter().take_while(|&(_, mapped_pc)| mapped_pc <= pc).last().map(|(ic, _)| ic)
     }
 }
 /// Represents a location in source code.
@@ -143,8 +134,7 @@ pub fn load_build_sources(
     for (source_id, source_path) in &build_ctx.source_id_to_path {
         let idx = *source_id as usize;
 
-        let full_path =
-            if source_path.is_absolute() { source_path.clone() } else { root.join(source_path) };
+        let full_path = root.join(source_path);
         let mut source_content = foundry_common::fs::read_to_string(&full_path).unwrap_or_default();
 
         // Normalize line endings for windows
