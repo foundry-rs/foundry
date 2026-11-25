@@ -805,27 +805,41 @@ impl<'a> AnchorIndex<'a> {
         })
     }
 
-    /// Finds the anchor of an arm of an `if` whose condition has no conditional jump, from the
-    /// arm's first instruction, or the first of a function that it calls and the compiler
-    /// inlined. The function's entry is not that instruction: other callers can jump to it.
+    /// Finds the anchor of an arm of an `if` that has no code of its own and whose condition has
+    /// no conditional jump, from the first instruction of a function that it calls and the
+    /// compiler inlined. The function's entry is not that instruction: other callers can jump to
+    /// it.
     ///
-    /// Without a jump only the arm that kept its code can run, and it runs whenever the `if`
-    /// does. The other arm has no code and stays unanchored.
+    /// Without a jump there is no edge to count, so the inlined body must be the arm's alone: a
+    /// single run of code mapped to the function. A function that is inlined at several places,
+    /// or an overloaded name, leaves the arm unanchored, as does an arm without a called function.
+    /// A run that only the arm can enter when it is the only call site is not provable from the
+    /// source map, so a call that the compiler removed along with its arm can borrow the run of
+    /// another call to the same function.
     fn if_entry(&self, item_id: u32, path_id: u32, arms: &IfArms) -> Option<EdgeAnchor> {
         let (arm, callees) = match path_id {
             0 => (&arms.then_arm, &arms.then_callees),
             _ => (arms.else_arm.as_ref()?, &arms.else_callees),
         };
-        let first = std::iter::once((arm, false))
-            .chain(callees.iter().map(|callee| (callee, true)))
-            .flat_map(|(loc, is_callee)| {
-                self.instructions_starting_in(loc).filter(move |&ic| {
-                    self.starts_in_range(ic, loc)
-                        && !(is_callee && self.source_map[ic].length() == loc.len())
-                })
+        let [callee] = callees.as_slice() else { return None };
+        let body = self
+            .instructions_starting_in(callee)
+            .filter(|&ic| {
+                self.starts_in_range(ic, callee) && self.source_map[ic].length() != callee.len()
             })
-            .min();
-        let anchor = ItemAnchor::from_instruction(first, self.ic_pc_map, item_id, arm).ok()?;
+            .collect::<Vec<_>>();
+        let (&first, &last) = (body.iter().min()?, body.iter().max()?);
+        // Code between the first and last instruction that is mapped elsewhere belongs to another
+        // copy or a nested call.
+        if !(first..=last).all(|ic| {
+            self.source_map.get(ic).is_some_and(|element| {
+                element.index().is_none() || is_in_source_range(element, callee)
+            })
+        }) {
+            return None;
+        }
+        let anchor =
+            ItemAnchor::from_instruction(Some(first), self.ic_pc_map, item_id, arm).ok()?;
         Some((anchor, None, Vec::new()))
     }
 
