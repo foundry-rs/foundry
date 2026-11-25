@@ -2,6 +2,14 @@ struct Item {
     uint256 id;
 }
 
+struct Unsigned {
+    uint256 v;
+}
+
+struct Signed {
+    int256 v;
+}
+
 contract Public {
     function fact(uint256 n) public pure returns (uint256) {
         return n == 0 ? 1 : n * fact(n - 1);
@@ -31,6 +39,14 @@ contract Public {
         return item.id + 1;
     }
 
+    function w(Unsigned calldata x) external pure returns (uint256) {
+        return uint256(w(Signed(int256(x.v))));
+    }
+
+    function w(Signed memory x) public pure returns (int256) {
+        return x.v <= 0 ? int256(1) : w(Signed(x.v - 1)) + 1;
+    }
+
     function read(uint256[2][2] memory xs) public pure returns (uint256) {
         return xs[0][0] + xs[1][1];
     }
@@ -55,5 +71,9 @@ contract PublicTest {
 
     function test_overloads_with_a_struct() public {
         new Public().k(uint256(3));
+    }
+
+    function test_overloads_with_two_structs() public {
+        new Public().w(Unsigned(3));
     }
 }

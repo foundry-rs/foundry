@@ -2,12 +2,12 @@
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
-Ran 5 tests for test/Public.t.sol:PublicTest
+Ran 6 tests for test/Public.t.sol:PublicTest
 [PASS] test_nested_fixed_array_argument() ([GAS])
 Traces:
   [..] PublicTest::test_nested_fixed_array_argument()
     ├─ [..] → new Public@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
-    │   └─ ← [Return] 762 bytes of code
+    │   └─ ← [Return] 914 bytes of code
     ├─ [..] Public::read([[1, 2], [3, 4]]) [staticcall]
     │   └─ ← [Return] 5
     └─ ← [Stop]
@@ -16,7 +16,7 @@ Traces:
 Traces:
   [..] PublicTest::test_overloads_with_a_struct()
     ├─ [..] → new Public@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
-    │   └─ ← [Return] 762 bytes of code
+    │   └─ ← [Return] 914 bytes of code
     ├─ [..] Public::k(3) [staticcall]
     │   ├─ [..] Public::k(<unknown>)
     │   │   └─ ← 4
@@ -27,8 +27,25 @@ Traces:
 Traces:
   [..] PublicTest::test_overloads_with_the_same_argument()
     ├─ [..] → new Public@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
-    │   └─ ← [Return] 762 bytes of code
+    │   └─ ← [Return] 914 bytes of code
     ├─ [..] Public::h(3) [staticcall]
+    │   └─ ← [Return] 4
+    └─ ← [Stop]
+
+[PASS] test_overloads_with_two_structs() ([GAS])
+Traces:
+  [..] PublicTest::test_overloads_with_two_structs()
+    ├─ [..] → new Public@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 914 bytes of code
+    ├─ [..] Public::w(Unsigned({ v: 3 })) [staticcall]
+    │   ├─ [..] Public::w(<unknown>)
+    │   │   ├─ [..] Public::w(<unknown>)
+    │   │   │   ├─ [..] Public::w(<unknown>)
+    │   │   │   │   ├─ [..] Public::w(<unknown>)
+    │   │   │   │   │   └─ ← 1
+    │   │   │   │   └─ ← 2
+    │   │   │   └─ ← 3
+    │   │   └─ ← 4
     │   └─ ← [Return] 4
     └─ ← [Stop]
 
@@ -36,7 +53,7 @@ Traces:
 Traces:
   [..] PublicTest::test_public_overload()
     ├─ [..] → new Public@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
-    │   └─ ← [Return] 762 bytes of code
+    │   └─ ← [Return] 914 bytes of code
     ├─ [..] Public::f(4) [staticcall]
     │   └─ ← [Return] 9
     └─ ← [Stop]
@@ -45,7 +62,7 @@ Traces:
 Traces:
   [..] PublicTest::test_recursive_public_function()
     ├─ [..] → new Public@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
-    │   └─ ← [Return] 762 bytes of code
+    │   └─ ← [Return] 914 bytes of code
     ├─ [..] Public::fact(3) [staticcall]
     │   ├─ [..] Public::fact(uint256)(2)
     │   │   ├─ [..] Public::fact(uint256)(1)
@@ -56,6 +73,6 @@ Traces:
     │   └─ ← [Return] 6
     └─ ← [Stop]
 
-Suite result: ok. 5 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 6 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test suite [ELAPSED]: 5 tests passed, 0 failed, 0 skipped (5 total tests)
+Ran 1 test suite [ELAPSED]: 6 tests passed, 0 failed, 0 skipped (6 total tests)

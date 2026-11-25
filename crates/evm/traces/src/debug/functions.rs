@@ -32,8 +32,8 @@ pub enum UserType {
     Enum,
     /// A user-defined value type of an elementary type.
     Value(DynSolType),
-    /// A struct, which does not have a single stack word to decode.
-    Struct,
+    /// A struct, which does not have a single stack word to decode, with the types of its fields.
+    Struct(Vec<SourceType>),
 }
 
 /// A function, modifier, public state variable getter, or Yul function.
@@ -139,7 +139,7 @@ pub(super) struct SourceParam {
 
 /// A type as spelled in the source.
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum SourceType {
+pub enum SourceType {
     Elementary(DynSolType),
     /// A user-defined type, by the last segment of its name.
     Custom(String),
@@ -178,8 +178,8 @@ impl SourceFunction {
         let abi_types = self.params.as_ref().filter(|_| !self.is_yul).map(|params| {
             params
                 .iter()
-                .map(|param| match param.ty.resolve(user_types) {
-                    Some(ty) => AbiType::Known(ty.sol_type_name().into_owned()),
+                .map(|param| match param.ty.abi_name(user_types, 0) {
+                    Some(name) => AbiType::Known(name),
                     None if param.ty.is_struct(user_types) => AbiType::Tuple,
                     None => AbiType::Unknown,
                 })
@@ -209,7 +209,7 @@ impl SourceType {
                 UserType::Address => Some(DynSolType::Address),
                 UserType::Enum => Some(DynSolType::Uint(8)),
                 UserType::Value(ty) => Some(ty.clone()),
-                UserType::Struct => None,
+                UserType::Struct(_) => None,
             },
             Self::Array(element, size) => {
                 let element = Box::new(element.resolve(user_types)?);
@@ -222,10 +222,40 @@ impl SourceType {
         }
     }
 
+    /// The name that the ABI spells for the type, with structs as tuples of their fields, or
+    /// `None` if it is not known. `depth` stops structs that contain themselves.
+    fn abi_name(&self, user_types: &UserTypes, depth: usize) -> Option<String> {
+        match self {
+            Self::Elementary(ty) => Some(ty.sol_type_name().into_owned()),
+            Self::Custom(name) => match user_types.get(name)?.as_ref()? {
+                UserType::Address => Some("address".to_string()),
+                UserType::Enum => Some("uint8".to_string()),
+                UserType::Value(ty) => Some(ty.sol_type_name().into_owned()),
+                UserType::Struct(fields) if depth < 8 => {
+                    let fields = fields
+                        .iter()
+                        .map(|field| field.abi_name(user_types, depth + 1))
+                        .collect::<Option<Vec<_>>>()?;
+                    Some(format!("({})", fields.join(",")))
+                }
+                UserType::Struct(_) => None,
+            },
+            Self::Array(element, size) => {
+                let element = element.abi_name(user_types, depth)?;
+                Some(match size {
+                    Some(size) => format!("{element}[{size}]"),
+                    None => format!("{element}[]"),
+                })
+            }
+            Self::ExternalFunction => Some("function".to_string()),
+            Self::Other => None,
+        }
+    }
+
     /// Whether the type is a struct or an array of structs.
     fn is_struct(&self, user_types: &UserTypes) -> bool {
         match self {
-            Self::Custom(name) => matches!(user_types.get(name), Some(Some(UserType::Struct))),
+            Self::Custom(name) => matches!(user_types.get(name), Some(Some(UserType::Struct(_)))),
             Self::Array(element, _) => element.is_struct(user_types),
             _ => false,
         }
@@ -319,7 +349,8 @@ fn collect_item<'ast>(
             None
         }
         ItemKind::Struct(item) => {
-            user_types.push((item.name.to_string(), Some(UserType::Struct)));
+            let fields = item.fields.iter().map(|field| source_type(&field.ty)).collect();
+            user_types.push((item.name.to_string(), Some(UserType::Struct(fields))));
             None
         }
         ItemKind::Udvt(item) => {
@@ -487,5 +518,35 @@ mod tests {
         assert!(names_agree("_checkOwner", "checkOwner"));
         assert!(!names_agree("step", "stop"));
         assert!(!names_agree("step_2", "stop"));
+    }
+
+    #[test]
+    fn structs_are_spelled_as_tuples_of_their_fields() {
+        let word = |bits| SourceType::Elementary(DynSolType::Uint(bits));
+        let user_types = UserTypes::from([
+            ("Unsigned".into(), Some(UserType::Struct(vec![word(256)]))),
+            (
+                "Signed".into(),
+                Some(UserType::Struct(vec![SourceType::Elementary(DynSolType::Int(256))])),
+            ),
+            (
+                "Nested".into(),
+                Some(UserType::Struct(vec![SourceType::Custom("Unsigned".into()), word(8)])),
+            ),
+            ("Cyclic".into(), Some(UserType::Struct(vec![SourceType::Custom("Cyclic".into())]))),
+        ]);
+        let abi = |ty: SourceType| ty.abi_name(&user_types, 0);
+        let custom = |name: &str| SourceType::Custom(name.into());
+
+        assert_eq!(abi(custom("Unsigned")).as_deref(), Some("(uint256)"));
+        assert_eq!(abi(custom("Signed")).as_deref(), Some("(int256)"));
+        assert_eq!(abi(custom("Nested")).as_deref(), Some("((uint256),uint8)"));
+        assert_eq!(
+            abi(SourceType::Array(Box::new(custom("Unsigned")), Some(2))).as_deref(),
+            Some("(uint256)[2]")
+        );
+        // A struct that contains itself has no finite spelling here.
+        assert_eq!(abi(custom("Cyclic")), None);
+        assert_eq!(abi(custom("Missing")), None);
     }
 }
