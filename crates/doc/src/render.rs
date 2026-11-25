@@ -91,7 +91,7 @@ fn render_contract<'ast, 'gcx>(
                 }
             }
             ItemKind::Function(f) => {
-                local.insert(&function_heading(f));
+                local.insert(function_heading(f));
                 if let Some(anchor) = function_signature_anchor(f, ctx) {
                     local.insert_anchor(anchor);
                 }
@@ -395,23 +395,21 @@ fn render_function_section(
     }
 }
 
-fn function_heading(f: &ItemFunction<'_>) -> String {
+fn function_heading<'a>(f: &'a ItemFunction<'_>) -> &'a str {
     match f.kind {
-        FunctionKind::Constructor => "constructor".to_string(),
-        FunctionKind::Fallback => "fallback".to_string(),
-        FunctionKind::Receive => "receive".to_string(),
+        FunctionKind::Constructor => "constructor",
+        FunctionKind::Fallback => "fallback",
+        FunctionKind::Receive => "receive",
         FunctionKind::Function | FunctionKind::Modifier => {
-            f.header.name.map(|n| n.as_str().to_string()).unwrap_or_else(|| "function".to_string())
+            f.header.name.as_ref().map_or("function", |n| n.as_str())
         }
     }
 }
 
 fn function_signature_anchor(f: &ItemFunction<'_>, ctx: &Ctx<'_>) -> Option<String> {
     let name = match f.kind {
-        FunctionKind::Constructor => "constructor".to_string(),
-        FunctionKind::Fallback => "fallback".to_string(),
-        FunctionKind::Receive => "receive".to_string(),
-        FunctionKind::Function | FunctionKind::Modifier => f.header.name?.as_str().to_string(),
+        FunctionKind::Function | FunctionKind::Modifier => f.header.name.as_ref()?.as_str(),
+        _ => function_heading(f),
     };
     let params = f
         .header
@@ -421,7 +419,7 @@ fn function_signature_anchor(f: &ItemFunction<'_>, ctx: &Ctx<'_>) -> Option<Stri
         .map(|v| ctx.snippet(v.ty.span).trim().to_string())
         .collect::<Vec<_>>();
 
-    Some(hir_ext::function_signature_anchor(&name, &params))
+    Some(hir_ext::function_signature_anchor(name, &params))
 }
 
 // ── natspec comment collection ────────────────────────────────────────────────
@@ -991,11 +989,11 @@ fn write_struct_properties_table(
     }
     write_signature_table_header(out, "Properties");
     for field in fields {
-        let name = field.name.map(|n| n.as_str().to_string()).unwrap_or_else(|| "_".to_string());
+        let name = field.name.as_ref().map_or("_", |n| n.as_str());
         let ty = format!("`{}`", ctx.snippet(field.ty.span).trim());
         let desc =
-            comments.params.iter().find(|(n, _)| n == &name).map(|(_, d)| d.as_str()).unwrap_or("");
-        let name = escape_table_cell(&name);
+            comments.params.iter().find(|(n, _)| n == name).map(|(_, d)| d.as_str()).unwrap_or("");
+        let name = escape_table_cell(name);
         let desc = escape_table_cell(desc);
         writeln!(out, "| {name} | {ty} | {desc} |").unwrap();
     }
@@ -1048,15 +1046,13 @@ fn find_contract_id<'gcx>(
 
 /// Strip common leading whitespace from all non-empty lines.
 fn dedent(s: &str) -> String {
-    let lines: Vec<&str> = s.lines().collect();
-    let indent = lines
-        .iter()
+    let indent = s
+        .lines()
         .filter(|l| !l.trim().is_empty())
         .map(|l| l.len() - l.trim_start().len())
         .min()
         .unwrap_or(0);
-    lines
-        .iter()
+    s.lines()
         .map(|l| if l.len() >= indent { &l[indent..] } else { l.trim() })
         .collect::<Vec<_>>()
         .join("\n")

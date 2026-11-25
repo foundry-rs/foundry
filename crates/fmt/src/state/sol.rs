@@ -3314,42 +3314,26 @@ impl<'ast> AttributeCommentMapper<'ast> {
     }
 
     fn collect_attributes(&mut self, header: &'ast ast::FunctionHeader<'ast>) -> BytePos {
-        let mut first_pos = BytePos(u32::MAX);
         if let Some(v) = header.visibility {
-            if v.span.lo() < first_pos {
-                first_pos = v.span.lo()
-            }
             self.attributes
                 .push(AttributeInfo { kind: AttributeKind::Visibility(*v), span: v.span });
         }
         if let Some(sm) = header.state_mutability {
-            if sm.span.lo() < first_pos {
-                first_pos = sm.span.lo()
-            }
             self.attributes
                 .push(AttributeInfo { kind: AttributeKind::StateMutability(*sm), span: sm.span });
         }
         if let Some(span) = header.virtual_ {
-            if span.lo() < first_pos {
-                first_pos = span.lo()
-            }
             self.attributes.push(AttributeInfo { kind: AttributeKind::Virtual, span });
         }
         if let Some(ref o) = header.override_ {
-            if o.span.lo() < first_pos {
-                first_pos = o.span.lo()
-            }
             self.attributes.push(AttributeInfo { kind: AttributeKind::Override(o), span: o.span });
         }
         for m in header.modifiers.iter() {
-            if m.span().lo() < first_pos {
-                first_pos = m.span().lo()
-            }
             self.attributes
                 .push(AttributeInfo { kind: AttributeKind::Modifier(m), span: m.span() });
         }
         self.attributes.sort_by_key(|attr| attr.span.lo());
-        first_pos
+        self.attributes.first().map_or(BytePos(u32::MAX), |attr| attr.span.lo())
     }
 
     fn cache_comments(&mut self, state: &mut State<'_, 'ast>) {
