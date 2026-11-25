@@ -41,7 +41,7 @@ pub struct SourceData {
     /// Maps the byte offset of a function, modifier, or public state variable definition to it.
     pub functions: HashMap<usize, Arc<SourceFunction>>,
     /// The user-defined types that the source declares.
-    pub user_types: Vec<(String, UserType)>,
+    pub user_types: Vec<(String, Option<UserType>)>,
     /// The edits that a preprocessor made to the source before compilation, sorted by start
     /// offset. The compiler's source locations refer to the edited source.
     pub source_edits: Vec<SourceEdit>,
@@ -332,7 +332,7 @@ impl ContractSources {
 
         for source_data in files.values() {
             for (name, ty) in &source_data.user_types {
-                self.add_user_type(name.clone(), Some(ty.clone()));
+                self.add_user_type(name.clone(), ty.clone());
             }
         }
 

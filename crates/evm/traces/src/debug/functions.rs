@@ -11,8 +11,8 @@ use alloy_dyn_abi::{DynSolType, parser::Storage};
 use alloy_primitives::keccak256;
 use solar::{
     ast::{
-        DataLocation, ElementaryType, ExprKind, FunctionKind, Item, ItemKind, LitKind, SourceUnit,
-        Type, TypeKind, VariableDefinition, Visibility,
+        DataLocation, ElementaryType, ExprKind, FunctionKind, ImportItems, Item, ItemKind, LitKind,
+        SourceUnit, Type, TypeKind, VariableDefinition, Visibility,
     },
     interface::source_map::SourceMap,
 };
@@ -30,8 +30,8 @@ pub enum UserType {
     Enum,
     /// A user-defined value type of an elementary type.
     Value(DynSolType),
-    /// A struct, which does not have a single stack word to decode.
-    Struct,
+    /// A struct with the types of its fields, which the ABI treats as a tuple.
+    Struct(Vec<SourceType>),
 }
 
 /// A function, modifier, or public state variable getter.
@@ -77,7 +77,7 @@ pub(super) struct SourceParam {
 
 /// A type as spelled in the source.
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum SourceType {
+pub enum SourceType {
     Elementary(DynSolType),
     /// A user-defined type, by the last segment of its name.
     Custom(String),
@@ -123,18 +123,32 @@ impl SourceFunction {
     }
 }
 
+/// How deep a struct can nest in the types that are resolved, as structs can contain themselves.
+const MAX_TYPE_DEPTH: usize = 8;
+
 impl SourceType {
     fn resolve(&self, user_types: &UserTypes) -> Option<DynSolType> {
+        self.resolve_at(user_types, 0)
+    }
+
+    fn resolve_at(&self, user_types: &UserTypes, depth: usize) -> Option<DynSolType> {
+        if depth > MAX_TYPE_DEPTH {
+            return None;
+        }
         match self {
             Self::Elementary(ty) => Some(ty.clone()),
             Self::Custom(name) => match user_types.get(name)?.as_ref()? {
                 UserType::Address => Some(DynSolType::Address),
                 UserType::Enum => Some(DynSolType::Uint(8)),
                 UserType::Value(ty) => Some(ty.clone()),
-                UserType::Struct => None,
+                UserType::Struct(fields) => fields
+                    .iter()
+                    .map(|field| field.resolve_at(user_types, depth + 1))
+                    .collect::<Option<Vec<_>>>()
+                    .map(DynSolType::Tuple),
             },
             Self::Array(element, size) => {
-                let element = Box::new(element.resolve(user_types)?);
+                let element = Box::new(element.resolve_at(user_types, depth)?);
                 Some(match size {
                     Some(size) => DynSolType::FixedArray(element, *size),
                     None => DynSolType::Array(element),
@@ -152,14 +166,14 @@ pub fn collect(
     ast: &SourceUnit<'_>,
     source_map: &SourceMap,
     functions: &mut HashMap<usize, Arc<SourceFunction>>,
-    user_types: &mut Vec<(String, UserType)>,
+    user_types: &mut Vec<(String, Option<UserType>)>,
 ) {
     let start = |item: &Item<'_>| source_map.span_to_range(item.span).ok().map(|r| r.start);
     for item in ast.items.iter() {
         match &item.kind {
             ItemKind::Contract(contract) => {
                 let name = contract.name.to_string();
-                user_types.push((name.clone(), UserType::Address));
+                user_types.push((name.clone(), Some(UserType::Address)));
                 let library = contract.kind.is_library();
                 for member in contract.body.iter() {
                     collect_item(
@@ -169,6 +183,13 @@ pub fn collect(
                         functions,
                         user_types,
                     );
+                }
+            }
+            ItemKind::Import(import) => {
+                // An alias can name any type, so a type of that name is not known by its name.
+                if let ImportItems::Aliases(aliases) = &import.items {
+                    let aliases = aliases.iter().filter_map(|(_, alias)| alias.as_ref());
+                    user_types.extend(aliases.map(|alias| (alias.to_string(), None)));
                 }
             }
             _ => collect_item(item, None, start(item), functions, user_types),
@@ -181,7 +202,7 @@ fn collect_item(
     contract: Option<(&str, bool)>,
     start: Option<usize>,
     functions: &mut HashMap<usize, Arc<SourceFunction>>,
-    user_types: &mut Vec<(String, UserType)>,
+    user_types: &mut Vec<(String, Option<UserType>)>,
 ) {
     let function = match &item.kind {
         ItemKind::Function(function) => {
@@ -214,16 +235,17 @@ fn collect_item(
             })
         }
         ItemKind::Enum(item) => {
-            user_types.push((item.name.to_string(), UserType::Enum));
+            user_types.push((item.name.to_string(), Some(UserType::Enum)));
             None
         }
         ItemKind::Struct(item) => {
-            user_types.push((item.name.to_string(), UserType::Struct));
+            let fields = item.fields.iter().map(|field| source_type(&field.ty)).collect();
+            user_types.push((item.name.to_string(), Some(UserType::Struct(fields))));
             None
         }
         ItemKind::Udvt(item) => {
             if let SourceType::Elementary(ty) = source_type(&item.ty) {
-                user_types.push((item.name.to_string(), UserType::Value(ty)));
+                user_types.push((item.name.to_string(), Some(UserType::Value(ty))));
             }
             None
         }
@@ -286,9 +308,21 @@ fn source_type(ty: &Type<'_>) -> SourceType {
 fn canonical_signature(name: &str, params: Option<&[Param]>) -> Option<String> {
     let types = params?
         .iter()
-        .map(|param| param.ty.as_ref().map(DynSolType::sol_type_name))
+        .map(|param| param.ty.as_ref().map(abi_type_name))
         .collect::<Option<Vec<_>>>()?;
     Some(format!("{name}({})", types.join(",")))
+}
+
+/// The name of a type in a function signature, with a tuple as `(a,b)`.
+fn abi_type_name(ty: &DynSolType) -> String {
+    match ty {
+        DynSolType::Tuple(fields) => {
+            format!("({})", fields.iter().map(abi_type_name).collect::<Vec<_>>().join(","))
+        }
+        DynSolType::Array(element) => format!("{}[]", abi_type_name(element)),
+        DynSolType::FixedArray(element, size) => format!("{}[{size}]", abi_type_name(element)),
+        _ => ty.sol_type_name().into_owned(),
+    }
 }
 
 /// The name that solc's `functionDebugData` key spells for a function with the AST id `id`:
@@ -328,6 +362,24 @@ pub fn without_number(name: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn signatures_spell_tuples_and_arrays_in_the_abi_form() {
+        let uint = DynSolType::Uint(256);
+        let param = |ty| Param { ty: Some(ty), storage: None };
+        let one = DynSolType::Tuple(vec![uint.clone()]);
+        let two = DynSolType::Tuple(vec![uint.clone(), DynSolType::Address]);
+        let params = [
+            param(one),
+            param(DynSolType::Array(Box::new(two))),
+            param(DynSolType::FixedArray(Box::new(uint), 3)),
+        ];
+
+        assert_eq!(
+            canonical_signature("f", Some(&params)).as_deref(),
+            Some("f((uint256),(uint256,address)[],uint256[3])")
+        );
+    }
 
     #[test]
     fn names_of_function_debug_data_keys() {

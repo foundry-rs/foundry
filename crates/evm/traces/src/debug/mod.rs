@@ -3,7 +3,9 @@ mod internal_calls;
 mod recording;
 mod sources;
 
-use crate::{CallTraceNode, DecodedInternalCall, DecodedTraceStep};
+use crate::{
+    CallTraceNode, CallTraceStep, DecodedInternalCall, DecodedTraceStep, TraceMemberOrder,
+};
 use alloy_dyn_abi::{
     DynSolType, DynSolValue, Specifier,
     parser::{Parameters, Storage},
@@ -71,6 +73,29 @@ impl DebugTraceIdentifier {
             from_source_map: &|step| source_map_function(node, sources, artifact, step),
         };
         let calls = track_internal_calls(&node.trace.steps, &context);
+        // The recorded steps end at the last jump, before the calls and logs that follow it. A
+        // function that the call ends in, by a revert or a halt, ends at a step after them all.
+        let end_of_call = node.trace.steps.len();
+        if let Some(last) = node.trace.steps.last()
+            && calls.iter().any(|call| call.end == end_of_call)
+        {
+            let step = CallTraceStep {
+                pc: last.pc,
+                op: last.op,
+                stack: None,
+                push_stack: None,
+                memory: None,
+                gas_remaining: node.trace.gas_limit.saturating_sub(node.trace.gas_used),
+                gas_refund_counter: last.gas_refund_counter,
+                storage_change: None,
+                gas_cost: 0,
+                state_gas_reservoir: None,
+                status: last.status,
+                extra: None,
+            };
+            node.trace.steps.push(step);
+            node.ordering.push(TraceMemberOrder::Step(end_of_call));
+        }
         for internal_call in calls {
             *node.trace.steps[internal_call.start].decoded_mut() =
                 DecodedTraceStep::InternalCall(internal_call.call, internal_call.end);
@@ -383,6 +408,8 @@ fn decode_parameter(
     let input = stack_words.first()?;
 
     match (ty, storage) {
+        // Struct fields are not decoded.
+        (DynSolType::Tuple(_), _) => None,
         // HACK: alloy parser treats user-defined types as uint8: https://github.com/alloy-rs/core/pull/386
         //
         // filter out `uint8` params which are marked as storage, memory, or calldata as this
@@ -426,6 +453,8 @@ fn decode_from_memory(ty: &DynSolType, memory: &[u8], location: usize) -> Option
     let first_word = memory_range(memory, location, 32)?;
 
     match ty {
+        // The layout of a struct in memory is not decoded.
+        DynSolType::Tuple(_) => None,
         // For `string` and `bytes` layout is a word with length followed by the data
         DynSolType::String | DynSolType::Bytes => {
             let length: usize = U256::from_be_slice(first_word).try_into().ok()?;

@@ -1,0 +1,47 @@
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 3 tests for test/Edge.t.sol:EdgeTest
+[PASS] test_ends_in_a_function() ([GAS])
+Traces:
+  [..] EdgeTest::test_ends_in_a_function()
+    ├─ [..] → new Edge@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   ├─ [..] → new Callee@0x104fBc016F4bb334D775a19E8A6510109AC63E00
+    │   │   └─ ← [Return] 175 bytes of code
+    │   └─ ← [Return] 645 bytes of code
+    ├─ [..] Edge::runEnds()
+    │   ├─ [..] Edge::ends()()
+    │   │   ├─ [..] Callee::ping()
+    │   │   │   └─ ← [Return] 1
+    │   │   └─ ← 
+    │   └─ ← [Stop]
+    └─ ← [Stop]
+
+[PASS] test_fallback_calls_a_public_function() ([GAS])
+Traces:
+  [..] EdgeTest::test_fallback_calls_a_public_function()
+    ├─ [..] → new Edge@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   ├─ [..] → new Callee@0x104fBc016F4bb334D775a19E8A6510109AC63E00
+    │   │   └─ ← [Return] 175 bytes of code
+    │   └─ ← [Return] 645 bytes of code
+    ├─ [..] Edge::fallback()
+    │   ├─ [..] Edge::setItem((uint256))(<unknown>)
+    │   │   └─ ← 
+    │   └─ ← [Stop]
+    └─ ← [Stop]
+
+[PASS] test_struct_entry_is_the_external_call() ([GAS])
+Traces:
+  [..] EdgeTest::test_struct_entry_is_the_external_call()
+    ├─ [..] → new Edge@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   ├─ [..] → new Callee@0x104fBc016F4bb334D775a19E8A6510109AC63E00
+    │   │   └─ ← [Return] 175 bytes of code
+    │   └─ ← [Return] 645 bytes of code
+    ├─ [..] Edge::setItem(Item({ id: 5 }))
+    │   └─ ← [Stop]
+    └─ ← [Stop]
+
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)

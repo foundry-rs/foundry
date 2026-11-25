@@ -96,8 +96,8 @@ impl CallConvention {
 pub struct InternalCall {
     /// The step of the `JUMP` into the function.
     pub start: usize,
-    /// The step of the `JUMPDEST` that the function returned to, or the last step of the call if
-    /// the function did not return.
+    /// The step of the `JUMPDEST` that the function returned to, or the number of steps if the
+    /// call ended inside the function, which is one past the last step.
     pub end: usize,
     /// The function and its decoded arguments and return values.
     pub call: DecodedInternalCall,
@@ -308,10 +308,9 @@ impl Tracker<'_> {
     /// Ends the frames that are still open when the call ends, by a revert, a halt, or a return
     /// from inside the functions.
     fn finish(mut self) -> Vec<InternalCall> {
-        if let Some(end) = self.steps.len().checked_sub(1) {
-            while let Some(frame) = self.frames.pop() {
-                self.close(frame, end, None);
-            }
+        let end = self.steps.len();
+        while let Some(frame) = self.frames.pop() {
+            self.close(frame, end, None);
         }
         self.calls
     }
@@ -469,6 +468,17 @@ mod tests {
         assert_eq!(
             track(&steps, legacy, 1, function("f", Some(1), true)),
             [(2, 5, "g".into(), strings(&["8"]), strings(&["9"]))]
+        );
+    }
+
+    #[test]
+    fn a_function_that_the_call_ends_in_ends_after_the_last_step() {
+        let steps = jump(F, &[RET.into(), 7]);
+        let legacy = Some(CallConvention::SolcLegacy);
+
+        assert_eq!(
+            track(&steps, legacy, 1, function("f", Some(1), false)),
+            [(0, 2, "f".into(), strings(&["7"]), None)]
         );
     }
 

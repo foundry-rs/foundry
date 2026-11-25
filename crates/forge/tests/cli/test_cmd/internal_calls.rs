@@ -1,6 +1,6 @@
 //! Tests for internal call detection with `--decode-internal`.
 
-use foundry_test_utils::{TestCommand, TestProject, file, snapbox::IntoData};
+use foundry_test_utils::{TestCommand, TestProject, file, snapbox::IntoData, str};
 
 /// Compiles the fixture in the given mode and compares the `-vvvv --decode-internal` output.
 #[track_caller]
@@ -110,4 +110,65 @@ fn c_via_ir_optimized(prj: _, cmd: _) {
         (true, true),
         file!["../../fixtures/internal_calls/c_via_ir_optimized.txt"],
     );
+}
+
+// Calls that need more than the function table: a function the call ends in, a public function
+// that a fallback function calls, and struct parameters.
+#[forgetest]
+fn edge_cases(prj: _, cmd: _) {
+    assert_internal_calls(
+        &prj,
+        &mut cmd,
+        ("Edge.t.sol", include_str!("../../fixtures/internal_calls/Edge.t.sol")),
+        (false, false),
+        file!["../../fixtures/internal_calls/edge.txt"],
+    );
+}
+
+// A type that a function names through an import alias is not the declaration of that name
+// elsewhere, so its type is unknown rather than taken from the other declaration.
+#[forgetest]
+fn import_alias_types_are_unknown(prj: _, cmd: _) {
+    prj.add_source("Types.sol", "type TokenId is uint256;");
+    prj.add_source("Other.sol", "type Amount is address;");
+    prj.add_source(
+        "Alias.sol",
+        r#"
+import {TokenId as Amount} from "./Types.sol";
+
+contract Alias {
+    function inner(Amount a) internal pure returns (Amount) {
+        return a;
+    }
+
+    function run(uint256 v) external pure returns (uint256) {
+        return Amount.unwrap(inner(Amount.wrap(v)));
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Alias.t.sol",
+        r#"
+import {Alias} from "src/Alias.sol";
+
+contract AliasTest {
+    function test_alias() public {
+        new Alias().run(10);
+    }
+}
+"#,
+    );
+    cmd.args(["test", "-vvvv", "--decode-internal"]).assert_success().stdout_eq(str![[r#"
+...
+Traces:
+  [..] AliasTest::test_alias()
+...
+    ├─ [..] Alias::run(10) [staticcall]
+    │   ├─ [..] Alias::inner(<unknown>)
+    │   │   └─ ← <unknown>
+    │   └─ ← [Return] 10
+    └─ ← [Stop]
+...
+"#]]);
 }
