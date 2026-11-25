@@ -74,6 +74,10 @@ async fn codehash_empty(cmd: _) {
 fn disassemble_incomplete_sequence(cmd: _) {
     cmd.cast_fuse().args(["disassemble", "60"]).assert_success().stdout_eq("00000000: PUSH1\n\n");
     cmd.cast_fuse()
+        .args(["disassemble", "e6"])
+        .assert_success()
+        .stdout_eq("00000000: DUPN 145\n\n");
+    cmd.cast_fuse()
         .args(["disassemble", "6000"])
         .assert_success()
         .stdout_eq("00000000: PUSH1 0x00\n\n");
