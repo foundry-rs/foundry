@@ -29,6 +29,66 @@ use std::{
 /// The user-defined types of the sources by name, or `None` for a name that two types share.
 pub type UserTypes = HashMap<String, Option<UserType>>;
 
+/// A user-defined type that a source declares, in a contract or at the top level of the file.
+#[derive(Clone, Debug)]
+pub struct DeclaredType {
+    /// The contract that declares it.
+    pub contract: Option<String>,
+    pub name: String,
+    /// The type, or `None` if the name is not known to be one, such as an import alias.
+    pub ty: Option<UserType>,
+}
+
+/// What a source declares: its functions by the offset of their definition, its types, and the
+/// bases of its contracts.
+#[derive(Debug, Default)]
+pub struct Declarations {
+    pub functions: HashMap<usize, Arc<SourceFunction>>,
+    pub types: Vec<DeclaredType>,
+    pub bases: Vec<(String, Vec<String>)>,
+}
+
+/// The user-defined types that a function sees, from the nearest scope out: the types of its
+/// contract and the contracts that it inherits from, those of its file, and then the types of the
+/// project that have one declaration of that name.
+pub struct TypeScope<'a> {
+    /// The contract of the function and its bases.
+    pub contracts: Vec<String>,
+    /// The types declared in contracts by contract and name, or `None` for two declarations.
+    pub contract_types: &'a HashMap<(String, String), Option<UserType>>,
+    /// The types declared in the file of the function.
+    pub file: &'a [DeclaredType],
+    /// The types of the project by name.
+    pub project: &'a UserTypes,
+}
+
+impl<'a> TypeScope<'a> {
+    /// A scope of the types of the project only.
+    pub fn project(project: &'a UserTypes) -> Self {
+        static NONE: std::sync::OnceLock<HashMap<(String, String), Option<UserType>>> =
+            std::sync::OnceLock::new();
+        Self {
+            contracts: Vec::new(),
+            contract_types: NONE.get_or_init(HashMap::new),
+            file: &[],
+            project,
+        }
+    }
+
+    fn get(&self, name: &str) -> Option<&'a Option<UserType>> {
+        self.contracts
+            .iter()
+            .find_map(|contract| self.contract_types.get(&(contract.clone(), name.to_string())))
+            .or_else(|| {
+                self.file
+                    .iter()
+                    .find(|declared| declared.contract.is_none() && declared.name == name)
+                    .map(|declared| &declared.ty)
+            })
+            .or_else(|| self.project.get(name))
+    }
+}
+
 /// A user-defined type and how it appears in function signatures.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum UserType {
@@ -167,7 +227,7 @@ pub enum SourceType {
 
 impl SourceFunction {
     /// Resolves the types of the parameters and return values.
-    pub fn info(&self, user_types: &UserTypes) -> FunctionInfo {
+    pub fn info(&self, user_types: &TypeScope<'_>) -> FunctionInfo {
         let resolve = |params: &Option<Vec<SourceParam>>| {
             params.as_ref().map(|params| {
                 params
@@ -218,7 +278,7 @@ impl SourceFunction {
 }
 
 impl SourceType {
-    fn resolve(&self, user_types: &UserTypes) -> Option<DynSolType> {
+    fn resolve(&self, user_types: &TypeScope<'_>) -> Option<DynSolType> {
         match self {
             Self::Elementary(ty) => Some(ty.clone()),
             Self::Custom(name) => match user_types.get(name)?.as_ref()? {
@@ -240,7 +300,7 @@ impl SourceType {
 
     /// The name that the ABI spells for the type, with structs as tuples of their fields, or
     /// `None` if it is not known. `depth` stops structs that contain themselves.
-    fn abi_name(&self, user_types: &UserTypes, depth: usize) -> Option<String> {
+    fn abi_name(&self, user_types: &TypeScope<'_>, depth: usize) -> Option<String> {
         match self {
             Self::Elementary(ty) => Some(ty.sol_type_name().into_owned()),
             Self::Custom(name) => match user_types.get(name)?.as_ref()? {
@@ -269,7 +329,7 @@ impl SourceType {
     }
 
     /// Whether the type is a struct or an array of structs.
-    fn is_struct(&self, user_types: &UserTypes) -> bool {
+    fn is_struct(&self, user_types: &TypeScope<'_>) -> bool {
         match self {
             Self::Custom(name) => matches!(user_types.get(name), Some(Some(UserType::Struct(_)))),
             Self::Array(element, _) => element.is_struct(user_types),
@@ -297,26 +357,39 @@ impl SourceType {
 pub fn collect<'ast>(
     ast: &'ast SourceUnit<'ast>,
     source_map: &SourceMap,
-    functions: &mut HashMap<usize, Arc<SourceFunction>>,
-    user_types: &mut Vec<(String, Option<UserType>)>,
+    declarations: &mut Declarations,
 ) {
     for item in ast.items.iter() {
         match &item.kind {
             ItemKind::Contract(contract) => {
                 let name = contract.name.to_string();
-                user_types.push((name.clone(), Some(UserType::Address)));
+                declarations.types.push(DeclaredType {
+                    contract: None,
+                    name: name.clone(),
+                    ty: Some(UserType::Address),
+                });
+                let bases = contract
+                    .bases
+                    .iter()
+                    .filter_map(|base| base.name.segments().last().map(|last| last.to_string()))
+                    .collect();
+                declarations.bases.push((name.clone(), bases));
                 for member in contract.body.iter() {
-                    collect_item(member, Some(&name), source_map, functions, user_types);
+                    collect_item(member, Some(&name), source_map, declarations);
                 }
             }
             ItemKind::Import(import) => {
                 // An alias can name any type, so a type of that name is not known by its name.
                 if let ImportItems::Aliases(aliases) = &import.items {
                     let aliases = aliases.iter().filter_map(|(_, alias)| alias.as_ref());
-                    user_types.extend(aliases.map(|alias| (alias.to_string(), None)));
+                    declarations.types.extend(aliases.map(|alias| DeclaredType {
+                        contract: None,
+                        name: alias.to_string(),
+                        ty: None,
+                    }));
                 }
             }
-            _ => collect_item(item, None, source_map, functions, user_types),
+            _ => collect_item(item, None, source_map, declarations),
         }
     }
 }
@@ -325,12 +398,19 @@ fn collect_item<'ast>(
     item: &'ast Item<'ast>,
     contract: Option<&str>,
     source_map: &SourceMap,
-    functions: &mut HashMap<usize, Arc<SourceFunction>>,
-    user_types: &mut Vec<(String, Option<UserType>)>,
+    declarations: &mut Declarations,
 ) {
+    let declare = |declarations: &mut Declarations, name: String, ty: UserType| {
+        declarations.types.push(DeclaredType {
+            contract: contract.map(str::to_string),
+            name,
+            ty: Some(ty),
+        });
+    };
     let function = match &item.kind {
         ItemKind::Function(function) => {
-            let mut yul = YulFunctions { contract, source_map, functions };
+            let mut yul =
+                YulFunctions { contract, source_map, functions: &mut declarations.functions };
             let _ = yul.visit_item_function(function);
             let Some(name) = &function.header.name else { return };
             let public = matches!(
@@ -363,17 +443,17 @@ fn collect_item<'ast>(
             })
         }
         ItemKind::Enum(item) => {
-            user_types.push((item.name.to_string(), Some(UserType::Enum)));
+            declare(declarations, item.name.to_string(), UserType::Enum);
             None
         }
         ItemKind::Struct(item) => {
             let fields = item.fields.iter().map(|field| source_type(&field.ty)).collect();
-            user_types.push((item.name.to_string(), Some(UserType::Struct(fields))));
+            declare(declarations, item.name.to_string(), UserType::Struct(fields));
             None
         }
         ItemKind::Udvt(item) => {
             if let SourceType::Elementary(ty) = source_type(&item.ty) {
-                user_types.push((item.name.to_string(), Some(UserType::Value(ty))));
+                declare(declarations, item.name.to_string(), UserType::Value(ty));
             }
             None
         }
@@ -382,7 +462,7 @@ fn collect_item<'ast>(
     if let Some(function) = function
         && let Ok(range) = source_map.span_to_range(item.span)
     {
-        functions.insert(range.start, Arc::new(function));
+        declarations.functions.insert(range.start, Arc::new(function));
     }
 }
 
@@ -629,7 +709,8 @@ mod tests {
             ),
             ("Cyclic".into(), Some(UserType::Struct(vec![SourceType::Custom("Cyclic".into())]))),
         ]);
-        let abi = |ty: SourceType| ty.abi_name(&user_types, 0);
+        let scope = TypeScope::project(&user_types);
+        let abi = |ty: SourceType| ty.abi_name(&scope, 0);
         let custom = |name: &str| SourceType::Custom(name.into());
 
         assert_eq!(abi(custom("Unsigned")).as_deref(), Some("(uint256)"));

@@ -1,6 +1,9 @@
 use super::{
     CodeFunctions, FunctionEntry, UnlistedFunction,
-    functions::{SourceFunction, UserType, UserTypes, collect, collect_call_sites, name_of_key},
+    functions::{
+        Declarations, DeclaredType, SourceFunction, UserType, UserTypes, collect,
+        collect_call_sites, name_of_key,
+    },
 };
 use evm2::interpreter::opcode::OpCode;
 use eyre::{Context, Result};
@@ -41,7 +44,9 @@ pub struct SourceData {
     /// The name that each call expression calls, by the byte offset where it starts.
     pub call_sites: HashMap<usize, String>,
     /// The user-defined types that the source declares.
-    pub user_types: Vec<(String, Option<UserType>)>,
+    pub user_types: Vec<DeclaredType>,
+    /// The base contracts of the contracts that the source declares, by name.
+    pub contract_bases: Vec<(String, Vec<String>)>,
     /// The edits that a preprocessor made to the source before compilation, sorted by start
     /// offset. The compiler's source locations refer to the edited source.
     pub source_edits: Vec<SourceEdit>,
@@ -56,16 +61,15 @@ impl SourceData {
         root: &Path,
         source_edits: Vec<SourceEdit>,
     ) -> Self {
-        let mut functions = HashMap::new();
+        let mut declarations = Declarations::default();
         let mut call_sites = HashMap::new();
-        let mut user_types = Vec::new();
 
         if matches!(language, MultiCompilerLanguage::Solc(_)) {
             let r = output.parser().solc().compiler().enter(|compiler| -> Option<()> {
                 let (_, source) = compiler.gcx().get_ast_source(root.join(&path))?;
                 let ast = source.ast.as_ref()?;
                 let source_map = compiler.sess().source_map();
-                collect(ast, source_map, &mut functions, &mut user_types);
+                collect(ast, source_map, &mut declarations);
                 collect_call_sites(ast, source_map, &mut call_sites);
                 Some(())
             });
@@ -74,7 +78,17 @@ impl SourceData {
             }
         }
 
-        Self { source, language, path, functions, call_sites, user_types, source_edits }
+        let Declarations { functions, types: user_types, bases: contract_bases } = declarations;
+        Self {
+            source,
+            language,
+            path,
+            functions,
+            call_sites,
+            user_types,
+            contract_bases,
+            source_edits,
+        }
     }
 }
 
@@ -208,6 +222,16 @@ fn code_functions(
     code
 }
 
+/// A function of the sources that has a body, for finding the functions that have the same code.
+#[derive(Clone, Debug)]
+pub struct BodyFunction {
+    pub name: String,
+    /// Tells it apart from the others by its file and offset.
+    pub id: u64,
+    /// The contract that declares it.
+    pub contract: Option<String>,
+}
+
 /// Container with artifacts data useful for identifying individual execution steps.
 #[derive(Clone, Debug, Default)]
 pub struct ContractSources {
@@ -217,9 +241,13 @@ pub struct ContractSources {
     pub artifacts_by_name: HashMap<String, Vec<ArtifactData>>,
     /// The user-defined types of all sources by name, which function parameters refer to.
     pub user_types: UserTypes,
+    /// The types that contracts declare, by contract and name, or `None` for two declarations.
+    pub contract_types: HashMap<(String, String), Option<UserType>>,
+    /// The bases of the contracts by name.
+    pub bases: HashMap<String, Vec<String>>,
     /// The functions of all sources by the hash of their body, which functions with the same code
-    /// share: their names, with a hash of the file and offset that tells them apart.
-    pub functions_by_body: HashMap<u64, Vec<(String, u64)>>,
+    /// share.
+    pub functions_by_body: HashMap<u64, Vec<BodyFunction>>,
 }
 
 impl ContractSources {
@@ -323,13 +351,33 @@ impl ContractSources {
         }
 
         for source_data in files.values().filter_map(|variants| variants.first()) {
-            for (name, ty) in &source_data.user_types {
-                self.add_user_type(name.clone(), ty.clone());
+            for declared in &source_data.user_types {
+                self.add_user_type(declared.name.clone(), declared.ty.clone());
+                if let Some(contract) = &declared.contract {
+                    self.add_contract_type(
+                        contract.clone(),
+                        declared.name.clone(),
+                        declared.ty.clone(),
+                    );
+                }
+            }
+            for (contract, bases) in &source_data.contract_bases {
+                let known = self.bases.entry(contract.clone()).or_default();
+                for base in bases {
+                    if !known.contains(base) {
+                        known.push(base.clone());
+                    }
+                }
             }
             for (offset, function) in &source_data.functions {
                 if let Some(hash) = function.body_hash {
                     let id = function_id(&source_data.path, *offset);
-                    self.add_function_by_body(hash, function.name.clone(), id);
+                    let function = BodyFunction {
+                        name: function.name.clone(),
+                        id,
+                        contract: function.contract.clone(),
+                    };
+                    self.add_function_by_body(hash, function);
                 }
             }
         }
@@ -377,11 +425,39 @@ impl ContractSources {
         }
     }
 
-    fn add_function_by_body(&mut self, hash: u64, name: String, id: u64) {
+    fn add_function_by_body(&mut self, hash: u64, function: BodyFunction) {
         let functions = self.functions_by_body.entry(hash).or_default();
-        if !functions.iter().any(|(_, known)| *known == id) {
-            functions.push((name, id));
+        if !functions.iter().any(|known| known.id == function.id) {
+            functions.push(function);
         }
+    }
+
+    /// Records a type that a contract declares. Two declarations of a name resolve to none.
+    fn add_contract_type(&mut self, contract: String, name: String, ty: Option<UserType>) {
+        self.contract_types
+            .entry((contract, name))
+            .and_modify(|known| {
+                if *known != ty {
+                    *known = None;
+                }
+            })
+            .or_insert(ty);
+    }
+
+    /// The contract and the contracts it inherits from.
+    pub fn contract_and_bases(&self, contract: &str) -> Vec<String> {
+        let mut contracts = vec![contract.to_string()];
+        let mut next = 0;
+        while let Some(contract) = contracts.get(next) {
+            let bases = self.bases.get(contract).into_iter().flatten().cloned().collect::<Vec<_>>();
+            for base in bases {
+                if !contracts.contains(&base) {
+                    contracts.push(base);
+                }
+            }
+            next += 1;
+        }
+        contracts
     }
 
     /// Merges given contract sources.
@@ -390,9 +466,20 @@ impl ContractSources {
         for (name, ty) in sources.user_types {
             self.add_user_type(name, ty);
         }
+        for ((contract, name), ty) in sources.contract_types {
+            self.add_contract_type(contract, name, ty);
+        }
+        for (contract, bases) in sources.bases {
+            let known = self.bases.entry(contract).or_default();
+            for base in bases {
+                if !known.contains(&base) {
+                    known.push(base);
+                }
+            }
+        }
         for (hash, functions) in sources.functions_by_body {
-            for (name, id) in functions {
-                self.add_function_by_body(hash, name, id);
+            for function in functions {
+                self.add_function_by_body(hash, function);
             }
         }
         for (name, artifacts) in sources.artifacts_by_name {
@@ -538,6 +625,7 @@ mod tests {
                 functions: HashMap::new(),
                 call_sites: HashMap::new(),
                 user_types: Vec::new(),
+                contract_bases: Vec::new(),
                 source_edits: Vec::new(),
             })
         };

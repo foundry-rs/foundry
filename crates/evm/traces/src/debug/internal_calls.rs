@@ -445,16 +445,16 @@ mod tests {
         track_at(steps, convention, parameter_slots, f, (is_create, is_dispatched, &|_| None))
     }
 
+    /// Whether the code is creation code, whether the call data selects a function, and the name
+    /// that the call at a step calls.
+    type Hooks<'a> = (bool, &'a dyn Fn(&FunctionInfo) -> bool, &'a dyn Fn(usize) -> Option<String>);
+
     fn track_at(
         steps: &[CallTraceStep],
         convention: Option<CallConvention>,
         parameter_slots: usize,
         f: FunctionInfo,
-        (is_create, is_dispatched, callee_name): (
-            bool,
-            &dyn Fn(&FunctionInfo) -> bool,
-            &dyn Fn(usize) -> Option<String>,
-        ),
+        (is_create, is_dispatched, callee_name): Hooks<'_>,
     ) -> Vec<Summary> {
         let entry = || FunctionEntry { name: None, parameter_slots, return_slots: 1 };
         let code = CodeFunctions {

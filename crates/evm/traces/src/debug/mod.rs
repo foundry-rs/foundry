@@ -9,7 +9,9 @@ use alloy_primitives::U256;
 use evm2::interpreter::opcode::OpCode;
 use foundry_common::fmt::format_token;
 use foundry_compilers::{artifacts::sourcemap::Jump, buildinfo::SourceEdit};
-pub use functions::{AbiType, FunctionInfo, SourceFunction, UserType, UserTypes};
+pub use functions::{
+    AbiType, DeclaredType, FunctionInfo, SourceFunction, TypeScope, UserType, UserTypes,
+};
 use functions::{names_agree, without_number};
 pub use internal_calls::{CallConvention, CodeFunctions, FunctionEntry, UnlistedFunction};
 use internal_calls::{ResolvedEntry, SourceMapFunction, TrackerContext, track_internal_calls};
@@ -63,7 +65,7 @@ impl DebugTraceIdentifier {
                 || selected.is_some_and(|selected| function.matches_signature(selected))
         };
         let resolve = |pc: u32, entries: &[FunctionEntry]| {
-            resolve_entry(sources, artifact, is_create, pc, entries)
+            resolve_entry(sources, artifact, contract_name, is_create, pc, entries)
         };
         let src_map = |step: usize| {
             sources.source_mapping_in(artifact, node.trace.steps.get(step)?.pc, is_create)
@@ -105,23 +107,29 @@ impl DebugTraceIdentifier {
 fn resolve_entry(
     sources: &ContractSources,
     artifact: &ArtifactData,
+    contract_name: &str,
     is_create: bool,
     pc: u32,
     entries: &[FunctionEntry],
 ) -> Option<ResolvedEntry> {
     let named = entries.iter().filter(|entry| entry.name.is_some()).collect::<Vec<_>>();
     let entry = *named.first()?;
-    let (defined, defined_id) = match sources.source_mapping_in(artifact, pc, is_create) {
+    let (source, offset) = match sources.source_mapping_in(artifact, pc, is_create) {
         Some((element, source)) => {
             let offset =
                 SourceEdit::original_offset(&source.source_edits, element.offset() as usize);
-            let defined = source.functions.get(&offset).map(Arc::as_ref);
-            (defined, function_id(&source.path, offset))
+            (Some(source), offset)
         }
         None => (None, 0),
     };
+    let defined = source.and_then(|source| source.functions.get(&offset)).map(Arc::as_ref);
+    let defined_id = source.map_or(0, |source| function_id(&source.path, offset));
     let mut function = match choose_entry(&named, defined) {
-        Choice::Function(function) => function.info(&sources.user_types),
+        Choice::Function(function) => {
+            // `defined` is `Some` if the source is.
+            let scope = type_scope(sources, source?, function.contract.as_deref());
+            function.info(&scope)
+        }
         // The entries do not tell which contract's function ran.
         Choice::Ambiguous(function) => {
             FunctionInfo::untyped(function.name.clone(), function.is_entry)
@@ -137,6 +145,9 @@ fn resolve_entry(
     let same_body = defined
         .and_then(|defined| defined.body_hash)
         .and_then(|hash| sources.functions_by_body.get(&hash));
+    // The key of a function without an entry point names a function of the contract or of the
+    // contracts that it inherits from.
+    let contracts = sources.contract_and_bases(contract_name);
     function.merged = artifact
         .functions(is_create)
         .unlisted
@@ -145,14 +156,30 @@ fn resolve_entry(
             (unlisted.parameter_slots, unlisted.return_slots)
                 == (entry.parameter_slots, entry.return_slots)
                 && same_body.is_some_and(|functions| {
-                    functions
-                        .iter()
-                        .any(|(name, id)| *id != defined_id && names_agree(&unlisted.name, name))
+                    functions.iter().any(|other| {
+                        other.id != defined_id
+                            && names_agree(&unlisted.name, &other.name)
+                            && other.contract.as_ref().is_none_or(|c| contracts.contains(c))
+                    })
                 })
         })
         .map(|unlisted| unlisted.name.clone())
         .collect();
     Some((entry.parameter_slots, entry.return_slots, function))
+}
+
+/// The user-defined types that a function of `contract` sees in `source`.
+fn type_scope<'a>(
+    sources: &'a ContractSources,
+    source: &'a SourceData,
+    contract: Option<&str>,
+) -> TypeScope<'a> {
+    TypeScope {
+        contracts: contract.map_or_else(Vec::new, |contract| sources.contract_and_bases(contract)),
+        contract_types: &sources.contract_types,
+        file: &source.user_types,
+        project: &sources.user_types,
+    }
 }
 
 /// What a call to an entry runs.
@@ -234,7 +261,7 @@ fn source_map_function(
 
     let offset = SourceEdit::original_offset(&source.source_edits, loc.offset() as usize);
     let defined = source.functions.get(&offset)?;
-    let function = defined.info(&sources.user_types);
+    let function = defined.info(&type_scope(sources, source, defined.contract.as_deref()));
     let slots = |params: &Option<Vec<Param>>| params.iter().flatten().map(|p| p.slots).sum();
     // Yul functions take their first argument on top, as via-IR functions do.
     let convention = if defined.is_yul {
