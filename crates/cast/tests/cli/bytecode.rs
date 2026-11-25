@@ -133,3 +133,17 @@ bb0:
 
 "#]]);
 }
+
+#[casttest]
+fn disassemble_invalid_jump(cmd: _) {
+    cmd.args(["disassemble", "5f6006575b00"]).assert_success().stdout_eq(str![[r#"
+bb0:
+  0000  PUSH0
+  0001  PUSH1 0x06
+  0003  JUMPI  ; -> invalid, else bb1
+bb1:
+  0004  JUMPDEST
+  0005  STOP
+
+"#]]);
+}
