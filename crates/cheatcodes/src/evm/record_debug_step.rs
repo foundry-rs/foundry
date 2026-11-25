@@ -97,17 +97,15 @@ fn get_memory_input_for_opcode(
     stack: Option<&[U256]>,
     memory: Option<&RecordedMemory>,
 ) -> Bytes {
-    let mut memory_input = Bytes::new();
-    let Some(stack_data) = stack else { return memory_input };
-    let Some(memory_data) = memory else { return memory_input };
-
-    if let Some(accesses) = get_buffer_accesses(opcode, stack_data)
+    if let Some(stack_data) = stack
+        && let Some(memory_data) = memory
+        && let Some(accesses) = get_buffer_accesses(opcode, stack_data)
         && let Some((BufferKind::Memory, access)) = accesses.read
     {
-        memory_input = get_slice_from_memory(memory_data.as_bytes(), access.offset, access.len);
-    };
-
-    memory_input
+        get_slice_from_memory(memory_data.as_bytes(), access.offset, access.len)
+    } else {
+        Bytes::new()
+    }
 }
 
 // The expected `stack` here is from the trace stack, where the top of the stack
@@ -124,24 +122,17 @@ fn get_stack_inputs_for_opcode(opcode: u8, stack: Option<&[U256]>) -> Vec<U256> 
 }
 
 fn get_slice_from_memory(memory: &Bytes, start_index: usize, size: usize) -> Bytes {
-    let memory_len = memory.len();
-
     let end_bound = start_index + size;
 
     // Return the bytes if data is within the range.
-    if start_index < memory_len && end_bound <= memory_len {
+    if start_index < memory.len() && end_bound <= memory.len() {
         return memory.slice(start_index..end_bound);
     }
 
-    // Pad zero bytes if attempting to load memory partially out of range.
-    if start_index < memory_len && end_bound > memory_len {
-        let mut result = memory.slice(start_index..memory_len).to_vec();
-        result.resize(size, 0u8);
-        return Bytes::from(result);
-    }
-
-    // Return empty bytes with the size if not in range at all.
-    Bytes::from(vec![0u8; size])
+    // Pad with zero bytes the part of the range that is out of memory.
+    let mut result = memory.get(start_index..).unwrap_or_default().to_vec();
+    result.resize(size, 0);
+    Bytes::from(result)
 }
 
 #[cfg(test)]
