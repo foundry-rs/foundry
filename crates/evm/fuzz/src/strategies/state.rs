@@ -634,7 +634,8 @@ impl FuzzDictionary {
                 break;
             }
             // Don't add 0 to the dictionary as it's already present.
-            if inst.immediate.len() == inst.opcode.immediate_size() as usize
+            if inst.opcode.is_push()
+                && inst.immediate.len() == inst.opcode.immediate_size() as usize
                 && let Some(push_value) = inst.push_value()
                 && !push_value.is_zero()
             {
