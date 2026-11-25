@@ -3,7 +3,9 @@
 use alloy_primitives::{Address, B256, U256, address};
 use foundry_cli::utils as forge_utils;
 use foundry_compilers::{
-    artifacts::{BytecodeHash, OptimizerDetails, RevertStrings, YulDetails},
+    artifacts::{
+        BytecodeHash, ConfigurableContractArtifact, OptimizerDetails, RevertStrings, YulDetails,
+    },
     solc::Solc,
 };
 use foundry_config::{
@@ -1817,7 +1819,10 @@ contract Core is DependencyLibrary {}
         ),
     );
 
-    cmd.current_dir(project).args(["build", "--no-lint"]).assert_success();
+    cmd.current_dir(project)
+        .args(["build", "--no-lint"])
+        .assert_success()
+        .stderr_eq(ABSOLUTE_METADATA_PATH_WARNING);
 }
 
 #[forgetest]
@@ -3675,7 +3680,8 @@ remappings = ["lib/dependency:unused/=lib/dependency/"]
         cmd.forge_fuse()
             .current_dir(&project)
             .args(["build", "--no-lint", "--use", SOLC_VERSION])
-            .assert_success();
+            .assert_success()
+            .stderr_eq("");
         let artifact: Value = serde_json::from_slice(
             &fs::read(project.join("out/Counter.sol/Counter.json")).unwrap(),
         )
@@ -4109,7 +4115,8 @@ fn external_source_bytecode_is_independent_of_project_root(prj: _, cmd: _) {
         cmd.forge_fuse()
             .current_dir(&project)
             .args(["build", "--no-lint", "--use", SOLC_VERSION])
-            .assert_success();
+            .assert_success()
+            .stderr_eq("");
         let artifact: Value =
             serde_json::from_slice(&fs::read(project.join("out/Root.sol/Root.json")).unwrap())
                 .unwrap();
@@ -4408,12 +4415,14 @@ fn external_libraries_preserve_global_dependency_aliases(prj: _, cmd: _) {
             "project/foundry.toml",
             &format!("[profile.default]\nlibs = [{libs:?}]\nsolc = {SOLC_VERSION:?}\n"),
         );
+        let warning =
+            if Path::new(&libs).is_absolute() { ABSOLUTE_METADATA_PATH_WARNING } else { "" };
         cmd.forge_fuse()
             .current_dir(&project)
             .args(["build", "--force"])
             .assert_success()
-            .stderr_eq("");
-        cmd.forge_fuse().current_dir(&project).arg("build").assert_success().stderr_eq("");
+            .stderr_eq(warning);
+        cmd.forge_fuse().current_dir(&project).arg("build").assert_success().stderr_eq(warning);
         let expected = if Path::new(&libs).is_absolute() {
             str![[r#"
 @priv/=[..]/shared/a/src/internal/
@@ -4511,4 +4520,105 @@ dep/=lib/dep/contracts/
 x/=lib/dep/lib/x/
 
 "#]]);
+}
+
+const ABSOLUTE_METADATA_PATH_WARNING: &str = "Warning: Solidity metadata contains absolute filesystem paths that may reveal information about your local system when published. Review the metadata before sharing or verifying these artifacts.\n";
+
+#[forgetest]
+fn unused_absolute_library_metadata_warns(prj: _, cmd: _) {
+    let external = tempfile::tempdir().unwrap();
+    let library = external.path().join("shared/src");
+    fs::create_dir_all(&library).unwrap();
+    fs::write(library.join("Unused.sol"), "contract Unused {}\n").unwrap();
+    prj.add_source("Root.sol", "contract Root {} contract Other {}\n");
+    prj.update_config(|config| config.libs = vec![external.path().to_path_buf()]);
+
+    cmd.args(["build", "--no-lint"]).assert_success().stderr_eq(ABSOLUTE_METADATA_PATH_WARNING);
+    let artifact_path = prj.root().join("out/Root.sol/Root.json");
+    let artifact_bytes = fs::read(&artifact_path).unwrap();
+    let artifact: ConfigurableContractArtifact = serde_json::from_slice(&artifact_bytes).unwrap();
+    assert_eq!(
+        artifact.metadata.unwrap().settings.remappings,
+        vec![Remapping::from_str(&format!("shared/={}/", library.to_slash_lossy())).unwrap()]
+    );
+
+    cmd.forge_fuse()
+        .args(["build", "--no-lint"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+"#]])
+        .stderr_eq(ABSOLUTE_METADATA_PATH_WARNING);
+    cmd.forge_fuse()
+        .args(["build", "--no-lint", "--json"])
+        .assert_json_stdout_with_status(
+            true,
+            str![[r#"
+{"errors": [], "sources": {}, "contracts": {}, "build_infos": []}
+"#]],
+        )
+        .stderr_eq(ABSOLUTE_METADATA_PATH_WARNING);
+    cmd.forge_fuse()
+        .args(["build", "--no-lint", "--quiet"])
+        .assert_success()
+        .stdout_eq("")
+        .stderr_eq("");
+    assert_eq!(fs::read(artifact_path).unwrap(), artifact_bytes);
+    cmd.forge_fuse()
+        .args(["build", "--no-lint", "--deny", "warnings"])
+        .assert_success()
+        .stderr_eq(ABSOLUTE_METADATA_PATH_WARNING);
+}
+
+#[forgetest]
+fn absolute_source_metadata_warns_without_remappings(prj: _, cmd: _) {
+    let external = tempfile::tempdir().unwrap();
+    let source = external.path().join("External.sol");
+    fs::write(
+        &source,
+        "// SPDX-License-Identifier: MIT\npragma solidity >=0.8.0; contract External {}\n",
+    )
+    .unwrap();
+    prj.update_config(|config| {
+        config.src = external.path().to_path_buf();
+        config.auto_detect_remappings = false;
+    });
+    cmd.args(["build", "--no-lint"]).assert_success().stderr_eq(ABSOLUTE_METADATA_PATH_WARNING);
+    let artifact: ConfigurableContractArtifact = serde_json::from_slice(
+        &fs::read(prj.root().join("out/External.sol/External.json")).unwrap(),
+    )
+    .unwrap();
+    let metadata = artifact.metadata.unwrap();
+    assert!(metadata.settings.remappings.is_empty());
+    assert_eq!(
+        metadata.sources.inner.into_keys().collect::<Vec<_>>(),
+        vec![source.to_slash_lossy()]
+    );
+}
+
+#[forgetest]
+fn metadata_path_warning_recognizes_windows_paths(prj: _, cmd: _) {
+    prj.add_source("Root.sol", "contract Root {}\n");
+    let internal = format!("unused/={}/", prj.root().join("lib").to_slash_lossy());
+    for (remapping, warning) in [
+        ("unused/=C:/Users/alice/shared/", ABSOLUTE_METADATA_PATH_WARNING),
+        (r"unused/=C:\Users\alice\shared\", ABSOLUTE_METADATA_PATH_WARNING),
+        ("C:/Users/alice/dependency/:unused/=lib/", ABSOLUTE_METADATA_PATH_WARNING),
+        (r"C:\Users\alice\dependency\:unused/=lib/", ABSOLUTE_METADATA_PATH_WARNING),
+        (r"unused/=\\server\share\", ABSOLUTE_METADATA_PATH_WARNING),
+        ("unused/=C:relative/", ""),
+        ("src/:unused/=lib/", ""),
+        ("unused/=../shared/", ""),
+        (internal.as_str(), ""),
+    ] {
+        prj.update_config(|config| {
+            config.auto_detect_remappings = false;
+            config.remappings = vec![Remapping::from_str(remapping).unwrap().into()];
+        });
+        cmd.forge_fuse()
+            .args(["build", "--force", "--no-lint"])
+            .assert_success()
+            .stderr_eq(warning);
+    }
 }
