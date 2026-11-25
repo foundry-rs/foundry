@@ -9,7 +9,7 @@ use evm2::{
 };
 use evm2_inspectors::{
     tracing::{TracingInspector, TracingInspectorConfig, types::CallTraceNode},
-    transfer::{TRANSFER_EVENT_TOPIC, TRANSFER_LOG_EMITTER, TransferInspector},
+    transfer::{TRANSFER_EVENT_TOPIC, TRANSFER_LOG_EMITTER},
 };
 use foundry_common::{ErrorExt, fmt::ConsoleFmt};
 use foundry_evm_core::{
@@ -25,8 +25,6 @@ pub struct AnvilInspector {
     pub tracer: Option<TracingInspector>,
     /// Collects all `console.sol` logs
     pub log_collector: Option<LogCollector>,
-    /// Collects all internal ETH transfers as ERC20 transfer events.
-    pub transfer: Option<TransferInspector>,
     /// Collects canonical and synthetic transfer logs for an `eth_simulateV1` response.
     simulation_logs: Option<SimulationLogCollector>,
     /// Number of frames the tracer has entered.
@@ -231,12 +229,6 @@ impl AnvilInspector {
         self
     }
 
-    /// Configures the `Tracer` [`evm2::Inspector`] with a transfer event collector.
-    pub fn with_transfers(mut self) -> Self {
-        self.transfer = Some(TransferInspector::new(false).with_logs(true));
-        self
-    }
-
     /// Collects canonical and synthetic transfer logs for an `eth_simulateV1` response.
     pub fn with_simulation_logs(mut self, trace_transfers: bool) -> Self {
         self.simulation_logs =
@@ -361,11 +353,6 @@ impl<T: EvmTypes> Inspector<T> for AnvilInspector {
                 collector.push_transfer(message.caller, message.destination, message.value);
             }
         }
-        if let Some(transfer) = &mut self.transfer
-            && let Some(result) = Inspector::<T>::call(transfer, interp, message)
-        {
-            return Some(result);
-        }
         if let Some(tracer) = &mut self.tracer {
             self.tracer_depth += 1;
             if let Some(result) = Inspector::<T>::call(tracer, interp, message) {
@@ -416,11 +403,6 @@ impl<T: EvmTypes> Inspector<T> for AnvilInspector {
             collector.frame_start();
             collector.push_transfer(message.caller, message.destination, message.value);
         }
-        if let Some(transfer) = &mut self.transfer
-            && let Some(result) = Inspector::<T>::create(transfer, interp, message)
-        {
-            return Some(result);
-        }
         if let Some(tracer) = &mut self.tracer {
             self.tracer_depth += 1;
             return Inspector::<T>::create(tracer, interp, message);
@@ -455,9 +437,6 @@ impl<T: EvmTypes> Inspector<T> for AnvilInspector {
     ) {
         if let Some(tracer) = &mut self.tracer {
             Inspector::<T>::selfdestruct(tracer, contract, target, value, host);
-        }
-        if let Some(transfer) = &mut self.transfer {
-            Inspector::<T>::selfdestruct(transfer, contract, target, value, host);
         }
         if let Some(collector) = &mut self.simulation_logs {
             collector.push_transfer(*contract, *target, *value);
