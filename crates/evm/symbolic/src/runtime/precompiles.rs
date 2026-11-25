@@ -30,6 +30,13 @@ pub(crate) fn active_precompiles(spec_id: SpecId) -> Precompiles {
     Precompiles::base(spec_id)
 }
 
+/// Returns the addresses of the canonical precompiles active under `spec_id`, in address order.
+pub(crate) fn active_precompile_addresses(spec_id: SpecId) -> Vec<Address> {
+    let mut addresses = active_precompiles(spec_id).as_map().addresses().collect::<Vec<_>>();
+    addresses.sort_unstable();
+    addresses
+}
+
 /// Returns whether `address` is a canonical precompile active under `spec_id`.
 pub(crate) fn is_precompile_for_spec(address: Address, spec_id: SpecId) -> bool {
     active_precompiles(spec_id).as_map().contains(&address)

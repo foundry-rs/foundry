@@ -1,12 +1,14 @@
 use crate::{
-    Config, FigmentProviders, Warning, foundry_toml_dir_entries, remappings_from_env_var,
-    remappings_from_newline,
+    Config, Warning, foundry_toml_dir_entries, remappings_from_env_var, remappings_from_newline,
 };
 use figment::{
     Error, Figment, Metadata, Profile, Provider,
     value::{Dict, Map},
 };
-use foundry_compilers::artifacts::remappings::{RelativeRemapping, Remapping, RemappingDiscovery};
+use foundry_compilers::{
+    artifacts::remappings::{RelativeRemapping, Remapping, RemappingDiscovery},
+    resolver::parse::SolData,
+};
 use rayon::prelude::*;
 use std::{
     borrow::Cow,
@@ -485,9 +487,42 @@ impl RemappingsProvider<'_> {
                     PathBuf::from(&r.path),
                 );
             }
+            // The compiler names an owner's files imported from its own root after that root,
+            // outside the owner's context, so it would not apply the owner's scoped aliases to
+            // them.
+            let resolving_remappings = authoritative_remappings
+                .iter()
+                .chain(&global)
+                .chain(&contextual)
+                .chain(&contextual_remappings)
+                .cloned()
+                .chain(lib_remappings.iter().flat_map(|(context, mappings)| {
+                    mappings.iter().map(|(name, path)| Remapping {
+                        context: context.clone(),
+                        name: name.clone(),
+                        path: path.to_string_lossy().into(),
+                    })
+                }))
+                .collect::<Vec<_>>();
+            let mut root_importing_libraries = None;
             for remapping in contextual
                 .into_iter()
-                .filter(|remapping| ambiguous_aliases.contains(&remapping.name))
+                .filter(|remapping| {
+                    ambiguous_aliases.contains(&remapping.name)
+                        && !remapping.context.as_ref().is_some_and(|owner| {
+                            let owner = normalize_remapping_context(&self.root.join(owner));
+                            root_importing_libraries
+                                .get_or_insert_with(|| {
+                                    libraries_imported_from_own_root(
+                                        self.root,
+                                        &self.project_paths,
+                                        &self.lib_paths,
+                                        &resolving_remappings,
+                                    )
+                                })
+                                .contains(&owner)
+                        })
+                })
                 .flat_map(expand_scoped_contextual_remapping)
             {
                 if let Some(overlays) = contextual_overlays(&authoritative_remappings, &remapping) {
@@ -691,8 +726,7 @@ impl RemappingsProvider<'_> {
 /// Returns the normalized library directories the dependency at `root` configures, as nested
 /// remapping discovery accepts them.
 pub fn dependency_library_paths(root: &Path) -> Vec<PathBuf> {
-    let figment = Config::with_root(root).to_figment(FigmentProviders::Cast);
-    let Ok(config) = Config::from_figment_fallback(figment) else { return Vec::new() };
+    let Ok(config) = Config::load_dependency_with_root(root) else { return Vec::new() };
     let canonical = dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     config
         .libs
@@ -714,8 +748,7 @@ fn contained_library_path(owner: &Path, canonical: &Path, lib: &Path) -> Option<
 }
 
 fn load_nested_config(root: &Path) -> Result<Option<CachedNestedConfig>, Error> {
-    let figment = Config::with_root(root).to_figment(FigmentProviders::Cast);
-    let Ok(config) = Config::from_figment_fallback(figment) else { return Ok(None) };
+    let Ok(config) = Config::load_dependency_with_root(root) else { return Ok(None) };
     let src = config.src.clone();
     let libs = config.libs.clone();
     let remappings = config.sanitized().remappings.into_iter().map(Remapping::from).collect();
@@ -929,6 +962,94 @@ fn normalize_remapping_context(path: &Path) -> PathBuf {
         }
     }
     normalized
+}
+
+/// Returns the library roots that files reached from the root sources import from by paths relative
+/// to that root, such as `import "src/X.sol"`.
+///
+/// No remapping covers those imports, so foundry-compilers resolves them through the library root
+/// as an include path and the compiler names them outside every dependency context. Files the root
+/// build never reaches, such as a dependency's scripts, are not considered.
+fn libraries_imported_from_own_root(
+    root: &Path,
+    project_paths: &[PathBuf],
+    lib_paths: &[PathBuf],
+    remappings: &[Remapping],
+) -> HashSet<PathBuf> {
+    let libs = lib_paths
+        .iter()
+        .map(|lib| normalize_remapping_context(&root.join(lib)))
+        .collect::<Vec<_>>();
+    let remappings = remappings
+        .iter()
+        .map(|remapping| {
+            (
+                remapping
+                    .context
+                    .as_ref()
+                    .map(|context| normalize_remapping_context(&root.join(context))),
+                remapping,
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut pending = project_paths
+        .iter()
+        .flat_map(|path| foundry_compilers::utils::sol_source_files(&root.join(path)))
+        .map(|path| normalize_remapping_context(&path))
+        .collect::<Vec<_>>();
+    let mut visited = HashSet::new();
+    let mut libraries = HashSet::new();
+    while let Some(file) = pending.pop() {
+        if !visited.insert(file.clone()) {
+            continue;
+        }
+        let Ok(source) = fs::read_to_string(&file) else { continue };
+        for import in SolData::parse(&source, &file).imports {
+            let import = import.data().path();
+            let import_str = import.to_string_lossy();
+            let resolved = if matches!(
+                import.components().next(),
+                Some(Component::CurDir | Component::ParentDir)
+            ) {
+                Some(normalize_remapping_context(&file.with_file_name("").join(import)))
+            } else if let Some((_, remapping)) = remappings
+                // Like solc, the longest matching context wins, then the longest alias.
+                .iter()
+                .filter(|(context, remapping)| {
+                    context.as_ref().is_none_or(|context| file.starts_with(context))
+                        && import_str.starts_with(&remapping.name)
+                })
+                .max_by_key(|(context, remapping)| {
+                    (context.as_ref().map(|c| c.components().count()), remapping.name.len())
+                })
+            {
+                // Paths taken from discovered remappings lack the trailing separator.
+                Some(normalize_remapping_context(
+                    &root
+                        .join(&remapping.path)
+                        .join(import_str[remapping.name.len()..].trim_start_matches('/')),
+                ))
+            } else if root.join(import).is_file() {
+                Some(root.join(import))
+            } else if let Some(library) = file
+                .ancestors()
+                // Like foundry-compilers, search from the importing directory's parent up to the
+                // library directory.
+                .skip(2)
+                .take_while(|dir| libs.iter().any(|lib| dir.starts_with(lib) && dir != lib))
+                .find(|dir| dir.join(import).is_file())
+            {
+                // Only this library's files get compiler names outside its context, so a parent
+                // library keeps its scoped aliases.
+                libraries.insert(library.to_path_buf());
+                Some(library.join(import))
+            } else {
+                None
+            };
+            pending.extend(resolved);
+        }
+    }
+    libraries
 }
 
 /// Sorts by descending context depth, then by context, preserving order within each context.
@@ -2302,5 +2423,91 @@ mod tests {
             .map(|context| Remapping { context: Some(context.to_string()), ..discovered.clone() });
         remappings.extend(distinct.to_vec());
         assert_eq!(remappings.into_inner(), [vec![declared], distinct.to_vec()].concat());
+    }
+
+    #[test]
+    fn dependency_config_ignores_project_env_overrides() {
+        figment::Jail::expect_with(|jail| {
+            let temp = tempdir().unwrap();
+            let root = dunce::canonicalize(temp.path()).unwrap();
+            let dep = root.join("lib/dep");
+            fs::create_dir_all(dep.join("contracts")).unwrap();
+            fs::create_dir_all(dep.join("lib/x")).unwrap();
+            fs::create_dir_all(root.join("external")).unwrap();
+            fs::write(dep.join("contracts/D.sol"), "library D {}\n").unwrap();
+            fs::write(dep.join("lib/x/X.sol"), "library X {}\n").unwrap();
+            fs::write(root.join(Config::FILE_NAME), "[profile.default]\n").unwrap();
+            fs::write(
+                dep.join(Config::FILE_NAME),
+                "[profile.default]\nsrc = \"contracts\"\nremappings = [\"@x/=lib/x/\"]\nsolc = \"0.8.18\"\n",
+            )
+            .unwrap();
+            // An external config for the project, as passed with `FOUNDRY_CONFIG`.
+            let external = root.join("external").join(Config::FILE_NAME);
+            fs::write(
+                &external,
+                format!("[profile.default]\nlibs = [{:?}]\n", root.join("lib").display()),
+            )
+            .unwrap();
+
+            for (key, value) in [
+                ("FOUNDRY_CONFIG", external.display().to_string()),
+                ("FOUNDRY_ROOT", root.display().to_string()),
+                ("FOUNDRY_SRC", "src".to_string()),
+                ("DAPP_SRC", "src".to_string()),
+                ("FOUNDRY_SOLC_VERSION", "0.8.26".to_string()),
+                ("DAPP_SOLC_VERSION", "0.8.26".to_string()),
+            ] {
+                jail.clear_env();
+                jail.set_env(key, value);
+                let config = Config::load_with_root(&root).unwrap();
+                assert_eq!(
+                    config
+                        .get_all_remappings()
+                        .map(|remapping| remapping.to_string())
+                        .collect::<Vec<_>>(),
+                    ["@x/=lib/dep/lib/x/", "dep/=lib/dep/contracts/", "x/=lib/dep/lib/x/"],
+                    "{key}"
+                );
+                assert_eq!(
+                    Config::load_dependency_with_root(&dep).unwrap().solc,
+                    Some(crate::SolcReq::Version("0.8.18".parse().unwrap())),
+                    "{key}"
+                );
+            }
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn dependency_library_paths_ignore_project_env_overrides() {
+        figment::Jail::expect_with(|jail| {
+            let temp = tempdir().unwrap();
+            let dep = dunce::canonicalize(temp.path()).unwrap();
+            fs::create_dir_all(dep.join("vendor")).unwrap();
+            fs::create_dir_all(dep.join("other")).unwrap();
+            fs::write(dep.join(Config::FILE_NAME), "[profile.default]\nlibs = [\"vendor\"]\n")
+                .unwrap();
+            // An external config for the project, as passed with `FOUNDRY_CONFIG`.
+            let external = dep.join("other").join(Config::FILE_NAME);
+            fs::write(&external, "[profile.default]\nlibs = [\"other\"]\n").unwrap();
+
+            for (key, value) in [
+                ("FOUNDRY_CONFIG", external.display().to_string()),
+                ("FOUNDRY_LIBS", "[\"other\"]".to_string()),
+                ("DAPP_LIBS", "[\"other\"]".to_string()),
+            ] {
+                jail.clear_env();
+                jail.set_env(key, value);
+                assert_eq!(
+                    dependency_library_paths(&dep),
+                    [normalize_remapping_context(&dep.join("vendor"))],
+                    "{key}"
+                );
+            }
+
+            Ok(())
+        });
     }
 }

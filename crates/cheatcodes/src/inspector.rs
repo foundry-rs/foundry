@@ -48,7 +48,9 @@ use foundry_evm_core::{
     Breakpoints,
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{LocalForkId, RevertDiagnostic},
-    constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
+    constants::{
+        CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME,
+    },
     evm::{
         BlockEnvFor, EthEvmNetwork, EvmEnvFor, FoundryEvmFor, FoundryEvmNetwork, InterpreterFor,
         MessageFor, MessageResultFor, PersistentWrite, SnapshotRestores, SpecFor,
@@ -816,6 +818,11 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// depositing it fails, and whether the constructor ran in an isolated call.
     pub deploy_code_output: Option<(Bytes, bool)>,
 
+    /// The depth and remaining gas of the last frame that halted while a revert was expected.
+    /// The EVM consumes a halted frame's gas when it ends, so an expected halt that the
+    /// cheatcodes turn into a return gives back the gas the frame had left when it halted.
+    pub halted_frame_gas: Option<(usize, u64)>,
+
     /// The `vm.accessList` the running transaction last applied to a call or create. It replaces
     /// the transaction's access list when computing its stipend.
     pub applied_access_list: Option<AccessList>,
@@ -823,12 +830,17 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Depth of a create that a hook ended with a revert without running its frame.
     pub unrun_create_depth: Option<usize>,
 
-    /// Code that issued the CREATE being handed off to a new frame EVM.
+    /// Code that issued the CREATE, or the call into the CREATE2 deployer, being handed off to a
+    /// new frame EVM.
     pub env_handoff_creator: Option<Address>,
 
     /// Automatic CREATE2 redirects: factory call depth, original issuing code, and whether the
     /// original create grants cheatcode access. The grant is resolved after caller overrides.
     pub pending_create2_redirects: Vec<(u16, Option<Address>, bool)>,
+
+    /// Depth of a call into the CREATE2 deployer whose create has not run yet, and whether the
+    /// code that called it grants cheatcode access to the contract the deployer creates.
+    pub create2_deployer_call: Option<(u16, bool)>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -915,10 +927,12 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             deploy_code_depth: None,
             deploy_code_create_state_gas: 0,
             deploy_code_output: None,
+            halted_frame_gas: None,
             applied_access_list: None,
             unrun_create_depth: None,
             env_handoff_creator: None,
             pending_create2_redirects: Vec::new(),
+            create2_deployer_call: None,
         }
     }
 
@@ -1268,30 +1282,40 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     /// Grants cheatcode access for top-level deployments or authorized callers, provided the
     /// code issuing the CREATE also has access while forked.
     ///
+    /// The CREATE2 deployer creates whatever init code it is called with, so its creates are
+    /// authorized by the code that called it, not by the deployer's own access.
+    ///
     /// Constructors need access before the new contract's runtime code has been deployed.
     fn allow_cheatcodes_on_create(
-        &self,
+        &mut self,
         backend: &mut dyn CheatcodesBackend<FEN>,
         depth: usize,
         caller: Address,
         created_address: Address,
         creator: Option<Address>,
     ) {
+        let is_factory_create = |factory_depth: u16| usize::from(factory_depth) + 1 == depth;
+        let deployer_call = self.create2_deployer_call.take();
         let allowed = self
             .pending_create2_redirects
             .last()
-            .filter(|(factory_depth, ..)| usize::from(*factory_depth) + 1 == depth)
-            .map_or_else(
-                || {
-                    Self::can_grant_cheatcodes_on_create(
-                        backend,
-                        depth - self.root_depth,
-                        caller,
-                        creator,
-                    )
-                },
-                |(.., allowed)| *allowed,
-            );
+            .filter(|(factory_depth, ..)| is_factory_create(*factory_depth))
+            .map(|(.., allowed)| *allowed)
+            .or_else(|| {
+                creator.is_some_and(|code| self.is_create2_deployer(code)).then(|| {
+                    deployer_call.is_some_and(|(call_depth, allowed)| {
+                        allowed && is_factory_create(call_depth)
+                    })
+                })
+            })
+            .unwrap_or_else(|| {
+                Self::can_grant_cheatcodes_on_create(
+                    backend,
+                    depth - self.root_depth,
+                    caller,
+                    creator,
+                )
+            });
         if allowed && !backend.backend().has_cheatcode_access(&created_address) {
             backend.backend_mut().allow_cheatcode_access(created_address);
         }
@@ -1712,6 +1736,23 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             );
         }
 
+        // Code calling the CREATE2 deployer authorizes its create as if it created directly.
+        if self.is_create2_deployer(call.code_address) {
+            // A delegated deployer creates from the calling account.
+            let caller = match call.kind {
+                MessageKind::DelegateCall | MessageKind::CallCode => call.destination,
+                _ => call.caller,
+            };
+            let creator = self.take_create_creator(interp, call);
+            let allowed = Self::can_grant_cheatcodes_on_create(
+                backend,
+                curr_depth - self.root_depth,
+                caller,
+                creator,
+            );
+            self.create2_deployer_call = Some((call.depth, allowed));
+        }
+
         None
     }
 
@@ -1968,6 +2009,16 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         if self.has_active_env_overrides() {
             steps = steps.union(opcodes([op::BASEFEE, op::GASPRICE, op::CHAINID, op::BLOBHASH]));
         }
+        // `expectRevert` gives back the gas of a call that halts, which `step_end_hook` records.
+        // Only the instructions compiled code halts on are stepped, so expected calls keep
+        // running on the plain loop; other halts consume their gas.
+        if self
+            .expected_revert
+            .as_ref()
+            .is_some_and(|expected| matches!(expected.kind, ExpectedRevertKind::Default))
+        {
+            steps = steps.union(opcodes([op::INVALID, op::RETURNDATACOPY]));
+        }
         if self.failure_provenance.is_some() {
             steps = steps.union(opcodes([op::REVERT, op::INVALID]));
         }
@@ -2168,6 +2219,20 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         backend: &mut dyn CheatcodesBackend<FEN>,
         executor: &mut dyn CheatcodesExecutor<FEN>,
     ) {
+        // `expectRevert`: keep the gas a halting frame has left, which the EVM consumes when the
+        // frame ends. Only the halts that `hook_steps` steps count, so the result does not depend
+        // on which other cheatcodes step every instruction.
+        if self.expected_revert.is_some()
+            && interp.result().is_err_and(InstrStop::is_halt)
+            && interp
+                .original_bytecode()
+                .get(self.pc)
+                .is_some_and(|&opcode| matches!(opcode, op::INVALID | op::RETURNDATACOPY))
+        {
+            self.halted_frame_gas =
+                Some((usize::from(interp.message().depth), interp.gas().remaining()));
+        }
+
         // `deployCode`: keep the constructor's output, which it reports if depositing it fails.
         if let Some(depth) = self.deploy_code_depth
             && usize::from(interp.message().depth) == depth + 1
@@ -2390,6 +2455,12 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         backend: &mut dyn CheatcodesBackend<FEN>,
     ) {
         let curr_depth = usize::from(call.depth);
+        let halted_frame_gas = self
+            .halted_frame_gas
+            .take()
+            // As on revm-based Foundry, only a static call gives back the gas of an expected halt.
+            .filter(|&(depth, _)| depth == curr_depth && call.is_static())
+            .map(|(_, gas)| gas);
         self.replay_persistent_writes(interp, curr_depth, outcome.is_success());
         // Depth at which the caller resumes and applies the region snapshot correction.
         let isolated_snapshot_gas_used = self.gas_metering.take_isolated_snapshot_gas_used(
@@ -2529,6 +2600,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                             if clear_last_frame_gas {
                                 self.gas_metering.last_frame_gas = None;
                             }
+                            return_expected_halt_gas(outcome, halted_frame_gas);
                             set_return(outcome, retdata);
                         }
                     };
@@ -2839,6 +2911,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     ) {
         let curr_depth = usize::from(call.depth);
         let frame_ran = self.unrun_create_depth.take() != Some(curr_depth);
+        // An expected halting create keeps consuming its gas, as on revm; drop its record so a
+        // later call at this depth does not take it.
+        self.halted_frame_gas = None;
         self.replay_persistent_writes(interp, curr_depth, outcome.is_success());
         // Depth at which the caller resumes and applies the region snapshot correction.
         let isolated_snapshot_gas_used = self.gas_metering.take_isolated_snapshot_gas_used(
@@ -3035,6 +3110,12 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     /// Returns the CREATE2 deployer address.
     pub fn create2_deployer(&self) -> Address {
         self.core.config.evm_opts.create2_deployer
+    }
+
+    /// Returns whether `address` is the configured CREATE2 deployer, or the default one, which
+    /// Foundry installs locally regardless of the configuration.
+    pub fn is_create2_deployer(&self, address: Address) -> bool {
+        address == self.create2_deployer() || address == DEFAULT_CREATE2_DEPLOYER
     }
 
     /// Preserves the original CREATE authorization before redirecting it to the factory.
@@ -4084,6 +4165,18 @@ fn set_revert<E>(outcome: &mut MessageResultExt<E>, output: Bytes) {
     outcome.output = output;
 }
 
+/// Gives an expected halt back the gas its frame had left when it halted, as a return does.
+const fn return_expected_halt_gas<E>(
+    outcome: &mut MessageResultExt<E>,
+    halted_frame_gas: Option<u64>,
+) {
+    if outcome.stop.is_halt()
+        && let Some(remaining) = halted_frame_gas
+    {
+        outcome.gas.set_remaining(remaining);
+    }
+}
+
 /// Turns `outcome` into a successful return with `output`.
 fn set_return<E>(outcome: &mut MessageResultExt<E>, output: Bytes) {
     outcome.stop = InstrStop::Return;
@@ -4328,6 +4421,7 @@ mod tests {
                 anonymous: false,
                 found: false,
                 count: 1,
+                matched_logs: 0,
                 mismatch_error: None,
             },
             Default::default(),
