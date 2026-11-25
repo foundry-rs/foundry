@@ -4094,17 +4094,17 @@ impl EthApi<FoundryNetwork> {
             }
         }
 
-        // search in the target block
+        // Search the target block, which may predate the fork.
         let target_block = low;
         if target_block <= latest_block
-            && let Some(txs) =
-                self.backend.mined_transactions_by_block_number(target_block.into()).await
+            && let Some(block) = self.backend.block_by_number_full(target_block.into()).await?
         {
-            for tx in txs {
-                if tx.from() == sender && tx.nonce() == target_nonce {
-                    return Ok(Some(tx));
-                }
-            }
+            return Ok(block
+                .0
+                .inner
+                .transactions
+                .into_transactions()
+                .find(|tx| tx.from() == sender && tx.nonce() == target_nonce));
         }
 
         Ok(None)
