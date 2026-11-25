@@ -547,16 +547,23 @@ fn rpc_error_code_from_body(body: &str) -> Option<i64> {
     // first complete JSON value instead of requiring the entire body to be JSON.
     let value =
         serde_json::Deserializer::from_str(body).into_iter::<serde_json::Value>().next()?.ok()?;
-    let error = match value.get("error") {
-        Some(error) => error,
-        // A bare JSON-RPC error has a message, unlike other bodies with a `code`, such as a
-        // gateway's.
-        None => {
-            value.get("message")?.as_str()?;
-            &value
-        }
-    };
+    let error = value.get("error").unwrap_or(&value);
     error.get("code")?.as_i64()
+}
+
+/// Returns the code of a JSON-RPC error response, including one in an HTTP error body.
+///
+/// Unlike [`rpc_error_code`], an HTTP error body counts only as a JSON-RPC response, so gateway
+/// JSON with its own `code`, such as `{"status":401,"code":401}`, has none.
+fn json_rpc_error_code(error: &TransportError) -> Option<i64> {
+    if let Some(response) = error.as_error_resp() {
+        return Some(response.code);
+    }
+    let body = &error.as_transport_err()?.as_http_error()?.body;
+    let value =
+        serde_json::Deserializer::from_str(body).into_iter::<serde_json::Value>().next()?.ok()?;
+    value.get("jsonrpc")?;
+    value.get("error")?.get("code")?.as_i64()
 }
 
 /// How an RPC request failed, for programs that decide whether to retry.
@@ -599,7 +606,7 @@ pub fn rpc_failure(error: &(dyn std::error::Error + 'static)) -> Option<RpcFailu
     ) {
         return None;
     }
-    let code = rpc_error_code(error);
+    let code = json_rpc_error_code(error);
     let status = error.as_transport_err().and_then(|error| error.as_http_error()).map(|e| e.status);
     let answered =
         code.is_some() || matches!(error, TransportError::ErrorResp(_) | TransportError::NullResp);
@@ -726,14 +733,27 @@ mod tests {
 
     #[test]
     fn gateway_error_code_is_not_a_json_rpc_code() {
+        for body in [
+            r#"{"code":401,"title":"Unauthorized","type":"about:blank","status":401}"#,
+            r#"{"status":401,"code":401,"message":"Unauthorized"}"#,
+            r#"{"error":{"code":401,"message":"Unauthorized","status":"UNAUTHENTICATED"}}"#,
+        ] {
+            let error = alloy_transport::TransportErrorKind::http_error(401, body.to_string());
+            let failure = rpc_failure(&error).unwrap();
+            assert_eq!(
+                (failure.kind(), failure.code, failure.status),
+                ("rpc.transport", None, Some(401))
+            );
+        }
         let error = alloy_transport::TransportErrorKind::http_error(
-            401,
-            r#"{"code":401,"title":"Unauthorized","type":"about:blank","status":401}"#.to_string(),
+            429,
+            r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32005,"message":"rate limited"}}"#
+                .to_string(),
         );
         let failure = rpc_failure(&error).unwrap();
         assert_eq!(
             (failure.kind(), failure.code, failure.status),
-            ("rpc.transport", None, Some(401))
+            ("rpc.error", Some(-32005), Some(429))
         );
     }
 
