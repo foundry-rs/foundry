@@ -86,7 +86,7 @@ pub struct ArtifactData {
     pub functions: CodeFunctions,
     /// The functions of the runtime code.
     pub functions_runtime: CodeFunctions,
-    /// The names of the external functions by selector, from the ABI.
+    /// The signatures of the external functions by selector, from the ABI.
     pub selectors: HashMap<[u8; 4], String>,
 }
 
@@ -145,7 +145,7 @@ impl ArtifactData {
                 .abi
                 .iter()
                 .flat_map(|abi| abi.functions())
-                .map(|function| (function.selector().0, function.name.clone()))
+                .map(|function| (function.selector().0, function.signature()))
                 .collect(),
         })
     }

@@ -67,6 +67,8 @@ pub struct FunctionInfo {
     pub returns: Option<Vec<Param>>,
     /// The name that the function is declared with, which the ABI spells too.
     pub declared_name: String,
+    /// `name(types)` as the ABI spells it, or `None` when a parameter type is not known.
+    pub signature: Option<String>,
     /// Whether the dispatcher or the call frame itself enters it.
     pub is_entry: bool,
 }
@@ -74,7 +76,14 @@ pub struct FunctionInfo {
 impl FunctionInfo {
     /// A function that only the name is known of.
     pub fn untyped(name: String, is_entry: bool) -> Self {
-        Self { declared_name: name.clone(), name, params: None, returns: None, is_entry }
+        Self {
+            declared_name: name.clone(),
+            name,
+            params: None,
+            returns: None,
+            signature: None,
+            is_entry,
+        }
     }
 }
 
@@ -123,19 +132,18 @@ impl SourceFunction {
                 .map(|param| param.ty.as_ref().map(DynSolType::sol_type_name))
                 .collect::<Option<Vec<_>>>()
         });
-        let signature = match types {
-            Some(types) => format!("{}({})", self.name, types.join(",")),
-            None => self.name.clone(),
-        };
+        let signature = types.map(|types| format!("{}({})", self.name, types.join(",")));
+        let spelled = signature.as_ref().unwrap_or(&self.name);
         let name = match &self.contract {
-            Some(contract) => format!("{contract}::{signature}"),
-            None => signature,
+            Some(contract) => format!("{contract}::{spelled}"),
+            None => spelled.clone(),
         };
         FunctionInfo {
             name,
             params,
             returns: resolve(&self.returns),
             declared_name: self.name.clone(),
+            signature,
             is_entry: self.is_entry,
         }
     }

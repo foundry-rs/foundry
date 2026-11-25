@@ -57,8 +57,13 @@ impl DebugTraceIdentifier {
         // Without an ABI every external function counts as dispatched.
         let selected =
             node.trace.data.first_chunk().and_then(|selector| artifact.selectors.get(selector));
-        let is_dispatched = |name: &str| {
-            artifact.selectors.is_empty() || selected.is_some_and(|selected| selected == name)
+        // The signature tells overloads apart, if the types of the function are known.
+        let is_dispatched = |function: &FunctionInfo| {
+            artifact.selectors.is_empty()
+                || selected.is_some_and(|selected| match &function.signature {
+                    Some(signature) => selected == signature,
+                    None => selected.split('(').next() == Some(&function.declared_name),
+                })
         };
         let resolve = |pc: u32, entries: &[FunctionEntry]| {
             resolve_entry(sources, artifact, is_create, pc, entries)
@@ -344,8 +349,12 @@ fn decode_from_memory(ty: &DynSolType, memory: &[u8], location: usize) -> Option
                 .map(|i| {
                     let offset = start.checked_add(i.checked_mul(32)?)?;
                     let location = match inner.as_ref() {
-                        // Arrays of variable length types are arrays of pointers to the values
-                        DynSolType::String | DynSolType::Bytes | DynSolType::Array(_) => {
+                        // Arrays of arrays, `bytes` and `string` are arrays of pointers to the
+                        // values
+                        DynSolType::String
+                        | DynSolType::Bytes
+                        | DynSolType::Array(_)
+                        | DynSolType::FixedArray(..) => {
                             U256::from_be_slice(memory_range(memory, offset, 32)?)
                                 .try_into()
                                 .ok()?
@@ -428,6 +437,25 @@ mod tests {
     #[test]
     fn decode_from_memory_rejects_overflow_location() {
         assert_eq!(decode_from_memory(&DynSolType::Bytes, &[0; 64], usize::MAX), None);
+    }
+
+    #[test]
+    fn decode_from_memory_follows_pointers_of_nested_fixed_arrays() {
+        // `uint256[2][2]` holds two pointers to the inner arrays.
+        let words = [0x40, 0x80, 1, 2, 3, 4].map(U256::from);
+        let memory = words.iter().flat_map(|word| word.to_be_bytes::<32>()).collect::<Vec<_>>();
+        let inner = DynSolType::FixedArray(Box::new(DynSolType::Uint(256)), 2);
+        let ty = DynSolType::FixedArray(Box::new(inner), 2);
+        let array =
+            |a, b| DynSolValue::Array(vec![DynSolValue::Uint(a, 256), DynSolValue::Uint(b, 256)]);
+
+        assert_eq!(
+            decode_from_memory(&ty, &memory, 0),
+            Some(DynSolValue::Array(vec![
+                array(U256::from(1), U256::from(2)),
+                array(U256::from(3), U256::from(4)),
+            ]))
+        );
     }
 
     #[test]

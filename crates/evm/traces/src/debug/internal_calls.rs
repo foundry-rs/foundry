@@ -115,9 +115,8 @@ pub struct TrackerContext<'a> {
     pub convention: Option<CallConvention>,
     /// The call data of the call, for `calldata` parameters.
     pub calldata: &'a [u8],
-    /// Whether the call data selects the external function with a declared name, which the
-    /// dispatcher then enters.
-    pub is_dispatched: &'a dyn Fn(&str) -> bool,
+    /// Whether the call data selects the external function, which the dispatcher then enters.
+    pub is_dispatched: &'a dyn Fn(&FunctionInfo) -> bool,
     /// Finds the function that the `JUMP` at a step enters from the source map, for a function
     /// that `functionDebugData` does not list.
     pub from_source_map: &'a dyn Fn(usize) -> Option<SourceMapFunction>,
@@ -262,7 +261,7 @@ impl Tracker<'_> {
             && self.frames.iter().all(|frame| frame.function.is_none())
             && let Some(info) = &function
             && info.is_entry
-            && (self.context.is_dispatched)(&info.declared_name)
+            && (self.context.is_dispatched)(info)
             && match (&info.params, &args) {
                 (Some(params), Some(args)) => {
                     args_match_calldata(params, args, self.context.calldata)
@@ -372,6 +371,7 @@ mod tests {
         FunctionInfo {
             name: name.into(),
             declared_name: name.into(),
+            signature: None,
             params,
             returns: uint(1),
             is_entry,
@@ -393,7 +393,7 @@ mod tests {
         convention: Option<CallConvention>,
         parameter_slots: usize,
         f: FunctionInfo,
-        (is_create, is_dispatched): (bool, &dyn Fn(&str) -> bool),
+        (is_create, is_dispatched): (bool, &dyn Fn(&FunctionInfo) -> bool),
     ) -> Vec<Summary> {
         let entry = || FunctionEntry { name: None, parameter_slots, return_slots: 1 };
         let code = CodeFunctions {
@@ -507,10 +507,13 @@ mod tests {
         let legacy = Some(CallConvention::SolcLegacy);
         let f = || function("f", Some(1), true);
 
-        assert_eq!(track_in(&steps, legacy, 1, f(), (false, &|name| name == "f")), []);
+        assert_eq!(
+            track_in(&steps, legacy, 1, f(), (false, &|function| function.declared_name == "f")),
+            []
+        );
         // The call data selects another function, as in a fallback function that calls `f`.
         assert_eq!(
-            track_in(&steps, legacy, 1, f(), (false, &|name| name == "g")),
+            track_in(&steps, legacy, 1, f(), (false, &|function| function.declared_name == "g")),
             [(0, 3, "f".into(), strings(&["7"]), strings(&["9"]))]
         );
     }
@@ -549,6 +552,23 @@ mod tests {
             track(&steps, legacy, 2, function("f", Some(2), true)),
             [(0, 3, "f".into(), strings(&["7", "8"]), strings(&["6"]))]
         );
+    }
+
+    #[test]
+    fn overloads_with_the_same_arguments_are_told_apart_by_signature() {
+        // The call data selects `f(uint256)`, and the first jump is the call of `f(int256)` with
+        // the same word.
+        let steps = [jump(F, &[RET.into(), 7]), jump(RET, &[4])].concat();
+        let legacy = Some(CallConvention::SolcLegacy);
+        let f = |signature: &str| FunctionInfo {
+            signature: Some(signature.into()),
+            ..function("f", Some(1), true)
+        };
+        let selects = |function: &FunctionInfo| function.signature.as_deref() == Some("f(uint256)");
+        let calls = |signature| track_in(&steps, legacy, 1, f(signature), (false, &selects));
+
+        assert_eq!(calls("f(uint256)"), []);
+        assert_eq!(calls("f(int256)"), [(0, 3, "f".into(), strings(&["7"]), strings(&["4"]))]);
     }
 
     #[test]
