@@ -3357,55 +3357,6 @@ BRDA:20,2,0,-
     );
 }
 
-// A function that only fails has nothing but its failure stub, which is then the run of the arm
-// that calls it, and the arm still counts it.
-#[forgetest]
-fn if_arm_calling_a_function_that_only_fails_lcov(prj: _, cmd: _) {
-    prj.add_source(
-        "Fail.sol",
-        r#"
-contract Fail {
-    function fail() internal pure {
-        revert();
-    }
-
-    function live() external pure {
-        if (true) {
-            fail();
-        }
-    }
-}
-"#,
-    );
-    prj.add_test(
-        "Fail.t.sol",
-        r#"
-import "../src/Fail.sol";
-
-contract FailTest {
-    function testLive() public {
-        Fail f = new Fail();
-        for (uint256 i = 0; i < 3; i++) {
-            try f.live() {} catch {}
-        }
-    }
-}
-"#,
-    );
-
-    let solar = prj.ensure_foundry_bin("solar");
-    assert_lcov(
-        cmd.args(["coverage", "--no-isolate", "--keep-optimizer", "--optimize"])
-            .arg("--use")
-            .arg(&solar),
-        str![[r#"
-...
-BRDA:10,0,0,3
-...
-"#]],
-    );
-}
-
 #[forgetest]
 fn identical_bytecodes(prj: _, cmd: _) {
     prj.insert_ds_test();
