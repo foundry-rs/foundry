@@ -11,7 +11,7 @@ use foundry_compilers::{
     },
 };
 use foundry_config::{Config, SolcReq};
-use semver::Version;
+use semver::{BuildMetadata, Version};
 use serde::Serialize;
 use std::{collections::BTreeMap, fmt, path::PathBuf};
 
@@ -399,8 +399,8 @@ fn resolved_compiler_path(
 /// config key.
 fn parse_compiler(s: &str) -> Result<Compiler, String> {
     // Installed releases are named without build metadata, so `0.8.30+commit.73712a01` installs
-    // and removes `0.8.30`.
-    let release = |version: Version| Version::new(version.major, version.minor, version.patch);
+    // and removes `0.8.30`. A prerelease identifier names another release and stays.
+    let release = |version: Version| Version { build: BuildMetadata::EMPTY, ..version };
     match SolcReq::from(s) {
         SolcReq::Version(version) => Ok(Compiler::Solc(release(version))),
         SolcReq::Solar(version) => Ok(Compiler::Solar(release(version))),

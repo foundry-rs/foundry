@@ -410,14 +410,23 @@ Error: solar 0.3.0 is not installed
 fn compiler_remove_moves_svm_global_version(cmd: _) {
     let home = tempfile::tempdir().unwrap();
     let svm = home.path().join(".svm");
-    for version in ["0.8.29", "0.8.30"] {
+    for version in ["0.8.29", "0.8.30", "0.8.30-pre.1"] {
         fs::create_dir_all(svm.join(version)).unwrap();
         fs::write(svm.join(version).join(format!("solc-{version}")), "").unwrap();
     }
     fs::write(svm.join(".global-version"), "0.8.30").unwrap();
 
-    // Build metadata names the same release.
+    // A prerelease names another release, so the stable one and the global version stay.
     cmd.env("HOME", home.path());
+    cmd.args(["compiler", "remove", "0.8.30-pre.1"]).assert_success().stderr_eq(str![[r#"
+Removed solc 0.8.30-pre.1
+
+"#]]);
+    assert!(svm.join("0.8.30").exists());
+    assert_eq!(fs::read_to_string(svm.join(".global-version")).unwrap(), "0.8.30");
+
+    // Build metadata names the same release.
+    cmd.forge_fuse().env("HOME", home.path());
     cmd.args(["compiler", "remove", "0.8.30+commit.73712a01"]).assert_success().stderr_eq(str![[
         r#"
 Removed solc 0.8.30
