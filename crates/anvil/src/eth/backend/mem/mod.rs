@@ -5787,6 +5787,9 @@ impl<N: Network> Backend<N> {
             return Ok(false);
         };
         let block = self.block_by_hash(hash).await?.ok_or(BlockchainError::BlockNotFound)?;
+        if let Some(gas_limit) = replayed_gas_limit {
+            self.fork_replayed_blocks.lock().insert(hash, gas_limit);
+        }
         let removed_logs = self.removed_logs_since(num);
         let mut db = self.db.write().await;
         let tempo_anchor = {
