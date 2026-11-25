@@ -4311,8 +4311,17 @@ impl EthApi<FoundryNetwork> {
     /// Handler for RPC call: `debug_getRawHeader`.
     pub async fn raw_header(&self, block: BlockId) -> Result<Bytes> {
         node_info!("debug_getRawHeader");
-        let block = self.backend.get_block(block).ok_or(BlockchainError::BlockNotFound)?;
-        Ok(alloy_rlp::encode(&block.header).into())
+        if let Some(block) = self.backend.get_block(block) {
+            return Ok(alloy_rlp::encode(&block.header).into());
+        }
+        // In fork mode, serve pre-fork blocks from the upstream provider.
+        if let Some(fork) = self.get_fork()
+            && let BlockRequest::Number(number) = self.block_request(Some(block)).await?
+            && fork.predates_fork_inclusive(number)
+        {
+            return Ok(fork.raw_header(number).await?);
+        }
+        Err(BlockchainError::BlockNotFound)
     }
 
     /// Returns RLP encoded raw block.
@@ -4320,8 +4329,17 @@ impl EthApi<FoundryNetwork> {
     /// Handler for RPC call: `debug_getRawBlock`.
     pub async fn raw_block(&self, block: BlockId) -> Result<Bytes> {
         node_info!("debug_getRawBlock");
-        let block = self.backend.get_block(block).ok_or(BlockchainError::BlockNotFound)?;
-        Ok(alloy_rlp::encode(canonical_block(block)).into())
+        if let Some(block) = self.backend.get_block(block) {
+            return Ok(alloy_rlp::encode(canonical_block(block)).into());
+        }
+        // In fork mode, serve pre-fork blocks from the upstream provider.
+        if let Some(fork) = self.get_fork()
+            && let BlockRequest::Number(number) = self.block_request(Some(block)).await?
+            && fork.predates_fork_inclusive(number)
+        {
+            return Ok(fork.raw_block(number).await?);
+        }
+        Err(BlockchainError::BlockNotFound)
     }
 
     /// Returns EIP-2718 encoded raw transaction by block hash and index

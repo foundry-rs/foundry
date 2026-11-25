@@ -6022,3 +6022,42 @@ async fn test_fork_dump_keeps_fetched_state_after_rollback_and_revert() {
         );
     }
 }
+
+// `debug_getRawHeader` and `debug_getRawBlock` must serve pre-fork blocks from the upstream.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_debug_get_raw_header_and_block_pre_fork() {
+    let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let origin = origin_handle.http_provider();
+    let from = origin_handle.dev_accounts().next().unwrap();
+    origin
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(from).to(Address::random()).value(U256::from(1)),
+        ))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    origin_api.mine_one().await.unwrap();
+
+    let (_fork_api, fork_handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+    let fork = fork_handle.http_provider();
+
+    // Block 2 is the fork block and block 1 predates it; neither is stored by the fork.
+    let fork_block = BlockId::number(2);
+    let latest = BlockId::Number(BlockNumberOrTag::Latest);
+    let pre_fork_hash = origin.get_block(BlockId::number(1)).await.unwrap().unwrap().header.hash;
+    for method in ["debug_getRawHeader", "debug_getRawBlock"] {
+        for (origin_id, fork_id) in [
+            (fork_block, fork_block),
+            (fork_block, latest),
+            (BlockId::number(1), BlockId::number(1)),
+            (BlockId::number(1), BlockId::hash(pre_fork_hash)),
+        ] {
+            let expected: Bytes = origin.client().request(method, (origin_id,)).await.unwrap();
+            let raw: Bytes = fork.client().request(method, (fork_id,)).await.unwrap();
+            assert_eq!(raw, expected, "{method} {fork_id}");
+        }
+    }
+}
