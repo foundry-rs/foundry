@@ -149,6 +149,16 @@ impl CoverageReporter for LcovReporter {
                         .or_insert(item.hits);
                 }
             }
+            // A taken branch evaluated its line, so the line is not left unhit, which `genhtml`
+            // rejects. A condition that the optimizer proved has no code of its own.
+            for item in &items {
+                if matches!(item.kind, CoverageItemKind::Branch { .. })
+                    && let Some(hits) = line_hits.get_mut(&item.loc.lines.start)
+                    && *hits == 0
+                {
+                    *hits = item.hits;
+                }
+            }
 
             let mut recorded_lines = HashSet::new();
 

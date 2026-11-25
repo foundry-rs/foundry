@@ -750,6 +750,11 @@ impl<'a> AnchorIndex<'a> {
             .iter()
             .filter(|&&(ic, ..)| self.source_map.get(ic + 1).is_some_and(in_condition))
             .collect::<Vec<_>>();
+        // A condition that the optimizer proved has no jump, so the arm runs whenever the `if`
+        // does.
+        if jumps.is_empty() {
+            return self.if_entry(item_id, path_id, arms);
+        }
         // A check in the condition, such as an array bounds, enum, or call check, cannot enter an
         // arm, unless it is the only jump, as when the arm is a shared `revert`. One side of a
         // check leads to a failure, whether the check jumps to it or, as solc's legacy pipeline
@@ -798,6 +803,61 @@ impl<'a> AnchorIndex<'a> {
         } else {
             (fallthrough.clone(), None, entries)
         })
+    }
+
+    /// Finds the anchor of an arm of an `if` that has no code of its own and whose condition has
+    /// no conditional jump, from the first instruction of a function that it calls and the
+    /// compiler inlined. The function's entry is not that instruction: other callers can jump to
+    /// it.
+    ///
+    /// Without a jump there is no edge to count, so the inlined body must be the arm's alone: a
+    /// single run of code mapped to the function. A function that is inlined at several places,
+    /// or an overloaded name, leaves the arm unanchored, as does an arm without a called function.
+    /// A run that only the arm can enter when it is the only call site is not provable from the
+    /// source map, so a call that the compiler removed along with its arm can borrow the run of
+    /// another call to the same function.
+    fn if_entry(&self, item_id: u32, path_id: u32, arms: &IfArms) -> Option<EdgeAnchor> {
+        let (arm, callees, other) = match path_id {
+            0 => (&arms.then_arm, &arms.then_callees, &arms.else_callees),
+            _ => (arms.else_arm.as_ref()?, &arms.else_callees, &arms.then_callees),
+        };
+        // Arms that call the same function share its run, so it cannot tell which one kept it.
+        let [callee] = callees.as_slice() else { return None };
+        if other
+            .iter()
+            .any(|other| (other.source_id, &other.bytes) == (callee.source_id, &callee.bytes))
+        {
+            return None;
+        }
+        let body = self
+            .instructions_starting_in(callee)
+            .filter(|&ic| {
+                self.starts_in_range(ic, callee)
+                    && self.source_map[ic].length() != callee.len()
+                    && self.source_map[ic].offset() < callee.bytes.end
+            })
+            .collect::<Vec<_>>();
+        let (&first, &last) = (body.iter().min()?, body.iter().max()?);
+        // Code between the first and last instruction that is mapped elsewhere belongs to another
+        // copy or a nested call.
+        if !(first..=last).all(|ic| {
+            self.source_map.get(ic).is_some_and(|element| {
+                element.index().is_none() || is_in_source_range(element, callee)
+            })
+        }) {
+            return None;
+        }
+        // The run is entered by falling into it. A first instruction that something jumps to, such
+        // as a loop header, runs more often than the arm.
+        let pc = *self.pcs.get(first)?;
+        if self.bytecode.get(pc as usize) == Some(&opcode::JUMPDEST)
+            && self.address_pushes.binary_search_by_key(&pc, |&(target, _)| target).is_ok()
+        {
+            return None;
+        }
+        let anchor =
+            ItemAnchor::from_instruction(Some(first), self.ic_pc_map, item_id, arm).ok()?;
+        Some((anchor, None, Vec::new()))
     }
 
     /// Returns whether the taken side of an `if`'s jump enters its then arm, or `None` when the

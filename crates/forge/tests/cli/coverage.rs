@@ -2665,6 +2665,63 @@ BRDA:18,4,0,16
     assert_lcov(cmd.forge_fuse().args(optimized).arg("--use").arg(&solar), expected);
 }
 
+// With via-IR and the optimizer, solc drops the jump of a condition it proves, so the arm that
+// remains runs whenever the `if` does and its path must count the `if`'s entries. The other
+// counts of the report are not asserted: via-IR source maps do not anchor them exactly.
+#[forgetest]
+fn if_arm_with_proved_condition_lcov(prj: _, cmd: _) {
+    prj.update_config(|config| config.via_ir = true);
+    prj.add_source(
+        "Gate.sol",
+        r#"
+contract Gate {
+    bool constant OPEN = true;
+
+    uint256 public total;
+
+    function check(uint256 kind) external {
+        if (kind == 0) {
+            addOne();
+        } else if (OPEN) {
+            addTwo();
+        }
+    }
+
+    function addOne() internal {
+        total += 1;
+    }
+
+    function addTwo() internal {
+        total += 2;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Gate.t.sol",
+        r#"
+import "../src/Gate.sol";
+
+contract GateTest {
+    function testGate() public {
+        Gate gate = new Gate();
+        gate.check(0);
+        for (uint256 i = 0; i < 2; i++) gate.check(1);
+    }
+}
+"#,
+    );
+
+    assert_lcov(
+        cmd.args(["coverage", "--no-isolate", "--keep-optimizer", "--optimize"]),
+        str![[r#"
+...
+BRDA:12,1,0,2
+...
+"#]],
+    );
+}
+
 #[forgetest]
 fn identical_bytecodes(prj: _, cmd: _) {
     prj.insert_ds_test();
