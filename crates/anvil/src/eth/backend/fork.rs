@@ -273,14 +273,14 @@ impl<N: Network> ClientFork<N> {
     }
 
     /// Sends `debug_getRawHeader`.
-    pub async fn raw_header(&self, block_number: u64) -> Result<Bytes, TransportError> {
+    pub async fn raw_header(&self, block_number: u64) -> Result<Option<Bytes>, TransportError> {
         self.provider()
             .raw_request("debug_getRawHeader".into(), (BlockId::number(block_number),))
             .await
     }
 
     /// Sends `debug_getRawBlock`.
-    pub async fn raw_block(&self, block_number: u64) -> Result<Bytes, TransportError> {
+    pub async fn raw_block(&self, block_number: u64) -> Result<Option<Bytes>, TransportError> {
         self.provider()
             .raw_request("debug_getRawBlock".into(), (BlockId::number(block_number),))
             .await

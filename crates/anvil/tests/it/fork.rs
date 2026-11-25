@@ -6046,7 +6046,7 @@ async fn test_fork_debug_get_raw_header_and_block_pre_fork() {
 
     // Block 2 is the fork block and block 1 predates it; neither is stored by the fork.
     let fork_block = BlockId::number(2);
-    let latest = BlockId::Number(BlockNumberOrTag::Latest);
+    let latest = BlockId::latest();
     let pre_fork_hash = origin.get_block(BlockId::number(1)).await.unwrap().unwrap().header.hash;
     for method in ["debug_getRawHeader", "debug_getRawBlock"] {
         for (origin_id, fork_id) in [

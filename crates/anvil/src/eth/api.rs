@@ -4319,7 +4319,7 @@ impl EthApi<FoundryNetwork> {
             && let BlockRequest::Number(number) = self.block_request(Some(block)).await?
             && fork.predates_fork_inclusive(number)
         {
-            return Ok(fork.raw_header(number).await?);
+            return fork.raw_header(number).await?.ok_or(BlockchainError::BlockNotFound);
         }
         Err(BlockchainError::BlockNotFound)
     }
@@ -4337,7 +4337,7 @@ impl EthApi<FoundryNetwork> {
             && let BlockRequest::Number(number) = self.block_request(Some(block)).await?
             && fork.predates_fork_inclusive(number)
         {
-            return Ok(fork.raw_block(number).await?);
+            return fork.raw_block(number).await?.ok_or(BlockchainError::BlockNotFound);
         }
         Err(BlockchainError::BlockNotFound)
     }
