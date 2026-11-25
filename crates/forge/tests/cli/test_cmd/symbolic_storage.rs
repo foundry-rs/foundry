@@ -1582,6 +1582,19 @@ contract SymbolicStorageReplay {
         if (x == 42 || y == 99) revert("ordinary revert");
     }
 
+    // The copy reads the value its source drew for the slot, so the assertion cannot fail.
+    function checkCopyAfterSourceKeys(uint256 a, uint256 b) public view {
+        copySource.values(a);
+        uint256 value = copySource.values(b);
+        assert(copyTarget.values(b) == value);
+    }
+
+    // The same holds when the copy reads the slot through another key.
+    function checkCopyCrossKey(uint256 a, uint256 b) public view {
+        uint256 value = copySource.values(a);
+        if (a == b) assert(copyTarget.values(b) == value);
+    }
+
     // The first read of the copy writes its value back to the source.
     function checkCopyWriteBack() public {
         copySource.set(5);
@@ -1607,6 +1620,8 @@ contract SymbolicStorageReplay {
     assert_symbolic_witness(cmd.args(["test", "--symbolic"])).failure().stdout_eq(str![[r#"
 ...
 [PASS] checkAliased(uint256,uint256) ([METRICS])
+[PASS] checkCopyAfterSourceKeys(uint256,uint256) ([METRICS])
+[PASS] checkCopyCrossKey(uint256,uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCopyWriteBack() ([METRICS])
 [FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkLoad() ([METRICS])
 [FAIL: assertion failed: [..]; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMint(uint256,address) ([METRICS])

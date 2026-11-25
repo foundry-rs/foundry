@@ -2902,11 +2902,12 @@ impl SymbolicWorld {
             }
             return Some(value);
         }
-        let value = match self.symbolic_key_base_reads.get(&(address, key.clone())) {
+        // A copy reads the values its source draws, so its bases are the source's.
+        let value = match self.symbolic_key_base_reads.get(&(symbol_address, key.clone())) {
             Some(value) => value.clone(),
             None => {
                 let value = SymExpr::get_var(cx, symbol);
-                self.record_symbolic_key_base(cx, address, key, value)
+                self.record_symbolic_key_base(cx, symbol_address, key, value)
             }
         };
         if copied_source.is_none()
