@@ -9023,7 +9023,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
     pub async fn load_state(&self, mut state: SerializableState) -> Result<bool, BlockchainError> {
         let _mining_guard = self.mining.lock().await;
         let mut block_env = state.block.take();
-        *self.fork_replayed_block.lock() = state.fork_replayed_block.take();
+        let replayed_block = state.fork_replayed_block.take();
         let mut fork_block_boundary = None;
         let mut selected_head = None;
         let mut selected_header = None;
@@ -9312,6 +9312,10 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
             }
         }
 
+        // A dump without the marker keeps the current one; the hash check ignores stale markers.
+        if let Some(replayed) = replayed_block {
+            *self.fork_replayed_block.lock() = Some(replayed);
+        }
         Ok(true)
     }
 
