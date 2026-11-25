@@ -594,9 +594,9 @@ solar-lint = { git = "https://github.com/paradigmxyz/solar", tag = "v0.3.0" }
 
 ## foundry-core
 foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "4d183274aed94cccbac20d8871916d7abc1036e2" }
-foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "7b62035ec5b343414e8a760696e5fadcd57d3b09" }
-foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "7b62035ec5b343414e8a760696e5fadcd57d3b09" }
-foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "7b62035ec5b343414e8a760696e5fadcd57d3b09" }
+foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "ea201facc7ba235632d0e6c9ee2c9bb5f857d31a" }
+foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "ea201facc7ba235632d0e6c9ee2c9bb5f857d31a" }
+foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "ea201facc7ba235632d0e6c9ee2c9bb5f857d31a" }
 
 ## alloy-core
 alloy-dyn-abi = { git = "https://github.com/alloy-rs/core", rev = "1e17055e111d087cd303186f9c4eeaee9af11684" }
