@@ -162,7 +162,9 @@ fn render_contract<'ast, 'gcx>(
                 // inheritance only runs when the variable has no local NatSpec at all.
                 let vid = hir_id.and_then(|cid| {
                     gcx.hir.contract(cid).items.iter().find_map(|&item| match item {
-                        hir::ItemId::Variable(id) if gcx.hir.variable(id).span == *span => Some(id),
+                        hir::ItemId::Variable(id) if gcx.hir.variable(id).span == v.span => {
+                            Some(id)
+                        }
                         _ => None,
                     })
                 });

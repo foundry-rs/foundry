@@ -2,7 +2,7 @@ warning[inconsistent-type-names]: contract mixes shorthand and explicit integer 
    ╭▸ ROOT/testdata/InconsistentTypeNames.sol:LL:CC
    │
 LL │     uint internal shorthandUint;
-   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/inconsistent-type-names
 
@@ -10,7 +10,7 @@ warning[inconsistent-type-names]: contract mixes shorthand and explicit integer 
    ╭▸ ROOT/testdata/InconsistentTypeNames.sol:LL:CC
    │
 LL │     int internal shorthandInt;
-   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/inconsistent-type-names
 

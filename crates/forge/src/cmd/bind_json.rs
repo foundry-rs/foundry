@@ -449,16 +449,15 @@ impl<'ast> Visit<'ast> for PreprocessorVisitor {
         self.walk_item_function(func)
     }
 
-    fn visit_variable_definition(
-        &mut self,
-        var: &'ast ast::VariableDefinition<'ast>,
-    ) -> ControlFlow<Self::BreakValue> {
-        // Remove `immutable` attributes.
-        if var.mutability == Some(VarMut::Immutable) {
-            self.updates.push((var.span, ""));
+    fn visit_item(&mut self, item: &'ast ast::Item<'ast>) -> ControlFlow<Self::BreakValue> {
+        // Remove `immutable` state variables, including their trailing `;`.
+        if let ast::ItemKind::Variable(var) = &item.kind
+            && var.mutability == Some(VarMut::Immutable)
+        {
+            self.updates.push((item.span, ""));
         }
 
-        self.walk_variable_definition(var)
+        self.walk_item(item)
     }
 }
 
