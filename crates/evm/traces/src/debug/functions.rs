@@ -69,6 +69,13 @@ pub struct FunctionInfo {
     pub selector: Option<[u8; 4]>,
 }
 
+impl FunctionInfo {
+    /// A function that only the name is known of.
+    pub fn untyped(name: String, is_entry: bool) -> Self {
+        Self { name, params: None, returns: None, is_entry, selector: None }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct SourceParam {
     ty: SourceType,
@@ -93,7 +100,10 @@ impl SourceFunction {
             params.as_ref().map(|params| {
                 params
                     .iter()
-                    .map(|param| Param { ty: param.ty.resolve(user_types), storage: param.storage })
+                    .map(|param| Param {
+                        ty: param.ty.resolve(user_types, 0),
+                        storage: param.storage,
+                    })
                     .collect::<Vec<_>>()
             })
         };
@@ -107,7 +117,7 @@ impl SourceFunction {
         let selector = canonical
             .as_deref()
             .filter(|_| has_selector)
-            .map(|signature| keccak256(signature)[..4].try_into().expect("four bytes"));
+            .and_then(|signature| keccak256(signature).first_chunk().copied());
         let signature = canonical.unwrap_or_else(|| self.name.clone());
         let name = match &self.contract {
             Some(contract) => format!("{contract}::{signature}"),
@@ -127,11 +137,7 @@ impl SourceFunction {
 const MAX_TYPE_DEPTH: usize = 8;
 
 impl SourceType {
-    fn resolve(&self, user_types: &UserTypes) -> Option<DynSolType> {
-        self.resolve_at(user_types, 0)
-    }
-
-    fn resolve_at(&self, user_types: &UserTypes, depth: usize) -> Option<DynSolType> {
+    fn resolve(&self, user_types: &UserTypes, depth: usize) -> Option<DynSolType> {
         if depth > MAX_TYPE_DEPTH {
             return None;
         }
@@ -143,12 +149,12 @@ impl SourceType {
                 UserType::Value(ty) => Some(ty.clone()),
                 UserType::Struct(fields) => fields
                     .iter()
-                    .map(|field| field.resolve_at(user_types, depth + 1))
+                    .map(|field| field.resolve(user_types, depth + 1))
                     .collect::<Option<Vec<_>>>()
                     .map(DynSolType::Tuple),
             },
             Self::Array(element, size) => {
-                let element = Box::new(element.resolve_at(user_types, depth)?);
+                let element = Box::new(element.resolve(user_types, depth)?);
                 Some(match size {
                     Some(size) => DynSolType::FixedArray(element, *size),
                     None => DynSolType::Array(element),
@@ -336,7 +342,10 @@ pub fn name_of_key(key: &str, id: u32) -> Option<String> {
         .or_else(|| key.strip_prefix("modifier_"))
         .or_else(|| key.strip_prefix("fun_"))?;
     // The fallback function has no name.
-    let name = name.strip_suffix(&format!("_{id}")).unwrap_or(name);
+    let name = match name.rsplit_once('_') {
+        Some((base, number)) if number.parse() == Ok(id) => base,
+        _ => name,
+    };
     (!name.is_empty()).then(|| name.to_string())
 }
 

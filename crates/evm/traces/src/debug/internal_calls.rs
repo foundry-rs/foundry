@@ -20,6 +20,7 @@ use crate::CallTraceStep;
 use alloy_primitives::U256;
 use evm2::interpreter::opcode::OpCode;
 use std::{
+    borrow::Cow,
     collections::{HashMap, HashSet},
     sync::Arc,
 };
@@ -62,12 +63,8 @@ pub enum CallConvention {
 
 impl CallConvention {
     /// The convention of a solc artifact, from the `viaIR` setting in its metadata.
-    pub const fn solc(via_ir: Option<bool>) -> Option<Self> {
-        match via_ir {
-            Some(true) => Some(Self::SolcViaIr),
-            Some(false) => Some(Self::SolcLegacy),
-            None => None,
-        }
+    pub fn solc(via_ir: Option<bool>) -> Option<Self> {
+        via_ir.map(|via_ir| if via_ir { Self::SolcViaIr } else { Self::SolcLegacy })
     }
 
     /// The index of the return address in `stack`, which enters a function that takes
@@ -77,12 +74,12 @@ impl CallConvention {
     }
 
     /// The arguments in `stack` in parameter order, given the index of the return address.
-    fn arguments(self, stack: &[U256], return_address_index: usize) -> Vec<U256> {
-        let mut arguments = stack[return_address_index + 1..].to_vec();
-        if self == Self::SolcViaIr {
-            arguments.reverse();
+    fn arguments(self, stack: &[U256], return_address_index: usize) -> Cow<'_, [U256]> {
+        let arguments = &stack[return_address_index + 1..];
+        match self {
+            Self::SolcLegacy => Cow::Borrowed(arguments),
+            Self::SolcViaIr => Cow::Owned(arguments.iter().rev().copied().collect()),
         }
-        arguments
     }
 
     /// The `return_slots` values that a return leaves on `stack`, in return value order.

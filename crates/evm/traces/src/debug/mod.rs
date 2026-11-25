@@ -127,16 +127,11 @@ fn resolve_entry(
         Choice::Function(entry, function) => (entry, function.info(&sources.user_types)),
         Choice::Ambiguous(entry, function) => {
             // The entries do not tell which contract's function ran.
-            let name = function.name.clone();
-            let is_entry = function.is_entry;
-            (entry, FunctionInfo { name, params: None, returns: None, is_entry, selector: None })
+            (entry, FunctionInfo::untyped(function.name.clone(), function.is_entry))
         }
         Choice::KeyName(entry) => {
             let name = without_number(entry.name.as_deref()?).to_string();
-            (
-                entry,
-                FunctionInfo { name, params: None, returns: None, is_entry: false, selector: None },
-            )
+            (entry, FunctionInfo::untyped(name, false))
         }
     };
     Some((entry.parameter_slots, entry.return_slots, function))
