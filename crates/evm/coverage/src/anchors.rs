@@ -750,6 +750,11 @@ impl<'a> AnchorIndex<'a> {
             .iter()
             .filter(|&&(ic, ..)| self.source_map.get(ic + 1).is_some_and(in_condition))
             .collect::<Vec<_>>();
+        // A condition that the optimizer proved has no jump, so the arm runs whenever the `if`
+        // does.
+        if jumps.is_empty() {
+            return self.if_entry(item_id, path_id, arms);
+        }
         // A check in the condition, such as an array bounds, enum, or call check, cannot enter an
         // arm, unless it is the only jump, as when the arm is a shared `revert`. One side of a
         // check leads to a failure, whether the check jumps to it or, as solc's legacy pipeline
@@ -798,6 +803,30 @@ impl<'a> AnchorIndex<'a> {
         } else {
             (fallthrough.clone(), None, entries)
         })
+    }
+
+    /// Finds the anchor of an arm of an `if` whose condition has no conditional jump, from the
+    /// arm's first instruction, or the first of a function that it calls and the compiler
+    /// inlined. The function's entry is not that instruction: other callers can jump to it.
+    ///
+    /// Without a jump only the arm that kept its code can run, and it runs whenever the `if`
+    /// does. The other arm has no code and stays unanchored.
+    fn if_entry(&self, item_id: u32, path_id: u32, arms: &IfArms) -> Option<EdgeAnchor> {
+        let (arm, callees) = match path_id {
+            0 => (&arms.then_arm, &arms.then_callees),
+            _ => (arms.else_arm.as_ref()?, &arms.else_callees),
+        };
+        let first = std::iter::once((arm, false))
+            .chain(callees.iter().map(|callee| (callee, true)))
+            .flat_map(|(loc, is_callee)| {
+                self.instructions_starting_in(loc).filter(move |&ic| {
+                    self.starts_in_range(ic, loc)
+                        && !(is_callee && self.source_map[ic].length() == loc.len())
+                })
+            })
+            .min();
+        let anchor = ItemAnchor::from_instruction(first, self.ic_pc_map, item_id, arm).ok()?;
+        Some((anchor, None, Vec::new()))
     }
 
     /// Returns whether the taken side of an `if`'s jump enters its then arm, or `None` when the
