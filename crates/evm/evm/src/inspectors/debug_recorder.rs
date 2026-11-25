@@ -493,20 +493,7 @@ fn changed(old: &[u8], new: &[u8]) -> Option<std::ops::Range<usize>> {
 /// The destination a memory-writing opcode takes from its pre-execution stack.
 /// Memory-reading opcodes can expand memory but leave all new bytes zero.
 fn memory_write(op: OpCode, stack: &[U256]) -> Option<std::ops::Range<usize>> {
-    let word = |depth: usize| -> Option<usize> {
-        stack.get(stack.len().checked_sub(depth + 1)?)?.try_into().ok()
-    };
-    let (offset, length) = match op {
-        OpCode::MSTORE => (word(0)?, 32),
-        OpCode::MSTORE8 => (word(0)?, 1),
-        OpCode::CALLDATACOPY | OpCode::CODECOPY | OpCode::RETURNDATACOPY | OpCode::MCOPY => {
-            (word(0)?, word(2)?)
-        }
-        OpCode::EXTCODECOPY => (word(1)?, word(3)?),
-        OpCode::CALL | OpCode::CALLCODE => (word(5)?, word(6)?),
-        OpCode::DELEGATECALL | OpCode::STATICCALL => (word(4)?, word(5)?),
-        _ => return None,
-    };
+    let (offset, length) = op.memory_write_range(stack)?;
     Some(offset..offset.saturating_add(length))
 }
 

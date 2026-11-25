@@ -1,10 +1,10 @@
 //! Source map decoding and PC mapping utilities.
 
 use alloy_primitives::Bytes;
+use evm2::{SpecId, bytecode::InstructionMap};
 use foundry_compilers::{
     ProjectCompileOutput, artifacts::sourcemap::SourceMap, buildinfo::SourceEdit,
 };
-use foundry_evm_core::ic::IcPcMap;
 use std::{
     path::{Path, PathBuf},
     sync::OnceLock,
@@ -25,7 +25,7 @@ pub struct SourceData {
 /// Maps program counters to source locations.
 pub struct PcSourceMapper<'a> {
     /// Mapping from instruction counter to program counter.
-    ic_pc_map: IcPcMap,
+    ic_pc_map: InstructionMap,
     /// Source data consists of the source_map and the deployed bytecode
     source_data: SourceData,
     /// Source files i.e source path, content, and preprocessor edits (indexed by source_id).
@@ -38,7 +38,7 @@ impl<'a> PcSourceMapper<'a> {
     /// Creates a new PC to source mapper.
     pub fn new(source_data: SourceData, sources: &'a [BuildSource]) -> Self {
         // Build instruction counter to program counter mapping
-        let ic_pc_map = IcPcMap::new(source_data.bytecode.as_ref());
+        let ic_pc_map = InstructionMap::new(source_data.bytecode.as_ref(), SpecId::NEXT);
 
         let line_offsets = sources.iter().map(|_| OnceLock::new()).collect();
 
@@ -90,16 +90,15 @@ impl<'a> PcSourceMapper<'a> {
 
     /// Finds the instruction counter for a given program counter.
     fn find_instruction_counter(&self, pc: usize) -> Option<usize> {
-        // The IcPcMap maps IC -> PC, we need the reverse
+        // The instruction map maps IC -> PC, we need the reverse
         // We find the highest IC that has a PC <= our target PC
         let mut best_ic = None;
         let mut best_pc = 0;
 
         for (ic, mapped_pc) in self.ic_pc_map.iter() {
-            let mapped_pc = *mapped_pc as usize;
             if mapped_pc <= pc && mapped_pc >= best_pc {
                 best_pc = mapped_pc;
-                best_ic = Some(*ic as usize);
+                best_ic = Some(ic);
             }
         }
 

@@ -1087,9 +1087,8 @@ pub struct SourceFiles {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use evm2::interpreter::op as opcode;
+    use evm2::{SpecId, bytecode::InstructionMap, interpreter::op as opcode};
     use foundry_compilers::artifacts::sourcemap;
-    use foundry_evm_core::ic::IcPcMap;
 
     fn item(start: u32, line: u32) -> CoverageItem {
         CoverageItem {
@@ -1230,7 +1229,7 @@ mod tests {
             opcode::REVERT,
         ];
         let source_map = sourcemap::parse("10:10:0;;;;50:10:0;-1:-1:-1;;;;;;;;").unwrap();
-        let ic_pc_map = IcPcMap::new(&bytecode);
+        let ic_pc_map = InstructionMap::new(&bytecode, SpecId::NEXT);
         let anchors = crate::anchors::find_anchors(&bytecode, &source_map, &ic_pc_map, &analysis);
         assert_eq!(anchors.anchors.len(), 1);
         assert_eq!(anchors.anchors[0].instruction, 7);

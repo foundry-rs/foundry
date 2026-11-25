@@ -646,14 +646,13 @@ impl FuzzDictionary {
         let len = code.len().min(PUSH_BYTE_ANALYSIS_LIMIT);
         let code = &code[..len];
         let mut seen = HashSet::default();
-        for inst in Instructions::new(code, SpecId::DEFAULT) {
+        for inst in Instructions::new(code, SpecId::NEXT) {
             if self.values_full() {
                 break;
             }
             // Don't add 0 to the dictionary as it's already present.
-            if !inst.immediate.is_empty()
-                && inst.immediate.len() == inst.opcode.immediate_size() as usize
-                && let Some(push_value) = U256::try_from_be_slice(inst.immediate)
+            if inst.immediate.len() == inst.opcode.immediate_size() as usize
+                && let Some(push_value) = inst.push_value()
                 && !push_value.is_zero()
             {
                 self.insert_push_value_u256(push_value, &mut seen);

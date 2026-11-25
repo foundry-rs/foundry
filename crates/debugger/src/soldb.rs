@@ -5,7 +5,11 @@
 //! soldb's own tools read.
 
 use alloy_primitives::{Address, B256, Bytes, hex, keccak256, map::HashSet};
-use evm2::interpreter::{InstrStop, opcode::OpCode};
+use evm2::{
+    SpecId,
+    bytecode::{InstructionMap, Instructions},
+    interpreter::{InstrStop, opcode::OpCode},
+};
 use eyre::{OptionExt, Result};
 use foundry_common::{
     ContractsByArtifact, Shell,
@@ -15,7 +19,7 @@ use foundry_compilers::{
     artifacts::sourcemap::{Jump, SourceElement, SourceMap},
     multi::MultiCompilerLanguage,
 };
-use foundry_evm_core::{Breakpoints, ic::PcIcMap};
+use foundry_evm_core::Breakpoints;
 use foundry_evm_traces::{
     CallTrace, CallTraceArena, CallTraceNode, CallTraceStep, TraceMemberOrder,
     debug::{
@@ -563,7 +567,7 @@ struct ExecutedProgram<'a> {
     /// Solc indexes source maps by instruction counter, but Vyper indexes by program counter.
     solc: bool,
     source_map: &'a SourceMap,
-    pc_ic_map: Option<&'a PcIcMap>,
+    pc_ic_map: Option<&'a InstructionMap>,
     /// The sources of the build that compiled the program, by source id.
     build_sources: &'a HashMap<u32, Arc<SourceData>>,
     /// The contract's storage layout, as solc writes it.
@@ -636,19 +640,14 @@ fn contract_debug_info(
 ) -> Option<ContractDebugInfo> {
     let mut instructions = Vec::new();
     let mut used_sources = BTreeSet::new();
-    let mut pc = 0;
-    while let Some(&byte) = program.code.get(pc) {
-        let op = OpCode::new(byte);
-        let index = if program.solc {
-            program.pc_ic_map.and_then(|map| map.get(pc as u32))
-        } else {
-            Some(pc as u32)
-        };
-        if let Some(element) = index.and_then(|index| program.source_map.get(index as usize)) {
+    for inst in Instructions::new(program.code, SpecId::NEXT) {
+        let pc = inst.pc;
+        let index =
+            if program.solc { program.pc_ic_map.and_then(|map| map.ic(pc)) } else { Some(pc) };
+        if let Some(element) = index.and_then(|index| program.source_map.get(index)) {
             let context = instruction_context(element, program.build_sources, &mut used_sources);
             instructions.extend(Instruction::from_bytecode(program.code, pc, context));
         }
-        pc += 1 + op.map_or(0, |op| op.info().immediate_size() as usize);
     }
     if instructions.is_empty() {
         return None;
@@ -1029,7 +1028,7 @@ mod tests {
                 source_map: None,
                 source_map_runtime: Some(sourcemap::parse("0:8:0:-;9:3:0:i;1:2:1:o").unwrap()),
                 pc_ic_map: None,
-                pc_ic_map_runtime: Some(PcIcMap::new(&CODE)),
+                pc_ic_map_runtime: Some(InstructionMap::new(&CODE, SpecId::NEXT)),
                 build_id: "build".to_string(),
                 file_id: 0,
                 via_ir: Some(false),

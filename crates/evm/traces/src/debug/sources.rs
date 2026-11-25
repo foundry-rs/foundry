@@ -1,3 +1,4 @@
+use evm2::{SpecId, bytecode::InstructionMap};
 use eyre::{Context, Result};
 use foundry_common::{
     compact_to_contract, external_compiler::is_external_artifact, is_deploy_helper_path,
@@ -12,7 +13,6 @@ use foundry_compilers::{
     multi::MultiCompilerLanguage,
 };
 use foundry_config::read_build_info_input;
-use foundry_evm_core::ic::PcIcMap;
 use foundry_linking::Linker;
 use rayon::prelude::*;
 use serde::Deserialize;
@@ -94,8 +94,8 @@ fn span_to_range(
 pub struct ArtifactData {
     pub source_map: Option<SourceMap>,
     pub source_map_runtime: Option<SourceMap>,
-    pub pc_ic_map: Option<PcIcMap>,
-    pub pc_ic_map_runtime: Option<PcIcMap>,
+    pub pc_ic_map: Option<InstructionMap>,
+    pub pc_ic_map_runtime: Option<InstructionMap>,
     pub build_id: String,
     pub file_id: u32,
     /// Whether the contract was compiled through the via-IR pipeline, if the metadata says.
@@ -120,8 +120,9 @@ impl ArtifactData {
             };
 
             // Only parse bytecode if it's not empty, stripping placeholders if necessary.
-            let pc_ic_map = strip_bytecode_placeholders(&b.object)
-                .and_then(|bytes| (!bytes.is_empty()).then(|| PcIcMap::new(bytes.as_ref())));
+            let pc_ic_map = strip_bytecode_placeholders(&b.object).and_then(|bytes| {
+                (!bytes.is_empty()).then(|| InstructionMap::new(bytes.as_ref(), SpecId::NEXT))
+            });
 
             source_map.map(|source_map| (source_map, pc_ic_map))
         };
@@ -348,9 +349,9 @@ impl ContractSources {
                 } else {
                     artifact.pc_ic_map_runtime.as_ref()
                 }?;
-                let ic = pc_ic_map.get(pc)?;
+                let ic = pc_ic_map.ic(pc as usize)?;
 
-                source_map.get(ic as usize)
+                source_map.get(ic)
             } else {
                 source_map.get(pc as usize)
             }?;

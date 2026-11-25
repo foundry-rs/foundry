@@ -533,7 +533,7 @@ impl CoverageReporter for BytecodeReporter {
             let source_elements =
                 report.source_maps.get(contract_id).map(|sm| &sm.1).unwrap_or(&no_source_elements);
 
-            let ops = Instructions::new(hits.bytecode(), SpecId::DEFAULT);
+            let ops = Instructions::new(hits.bytecode(), SpecId::NEXT);
             for (inst, source_element) in std::iter::zip(ops, source_elements) {
                 let pc = inst.pc;
                 let hits =
@@ -542,7 +542,7 @@ impl CoverageReporter for BytecodeReporter {
                 let source_path = source_id
                     .and_then(|i| report.get_source_path(&contract_id.build_id, i as usize));
 
-                let code = format!("{pc:08x}: {}", inst.display(SpecId::DEFAULT));
+                let code = format!("{pc:08x}: {}", inst.display(SpecId::NEXT));
                 let start = source_element.offset() as usize;
                 let end = (source_element.offset() + source_element.length()) as usize;
 

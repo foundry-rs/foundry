@@ -3,16 +3,19 @@ use super::{
 };
 use crate::analysis::{BranchKind, EmptySpecialFunctionKind, IfArms, SourceAnalysis, TernaryArms};
 use alloy_primitives::{U256, map::rustc_hash::FxHashSet};
-use evm2::{SpecId, bytecode::Instructions, interpreter::op as opcode};
+use evm2::{
+    SpecId,
+    bytecode::{InstructionMap, Instructions},
+    interpreter::op as opcode,
+};
 use eyre::ensure;
 use foundry_compilers::artifacts::sourcemap::{Jump, SourceElement, SourceMap};
-use foundry_evm_core::ic::IcPcMap;
 use std::ops::Range;
 
 impl ItemAnchor {
     fn from_instruction(
         instruction: Option<usize>,
-        ic_pc_map: &IcPcMap,
+        ic_pc_map: &InstructionMap,
         item_id: u32,
         loc: &SourceLocation,
     ) -> eyre::Result<Self> {
@@ -20,9 +23,9 @@ impl ItemAnchor {
             eyre::eyre!("Could not find anchor: No matching instruction in range {loc}")
         })?;
         Ok(Self {
-            instruction: ic_pc_map.get(instruction as u32).ok_or_else(|| {
+            instruction: ic_pc_map.pc(instruction).ok_or_else(|| {
                 eyre::eyre!("We found an anchor, but we can't translate it to a program counter")
-            })?,
+            })? as u32,
             item_id,
         })
     }
@@ -53,7 +56,7 @@ fn jump_destination(immediate: &[u8]) -> eyre::Result<u32> {
 pub fn find_anchors(
     bytecode: &[u8],
     source_map: &SourceMap,
-    ic_pc_map: &IcPcMap,
+    ic_pc_map: &InstructionMap,
     analysis: &SourceAnalysis,
 ) -> ItemAnchors {
     let mut anchors = ItemAnchors::default();
@@ -196,7 +199,7 @@ struct AnchorIndex<'a> {
     source_map: &'a SourceMap,
     /// The program counter of every instruction, by instruction counter.
     pcs: Vec<u32>,
-    ic_pc_map: &'a IcPcMap,
+    ic_pc_map: &'a InstructionMap,
     /// `(source id, offset, instruction)`, sorted for source range lookups.
     entries: Vec<(i32, u32, usize)>,
     /// `(ic, next pc, push immediate)` for every push that feeds a `JUMPI`.
@@ -219,7 +222,7 @@ struct AnchorIndex<'a> {
 }
 
 impl<'a> AnchorIndex<'a> {
-    fn new(bytecode: &'a [u8], source_map: &'a SourceMap, ic_pc_map: &'a IcPcMap) -> Self {
+    fn new(bytecode: &'a [u8], source_map: &'a SourceMap, ic_pc_map: &'a InstructionMap) -> Self {
         let mut entries = source_map
             .iter()
             .enumerate()
@@ -595,7 +598,7 @@ impl<'a> AnchorIndex<'a> {
         let (mut any, mut all) = (false, true);
         let mut ic = instruction;
         loop {
-            if let Some(pc) = self.ic_pc_map.get(ic as u32) {
+            if let Some(pc) = self.ic_pc_map.pc(ic).map(|pc| pc as u32) {
                 let start = self.address_pushes.partition_point(|&(target, _)| target < pc);
                 for element in self.address_pushes[start..]
                     .iter()
@@ -627,7 +630,7 @@ impl<'a> AnchorIndex<'a> {
 
     /// Returns whether a static jump mapped outside `loc` targets `instruction`.
     fn is_jumped_to_from_outside(&self, instruction: usize, loc: &SourceLocation) -> bool {
-        let Some(pc) = self.ic_pc_map.get(instruction as u32) else { return false };
+        let Some(pc) = self.ic_pc_map.pc(instruction).map(|pc| pc as u32) else { return false };
         let start = self.jumps.partition_point(|&(target, _)| target < pc);
         self.jumps[start..]
             .iter()
@@ -1132,8 +1135,8 @@ fn is_in_source_range(element: &SourceElement, location: &SourceLocation) -> boo
 
 /// Returns an iterator over the instructions of `code`, as the compilers' instruction counters
 /// number them.
-fn instructions(code: &[u8]) -> Instructions<'_> {
-    Instructions::new(code, SpecId::DEFAULT)
+const fn instructions(code: &[u8]) -> Instructions<'_> {
+    Instructions::new(code, SpecId::NEXT)
 }
 
 #[cfg(test)]
@@ -1190,7 +1193,7 @@ mod tests {
             .collect::<Vec<_>>();
         let analysis = SourceAnalysis::for_test(items, kinds);
         let source_map = sourcemap::parse(source_map).unwrap();
-        let ic_pc_map = IcPcMap::new(bytecode);
+        let ic_pc_map = InstructionMap::new(bytecode, SpecId::NEXT);
         find_anchors(bytecode, &source_map, &ic_pc_map, &analysis)
     }
 
@@ -1603,7 +1606,7 @@ mod tests {
         let arms = TernaryArms { true_arm: location(20..30), false_arm: location(35..45) };
         let analysis = SourceAnalysis::for_test(items, vec![(0, BranchKind::Ternary(arms))]);
         let source_map = sourcemap::parse(source_map).unwrap();
-        let ic_pc_map = IcPcMap::new(bytecode);
+        let ic_pc_map = InstructionMap::new(bytecode, SpecId::NEXT);
         let anchors = find_anchors(bytecode, &source_map, &ic_pc_map, &analysis);
         (0..anchors.anchors.len())
             .map(|i| (anchors.anchors[i].instruction, anchors.jumps.get(&i).copied()))
@@ -1662,13 +1665,36 @@ mod tests {
     }
 
     #[test]
+    fn instruction_counters_skip_eip8024_immediates() {
+        // `PUSH1 1; DUPN 17; SWAPN 17; EXCHANGE 1, 2; JUMPDEST`. Each of the last three takes a
+        // one-byte immediate, so the counters differ from the offsets after the first push.
+        let bytecode = [
+            opcode::PUSH1,
+            1,
+            opcode::DUPN,
+            0x80,
+            opcode::SWAPN,
+            0x80,
+            opcode::EXCHANGE,
+            0x8e,
+            opcode::JUMPDEST,
+        ];
+        let ic_pc_map = InstructionMap::new(&bytecode, SpecId::NEXT);
+        assert_eq!(ic_pc_map.iter().collect::<Vec<_>>(), [(0, 0), (1, 2), (2, 4), (3, 6), (4, 8)]);
+
+        let source_map = sourcemap::parse(";;;;").unwrap();
+        let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
+        assert_eq!(index.pcs, [0, 2, 4, 6, 8]);
+    }
+
+    #[test]
     fn ternary_anchor_rejects_missing_node_mapping() {
         let loc =
             SourceLocation { source_id: 0, contract_name: "T".into(), bytes: 10..30, lines: 1..2 };
         let bytecode = [opcode::PUSH1, 6, opcode::JUMPI, opcode::PUSH1, 7, opcode::JUMPI];
         // A contained inner span must never substitute for the missing outer decision.
         let inner_only = sourcemap::parse("15:5:0;;;").unwrap();
-        let ic_pc_map = IcPcMap::new(&bytecode);
+        let ic_pc_map = InstructionMap::new(&bytecode, SpecId::NEXT);
         let index = AnchorIndex::new(&bytecode, &inner_only, &ic_pc_map);
         assert!(index.branch(0, &loc, true, None).is_err());
     }
@@ -1728,7 +1754,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join(";");
         let source_map = sourcemap::parse(&text).unwrap();
-        let ic_pc_map = IcPcMap::new(&bytecode);
+        let ic_pc_map = InstructionMap::new(&bytecode, SpecId::NEXT);
         let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
         let mut anchors = ItemAnchors::default();
         for (item_id, start) in [(0, 10), (1, 30)] {
@@ -1780,7 +1806,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join(";");
         let source_map = sourcemap::parse(&text).unwrap();
-        let ic_pc_map = IcPcMap::new(&bytecode);
+        let ic_pc_map = InstructionMap::new(&bytecode, SpecId::NEXT);
         let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
         let guard = super::super::RevertGuard {
             condition: source_location(10, 10),
@@ -1816,7 +1842,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join(";");
         let source_map = sourcemap::parse(&text).unwrap();
-        let ic_pc_map = IcPcMap::new(&bytecode);
+        let ic_pc_map = InstructionMap::new(&bytecode, SpecId::NEXT);
         let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
         let guard = super::super::RevertGuard {
             condition: source_location(10, 10),
@@ -1831,7 +1857,7 @@ mod tests {
     fn alias_statements_require_a_unique_normal_return() {
         let bytecode = [opcode::JUMPDEST, opcode::PUSH1, 42, opcode::SWAP1, opcode::JUMP];
         let source_map = sourcemap::parse("10:20:0;;;10:20:0:o").unwrap();
-        let ic_pc_map = IcPcMap::new(&bytecode);
+        let ic_pc_map = InstructionMap::new(&bytecode, SpecId::NEXT);
         let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
         let anchor = index.alias_return(0, &source_location(10, 20)).unwrap();
         assert_eq!(anchor.instruction, 4);
@@ -1854,7 +1880,7 @@ mod tests {
             [opcode::MLOAD, opcode::JUMPI, opcode::CALL, opcode::INVALID, opcode::REVERT]
         {
             let bytecode = [opcode::JUMPDEST, unsupported, opcode::SWAP1, opcode::JUMP];
-            let ic_pc_map = IcPcMap::new(&bytecode);
+            let ic_pc_map = InstructionMap::new(&bytecode, SpecId::NEXT);
             let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
             assert!(index.alias_return(0, &source_location(10, 20)).is_none());
         }
@@ -1951,7 +1977,7 @@ mod tests {
             let count = instructions(&bytecode).count();
             let source_map =
                 sourcemap::parse(&format!("10:20:0{}", ";".repeat(count - 1))).unwrap();
-            let ic_pc_map = IcPcMap::new(&bytecode);
+            let ic_pc_map = InstructionMap::new(&bytecode, SpecId::NEXT);
             let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
             assert_eq!(index.simple(0, &loc).unwrap().instruction, expected);
         }
@@ -2176,7 +2202,7 @@ mod tests {
             ),
         ] {
             let source_map = sourcemap::parse(source_map).unwrap();
-            let ic_pc_map = IcPcMap::new(&bytecode);
+            let ic_pc_map = InstructionMap::new(&bytecode, SpecId::NEXT);
             let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
             assert_eq!(index.simple(0, &loc).unwrap().instruction, expected, "{source_map:?}");
         }
@@ -2199,7 +2225,7 @@ mod tests {
             3,
             opcode::JUMP,
         ];
-        let ic_pc_map = IcPcMap::new(&bytecode);
+        let ic_pc_map = InstructionMap::new(&bytecode, SpecId::NEXT);
         for (source_map, expected) in [
             // Call site outside the function.
             ("15:5:0;;;10:20:0;;0:100:0;", 3),
@@ -2447,7 +2473,7 @@ mod tests {
             ),
         ] {
             let source_map = sourcemap::parse(source_map).unwrap();
-            let ic_pc_map = IcPcMap::new(&bytecode);
+            let ic_pc_map = InstructionMap::new(&bytecode, SpecId::NEXT);
             let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
             assert_eq!(index.function(0, &loc).unwrap().instruction, expected);
         }
@@ -2456,7 +2482,7 @@ mod tests {
         // constructor whose exact span only marks its trailing cleanup.
         let bytecode = [opcode::PUSH0, opcode::POP, opcode::PUSH0, opcode::POP, opcode::STOP];
         let source_map = sourcemap::parse("15:5:0;;10:20:0;;").unwrap();
-        let ic_pc_map = IcPcMap::new(&bytecode);
+        let ic_pc_map = InstructionMap::new(&bytecode, SpecId::NEXT);
         let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
         assert_eq!(index.function(0, &loc).unwrap().instruction, 0);
     }
@@ -2515,7 +2541,7 @@ mod tests {
             .collect();
         let analysis = SourceAnalysis::for_test(items, vec![(0, BranchKind::If(arms))]);
         let source_map = sourcemap::parse(source_map).unwrap();
-        let ic_pc_map = IcPcMap::new(bytecode);
+        let ic_pc_map = InstructionMap::new(bytecode, SpecId::NEXT);
         find_anchors(bytecode, &source_map, &ic_pc_map, &analysis)
     }
 

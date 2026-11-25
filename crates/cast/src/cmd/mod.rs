@@ -9,8 +9,7 @@ use alloy_network::Network;
 use alloy_primitives::{Address, Bytes, map::AddressHashMap};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
-use evm2::SpecId;
-use evm2_jit_codegen::analyze_blocks;
+use evm2::{SpecId, bytecode::Instructions};
 use eyre::Result;
 use foundry_cli::{
     json::print_scalar,
@@ -24,7 +23,7 @@ use foundry_evm_networks::NetworkVariant;
 use futures::StreamExt;
 use serde::Serialize;
 use serde_json::Value;
-use std::fmt::Display;
+use std::fmt::{Display, Write};
 
 const MAX_CONCURRENT_RPC_REQUESTS: usize = 5;
 
@@ -185,10 +184,12 @@ pub(crate) async fn resolve_transaction_network(
     Ok(provider.get_chain_id().await?.into())
 }
 
-/// Disassembles `code` into basic blocks, with the targets of the jumps the JIT's analysis
-/// resolves.
-pub(crate) fn disassemble(code: &[u8]) -> String {
-    analyze_blocks(code, SpecId::NEXT).to_string()
+pub(crate) fn disassemble(code: &[u8]) -> Result<String> {
+    let mut output = String::new();
+    for inst in Instructions::new(code, SpecId::NEXT) {
+        writeln!(output, "{:08x}: {}", inst.pc, inst.display(SpecId::NEXT))?;
+    }
+    Ok(output)
 }
 
 /// Rejects blob options before Base's transaction builder can discard them.

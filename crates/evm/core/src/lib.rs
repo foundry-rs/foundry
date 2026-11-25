@@ -35,7 +35,6 @@ pub mod eip2935;
 pub mod evm;
 pub mod fork;
 pub mod hardfork;
-pub mod ic;
 pub mod opts;
 pub mod precompiles;
 pub mod state_snapshot;

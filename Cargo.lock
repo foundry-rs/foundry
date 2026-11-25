@@ -3394,7 +3394,6 @@ dependencies = [
  "comfy-table",
  "dirs",
  "evm2",
- "evm2-jit-codegen",
  "evmole",
  "eyre",
  "forge-fmt",
@@ -5510,7 +5509,7 @@ dependencies = [
 [[package]]
 name = "evm2"
 version = "0.1.0"
-source = "git+https://github.com/DaniPopes/evm2?rev=0ddaea06244cc5db62b537ebe8df7e64c4093259#0ddaea06244cc5db62b537ebe8df7e64c4093259"
+source = "git+https://github.com/DaniPopes/evm2?rev=3278768132102d243b2549cbb1fb9e9fa16bd0a5#3278768132102d243b2549cbb1fb9e9fa16bd0a5"
 dependencies = [
  "alloy-consensus",
  "alloy-eip7928",
@@ -5548,7 +5547,7 @@ dependencies = [
 [[package]]
 name = "evm2-bytecode"
 version = "0.1.0"
-source = "git+https://github.com/DaniPopes/evm2?rev=0ddaea06244cc5db62b537ebe8df7e64c4093259#0ddaea06244cc5db62b537ebe8df7e64c4093259"
+source = "git+https://github.com/DaniPopes/evm2?rev=3278768132102d243b2549cbb1fb9e9fa16bd0a5#3278768132102d243b2549cbb1fb9e9fa16bd0a5"
 dependencies = [
  "alloy-primitives",
  "paste",
@@ -5558,7 +5557,7 @@ dependencies = [
 [[package]]
 name = "evm2-inspectors"
 version = "0.1.0"
-source = "git+https://github.com/DaniPopes/evm2?rev=0ddaea06244cc5db62b537ebe8df7e64c4093259#0ddaea06244cc5db62b537ebe8df7e64c4093259"
+source = "git+https://github.com/DaniPopes/evm2?rev=3278768132102d243b2549cbb1fb9e9fa16bd0a5#3278768132102d243b2549cbb1fb9e9fa16bd0a5"
 dependencies = [
  "alloy-consensus",
  "alloy-eip2930",
@@ -5579,68 +5578,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "evm2-jit-backend"
-version = "0.1.0"
-source = "git+https://github.com/alloy-rs/evm2?rev=0ddaea06244cc5db62b537ebe8df7e64c4093259#0ddaea06244cc5db62b537ebe8df7e64c4093259"
-dependencies = [
- "eyre",
- "ruint",
-]
-
-[[package]]
-name = "evm2-jit-build"
-version = "0.1.0"
-source = "git+https://github.com/alloy-rs/evm2?rev=0ddaea06244cc5db62b537ebe8df7e64c4093259#0ddaea06244cc5db62b537ebe8df7e64c4093259"
-
-[[package]]
-name = "evm2-jit-builtins"
-version = "0.1.0"
-source = "git+https://github.com/alloy-rs/evm2?rev=0ddaea06244cc5db62b537ebe8df7e64c4093259#0ddaea06244cc5db62b537ebe8df7e64c4093259"
-dependencies = [
- "alloy-primitives",
- "evm2",
- "evm2-jit-backend",
- "evm2-jit-context",
- "paste",
- "tracing",
-]
-
-[[package]]
-name = "evm2-jit-codegen"
-version = "0.1.0"
-source = "git+https://github.com/alloy-rs/evm2?rev=0ddaea06244cc5db62b537ebe8df7e64c4093259#0ddaea06244cc5db62b537ebe8df7e64c4093259"
-dependencies = [
- "alloy-primitives",
- "bitflags 2.13.2",
- "bitvec",
- "derive_more",
- "either",
- "evm2",
- "evm2-jit-backend",
- "evm2-jit-build",
- "evm2-jit-builtins",
- "evm2-jit-context",
- "indexmap 2.14.2",
- "oxc_index",
- "smallvec",
- "tempfile",
- "tracing",
-]
-
-[[package]]
-name = "evm2-jit-context"
-version = "0.1.0"
-source = "git+https://github.com/alloy-rs/evm2?rev=0ddaea06244cc5db62b537ebe8df7e64c4093259#0ddaea06244cc5db62b537ebe8df7e64c4093259"
-dependencies = [
- "alloy-primitives",
- "evm2",
- "ruint",
-]
-
-[[package]]
 name = "evm2-macros"
 version = "0.1.0"
-source = "git+https://github.com/DaniPopes/evm2?rev=0ddaea06244cc5db62b537ebe8df7e64c4093259#0ddaea06244cc5db62b537ebe8df7e64c4093259"
+source = "git+https://github.com/DaniPopes/evm2?rev=3278768132102d243b2549cbb1fb9e9fa16bd0a5#3278768132102d243b2549cbb1fb9e9fa16bd0a5"
 dependencies = [
  "proc-macro2",
  "quote",

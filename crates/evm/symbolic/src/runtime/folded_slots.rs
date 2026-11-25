@@ -14,6 +14,7 @@
 //! and ERC-7201 roots, stay fixed slots.
 
 use super::*;
+use evm2::bytecode::Instructions;
 use foundry_common::slot_identifier::{ENCODING_INPLACE, ENCODING_MAPPING};
 use foundry_compilers::artifacts::{Storage, StorageLayout, StorageType};
 
@@ -168,21 +169,9 @@ fn past_deadline(deadline: Option<Instant>) -> bool {
     deadline.is_some_and(|deadline| Instant::now() >= deadline)
 }
 
-/// Returns the right-aligned values of the `PUSH` immediates in `code`.
+/// Returns the values the `PUSH` instructions in `code` push.
 fn push_immediates(code: &[u8]) -> impl Iterator<Item = U256> {
-    let mut pc = 0;
-    std::iter::from_fn(move || {
-        while let Some(&op) = code.get(pc) {
-            pc += 1;
-            if let opcode::PUSH1..=opcode::PUSH32 = op {
-                let len = usize::from(op - opcode::PUSH1 + 1);
-                let data = &code[pc..code.len().min(pc + len)];
-                pc += len;
-                return Some(U256::from_be_slice(data));
-            }
-        }
-        None
-    })
+    Instructions::new(code, SpecId::NEXT).filter_map(|inst| inst.push_value())
 }
 
 /// Calls `hash` for every candidate key that fits the key type of the mapping at `slot`, descending
