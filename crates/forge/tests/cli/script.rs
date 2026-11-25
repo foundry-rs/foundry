@@ -11874,3 +11874,119 @@ contract SimpleScript {
         .is_jsonlines(),
     );
 }
+
+// `--args-json` encodes structs, struct arrays, and big integers against `--sig`.
+#[forgetest]
+fn can_execute_script_with_args_json(prj: _, cmd: _) {
+    prj.add_source(
+        "Foo",
+        r#"
+contract ArgsJson {
+    struct Leg { address to; uint256 amount; }
+    struct Plan { string name; Leg main; Leg[] extra; }
+
+    function run(Plan memory plan, uint256 big, uint256 small, address owner)
+        external
+        pure
+        returns (Plan memory, uint256, uint256, address)
+    {
+        return (plan, big, small, owner);
+    }
+}
+"#,
+    );
+    let args = prj.root().join("args.json");
+    fs::write(
+        &args,
+        r#"[
+  {
+    "name": "plan",
+    "main": { "to": "0x0000000000000000000000000000000000000001", "amount": 1 },
+    "extra": [{ "to": "0x0000000000000000000000000000000000000002", "amount": "2" }]
+  },
+  115792089237316195423570985008687907853269984665640564039457584007913129639935,
+  "42",
+  "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+]"#,
+    )
+    .unwrap();
+    cmd.args(["script", "ArgsJson", "--args-json", args.to_str().unwrap()])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+[GAS]
+
+== Return ==
+0: struct ArgsJson.Plan Plan({ name: "plan", main: Leg({ to: 0x0000000000000000000000000000000000000001, amount: 1 }), extra: [Leg({ to: 0x0000000000000000000000000000000000000002, amount: 2 })] })
+1: uint256 115792089237316195423570985008687907853269984665640564039457584007913129639935 [1.157e77]
+2: uint256 42
+3: address 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+
+"#]]);
+
+    fs::write(
+        &args,
+        r#"[{ "name": "plan", "extra": [] }, 1, 2, "0x0000000000000000000000000000000000000001"]"#,
+    )
+    .unwrap();
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: argument `plan` (string,(address,uint256),(address,uint256)[]): field "main" not found in JSON object
+
+"#]]);
+}
+
+// A relink for a new library deployer reruns the script with the arguments read before the
+// first run, even if the script rewrites its `--args-json` file.
+#[forgetest]
+fn args_json_survives_deployer_relink(prj: _, cmd: _) {
+    prj.add_source(
+        "Foo",
+        r#"
+interface Vm {
+    function writeFile(string calldata path, string calldata data) external;
+    function startBroadcast(address signer) external;
+}
+
+library Lib {
+    function id(uint256 value) external pure returns (uint256) { return value; }
+}
+
+contract Dummy {}
+
+contract Relink {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run(uint256 value) external returns (uint256) {
+        vm.writeFile("args.json", "[2]");
+        vm.startBroadcast(address(0xBEEF));
+        new Dummy();
+        return Lib.id(value);
+    }
+}
+"#,
+    );
+    prj.update_config(|config| {
+        config.fs_permissions = foundry_config::FsPermissions::new(vec![
+            foundry_config::fs_permissions::PathPermission::read_write("./"),
+        ]);
+    });
+    fs::write(prj.root().join("args.json"), "[1]").unwrap();
+    cmd.args(["script", "Relink", "--args-json", "args.json"]).assert_success().stdout_eq(str![[
+        r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+[GAS]
+
+== Return ==
+0: uint256 1
+
+If you wish to simulate on-chain transactions pass a RPC URL.
+
+"#
+    ]]);
+}

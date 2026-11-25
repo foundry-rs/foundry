@@ -10282,6 +10282,129 @@ contract SymbolicCollateralRatio {
     }
 }
 
+// Vaults round shares up as `(assets * supply + total - 1) / total` and down as
+// `assets * supply / total`. The ceiling is at least the floor and at most one above it once
+// the sum cannot wrap, from value ranges or a checked addition.
+#[forgetest_init]
+fn symbolic_proves_additive_ceiling_bounds(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_additive_ceiling_bounds");
+    prj.add_test(
+        "SymbolicCeilingBounds.t.sol",
+        r#"
+contract SymbolicCeilingBounds {
+    function sharesDown(uint128 assets, uint128 supply, uint128 total) internal pure returns (uint256) {
+        return uint256(assets) * supply / total;
+    }
+
+    function sharesUp(uint128 assets, uint128 supply, uint128 total) internal pure returns (uint256) {
+        return (uint256(assets) * supply + total - 1) / total;
+    }
+
+    function checkCeilingAboveFloor(uint128 assets, uint128 supply, uint128 total) public pure {
+        require(total != 0);
+        assert(sharesUp(assets, supply, total) >= sharesDown(assets, supply, total));
+    }
+
+    function checkCeilingAtMostFloorPlusOne(uint128 assets, uint128 supply, uint128 total)
+        public
+        pure
+    {
+        require(total != 0);
+        assert(sharesUp(assets, supply, total) <= sharesDown(assets, supply, total) + 1);
+    }
+
+    function checkCheckedCeilingAboveFloor(uint256 n, uint256 d) public pure {
+        require(d != 0);
+        assert((n + d - 1) / d >= n / d);
+    }
+
+    function checkWrappedCeilingAboveFloor(uint256 n, uint256 d) public pure {
+        require(d != 0);
+        unchecked {
+            assert((n + d - 1) / d >= n / d);
+        }
+    }
+
+    function checkWrappedCeilingAtMostFloorPlusOne(uint256 n, uint256 d) public pure {
+        require(d != 0);
+        unchecked {
+            assert((n + d - 1) / d <= n / d + 1);
+        }
+    }
+
+    function checkSmallerOffset(uint128 n, uint128 d) public pure {
+        require(d != 0);
+        assert((uint256(n) + d - 2) / d >= uint256(n) / d);
+    }
+
+    function checkCeilingAtMostFloor(uint128 n, uint128 d) public pure {
+        require(d != 0);
+        assert((uint256(n) + d - 1) / d <= uint256(n) / d);
+    }
+
+    function checkOtherDivisor(uint128 n, uint128 d, uint128 e) public pure {
+        require(d != 0 && e != 0);
+        assert((uint256(n) + d - 1) / d >= uint256(n) / e);
+    }
+
+    function checkOtherDivisorPlusOne(uint128 n, uint128 d, uint128 e) public pure {
+        require(d != 0 && e != 0);
+        assert((uint256(n) + d - 1) / d <= uint256(n) / e + 1);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicCeilingBounds"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        for signature in [
+            "checkCeilingAboveFloor(uint128,uint128,uint128)",
+            "checkCeilingAtMostFloorPlusOne(uint128,uint128,uint128)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "pass",
+                "{signature}, optimized={optimized}: {result}"
+            );
+            assert_eq!(
+                result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+                "{signature}, optimized={optimized}: {result}"
+            );
+        }
+        // A checked `n + d` leaves its `d <= ~n` guard instead of a bounded range.
+        let signature = "checkCheckedCeilingAboveFloor(uint256,uint256)";
+        let result = json_test_result(&output, signature);
+        assert_eq!(
+            result["symbolic"]["status"], "pass",
+            "{signature}, optimized={optimized}: {result}"
+        );
+        for signature in [
+            "checkWrappedCeilingAboveFloor(uint256,uint256)",
+            "checkWrappedCeilingAtMostFloorPlusOne(uint256,uint256)",
+            "checkSmallerOffset(uint128,uint128)",
+            "checkCeilingAtMostFloor(uint128,uint128)",
+            "checkOtherDivisor(uint128,uint128,uint128)",
+            "checkOtherDivisorPlusOne(uint128,uint128,uint128)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "{signature}, optimized={optimized}: {result}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "{signature}, optimized={optimized}: {result}"
+            );
+        }
+    }
+}
+
 // Fee splits and payment splitters floor each share `w * a / k`, and two shares with
 // `a + b <= k`, or `b = k - a`, sum to at most `w`, so their checked sum cannot overflow either.
 // A wrapped `a + b <= k` does not bound the shares, unless a `b <= MAX - a` guard rules out the
@@ -11693,6 +11816,34 @@ contract SymbolicBoundedComplementTest {
         uint256 shares = assets * supply / total;
         assert(shares * total / other <= assets);
     }
+
+    // Converting back rounding up, as with Morpho Blue's `mulDivUp` (GPL-2.0-or-later), still
+    // cannot create assets: the rounded product is at most `assets * supply`, so the checked
+    // `shares * total + (supply - 1)` cannot overflow.
+    function checkVaultRoundTripUp(uint128 assets, uint128 supply, uint128 total) public pure {
+        if (supply == 0 || total == 0) return;
+        uint256 shares = uint256(assets) * supply / total;
+        assert((shares * total + (supply - 1)) / supply <= assets);
+    }
+
+    function checkVaultRoundTripUpLeftAssociated(uint128 assets, uint128 supply, uint128 total)
+        public
+        pure
+    {
+        if (supply == 0 || total == 0) return;
+        uint256 shares = uint256(assets) * supply / total;
+        assert((shares * total + supply - 1) / supply <= assets);
+    }
+
+    // Rounding up by another divisor can create assets.
+    function checkVaultOtherDivisorUp(uint128 assets, uint128 supply, uint128 total, uint128 other)
+        public
+        pure
+    {
+        if (total == 0 || other == 0) return;
+        uint256 shares = uint256(assets) * supply / total;
+        assert((shares * total + (other - 1)) / other <= assets);
+    }
 }
 "#,
     );
@@ -11781,6 +11932,23 @@ contract SymbolicBoundedComplementTest {
 
         let result =
             json_test_result(&output, "checkVaultOtherDivisor(uint256,uint256,uint256,uint256)");
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
+        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
+
+        for test in [
+            "checkVaultRoundTripUp(uint128,uint128,uint128)",
+            "checkVaultRoundTripUpLeftAssociated(uint128,uint128,uint128)",
+        ] {
+            let result = json_test_result(&output, test);
+            assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+            assert_eq!(
+                result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+                "optimized={optimized}: {test}"
+            );
+        }
+
+        let result =
+            json_test_result(&output, "checkVaultOtherDivisorUp(uint128,uint128,uint128,uint128)");
         assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
         assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
     }

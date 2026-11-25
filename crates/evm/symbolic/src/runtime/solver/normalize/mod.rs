@@ -8,7 +8,8 @@ mod rounding;
 
 use mul_div::{
     checked_product_guard_operands, full_mul_div_operands, mul_high_operands,
-    normalize_mul_high_factor_cmp, normalize_quotient_offset_eq, word_division_operands,
+    normalize_mul_high_factor_cmp, normalize_quotient_offset_eq, rounded_down_dividend,
+    word_division_operands,
 };
 use polynomial::polynomial_identity;
 
@@ -1658,17 +1659,28 @@ impl ConstraintContext {
                 })
             }
             SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
+                // `(n / t) * t <= n`, and the product is zero when `t == 0`.
+                let cap = rounded_down_dividend(expr)
+                    .and_then(|dividend| self.interval_cached(dividend, intervals, remaining))
+                    .map(|dividend| dividend.max);
                 let guarded = self.has_non_wrapping_product(left, right);
-                let left = self.interval_cached(left, intervals, remaining)?;
-                let right = self.interval_cached(right, intervals, remaining)?;
-                Some(WordInterval {
-                    min: left.min.checked_mul(right.min)?,
-                    // A retained overflow guard correlates the factors. Their independent
-                    // maxima can overflow even though every feasible product fits.
-                    max: left
-                        .max
-                        .checked_mul(right.max)
-                        .or_else(|| guarded.then_some(U256::MAX))?,
+                let product = self
+                    .interval_cached(left, intervals, remaining)
+                    .zip(self.interval_cached(right, intervals, remaining))
+                    .and_then(|(left, right)| {
+                        Some(WordInterval {
+                            min: left.min.checked_mul(right.min)?,
+                            // A retained overflow guard correlates the factors. Their independent
+                            // maxima can overflow even though every feasible product fits.
+                            max: left
+                                .max
+                                .checked_mul(right.max)
+                                .or_else(|| guarded.then_some(U256::MAX))?,
+                        })
+                    });
+                let Some(cap) = cap else { return product };
+                product.map_or(Some(WordInterval { min: U256::ZERO, max: cap }), |product| {
+                    product.with_bounds(None, Some(cap))
                 })
             }
             SymExprKind::BinOp(SymBinOp::UDiv, numerator_expr, denominator_expr) => {
