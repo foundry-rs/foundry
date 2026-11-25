@@ -458,11 +458,13 @@ impl SymbolicExecutor {
             return Ok(StepOutcome::AssumeRejected);
         }
 
+        // Forge settles a `vm.expectRevert` from this frame at the CREATE, as for a native create.
+        let expects_revert = state.expected_revert.is_some();
         let mut parents = VecDeque::with_capacity(outcomes.len());
         for mut outcome in outcomes {
             // Like a CREATE, a runtime over the code size limit or starting with 0xEF fails the
             // deployment. Forge reverts the cheatcode with that runtime, or with no data when the
-            // CREATE ran as its own transaction.
+            // CREATE ran as its own transaction or settles a `vm.expectRevert`.
             let runtime = &outcome.state.frame.return_data;
             let rejected_runtime = matches!(outcome.status, CallStatus::Success)
                 && (runtime_exceeds_code_size_limit(
@@ -472,14 +474,10 @@ impl SymbolicExecutor {
                 ) || runtime_has_rejected_prefix(&mut self.cx, executor.spec_id, runtime)?);
             if rejected_runtime {
                 outcome.status = CallStatus::Revert;
-                if isolated {
+                if isolated || expects_revert {
                     outcome.state.frame.return_data = SymReturnData::empty(&mut self.cx);
                 }
             }
-            // Forge's CREATE runs a frame below the cheatcode call, so a rejected runtime leaves
-            // the caller's `vm.expectRevert` pending for the cheatcode revert.
-            let expected_revert =
-                if rejected_runtime { state.expected_revert.take() } else { None };
             if !matches!(outcome.status, CallStatus::Success)
                 && state.expected_revert.as_ref().is_some_and(ExpectedRevert::repeats_with_reverter)
             {
@@ -487,10 +485,12 @@ impl SymbolicExecutor {
                     "symbolic vm.expectRevert reverter count on CREATE",
                 ));
             }
-            // Forge records a reverting CREATE, and otherwise the failed cheatcode call.
+            // Forge records a reverting CREATE. Otherwise it records no reverter when the CREATE
+            // settles a `vm.expectRevert`, and the failed cheatcode call for an outer one.
             let failed_callee = match outcome.status {
                 CallStatus::Success => None,
                 CallStatus::Revert if !rejected_runtime => Some(created),
+                _ if expects_revert => None,
                 CallStatus::Revert | CallStatus::ExceptionalHalt | CallStatus::Failure => {
                     Some(CHEATCODE_ADDRESS)
                 }
@@ -504,9 +504,6 @@ impl SymbolicExecutor {
                 failed_callee,
                 None,
             );
-            if rejected_runtime {
-                state.expected_revert = expected_revert;
-            }
             match joined? {
                 JoinedCallOutcome::Failure(parent)
                 | JoinedCallOutcome::Success { parent, unmet_expected_revert: Some(_), .. } => {
@@ -520,8 +517,10 @@ impl SymbolicExecutor {
                     parents.push_back(parent);
                 }
                 JoinedCallOutcome::ExpectedRevert(mut parent) => {
-                    let zero = SymExpr::zero(&mut self.cx);
-                    let return_data = SymReturnData::from_words(&mut self.cx, vec![zero]);
+                    // Like a native CREATE, an expected revert returns Forge's dummy address.
+                    let address =
+                        SymExpr::constant(&mut self.cx, address_word(DUMMY_CREATE_ADDRESS));
+                    let return_data = SymReturnData::from_words(&mut self.cx, vec![address]);
                     complete_cheatcode_call(
                         &mut self.cx,
                         &mut parent,

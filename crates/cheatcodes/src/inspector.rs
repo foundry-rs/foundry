@@ -2551,7 +2551,11 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             }
         }
 
-        // Handle expected reverts.
+        // Handle expected reverts. A CREATE redirected to the CREATE2 factory ends as this call,
+        // so it settles the expectation like a create.
+        let create2_redirect =
+            self.pending_create2_redirects.last().is_some_and(|(depth, ..)| *depth == call.depth);
+        let caller_depth = self.deploy_code_caller_depth(curr_depth);
         if let Some(expected_revert) = &mut self.expected_revert {
             // Record current reverter address and call scheme before processing the expect revert
             // if call reverted.
@@ -2567,7 +2571,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 }
             }
 
-            if curr_depth <= expected_revert.depth {
+            if caller_depth <= expected_revert.depth {
                 let needs_processing = expected_revert.needs_processing(
                     cheatcode_call,
                     call_failed,
@@ -2581,7 +2585,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                         matches!(expected_revert.kind, ExpectedRevertKind::Default);
                     return match revert_handlers::handle_expect_revert(
                         cheatcode_call,
-                        false,
+                        create2_redirect,
                         self.core.config.internal_expect_revert,
                         &expected_revert,
                         outcome.stop,
@@ -2592,7 +2596,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                             trace!(expected=?expected_revert, ?error, status=?outcome.stop, "Expected revert mismatch");
                             set_revert(outcome, error.abi_encode().into());
                         }
-                        Ok((_, retdata)) => {
+                        Ok((address, retdata)) => {
                             expected_revert.actual_count += 1;
                             if expected_revert.actual_count < expected_revert.count {
                                 self.expected_revert = Some(expected_revert);
@@ -2601,7 +2605,15 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                                 self.gas_metering.last_frame_gas = None;
                             }
                             return_expected_halt_gas(outcome, halted_frame_gas);
-                            set_return(outcome, retdata);
+                            // The factory returns the created address, so only a failed redirect
+                            // returns the dummy address and a successful one keeps its output.
+                            if let Some(address) = address {
+                                if call_failed {
+                                    set_return(outcome, address.to_vec().into());
+                                }
+                            } else {
+                                set_return(outcome, retdata);
+                            }
                         }
                     };
                 }
@@ -2979,6 +2991,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 && matches!(expected_revert.kind, ExpectedRevertKind::Default)
             {
                 let mut expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
+                // The expectation settles a `deployCode` create, so `deployCode` returns its
+                // result rather than the runtime the create could not deposit.
+                self.deploy_code_output = None;
                 return match revert_handlers::handle_expect_revert(
                     false,
                     true,
@@ -2996,8 +3011,12 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                             self.expected_revert = Some(expected_revert.clone());
                         }
 
-                        set_return(outcome, retdata);
-                        outcome.created_address = address;
+                        // Only a failed create returns the dummy address; a successful one under
+                        // `vm.expectRevert` with count 0 keeps its address.
+                        if !outcome.is_success() {
+                            set_return(outcome, retdata);
+                            outcome.created_address = address;
+                        }
                         self.gas_metering.last_frame_gas = None;
                     }
                     Err(err) => {
