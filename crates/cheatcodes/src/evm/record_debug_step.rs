@@ -83,7 +83,7 @@ pub(crate) fn convert_call_trace_ctx_to_debug_step(ctx: &CallTraceCtx) -> DebugS
     DebugStep {
         stack,
         memoryInput: memory,
-        opcode: ctx.step.op.get(),
+        opcode,
         depth,
         isOutOfGas: is_out_of_gas,
         contractAddr: contract_addr,
@@ -130,7 +130,8 @@ fn get_slice_from_memory(memory: &Bytes, start_index: usize, size: usize) -> Byt
     }
 
     // Pad with zero bytes the part of the range that is out of memory.
-    let mut result = memory.get(start_index..).unwrap_or_default().to_vec();
+    let mut result = Vec::with_capacity(size);
+    result.extend_from_slice(memory.get(start_index..).unwrap_or_default());
     result.resize(size, 0);
     Bytes::from(result)
 }
