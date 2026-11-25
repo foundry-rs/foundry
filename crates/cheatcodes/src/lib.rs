@@ -62,6 +62,7 @@ mod inspector;
 pub use inspector::CheatcodeAnalysis;
 
 mod json;
+pub use json::parse_json_as;
 
 #[cfg(feature = "monad")]
 mod monad;
