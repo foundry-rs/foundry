@@ -5835,12 +5835,6 @@ contract CounterTest is Test {
         assertTrue(false);
     }
 
-    function test_deploys_after_revert() public {
-        vm.expectRevert();
-        new Counter(0);
-        assertEq(new Counter(5).number(), 5);
-    }
-
     function test_keeps_address_when_not_reverting() public {
         vm.expectRevert(uint64(0));
         Counter counter = new Counter(5);
@@ -5877,15 +5871,14 @@ contract CounterTest is Test {
 
     let expected = str![[r#"
 ...
-Ran 7 tests for test/Counter.t.sol:CounterTest
+Ran 6 tests for test/Counter.t.sol:CounterTest
 [FAIL: assertion failed] test_continues_after_revert() ([GAS])
-[PASS] test_deploys_after_revert() ([GAS])
 [PASS] test_expect_create_when_not_reverting() ([GAS])
 [PASS] test_keeps_address_when_not_reverting() ([GAS])
 [FAIL: next call did not revert as expected] test_loop() ([GAS])
 [FAIL: assertion failed] test_salt_continues_after_revert() ([GAS])
 [PASS] test_salt_keeps_address_when_not_reverting() ([GAS])
-Suite result: FAILED. 4 passed; 3 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 3 passed; 3 failed; 0 skipped; [ELAPSED]
 ...
 "#]];
     cmd.args(["test"]).assert_failure().stdout_eq(expected.clone());

@@ -520,9 +520,9 @@ impl SymbolicExecutor {
                 failed_callee,
                 None,
             );
-            match joined? {
-                // A revert that does not meet the expectation fails the cheatcode call with
-                // Forge's `CheatcodeError`, which a caller can catch.
+            let joined = match joined? {
+                // Forge matches the expectation against the status of the failed CREATE, and a
+                // mismatch fails the cheatcode call with a `CheatcodeError` a caller can catch.
                 JoinedCallOutcome::Failure(mut parent)
                     if let Some(expected) = &expected_revert
                         && let Some((status, return_data)) = &settled_revert =>
@@ -551,24 +551,17 @@ impl SymbolicExecutor {
                             out_size,
                             return_data,
                         )?;
-                    } else {
-                        // Forge also matches a reason against the halt it names for a rejected
-                        // runtime, which settles the expectation like a revert.
-                        let mut expected = expected.clone();
-                        parent.expected_revert = (!expected.consume_one()).then_some(expected);
-                        let address =
-                            SymExpr::constant(&mut self.cx, address_word(DUMMY_CREATE_ADDRESS));
-                        let return_data = SymReturnData::from_words(&mut self.cx, vec![address]);
-                        complete_cheatcode_call(
-                            &mut self.cx,
-                            &mut parent,
-                            out_offset.clone(),
-                            out_size,
-                            return_data,
-                        )?;
+                        parents.push_back(parent);
+                        continue;
                     }
-                    parents.push_back(parent);
+                    // A reason can match the halt Forge names for a rejected runtime.
+                    let mut expected = expected.clone();
+                    parent.expected_revert = (!expected.consume_one()).then_some(expected);
+                    JoinedCallOutcome::ExpectedRevert(parent)
                 }
+                joined => joined,
+            };
+            match joined {
                 JoinedCallOutcome::Failure(parent)
                 | JoinedCallOutcome::Success { parent, unmet_expected_revert: Some(_), .. } => {
                     *state = parent;
