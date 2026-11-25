@@ -11,12 +11,12 @@ use foundry_common::fmt::format_token;
 use foundry_compilers::{artifacts::sourcemap::Jump, buildinfo::SourceEdit};
 pub use functions::{AbiType, FunctionInfo, SourceFunction, UserType, UserTypes};
 use functions::{names_agree, without_number};
-pub use internal_calls::{CallConvention, CodeFunctions, FunctionEntry};
+pub use internal_calls::{CallConvention, CodeFunctions, FunctionEntry, UnlistedFunction};
 use internal_calls::{ResolvedEntry, SourceMapFunction, TrackerContext, track_internal_calls};
 pub use recording::{
     DebugRecording, DebugStepSink, RecordedFrame, StepConverter, StepStorage, quantity, step_record,
 };
-pub use sources::{ArtifactData, ContractSources, SourceData};
+pub use sources::{ArtifactData, ContractSources, SourceData, function_id};
 use std::sync::Arc;
 
 #[derive(Clone, Debug)]
@@ -65,6 +65,19 @@ impl DebugTraceIdentifier {
         let resolve = |pc: u32, entries: &[FunctionEntry]| {
             resolve_entry(sources, artifact, is_create, pc, entries)
         };
+        let src_map = |step: usize| {
+            sources.source_mapping_in(artifact, node.trace.steps.get(step)?.pc, is_create)
+        };
+        // The name that the call at a `JUMP` step calls, from the source location of the jump,
+        // which is the call expression.
+        let callee_name = |step: usize| {
+            let (jump, source) = src_map(step)?;
+            if jump.jump() != Jump::In {
+                return None;
+            }
+            let offset = SourceEdit::original_offset(&source.source_edits, jump.offset() as usize);
+            source.call_sites.get(&offset).cloned()
+        };
         let context = TrackerContext {
             code: artifact.functions(is_create),
             resolve: &resolve,
@@ -72,6 +85,7 @@ impl DebugTraceIdentifier {
             convention: CallConvention::solc(artifact.via_ir),
             calldata: node.trace.data.as_ref(),
             is_dispatched: &is_dispatched,
+            callee_name: &callee_name,
             from_source_map: &|step| source_map_function(node, sources, artifact, step),
         };
         let calls = track_internal_calls(&node.trace.steps, &context);
@@ -97,13 +111,16 @@ fn resolve_entry(
 ) -> Option<ResolvedEntry> {
     let named = entries.iter().filter(|entry| entry.name.is_some()).collect::<Vec<_>>();
     let entry = *named.first()?;
-    let defined =
-        sources.source_mapping_in(artifact, pc, is_create).and_then(|(element, source)| {
+    let (defined, defined_id) = match sources.source_mapping_in(artifact, pc, is_create) {
+        Some((element, source)) => {
             let offset =
                 SourceEdit::original_offset(&source.source_edits, element.offset() as usize);
-            source.functions.get(&offset).map(Arc::as_ref)
-        });
-    let function = match choose_entry(&named, defined) {
+            let defined = source.functions.get(&offset).map(Arc::as_ref);
+            (defined, function_id(&source.path, offset))
+        }
+        None => (None, 0),
+    };
+    let mut function = match choose_entry(&named, defined) {
         Choice::Function(function) => function.info(&sources.user_types),
         // The entries do not tell which contract's function ran.
         Choice::Ambiguous(function) => {
@@ -114,6 +131,27 @@ fn resolve_entry(
         }
         Choice::Hidden => return None,
     };
+    // The functions that the table lists without an entry point, which can be merged into this
+    // entry: they take and leave as many words, and their body is the one of the function that
+    // kept the entry.
+    let same_body = defined
+        .and_then(|defined| defined.body_hash)
+        .and_then(|hash| sources.functions_by_body.get(&hash));
+    function.merged = artifact
+        .functions(is_create)
+        .unlisted
+        .iter()
+        .filter(|unlisted| {
+            (unlisted.parameter_slots, unlisted.return_slots)
+                == (entry.parameter_slots, entry.return_slots)
+                && same_body.is_some_and(|functions| {
+                    functions
+                        .iter()
+                        .any(|(name, id)| *id != defined_id && names_agree(&unlisted.name, name))
+                })
+        })
+        .map(|unlisted| unlisted.name.clone())
+        .collect();
     Some((entry.parameter_slots, entry.return_slots, function))
 }
 
@@ -401,6 +439,7 @@ mod tests {
             name: name.into(),
             is_entry: false,
             is_yul: false,
+            body_hash: None,
             params: None,
             returns: None,
         }

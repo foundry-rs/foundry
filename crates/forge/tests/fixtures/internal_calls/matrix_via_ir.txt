@@ -7,7 +7,7 @@ Ran 13 tests for test/Matrix.t.sol:MatrixTest
 Traces:
   [..] MatrixTest::test_am()
     ├─ [..] → new Matrix@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
-    │   └─ ← [Return] 4801 bytes of code
+    │   └─ ← [Return] 4720 bytes of code
     ├─ [..] Matrix::am([1, 2]) [staticcall]
     │   ├─ [..] Matrix::am(uint256[],uint256)(<unknown>, 0)
     │   │   └─ ← 2
@@ -18,18 +18,18 @@ Traces:
 Traces:
   [..] MatrixTest::test_ar()
     ├─ [..] → new Matrix@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
-    │   └─ ← [Return] 4801 bytes of code
+    │   └─ ← [Return] 4720 bytes of code
     ├─ [..] Matrix::ar([1, 2, 3]) [staticcall]
     │   ├─ [..] Matrix::ar(uint256[],uint256)(<unknown>, 1)
-    │   │   └─ ← 104
-    │   └─ ← [Return] 104
+    │   │   └─ ← 4
+    │   └─ ← [Return] 4
     └─ ← [Return]
 
 [PASS] test_av() ([GAS])
 Traces:
   [..] MatrixTest::test_av()
     ├─ [..] → new Matrix@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
-    │   └─ ← [Return] 4801 bytes of code
+    │   └─ ← [Return] 4720 bytes of code
     ├─ [..] Matrix::av(0x0000000000000000000000000000000000001234) [staticcall]
     │   ├─ [..] Matrix::av(uint160)(4660)
     │   │   └─ ← 4661
@@ -40,7 +40,7 @@ Traces:
 Traces:
   [..] MatrixTest::test_both()
     ├─ [..] → new Matrix@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
-    │   └─ ← [Return] 4801 bytes of code
+    │   └─ ← [Return] 4720 bytes of code
     ├─ [..] Matrix::both(2)
     │   ├─ [..] Matrix::both(uint256)(1)
     │   │   ├─ [..] Matrix::both(uint256)(0)
@@ -57,7 +57,7 @@ Traces:
 Traces:
   [..] MatrixTest::test_dc()
     ├─ [..] → new Matrix@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
-    │   └─ ← [Return] 4801 bytes of code
+    │   └─ ← [Return] 4720 bytes of code
     ├─ [..] Matrix::dc(4) [staticcall]
     │   ├─ [..] Matrix::dc(uint256,uint256)(4, 2)
     │   │   └─ ← 8
@@ -68,7 +68,7 @@ Traces:
 Traces:
   [..] MatrixTest::test_io()
     ├─ [..] → new Matrix@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
-    │   └─ ← [Return] 4801 bytes of code
+    │   └─ ← [Return] 4720 bytes of code
     ├─ [..] Matrix::io(2) [staticcall]
     │   ├─ [..] Matrix::io(uint256,uint256)(2, 5)
     │   │   └─ ← 7
@@ -79,7 +79,7 @@ Traces:
 Traces:
   [..] MatrixTest::test_ios()
     ├─ [..] → new Matrix@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
-    │   └─ ← [Return] 4801 bytes of code
+    │   └─ ← [Return] 4720 bytes of code
     ├─ [..] Matrix::ios(3) [staticcall]
     │   ├─ [..] Matrix::ios(int256)(3)
     │   │   └─ ← 6
@@ -90,7 +90,7 @@ Traces:
 Traces:
   [..] MatrixTest::test_rec()
     ├─ [..] → new Matrix@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
-    │   └─ ← [Return] 4801 bytes of code
+    │   └─ ← [Return] 4720 bytes of code
     ├─ [..] Matrix::rec(2) [staticcall]
     │   ├─ [..] Matrix::rec(uint256)(1)
     │   │   ├─ [..] Matrix::rec(uint256)(0)
@@ -103,7 +103,7 @@ Traces:
 Traces:
   [..] MatrixTest::test_same()
     ├─ [..] → new Matrix@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
-    │   └─ ← [Return] 4801 bytes of code
+    │   └─ ← [Return] 4720 bytes of code
     ├─ [..] Matrix::same(7)
     │   ├─ [..] Matrix::same(uint256)(7)
     │   │   └─ ← 7
@@ -114,7 +114,7 @@ Traces:
 Traces:
   [..] MatrixTest::test_sc()
     ├─ [..] → new Matrix@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
-    │   └─ ← [Return] 4801 bytes of code
+    │   └─ ← [Return] 4720 bytes of code
     ├─ [..] Matrix::sc(S({ a: 4 })) [staticcall]
     │   ├─ [..] Matrix::sc(uint256)(4)
     │   │   └─ ← 5
@@ -125,7 +125,7 @@ Traces:
 Traces:
   [..] MatrixTest::test_st()
     ├─ [..] → new Matrix@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
-    │   └─ ← [Return] 4801 bytes of code
+    │   └─ ← [Return] 4720 bytes of code
     ├─ [..] Matrix::st(S({ a: 4 })) [staticcall]
     │   ├─ [..] Matrix::st(<unknown>, 1)
     │   │   └─ ← 5
@@ -136,18 +136,18 @@ Traces:
 Traces:
   [..] MatrixTest::test_sup()
     ├─ [..] → new Matrix@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
-    │   └─ ← [Return] 4801 bytes of code
+    │   └─ ← [Return] 4720 bytes of code
     ├─ [..] Matrix::sup(5) [staticcall]
     │   ├─ [..] Base::sup(uint256)(5)
-    │   │   └─ ← 12
-    │   └─ ← [Return] 24
+    │   │   └─ ← 6
+    │   └─ ← [Return] 12
     └─ ← [Return]
 
 [PASS] test_sw() ([GAS])
 Traces:
   [..] MatrixTest::test_sw()
     ├─ [..] → new Matrix@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
-    │   └─ ← [Return] 4801 bytes of code
+    │   └─ ← [Return] 4720 bytes of code
     ├─ [..] Matrix::sw(3) [staticcall]
     │   ├─ [..] Matrix::sw(int256)(3)
     │   │   └─ ← 4

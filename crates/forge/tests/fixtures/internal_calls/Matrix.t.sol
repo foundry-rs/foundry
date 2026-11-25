@@ -4,7 +4,7 @@ struct S {
 
 contract Base {
     function sup(uint256 x) public pure virtual returns (uint256) {
-        return x + 7;
+        return x + 1;
     }
 }
 
@@ -71,7 +71,7 @@ contract Matrix is Base {
     }
 
     function ar(uint256[] memory xs, uint256 k) internal pure returns (uint256) {
-        return xs.length + k + 100;
+        return xs.length + k;
     }
 
     function am(uint256[] memory xs) public pure returns (uint256) {

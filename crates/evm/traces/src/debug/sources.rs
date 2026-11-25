@@ -1,6 +1,6 @@
 use super::{
-    CodeFunctions, FunctionEntry,
-    functions::{SourceFunction, UserType, UserTypes, collect, name_of_key},
+    CodeFunctions, FunctionEntry, UnlistedFunction,
+    functions::{SourceFunction, UserType, UserTypes, collect, collect_call_sites, name_of_key},
 };
 use evm2::interpreter::opcode::OpCode;
 use eyre::{Context, Result};
@@ -26,6 +26,7 @@ use serde::Deserialize;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fmt::Write,
+    hash::{DefaultHasher, Hash, Hasher},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -37,6 +38,8 @@ pub struct SourceData {
     pub path: PathBuf,
     /// Maps the byte offset of a function, modifier, or public state variable definition to it.
     pub functions: HashMap<usize, Arc<SourceFunction>>,
+    /// The name that each call expression calls, by the byte offset where it starts.
+    pub call_sites: HashMap<usize, String>,
     /// The user-defined types that the source declares.
     pub user_types: Vec<(String, Option<UserType>)>,
     /// The edits that a preprocessor made to the source before compilation, sorted by start
@@ -54,13 +57,16 @@ impl SourceData {
         source_edits: Vec<SourceEdit>,
     ) -> Self {
         let mut functions = HashMap::new();
+        let mut call_sites = HashMap::new();
         let mut user_types = Vec::new();
 
         if matches!(language, MultiCompilerLanguage::Solc(_)) {
             let r = output.parser().solc().compiler().enter(|compiler| -> Option<()> {
                 let (_, source) = compiler.gcx().get_ast_source(root.join(&path))?;
                 let ast = source.ast.as_ref()?;
-                collect(ast, compiler.sess().source_map(), &mut functions, &mut user_types);
+                let source_map = compiler.sess().source_map();
+                collect(ast, source_map, &mut functions, &mut user_types);
+                collect_call_sites(ast, source_map, &mut call_sites);
                 Some(())
             });
             if r.is_none() {
@@ -68,7 +74,7 @@ impl SourceData {
             }
         }
 
-        Self { source, language, path, functions, user_types, source_edits }
+        Self { source, language, path, functions, call_sites, user_types, source_edits }
     }
 }
 
@@ -133,14 +139,11 @@ impl ArtifactData {
                 .metadata
                 .as_ref()
                 .map(|metadata| metadata.settings.via_ir.unwrap_or_default()),
-            functions: CodeFunctions {
-                entries: entries(artifact.function_debug_data.as_ref()),
-                jumpdests,
-            },
-            functions_runtime: CodeFunctions {
-                entries: entries(artifact.deployed_function_debug_data.as_ref()),
-                jumpdests: jumpdests_runtime,
-            },
+            functions: code_functions(artifact.function_debug_data.as_ref(), jumpdests),
+            functions_runtime: code_functions(
+                artifact.deployed_function_debug_data.as_ref(),
+                jumpdests_runtime,
+            ),
             selectors: artifact
                 .abi
                 .iter()
@@ -156,6 +159,13 @@ impl ArtifactData {
     }
 }
 
+/// Tells a function of the sources apart from the others by its file and offset.
+pub fn function_id(path: &Path, offset: usize) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    (path, offset).hash(&mut hasher);
+    hasher.finish()
+}
+
 /// The offsets of the `JUMPDEST`s in `code`.
 fn jumpdests(code: &[u8]) -> HashSet<u32> {
     InstIter::new(code)
@@ -165,24 +175,37 @@ fn jumpdests(code: &[u8]) -> HashSet<u32> {
         .collect()
 }
 
-/// The functions that `functionDebugData` places in the code, by entry offset.
+/// The functions that `functionDebugData` places in the code, by entry offset, and the functions
+/// of the contract that it lists without one.
 ///
-/// An entry the compiler inlined has no offset.
-fn entries(data: Option<&BTreeMap<String, FunctionDebugData>>) -> HashMap<u32, Vec<FunctionEntry>> {
-    let mut entries = HashMap::<u32, Vec<FunctionEntry>>::new();
+/// A function the compiler inlined, or merged into another function with the same code, has no
+/// offset.
+fn code_functions(
+    data: Option<&BTreeMap<String, FunctionDebugData>>,
+    jumpdests: HashSet<u32>,
+) -> CodeFunctions {
+    let mut code = CodeFunctions { jumpdests, ..Default::default() };
     for (key, function) in data.into_iter().flatten() {
-        let (Some(entry_point), Some(parameter_slots), Some(return_slots)) =
-            (function.entry_point, function.parameter_slots, function.return_slots)
+        let (Some(parameter_slots), Some(return_slots)) =
+            (function.parameter_slots, function.return_slots)
         else {
             continue;
         };
-        entries.entry(entry_point).or_default().push(FunctionEntry {
-            name: function.id.and_then(|id| name_of_key(key, id)),
-            parameter_slots: parameter_slots as usize,
-            return_slots: return_slots as usize,
-        });
+        let name = function.id.and_then(|id| name_of_key(key, id));
+        let (parameter_slots, return_slots) = (parameter_slots as usize, return_slots as usize);
+        match (function.entry_point, name) {
+            (Some(entry_point), name) => code
+                .entries
+                .entry(entry_point)
+                .or_default()
+                .push(FunctionEntry { name, parameter_slots, return_slots }),
+            (None, Some(name)) => {
+                code.unlisted.push(UnlistedFunction { name, parameter_slots, return_slots });
+            }
+            (None, None) => {}
+        }
     }
-    entries
+    code
 }
 
 /// Container with artifacts data useful for identifying individual execution steps.
@@ -194,6 +217,9 @@ pub struct ContractSources {
     pub artifacts_by_name: HashMap<String, Vec<ArtifactData>>,
     /// The user-defined types of all sources by name, which function parameters refer to.
     pub user_types: UserTypes,
+    /// The functions of all sources by the hash of their body, which functions with the same code
+    /// share: their names, with a hash of the file and offset that tells them apart.
+    pub functions_by_body: HashMap<u64, Vec<(String, u64)>>,
 }
 
 impl ContractSources {
@@ -300,6 +326,12 @@ impl ContractSources {
             for (name, ty) in &source_data.user_types {
                 self.add_user_type(name.clone(), ty.clone());
             }
+            for (offset, function) in &source_data.functions {
+                if let Some(hash) = function.body_hash {
+                    let id = function_id(&source_data.path, *offset);
+                    self.add_function_by_body(hash, function.name.clone(), id);
+                }
+            }
         }
 
         if !removed_files.is_empty() {
@@ -345,11 +377,23 @@ impl ContractSources {
         }
     }
 
+    fn add_function_by_body(&mut self, hash: u64, name: String, id: u64) {
+        let functions = self.functions_by_body.entry(hash).or_default();
+        if !functions.iter().any(|(_, known)| *known == id) {
+            functions.push((name, id));
+        }
+    }
+
     /// Merges given contract sources.
     pub fn merge(&mut self, sources: Self) {
         self.sources_by_id.extend(sources.sources_by_id);
         for (name, ty) in sources.user_types {
             self.add_user_type(name, ty);
+        }
+        for (hash, functions) in sources.functions_by_body {
+            for (name, id) in functions {
+                self.add_function_by_body(hash, name, id);
+            }
         }
         for (name, artifacts) in sources.artifacts_by_name {
             self.artifacts_by_name.entry(name).or_default().extend(artifacts);
@@ -492,6 +536,7 @@ mod tests {
                 language: Default::default(),
                 path: PathBuf::from(path),
                 functions: HashMap::new(),
+                call_sites: HashMap::new(),
                 user_types: Vec::new(),
                 source_edits: Vec::new(),
             })

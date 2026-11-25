@@ -10,15 +10,21 @@ use super::Param;
 use alloy_dyn_abi::{DynSolType, parser::Storage};
 use solar::{
     ast::{
-        DataLocation, ElementaryType, ExprKind, FunctionKind, ImportItems, Item, ItemKind, LitKind,
-        SourceUnit, Type, TypeKind, VariableDefinition, Visibility,
+        DataLocation, ElementaryType, Expr, ExprKind, FunctionKind, ImportItems, Item,
+        ItemFunction, ItemKind, LitKind, SourceUnit, Type, TypeKind, VariableDefinition,
+        Visibility,
         visit::Visit,
         yul::{self, StmtKind as YulStmtKind},
     },
     data_structures::Never,
     interface::{Ident, source_map::SourceMap},
 };
-use std::{collections::HashMap, ops::ControlFlow, sync::Arc};
+use std::{
+    collections::HashMap,
+    hash::{DefaultHasher, Hash, Hasher},
+    ops::ControlFlow,
+    sync::Arc,
+};
 
 /// The user-defined types of the sources by name, or `None` for a name that two types share.
 pub type UserTypes = HashMap<String, Option<UserType>>;
@@ -49,6 +55,10 @@ pub struct SourceFunction {
     /// Whether it is a function of an inline assembly block. Those have no types: every value is
     /// a word.
     pub is_yul: bool,
+    /// A hash of the body without spaces and of the parameter and return types, with the names of
+    /// the parameters and return values replaced by their positions, for telling which functions
+    /// can have the same code. `None` for getters and functions without a body.
+    pub body_hash: Option<u64>,
     /// The parameters, or `None` for a getter, whose parameters the AST does not list.
     pub(super) params: Option<Vec<SourceParam>>,
     /// The return values, or `None` for a getter.
@@ -71,6 +81,10 @@ pub struct FunctionInfo {
     pub abi_types: Option<Vec<AbiType>>,
     /// Whether the dispatcher or the call frame itself enters it.
     pub is_entry: bool,
+    /// The names of the functions without an entry point that the compiler may have merged into
+    /// this function, because they take and leave as many words and have the same code. A call
+    /// to the entry can be a call to any of them.
+    pub merged: Vec<String>,
 }
 
 /// What the ABI spells for a parameter of a function.
@@ -125,6 +139,7 @@ impl FunctionInfo {
             returns: None,
             abi_types: None,
             is_entry,
+            merged: Vec::new(),
         }
     }
 }
@@ -197,6 +212,7 @@ impl SourceFunction {
             declared_name: self.name.clone(),
             abi_types,
             is_entry: self.is_entry,
+            merged: Vec::new(),
         }
     }
 }
@@ -326,6 +342,7 @@ fn collect_item<'ast>(
                 name: name.to_string(),
                 is_entry: function.kind == FunctionKind::Function && public,
                 is_yul: false,
+                body_hash: body_hash(function, source_map),
                 params: Some(params(function.header.parameters.vars)),
                 returns: Some(
                     function.header.returns.as_ref().map_or_else(Vec::new, |r| params(r.vars)),
@@ -340,6 +357,7 @@ fn collect_item<'ast>(
                 name: name.to_string(),
                 is_entry: true,
                 is_yul: false,
+                body_hash: None,
                 params: None,
                 returns: None,
             })
@@ -365,6 +383,36 @@ fn collect_item<'ast>(
         && let Ok(range) = source_map.span_to_range(item.span)
     {
         functions.insert(range.start, Arc::new(function));
+    }
+}
+
+/// Collects the call expressions of a parsed source file: the name that each calls, by the byte
+/// offset where the expression starts. A call through a variable, such as a function pointer, is
+/// recorded by the name of the variable.
+pub fn collect_call_sites<'ast>(
+    ast: &'ast SourceUnit<'ast>,
+    source_map: &SourceMap,
+    call_sites: &mut HashMap<usize, String>,
+) {
+    let _ = CallSites { source_map, call_sites }.visit_source_unit(ast);
+}
+
+struct CallSites<'a> {
+    source_map: &'a SourceMap,
+    call_sites: &'a mut HashMap<usize, String>,
+}
+
+impl<'ast> Visit<'ast> for CallSites<'_> {
+    type BreakValue = Never;
+
+    fn visit_expr(&mut self, expr: &'ast Expr<'ast>) -> ControlFlow<Self::BreakValue> {
+        if let ExprKind::Call(callee, _) = &expr.kind
+            && let ExprKind::Ident(name) | ExprKind::Member(_, name) = &callee.kind
+            && let Ok(range) = self.source_map.span_to_range(expr.span)
+        {
+            self.call_sites.insert(range.start, name.to_string());
+        }
+        self.walk_expr(expr)
     }
 }
 
@@ -395,6 +443,7 @@ impl<'ast> Visit<'ast> for YulFunctions<'_> {
                     name: function.name.to_string(),
                     is_entry: false,
                     is_yul: true,
+                    body_hash: None,
                     params: Some(words(function.parameters)),
                     returns: Some(words(function.returns)),
                 }),
@@ -402,6 +451,51 @@ impl<'ast> Visit<'ast> for YulFunctions<'_> {
         }
         self.walk_yul_stmt(stmt)
     }
+}
+
+/// Hashes the body of a function and the types of its parameters and return values, with the names
+/// of the parameters and return values replaced by their positions, so that functions with the
+/// same code have the same hash.
+fn body_hash(function: &ItemFunction<'_>, source_map: &SourceMap) -> Option<u64> {
+    function.body.as_ref()?;
+    let body = source_map.span_to_snippet(function.body_span).ok()?;
+    let names = function
+        .header
+        .parameters
+        .vars
+        .iter()
+        .chain(function.header.returns.iter().flat_map(|returns| returns.vars.iter()))
+        .map(|var| var.name.map(|name| name.to_string()))
+        .collect::<Vec<_>>();
+    let mut hasher = DefaultHasher::new();
+    // The code depends on the types of the parameters and return values as well.
+    let returns = function.header.returns.iter().flat_map(|returns| returns.vars.iter());
+    for var in function.header.parameters.vars.iter().chain(returns) {
+        format!("{:?}{:?}", source_type(&var.ty), var.data_location).hash(&mut hasher);
+    }
+    let mut word = String::new();
+    // Hash the words and the other characters of the body, skipping white space.
+    let flush = |word: &mut String, hasher: &mut DefaultHasher| {
+        if !word.is_empty() {
+            match names.iter().position(|name| name.as_deref() == Some(word.as_str())) {
+                Some(position) => (true, position).hash(hasher),
+                None => (false, word.as_str()).hash(hasher),
+            }
+            word.clear();
+        }
+    };
+    for c in body.chars() {
+        if c.is_alphanumeric() || c == '_' || c == '$' {
+            word.push(c);
+        } else {
+            flush(&mut word, &mut hasher);
+            if !c.is_whitespace() {
+                c.hash(&mut hasher);
+            }
+        }
+    }
+    flush(&mut word, &mut hasher);
+    Some(hasher.finish())
 }
 
 fn params(vars: &[VariableDefinition<'_>]) -> Vec<SourceParam> {

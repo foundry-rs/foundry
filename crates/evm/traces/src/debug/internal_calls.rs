@@ -15,7 +15,10 @@
 //! call that the trace shows already, so it is not shown either. Via-IR codegen calls modifiers
 //! like functions, so they appear as calls there. Legacy codegen inlines them.
 
-use super::{DecodedInternalCall, args_match_calldata, decode_parameters, functions::FunctionInfo};
+use super::{
+    DecodedInternalCall, args_match_calldata, decode_parameters,
+    functions::{FunctionInfo, names_agree},
+};
 use crate::CallTraceStep;
 use alloy_primitives::U256;
 use evm2::interpreter::opcode::OpCode;
@@ -37,6 +40,18 @@ pub struct FunctionEntry {
     pub return_slots: usize,
 }
 
+/// A function of the contract that the table lists without an entry point, because the compiler
+/// inlined it, or merged it into another function with the same code.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnlistedFunction {
+    /// The name that the key spells.
+    pub name: String,
+    /// The stack words the function takes.
+    pub parameter_slots: usize,
+    /// The stack words the function leaves.
+    pub return_slots: usize,
+}
+
 /// The entry points and jump destinations of one code of a contract, which creation code and
 /// runtime code each have.
 #[derive(Clone, Debug, Default)]
@@ -44,6 +59,8 @@ pub struct CodeFunctions {
     /// The function entries by offset of their first `JUMPDEST`. Functions that the compiler
     /// merged into one share an offset.
     pub entries: HashMap<u32, Vec<FunctionEntry>>,
+    /// The functions without an entry point.
+    pub unlisted: Vec<UnlistedFunction>,
     /// The offsets of all `JUMPDEST`s.
     pub jumpdests: HashSet<u32>,
 }
@@ -117,6 +134,8 @@ pub struct TrackerContext<'a> {
     pub calldata: &'a [u8],
     /// Whether the call data selects the external function, which the dispatcher then enters.
     pub is_dispatched: &'a dyn Fn(&FunctionInfo) -> bool,
+    /// The name that the call at the `JUMP` at a step calls, if the source map tells.
+    pub callee_name: &'a dyn Fn(usize) -> Option<String>,
     /// Finds the function that the `JUMP` at a step enters from the source map, for a function
     /// that `functionDebugData` does not list.
     pub from_source_map: &'a dyn Fn(usize) -> Option<SourceMapFunction>,
@@ -240,6 +259,11 @@ impl Tracker<'_> {
             self.close(top, i - 1, None);
         }
 
+        if let Some(info) = &function
+            && !info.merged.is_empty()
+        {
+            function = self.settle_merge(i, info);
+        }
         let mut args = function.as_ref().and_then(|function| {
             let convention = convention?;
             let params = function.params.as_deref()?;
@@ -282,6 +306,28 @@ impl Tracker<'_> {
             function,
             args,
         });
+    }
+
+    /// Settles which function the call at step `i` enters, if the compiler may have merged other
+    /// functions with the same code into the function `info` of the entry. The name at the call
+    /// site tells: the entry is the function of that name if no other function is, and if the
+    /// call site calls a function that was merged away, only that name is shown, without the
+    /// types and arguments of the function that kept the entry. A call whose callee the source
+    /// map does not tell, or tells to be none of the functions, is not shown.
+    fn settle_merge(&self, i: usize, info: &Arc<FunctionInfo>) -> Option<Arc<FunctionInfo>> {
+        let callee = (self.context.callee_name)(i)?;
+        let is_merged = |name: &str| info.merged.iter().any(|merged| names_agree(merged, name));
+        if names_agree(&callee, &info.declared_name) {
+            // Overloads that differ in their types only share a name.
+            return Some(if is_merged(&info.declared_name) {
+                Arc::new(FunctionInfo::untyped(info.declared_name.clone(), info.is_entry))
+            } else {
+                info.clone()
+            });
+        }
+        // A callee that is none of the functions is not trusted: the optimizer can leave a jump
+        // with the source location of another one.
+        is_merged(&callee).then(|| Arc::new(FunctionInfo::untyped(callee, false)))
     }
 
     /// Handles the `JUMP` at step `i` that returns from frame `k`.
@@ -372,6 +418,7 @@ mod tests {
             name: name.into(),
             declared_name: name.into(),
             abi_types: None,
+            merged: Vec::new(),
             params,
             returns: uint(1),
             is_entry,
@@ -395,10 +442,25 @@ mod tests {
         f: FunctionInfo,
         (is_create, is_dispatched): (bool, &dyn Fn(&FunctionInfo) -> bool),
     ) -> Vec<Summary> {
+        track_at(steps, convention, parameter_slots, f, (is_create, is_dispatched, &|_| None))
+    }
+
+    fn track_at(
+        steps: &[CallTraceStep],
+        convention: Option<CallConvention>,
+        parameter_slots: usize,
+        f: FunctionInfo,
+        (is_create, is_dispatched, callee_name): (
+            bool,
+            &dyn Fn(&FunctionInfo) -> bool,
+            &dyn Fn(usize) -> Option<String>,
+        ),
+    ) -> Vec<Summary> {
         let entry = || FunctionEntry { name: None, parameter_slots, return_slots: 1 };
         let code = CodeFunctions {
             entries: HashMap::from([(F, vec![entry()]), (G, vec![entry()])]),
             jumpdests: HashSet::from([F, G, RET, OTHER_RET]),
+            ..Default::default()
         };
         let g = function("g", Some(parameter_slots), false);
         let resolve = |pc: u32, _: &[FunctionEntry]| {
@@ -412,6 +474,7 @@ mod tests {
             convention,
             calldata: &CALLDATA,
             is_dispatched,
+            callee_name,
             from_source_map: &|_| None,
         };
         track_internal_calls(steps, &context)
@@ -573,6 +636,44 @@ mod tests {
     }
 
     #[test]
+    fn a_merged_entry_is_named_by_the_call_site() {
+        // `f` kept the entry, and `h` and the overload `f` have the same code and were merged.
+        let steps = [jump(F, &[RET.into(), 5]), jump(RET, &[6])].concat();
+        let legacy = Some(CallConvention::SolcLegacy);
+        let f = || FunctionInfo {
+            merged: vec!["h".into(), "f".into()],
+            ..function("C::f(uint256)", Some(1), false)
+        };
+        let f = || FunctionInfo { declared_name: "f".into(), ..f() };
+        let calls = |callee: Option<&'static str>| {
+            let callee = move |_: usize| callee.map(String::from);
+            track_at(&steps, legacy, 1, f(), (false, &|_| true, &callee))
+        };
+        let shown = |name: &str, args, returns| [(0, 3, name.into(), args, returns)];
+
+        // The call site calls the function that was merged away: only its name is known.
+        assert_eq!(calls(Some("h")), shown("h", None, None));
+        // An overload of the function that kept the entry cannot be told apart by its types.
+        assert_eq!(calls(Some("f")), shown("f", None, None));
+        // Any other callee is not trusted.
+        assert_eq!(calls(Some("pointer")), []);
+        // Without a callee the function is not known.
+        assert_eq!(calls(None), []);
+    }
+
+    #[test]
+    fn an_entry_without_merged_functions_is_named_by_the_table() {
+        let steps = [jump(F, &[RET.into(), 5]), jump(RET, &[6])].concat();
+        let legacy = Some(CallConvention::SolcLegacy);
+        let callee = |_: usize| Some("other".to_string());
+
+        assert_eq!(
+            track_at(&steps, legacy, 1, function("f", Some(1), false), (false, &|_| true, &callee)),
+            [(0, 3, "f".into(), strings(&["5"]), strings(&["6"]))]
+        );
+    }
+
+    #[test]
     fn matches_a_signature_by_name_and_parameter_types() {
         let function = |types| FunctionInfo {
             abi_types: Some(types),
@@ -599,7 +700,7 @@ mod tests {
     fn functions_found_from_the_source_map_report_their_argument_order() {
         // `sub2(10, 3)` enters with `[ret, 3, 10]` if the first argument is on top.
         let steps = [jump(F, &[RET.into(), 3, 10]), jump(RET, &[7])].concat();
-        let code = CodeFunctions { entries: HashMap::new(), jumpdests: HashSet::from([F, RET]) };
+        let code = CodeFunctions { jumpdests: HashSet::from([F, RET]), ..Default::default() };
         let calls = |convention| {
             let from_source_map = |_: usize| {
                 Some(SourceMapFunction {
@@ -617,6 +718,7 @@ mod tests {
                 convention: Some(CallConvention::SolcLegacy),
                 calldata: &[],
                 is_dispatched: &|_| true,
+                callee_name: &|_| None,
                 from_source_map: &from_source_map,
             };
             track_internal_calls(&steps, &context)
