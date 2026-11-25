@@ -126,3 +126,31 @@ library JsonBindings {
 
     cmd.forge_fuse().args(["test"]).assert_success();
 }
+
+// `immutable` variables cannot stay in the preprocessed sources, and removing one must also remove
+// its `;`.
+#[forgetest]
+fn bind_json_removes_immutable_variables(prj: _, cmd: _) {
+    prj.add_source(
+        "Holder.sol",
+        r#"
+contract Holder {
+    struct Item {
+        uint256 value;
+    }
+
+    uint256 immutable limit = 1;
+    uint256 public constant FLOOR = 2;
+
+    function read() external view returns (uint256) {
+        return limit + FLOOR;
+    }
+}
+"#,
+    );
+
+    cmd.arg("bind-json").assert_success().stderr_eq(snapbox::str![[r#"
+Bindings written to [..]
+
+"#]]);
+}
