@@ -43,9 +43,6 @@ struct SourceVisitor<'gcx> {
     /// Deferred function-call spans, each paired with the contract scope active where the call
     /// was collected, so scope travels with the span to the delayed HIR resolution pass.
     function_calls: Vec<(Span, Arc<str>)>,
-    /// Whether any call was collected, including those of contracts dropped afterwards, which
-    /// still count as calls to the functions they name.
-    has_calls: bool,
     function_call_scopes: FxHashMap<Span, Arc<str>>,
     /// The span of the statement that follows each `if` statement in its block.
     stmts_after_if: FxHashMap<Span, Span>,
@@ -210,7 +207,6 @@ impl<'gcx> SourceVisitor<'gcx> {
             branch_kinds: Default::default(),
             all_lines: Default::default(),
             function_calls: Default::default(),
-            has_calls: false,
             function_call_scopes: Default::default(),
             stmts_after_if: Default::default(),
             hir_source_ids,
@@ -666,7 +662,6 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
             ExprKind::Call(callee, _args) => {
                 // Resolve later. Capture the current contract scope so it travels with the span.
                 self.function_calls.push((expr.span, self.contract_name.clone()));
-                self.has_calls = true;
 
                 if let ExprKind::Ident(ident) = &callee.kind {
                     // Might be a require call, add branch coverage.
@@ -1012,9 +1007,9 @@ impl SourceAnalysis {
                         }
                     }
 
-                    if visitor.has_calls || !visitor.revert_guards.is_empty() {
-                        visitor.resolve_function_calls(hir_source_id);
-                    }
+                    // Every source is walked, also one without calls: a reference to a function
+                    // that is not a call, as a function pointer's value, runs the function too.
+                    visitor.resolve_function_calls(hir_source_id);
 
                     if !visitor.items.is_empty() {
                         visitor.disambiguate_functions();
