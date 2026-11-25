@@ -6,9 +6,9 @@ use comfy_table::{
     Attribute, Cell, Color, Row, Table,
     presets::{ASCII_FULL, ASCII_MARKDOWN},
 };
+use evm2::{SpecId, bytecode::Instructions};
 use foundry_common::{fs, shell};
 use foundry_compilers::artifacts::Source;
-use foundry_evm::core::bytecode::InstIter;
 use semver::Version;
 use serde::{Serialize, ser::SerializeSeq};
 use std::{
@@ -533,8 +533,9 @@ impl CoverageReporter for BytecodeReporter {
             let source_elements =
                 report.source_maps.get(contract_id).map(|sm| &sm.1).unwrap_or(&no_source_elements);
 
-            let ops = InstIter::new(hits.bytecode()).with_pc();
-            for ((pc, inst), source_element) in std::iter::zip(ops, source_elements) {
+            let ops = Instructions::new(hits.bytecode(), SpecId::DEFAULT);
+            for (inst, source_element) in std::iter::zip(ops, source_elements) {
+                let pc = inst.pc;
                 let hits =
                     hits.get(pc as u32).map(|h| format!("[{h:03}]")).unwrap_or("     ".to_owned());
                 let source_id = source_element.index();

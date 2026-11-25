@@ -28,7 +28,6 @@ pub mod abi {
 
 pub mod backend;
 pub mod buffer;
-pub mod bytecode;
 pub mod constants;
 pub mod decode;
 pub mod edgecov;

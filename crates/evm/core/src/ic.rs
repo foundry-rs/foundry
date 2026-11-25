@@ -1,5 +1,5 @@
-use crate::bytecode::InstIter;
 use alloy_primitives::map::rustc_hash::FxHashMap;
+use evm2::{SpecId, bytecode::Instructions};
 use serde::Serialize;
 
 /// Maps from program counter to instruction counter.
@@ -70,7 +70,8 @@ impl IcPcMap {
 fn make_map<const PC_FIRST: bool>(code: &[u8]) -> FxHashMap<u32, u32> {
     assert!(code.len() <= u32::MAX as usize, "bytecode is too big");
     let mut map = FxHashMap::with_capacity_and_hasher(code.len(), Default::default());
-    for (ic, (pc, _)) in InstIter::new(code).with_pc().enumerate() {
+    for (ic, inst) in Instructions::new(code, SpecId::DEFAULT).enumerate() {
+        let pc = inst.pc;
         if PC_FIRST {
             map.insert(pc as u32, ic as u32);
         } else {

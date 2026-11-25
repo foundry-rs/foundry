@@ -9,6 +9,8 @@ use alloy_network::Network;
 use alloy_primitives::{Address, Bytes, map::AddressHashMap};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
+use evm2::SpecId;
+use evm2_jit_codegen::analyze_blocks;
 use eyre::Result;
 use foundry_cli::{
     json::print_scalar,
@@ -17,12 +19,12 @@ use foundry_cli::{
 };
 use foundry_common::{provider::RetryProvider, shell};
 use foundry_config::{Config, figment::Figment};
-use foundry_evm::{core::bytecode::InstIter, opts::EvmOpts};
+use foundry_evm::opts::EvmOpts;
 use foundry_evm_networks::NetworkVariant;
 use futures::StreamExt;
 use serde::Serialize;
 use serde_json::Value;
-use std::fmt::{Display, Write};
+use std::fmt::Display;
 
 const MAX_CONCURRENT_RPC_REQUESTS: usize = 5;
 
@@ -183,12 +185,10 @@ pub(crate) async fn resolve_transaction_network(
     Ok(provider.get_chain_id().await?.into())
 }
 
-pub(crate) fn disassemble(code: &[u8]) -> Result<String> {
-    let mut output = String::new();
-    for (pc, inst) in InstIter::new(code).with_pc() {
-        writeln!(output, "{pc:08x}: {inst}")?;
-    }
-    Ok(output)
+/// Disassembles `code` into basic blocks, with the targets of the jumps the JIT's analysis
+/// resolves.
+pub(crate) fn disassemble(code: &[u8]) -> String {
+    analyze_blocks(code, SpecId::NEXT).to_string()
 }
 
 /// Rejects blob options before Base's transaction builder can discard them.

@@ -17,16 +17,16 @@ fn can_disassemble_contract_code(cmd: _) {
     ])
     .assert_success()
     .stdout_eq(str![[r#"
-00000000: PUSH1 0x60
-00000002: PUSH1 0x40
-00000004: MSTORE
-00000005: CALLDATASIZE
-00000006: ISZERO
-00000007: PUSH2 0x010f
-0000000a: JUMPI
-0000000b: PUSH4 0xffffffff
-00000010: PUSH29 0x0100000000000000000000000000000000000000000000000000000000
-0000002e: PUSH1 0x00
+bb0:
+  0000  PUSH1 0x60
+  0002  PUSH1 0x40
+  0004  MSTORE
+  0005  CALLDATASIZE
+  0006  ISZERO
+  0007  PUSH2 0x010f
+  000a  JUMPI  ; -> bb21, else bb1
+bb1:
+  000b  PUSH4 0xffffffff
 ...
 "#]]);
 }
@@ -72,14 +72,64 @@ async fn codehash_empty(cmd: _) {
 
 #[casttest]
 fn disassemble_incomplete_sequence(cmd: _) {
-    cmd.cast_fuse().args(["disassemble", "60"]).assert_success().stdout_eq("00000000: PUSH1\n\n");
-    cmd.cast_fuse()
-        .args(["disassemble", "6000"])
-        .assert_success()
-        .stdout_eq("00000000: PUSH1 0x00\n\n");
+    cmd.cast_fuse().args(["disassemble", "60"]).assert_success().stdout_eq(str![[r#"
+bb0:
+  0000  PUSH1
+
+"#]]);
+    cmd.cast_fuse().args(["disassemble", "6000"]).assert_success().stdout_eq(str![[r#"
+bb0:
+  0000  PUSH1 0x00
+
+"#]]);
     cmd.cast_fuse()
         .args(["disassemble", "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"])
         .assert_success()
-        .stdout_eq("00000000: PUSH32\n\n");
-    cmd.cast_fuse().args(["disassemble", "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"]).assert_success().stdout_eq("00000000: PUSH32 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\n\n");
+        .stdout_eq(str![[r#"
+bb0:
+  0000  PUSH32 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+
+"#]]);
+    cmd.cast_fuse()
+        .args(["disassemble", "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+bb0:
+  0000  PUSH32 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+
+"#]]);
+}
+
+// An internal function called from two places returns to both call sites.
+#[casttest]
+fn disassemble_dynamic_jump(cmd: _) {
+    cmd.args(["disassemble", "6005600d565b600b600d565b005b56"]).assert_success().stdout_eq(str![[
+        r#"
+bb0:
+  0000  PUSH1 0x05
+  0002  PUSH1 0x0d
+  0004  JUMP  ; -> bb3
+bb1:
+  0005  JUMPDEST
+  0006  PUSH1 0x0b
+  0008  PUSH1 0x0d
+  000a  JUMP  ; -> bb3
+bb2:
+  000b  JUMPDEST
+  000c  STOP
+bb3:
+  000d  JUMPDEST
+  000e  JUMP  ; -> bb1, bb2
+
+"#
+    ]]);
+}
+
+#[casttest]
+fn disassemble_unknown_opcode(cmd: _) {
+    cmd.args(["disassemble", "0c"]).assert_success().stdout_eq(str![[r#"
+bb0:
+  0000  UNKNOWN(0x0c)
+
+"#]]);
 }

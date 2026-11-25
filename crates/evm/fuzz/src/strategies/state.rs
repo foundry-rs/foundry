@@ -12,7 +12,8 @@ use alloy_primitives::{
     map::{AddressIndexSet, B256IndexSet, HashMap, HashSet, IndexMap, IndexSet},
 };
 use evm2::{
-    bytecode::Bytecode,
+    SpecId,
+    bytecode::{Bytecode, Instructions},
     evm::{AccountChanges, AccountInfo, CacheDB},
 };
 use foundry_common::{
@@ -20,7 +21,7 @@ use foundry_common::{
     slot_identifier::{SlotIdentifier, SlotInfo},
 };
 use foundry_config::FuzzDictionaryConfig;
-use foundry_evm_core::{bytecode::InstIter, eip2935::is_history_storage_address};
+use foundry_evm_core::eip2935::is_history_storage_address;
 use std::{cell::RefCell, fmt, rc::Rc, sync::Arc};
 
 #[cfg(test)]
@@ -645,7 +646,7 @@ impl FuzzDictionary {
         let len = code.len().min(PUSH_BYTE_ANALYSIS_LIMIT);
         let code = &code[..len];
         let mut seen = HashSet::default();
-        for inst in InstIter::new(code) {
+        for inst in Instructions::new(code, SpecId::DEFAULT) {
             if self.values_full() {
                 break;
             }

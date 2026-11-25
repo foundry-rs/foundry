@@ -4,6 +4,7 @@
 //! the REPL contract's source code. It provides simple compilation, parsing, and
 //! execution helpers.
 
+use evm2::{SpecId, bytecode::Instructions};
 use eyre::Result;
 use foundry_compilers::{
     Artifact, ProjectCompileOutput,
@@ -15,10 +16,7 @@ use foundry_config::{
     Config, EtherscanConfigs, FoundryHardfork, RpcEndpoints, SolcReq, cache::CachedEndpoints,
 };
 use foundry_evm::{
-    backend::Backend,
-    core::{bytecode::InstIter, evm::FoundryEvmNetwork},
-    executors::ExecutorBuilder,
-    opts::EvmOpts,
+    backend::Backend, core::evm::FoundryEvmNetwork, executors::ExecutorBuilder, opts::EvmOpts,
 };
 use foundry_evm_networks::NetworkConfigs;
 use semver::Version;
@@ -208,7 +206,7 @@ impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
             .get_source_map_deployed()
             .ok_or_else(|| eyre::eyre!("No source map found for `REPL` contract"))??
             .into_iter()
-            .zip(InstIter::new(deployed_bytecode_bytes).with_pc().map(|(pc, _)| pc))
+            .zip(Instructions::new(deployed_bytecode_bytes, SpecId::DEFAULT).map(|inst| inst.pc))
             .filter(|(s, _)| s.offset() == offset && s.length() == length)
             .map(|(_, pc)| pc)
             .max();

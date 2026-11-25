@@ -62,7 +62,7 @@ impl CreationCodeArgs {
         .await?;
 
         if disassemble {
-            sh_println!("{}", super::disassemble(&bytecode)?)?;
+            sh_println!("{}", super::disassemble(&bytecode))?;
         } else {
             sh_println!("{bytecode}")?;
         }

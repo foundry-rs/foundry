@@ -100,7 +100,7 @@ pub fn validate_bal(
     for account in bal {
         // Reject invalid code even in earlier changes or incomplete accounts.
         for change in &account.code_changes {
-            Bytecode::new_raw_checked(change.new_code.clone()).wrap_err("invalid BAL code")?;
+            Bytecode::new_raw_checked(change.new_code().clone()).wrap_err("invalid BAL code")?;
         }
     }
     Ok(())
@@ -132,8 +132,8 @@ fn cache_bal_accounts(accounts: &mut AddressHashMap<AccountInfo>, bal: &BlockAcc
             accounts.entry(account.address()).or_insert_with(|| AccountInfo {
                 balance,
                 nonce,
-                code_hash: keccak256(&code.new_code),
-                code: Some(code.new_code.clone()),
+                code_hash: keccak256(code.new_code()),
+                code: Some(code.new_code().clone()),
                 // BALs carry no account extension; only Ethereum sources, which have none, are
                 // eligible.
                 extension: Bytes::new(),

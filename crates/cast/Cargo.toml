@@ -77,6 +77,7 @@ sha2 = "0.10"
 
 chrono.workspace = true
 evm2.workspace = true
+evm2-jit-codegen.workspace = true
 eyre.workspace = true
 futures.workspace = true
 rand.workspace = true

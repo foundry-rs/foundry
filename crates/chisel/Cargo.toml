@@ -43,6 +43,7 @@ alloy-json-abi.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "wrap_help"] }
 dirs.workspace = true
+evm2.workspace = true
 eyre.workspace = true
 reqwest.workspace = true
 rustyline = "18"

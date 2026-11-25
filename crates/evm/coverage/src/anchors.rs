@@ -3,10 +3,10 @@ use super::{
 };
 use crate::analysis::{BranchKind, EmptySpecialFunctionKind, IfArms, SourceAnalysis, TernaryArms};
 use alloy_primitives::{U256, map::rustc_hash::FxHashSet};
-use evm2::interpreter::op as opcode;
+use evm2::{SpecId, bytecode::Instructions, interpreter::op as opcode};
 use eyre::ensure;
 use foundry_compilers::artifacts::sourcemap::{Jump, SourceElement, SourceMap};
-use foundry_evm_core::{bytecode::InstIter, ic::IcPcMap};
+use foundry_evm_core::ic::IcPcMap;
 use std::ops::Range;
 
 impl ItemAnchor {
@@ -244,7 +244,8 @@ impl<'a> AnchorIndex<'a> {
         let mut run_start = 0;
         let mut prev = opcode::STOP;
         let mut prev_target = None;
-        for (ic, (pc, inst)) in InstIter::new(bytecode).with_pc().enumerate() {
+        for (ic, inst) in instructions(bytecode).enumerate() {
+            let pc = inst.pc;
             opcodes.push(inst.opcode.get());
             falls_through.push(!matches!(
                 prev,
@@ -939,15 +940,15 @@ impl<'a> AnchorIndex<'a> {
                 && element.length() == 1
         };
         let mut returns = Vec::new();
-        for (ic, (pc, instruction)) in InstIter::new(self.bytecode).with_pc().enumerate() {
+        for (ic, instruction) in instructions(self.bytecode).enumerate() {
+            let pc = instruction.pc;
             if instruction.opcode.get() != opcode::JUMPDEST
                 || !self.source_map.get(ic).is_some_and(exact)
             {
                 continue;
             }
-            for (relative, (offset, instruction)) in
-                InstIter::new(&self.bytecode[pc..]).with_pc().enumerate().take(32)
-            {
+            for (relative, instruction) in instructions(&self.bytecode[pc..]).enumerate().take(32) {
+                let offset = instruction.pc;
                 match instruction.opcode.get() {
                     opcode::JUMPDEST if relative == 0 => {}
                     opcode::PUSH0
@@ -1008,10 +1009,9 @@ impl<'a> AnchorIndex<'a> {
     /// The other successor must positively reach the source continuation in this same function.
     /// An unsupported error stub is unknown, not evidence for the opposite branch's polarity.
     fn continues_after(&self, start: usize, guard: &super::RevertGuard) -> bool {
-        for (ic, (_, instruction)) in InstIter::new(self.bytecode)
-            .with_pc()
+        for (ic, instruction) in instructions(self.bytecode)
             .enumerate()
-            .skip_while(|(_, (pc, _))| *pc < start)
+            .skip_while(|(_, instruction)| instruction.pc < start)
             .take(32)
         {
             match instruction.opcode.get() {
@@ -1050,7 +1050,7 @@ impl<'a> AnchorIndex<'a> {
 fn constant_revert_selector(bytecode: &[u8], pc: usize) -> Option<[u8; 4]> {
     let mut stack = Vec::<U256>::new();
     let mut memory = [None; 64];
-    for (_, inst) in InstIter::new(bytecode.get(pc..)?).with_pc().take(32) {
+    for inst in instructions(bytecode.get(pc..)?).take(32) {
         match inst.opcode.get() {
             opcode::JUMPDEST => {}
             opcode::PUSH0 => stack.push(U256::ZERO),
@@ -1128,6 +1128,12 @@ fn is_in_source_range(element: &SourceElement, location: &SourceLocation) -> boo
     let end_of_ranges =
         (location.bytes.start + location.len()).min(element.offset() + element.length());
     start_of_ranges <= end_of_ranges
+}
+
+/// Returns an iterator over the instructions of `code`, as the compilers' instruction counters
+/// number them.
+fn instructions(code: &[u8]) -> Instructions<'_> {
+    Instructions::new(code, SpecId::DEFAULT)
 }
 
 #[cfg(test)]
@@ -1266,7 +1272,7 @@ mod tests {
             (&both_revert[..], [(5, None), (8, Some(4))]),
             (&taken_branches[..], [(5, None), (6, Some(4))]),
         ] {
-            let count = InstIter::new(bytecode).count();
+            let count = instructions(bytecode).count();
             // Only the condition and the jump belong to the require.
             let source_map = format!("10:20:0;;;50:5:0{}", ";".repeat(count - 4));
             assert_eq!(require_anchors(bytecode, &[10], &source_map), expected);
@@ -1571,7 +1577,7 @@ mod tests {
         // Each require maps its condition and jump. Other code lies outside both spans.
         let source_map = format!(
             "10:20:0;;;40:20:0;;;90:5:0{}",
-            ";".repeat(InstIter::new(&bytecode).count() - 7)
+            ";".repeat(instructions(&bytecode).count() - 7)
         );
         assert_eq!(
             require_anchors(&bytecode, &[10, 40], &source_map),
@@ -1711,7 +1717,7 @@ mod tests {
             opcode::JUMPDEST,
         ];
         bytecode.extend(constant_error_stub());
-        let text = InstIter::new(&bytecode)
+        let text = instructions(&bytecode)
             .enumerate()
             .map(|(ic, _)| match ic {
                 0..=3 => "10:10:0",
@@ -1736,7 +1742,7 @@ mod tests {
             anchors.jumps.insert(anchors.anchors.len(), jump.unwrap());
             anchors.anchors.push(anchor);
         }
-        let ambiguous_text = InstIter::new(&bytecode)
+        let ambiguous_text = instructions(&bytecode)
             .enumerate()
             .map(|(ic, _)| if ic < 8 { "10:10:0" } else { "-1:-1:-1" })
             .collect::<Vec<_>>()
@@ -1768,7 +1774,7 @@ mod tests {
         bytecode.extend(constant_error_stub());
         bytecode.push(opcode::JUMPDEST);
         bytecode.extend(constant_error_stub());
-        let text = InstIter::new(&bytecode)
+        let text = instructions(&bytecode)
             .enumerate()
             .map(|(ic, _)| if ic < 3 { "10:10:0" } else { "-1:-1:-1" })
             .collect::<Vec<_>>()
@@ -1804,7 +1810,7 @@ mod tests {
         bytecode.extend(constant_error_stub());
         bytecode.push(opcode::JUMPDEST);
         bytecode.extend(constant_error_stub());
-        let text = InstIter::new(&bytecode)
+        let text = instructions(&bytecode)
             .enumerate()
             .map(|(ic, _)| if ic < 3 { "10:10:0" } else { "-1:-1:-1" })
             .collect::<Vec<_>>()
@@ -1942,7 +1948,7 @@ mod tests {
             // A JUMPDEST-led failure stub is still the fallback when it is the only candidate.
             (vec![opcode::JUMPDEST, opcode::PUSH0, opcode::PUSH0, opcode::REVERT], 0),
         ] {
-            let count = InstIter::new(&bytecode).count();
+            let count = instructions(&bytecode).count();
             let source_map =
                 sourcemap::parse(&format!("10:20:0{}", ";".repeat(count - 1))).unwrap();
             let ic_pc_map = IcPcMap::new(&bytecode);
