@@ -24,7 +24,8 @@ use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
     Artifact, Project, ProjectBuilder, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
     artifacts::{
-        BytecodeObject, Contract, Error as SolcError, SecondarySourceLocation, Severity, Source,
+        BytecodeObject, Contract, Error as SolcError, Metadata as SolcMetadata,
+        SecondarySourceLocation, Severity, Source,
         output_selection::OutputSelection,
         remappings::{RelativeRemapping, Remapping},
     },
@@ -413,6 +414,20 @@ impl ProjectCompiler {
                 // print the compiler output / warnings
                 sh_println!("{output}")?;
             }
+        }
+
+        if !quiet
+            && !output.has_compiler_errors()
+            && output
+                .artifact_ids()
+                .filter_map(|(_, artifact)| artifact.metadata.as_ref())
+                .any(metadata_has_absolute_paths)
+        {
+            sh_warn!(
+                "Solidity metadata contains absolute filesystem paths that may reveal information \
+                 about your local system when published. Review the metadata before sharing or \
+                 verifying these artifacts."
+            )?;
         }
 
         // Report compiler warnings before the policy failure.
@@ -1334,6 +1349,29 @@ fn add_scoped_alias_diagnostics<C: Compiler<CompilerContract = Contract>>(
             }
         }
     }
+}
+
+/// Checks emitted source names and remappings, not internal absolute compiler paths.
+fn metadata_has_absolute_paths(metadata: &SolcMetadata) -> bool {
+    // Recognize Windows paths even when reading metadata produced on another platform.
+    let is_absolute = |path: &str| {
+        path.starts_with('/')
+            || path.starts_with(r"\\")
+            || matches!(path.as_bytes(), [drive, b':', b'/' | b'\\', ..] if drive.is_ascii_alphabetic())
+    };
+    metadata.language == "Solidity"
+        && (metadata.sources.inner.keys().any(|path| is_absolute(path))
+            || metadata.settings.remappings.iter().any(|remapping| {
+                // Recover a Windows context split at its drive colon. Virtual names alone aren't
+                // paths; the remaining context separator must also be present.
+                is_absolute(&remapping.path)
+                    || remapping.context.as_deref().is_some_and(|context| {
+                        is_absolute(context)
+                            || (matches!(context.as_bytes(), [drive] if drive.is_ascii_alphabetic())
+                                && remapping.name.starts_with(['/', '\\'])
+                                && remapping.name.contains(':'))
+                    })
+            }))
 }
 
 #[cfg(test)]
