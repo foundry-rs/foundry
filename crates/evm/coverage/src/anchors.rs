@@ -195,8 +195,6 @@ const MAX_TRACE_HOPS: usize = 8;
 struct AnchorIndex<'a> {
     bytecode: &'a [u8],
     source_map: &'a SourceMap,
-    /// The program counter of every instruction, by instruction counter.
-    pcs: Vec<u32>,
     ic_pc_map: &'a InstructionMap,
     /// `(source id, offset, instruction)`, sorted for source range lookups.
     entries: Vec<(i32, u32, usize)>,
@@ -227,7 +225,6 @@ impl<'a> AnchorIndex<'a> {
             .map(|(instruction, element)| (element.index_i32(), element.offset(), instruction))
             .collect::<Vec<_>>();
         entries.sort_unstable();
-        let mut pcs = Vec::new();
         let mut branches = Vec::new();
         let mut reverting_runs = Vec::new();
         let mut jumps = Vec::new();
@@ -257,7 +254,6 @@ impl<'a> AnchorIndex<'a> {
                     | opcode::INVALID
                     | opcode::SELFDESTRUCT
             ));
-            pcs.push(pc as u32);
             match inst.opcode.get() {
                 opcode::JUMPDEST => jumpdests.push((pc, ic)),
                 opcode::JUMPI => conditional_jumps.push((ic, prev_target)),
@@ -372,7 +368,6 @@ impl<'a> AnchorIndex<'a> {
         Self {
             bytecode,
             source_map,
-            pcs,
             ic_pc_map,
             entries,
             branches,
@@ -463,17 +458,28 @@ impl<'a> AnchorIndex<'a> {
         (fallthrough, _): &(ItemAnchor, ItemAnchor),
         loc: &SourceLocation,
     ) -> bool {
-        let jump = self.pcs.binary_search(&(fallthrough.instruction - 1)).ok();
+        let jump = self.ic_pc_map.ic(fallthrough.instruction as usize - 1);
         jump.is_some_and(|jump| self.starts_in_range(jump - 1, loc))
     }
 
     /// Returns whether the first instruction at `pc` after any `JUMPDEST`s is mapped inside `loc`.
     fn starts_in(&self, pc: u32, loc: &SourceLocation) -> bool {
-        let Ok(mut ic) = self.pcs.binary_search(&pc) else { return false };
-        while self.pcs.get(ic).is_some_and(|&p| self.bytecode[p as usize] == opcode::JUMPDEST) {
+        self.after_jumpdests(pc).is_some_and(|ic| self.maps_inside(ic, loc))
+    }
+
+    /// Returns the first instruction counter at `pc` or after it that is not a `JUMPDEST`, or
+    /// `None` if `pc` does not start an instruction.
+    fn after_jumpdests(&self, pc: u32) -> Option<usize> {
+        let mut ic = self.ic_pc_map.ic(pc as usize)?;
+        while self.opcode_at(ic) == Some(opcode::JUMPDEST) {
             ic += 1;
         }
-        self.maps_inside(ic, loc)
+        Some(ic)
+    }
+
+    /// Returns the opcode of the instruction `ic`.
+    fn opcode_at(&self, ic: usize) -> Option<u8> {
+        self.ic_pc_map.pc(ic).map(|pc| self.bytecode[pc])
     }
 
     /// Returns whether the instruction `ic` is mapped inside `loc`.
@@ -485,7 +491,7 @@ impl<'a> AnchorIndex<'a> {
     ///
     /// Follows static `PUSH target; JUMP` hops, which compilers use to share revert blocks.
     fn fails(&self, pc: u32) -> bool {
-        let last = self.trace(pc).last().map(|&ic| self.bytecode[self.pcs[ic] as usize]);
+        let last = self.trace(pc).last().and_then(|&ic| self.opcode_at(ic));
         matches!(last, Some(opcode::REVERT | opcode::INVALID))
     }
 
@@ -517,13 +523,13 @@ impl<'a> AnchorIndex<'a> {
     /// instructions mapped to the enclosing expression. An arm that falls into the join point
     /// also scans the code after it, which is mapped outside both arms.
     fn block_maps_inside(&self, pc: u32, loc: &SourceLocation) -> bool {
-        let Ok(start) = self.pcs.binary_search(&pc) else { return false };
-        for (ic, &next) in self.pcs.iter().enumerate().skip(start) {
+        let Some(start) = self.ic_pc_map.ic(pc as usize) else { return false };
+        for (ic, next) in self.ic_pc_map.iter().skip(start) {
             if self.source_map.get(ic).is_some_and(|element| is_within_source_span(element, loc)) {
                 return true;
             }
             if matches!(
-                self.bytecode[next as usize],
+                self.bytecode[next],
                 opcode::JUMP
                     | opcode::JUMPI
                     | opcode::STOP
@@ -674,7 +680,7 @@ impl<'a> AnchorIndex<'a> {
             .iter()
             .take_while(|&&(target, _)| target == pc)
             .map(|&(_, push)| {
-                let jump = self.pcs.get(push + 1).copied().unwrap_or_default();
+                let jump = self.ic_pc_map.pc(push + 1).unwrap_or_default() as u32;
                 let conditional = self.bytecode[jump as usize] == opcode::JUMPI;
                 ensure!(
                     jump != pc - 1
@@ -761,10 +767,7 @@ impl<'a> AnchorIndex<'a> {
         // Solar to no source, but the `if`'s own jump is mapped to the whole statement, while a
         // check's is mapped to the expression it guards.
         let fails_in_condition = |pc: u32, unmapped: bool| {
-            let Ok(mut ic) = self.pcs.binary_search(&pc) else { return false };
-            while self.pcs.get(ic).is_some_and(|&p| self.bytecode[p as usize] == opcode::JUMPDEST) {
-                ic += 1;
-            }
+            let Some(ic) = self.after_jumpdests(pc) else { return false };
             self.source_map.get(ic).is_some_and(|element| {
                 (unmapped && element.index().is_none()) || in_condition(element)
             }) && self.fails(pc)
@@ -859,7 +862,7 @@ impl<'a> AnchorIndex<'a> {
         let starts_after = |trace: &[usize]| {
             trace
                 .iter()
-                .find(|&&ic| self.bytecode[self.pcs[ic] as usize] != opcode::JUMPDEST)
+                .find(|&&ic| self.opcode_at(ic) != Some(opcode::JUMPDEST))
                 .is_some_and(|&ic| self.starts_in_range(ic, after))
         };
         let reaches_after =
@@ -875,17 +878,17 @@ impl<'a> AnchorIndex<'a> {
     /// or halt, following static `PUSH target; JUMP` hops.
     fn trace(&self, pc: u32) -> Vec<usize> {
         let mut trace = Vec::new();
-        let mut next = self.pcs.binary_search(&pc).ok();
+        let mut next = self.ic_pc_map.ic(pc as usize);
         // Bounds a cycle of static jumps.
         for _ in 0..MAX_TRACE_HOPS {
             let mut push = None;
             while let Some(ic) = next {
-                let Some(&pc) = self.pcs.get(ic) else { return trace };
+                let Some(pc) = self.ic_pc_map.pc(ic) else { return trace };
                 trace.push(ic);
                 next = Some(ic + 1);
-                match self.bytecode[pc as usize] {
+                match self.bytecode[pc] {
                     opcode::JUMP => {
-                        next = push.and_then(|target| self.pcs.binary_search(&target).ok());
+                        next = push.and_then(|target| self.ic_pc_map.ic(target as usize));
                         break;
                     }
                     opcode::JUMPI
@@ -895,7 +898,7 @@ impl<'a> AnchorIndex<'a> {
                     | opcode::INVALID
                     | opcode::SELFDESTRUCT => return trace,
                     op @ opcode::PUSH1..=opcode::PUSH4 => {
-                        let immediate = &self.bytecode[pc as usize + 1..];
+                        let immediate = &self.bytecode[pc + 1..];
                         let len = (op - opcode::PUSH0) as usize;
                         push = jump_destination(&immediate[..len]).ok();
                     }
@@ -1678,7 +1681,9 @@ mod tests {
 
         let source_map = sourcemap::parse(";;;;").unwrap();
         let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
-        assert_eq!(index.pcs, [0, 2, 4, 6, 8]);
+        assert_eq!(index.trace(2), [1, 2, 3, 4]);
+        // A byte of an immediate does not start an instruction.
+        assert_eq!(index.trace(3), Vec::<usize>::new());
     }
 
     #[test]
