@@ -19,6 +19,7 @@ use solar::{
 };
 use std::{
     collections::{HashMap, HashSet, hash_map::Entry},
+    fmt::Write,
     path::{Path, PathBuf},
 };
 use tracing::warn;
@@ -918,10 +919,10 @@ pub fn replace_inline_links(
                                 None => lookup_name.to_string(),
                             };
                             let display = escape_link_label(label.unwrap_or(&default_display));
-                            out.push_str(&format!("[{display}](#{anchor})"));
+                            write!(out, "[{display}](#{anchor})").unwrap();
                         } else {
                             let safe_name = lookup_name.replace('`', "'");
-                            out.push_str(&format!("`{safe_name}`"));
+                            write!(out, "`{safe_name}`").unwrap();
                         }
                         i += end;
                         continue;
@@ -940,10 +941,10 @@ pub fn replace_inline_links(
                                 None => lookup_name.to_string(),
                             };
                             let display = escape_link_label(label.unwrap_or(&default_display));
-                            out.push_str(&format!("[{display}]({link})"));
+                            write!(out, "[{display}]({link})").unwrap();
                         } else {
                             let safe_name = lookup_name.replace('`', "'");
-                            out.push_str(&format!("`{safe_name}`"));
+                            write!(out, "`{safe_name}`").unwrap();
                         }
                         i += end;
                         continue;
@@ -970,7 +971,7 @@ pub fn replace_inline_links(
                         lookup_name.to_string()
                     };
                     let display = escape_link_label(label.unwrap_or(&default_display));
-                    out.push_str(&format!("[{display}]({link})"));
+                    write!(out, "[{display}]({link})").unwrap();
                     i += end;
                     continue;
                 }
@@ -978,7 +979,7 @@ pub fn replace_inline_links(
                 // Unresolved {Ident}, emit as inline code to avoid MDX treating it as a
                 // JS expression. Strip backticks to avoid breaking the fence.
                 let safe_name = lookup_name.replace('`', "'");
-                out.push_str(&format!("`{safe_name}`"));
+                write!(out, "`{safe_name}`").unwrap();
                 i += end;
                 continue;
             }
