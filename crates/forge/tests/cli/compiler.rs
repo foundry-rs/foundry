@@ -365,12 +365,12 @@ fn can_install_list_and_remove_solar(cmd: _) {
     let home = home.path().to_str().unwrap();
 
     cmd.env("HOME", home);
-    cmd.args(["compiler", "install", "solar:0.3.0"]).assert_success().stdout_eq(str![[r#"
-installing solar version "0.3.0"
-Successfully installed solar 0.3.0
-solar 0.3.0: [..]/.foundry/solar/0.3.0/solar
-
-"#]]);
+    cmd.args(["compiler", "install", "solar:0.3.0", "--json"]).assert_success().stdout_eq(
+        str![[
+            r#"[{"compiler":"solar","version":"0.3.0","path":"[..]/.foundry/solar/0.3.0/solar"}]"#
+        ]]
+        .is_json(),
+    );
 
     cmd.forge_fuse().env("HOME", home);
     cmd.args(["compiler", "list", "--json"])
@@ -378,10 +378,12 @@ solar 0.3.0: [..]/.foundry/solar/0.3.0/solar
         .stdout_eq(str![[r#"{"solc":"{...}","solar":["0.3.0"]}"#]].is_json());
 
     cmd.forge_fuse().env("HOME", home);
-    cmd.args(["compiler", "remove", "solar:0.3.0"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["compiler", "remove", "solar:0.3.0"]).assert_success().stdout_eq("").stderr_eq(str![
+        [r#"
 Removed solar 0.3.0
 
-"#]]);
+"#]
+    ]);
 
     cmd.forge_fuse().env("HOME", home);
     cmd.args(["compiler", "remove", "solar:0.3.0"]).assert_failure().stderr_eq(str![[r#"

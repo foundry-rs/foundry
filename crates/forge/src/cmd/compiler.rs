@@ -224,15 +224,40 @@ pub struct InstallArgs {
 
 impl InstallArgs {
     pub fn run(self) -> Result<()> {
+        let mut installed = Vec::with_capacity(self.compilers.len());
         for compiler in self.compilers {
-            let installed = with_compilation_reporter(false, None, || match &compiler {
+            let solc = with_compilation_reporter(false, None, || match &compiler {
                 Compiler::Solc(version) => Solc::find_or_install(version),
                 Compiler::Solar(version) => Solc::find_installed_solar(version)
                     .map_or_else(|| Solc::blocking_install_solar(version), Ok),
             })?;
-            sh_println!("{compiler}: {}", installed.solc.display())?;
+            if !shell::is_json() {
+                sh_println!("{compiler}: {}", solc.solc.display())?;
+            }
+            installed.push(InstalledCompiler::new(&compiler, solc.solc));
+        }
+        if shell::is_json() {
+            sh_println!("{}", serde_json::to_string(&installed)?)?;
         }
         Ok(())
+    }
+}
+
+/// An installed compiler binary, as `forge compiler install --json` reports it.
+#[derive(Serialize)]
+struct InstalledCompiler {
+    compiler: &'static str,
+    version: Version,
+    path: PathBuf,
+}
+
+impl InstalledCompiler {
+    fn new(compiler: &Compiler, path: PathBuf) -> Self {
+        let (name, version) = match compiler {
+            Compiler::Solc(version) => ("solc", version),
+            Compiler::Solar(version) => ("solar", version),
+        };
+        Self { compiler: name, version: version.clone(), path }
     }
 }
 
@@ -294,7 +319,7 @@ impl RemoveArgs {
                 Compiler::Solar(version) => Solc::remove_solar(version)?,
             };
             eyre::ensure!(removed, "{compiler} is not installed");
-            sh_println!("Removed {compiler}")?;
+            sh_status!("Removed {compiler}")?;
         }
         Ok(())
     }
