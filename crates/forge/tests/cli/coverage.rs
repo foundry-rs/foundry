@@ -2931,6 +2931,60 @@ BRDA:14,0,0,-
     );
 }
 
+// A function pointer can run the function that an arm names from elsewhere, so a reference to the
+// function other than a call also keeps the arm from owning its hits.
+#[forgetest]
+fn if_arm_does_not_take_function_pointer_calls_lcov(prj: _, cmd: _) {
+    prj.update_config(|config| config.via_ir = true);
+    prj.add_source(
+        "Pointer.sol",
+        r#"
+contract Base {
+    uint256 public total;
+
+    function bump() internal {
+        total |= 7;
+    }
+}
+
+contract Derived is Base {
+    function never() internal {
+        if (true) {
+            bump();
+        }
+    }
+
+    function run() external {
+        function() internal f = bump;
+        f();
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Pointer.t.sol",
+        r#"
+import "../src/Pointer.sol";
+
+contract PointerTest {
+    function testRun() public {
+        Derived derived = new Derived();
+        derived.run();
+    }
+}
+"#,
+    );
+
+    assert_lcov(
+        cmd.args(["coverage", "--no-isolate", "--keep-optimizer", "--optimize"]),
+        str![[r#"
+...
+BRDA:14,0,0,-
+...
+"#]],
+    );
+}
+
 #[forgetest]
 fn identical_bytecodes(prj: _, cmd: _) {
     prj.insert_ds_test();

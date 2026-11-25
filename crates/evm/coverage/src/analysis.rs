@@ -5,7 +5,10 @@ use foundry_compilers::ProjectCompileOutput;
 use rayon::prelude::*;
 use solar::{
     ast::{self, ExprKind, ItemKind, StmtKind, yul},
-    data_structures::{Never, map::FxHashMap},
+    data_structures::{
+        Never,
+        map::{FxHashMap, FxHashSet},
+    },
     interface::{RelativeBytePos, Span, sym},
     sema::{Gcx, hir},
 };
@@ -55,9 +58,14 @@ struct SourceVisitor<'gcx> {
     /// function, with the function's name. A function that outside callers can reach counts twice
     /// per call, so it never counts as called once.
     callee_calls: HashMap<(usize, u32, u32), (u32, Arc<str>)>,
-    /// How many calls through a member access, such as `super.f()`, name each function. They
-    /// resolve statically, so they count against every function with that name.
+    /// How many member accesses, such as `super.f` in a call, name each function. They resolve
+    /// statically, so they count against every function with that name.
     member_calls: HashMap<Arc<str>, u32>,
+    /// How many references to each function are not the callee of a call, such as a function
+    /// pointer's value, by [`callee_key`]. The pointer can run the function from elsewhere.
+    value_refs: HashMap<(usize, u32, u32), u32>,
+    /// The spans of the callees that are bare names of calls, which `callee_calls` counts.
+    callee_idents: FxHashSet<Span>,
     /// Direct revert guards, resolved against HIR after collecting their source items.
     revert_guards: Vec<PendingRevertGuard>,
     current_function: Option<SourceLocation>,
@@ -209,6 +217,8 @@ impl<'gcx> SourceVisitor<'gcx> {
             callees: Default::default(),
             callee_calls: Default::default(),
             member_calls: Default::default(),
+            value_refs: Default::default(),
+            callee_idents: Default::default(),
             revert_guards: Default::default(),
             current_function: None,
             items: Default::default(),
@@ -413,13 +423,19 @@ impl<'gcx> SourceVisitor<'gcx> {
         }
     }
 
+    /// Returns the [`callee_key`] of a function with a body.
+    fn function_key(&self, function: &hir::Function<'_>) -> Option<(usize, u32, u32)> {
+        function.body?;
+        let &source_id = self.hir_source_ids.get(&function.source)?;
+        let contract = function.contract.map(|id| self.gcx.hir.contract(id).name.as_str());
+        let location = self.location(function.span, source_id, contract.unwrap_or_default().into());
+        Some(callee_key(&location))
+    }
+
     /// Records the functions that a call by name can run, from the functions its callee names
     /// resolve to. An overloaded name resolves to every overload. A call of a contract that is
     /// dropped from the report, as a test's, only counts as a call to those functions.
     fn push_callees(&mut self, call: &hir::Expr<'_>, callee: &hir::Expr<'_>, record: bool) {
-        if let hir::ExprKind::Member(_, member) = &callee.peel_parens().kind {
-            *self.member_calls.entry(Arc::from(member.as_str())).or_default() += 1;
-        }
         let hir::ExprKind::Ident(res) = &callee.peel_parens().kind else { return };
         let callees = res
             .iter()
@@ -778,6 +794,21 @@ impl<'gcx> hir::Visit<'gcx> for SourceVisitor<'gcx> {
     }
 
     fn visit_expr(&mut self, expr: &'gcx hir::Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
+        match &expr.kind {
+            hir::ExprKind::Member(_, member) => {
+                *self.member_calls.entry(Arc::from(member.as_str())).or_default() += 1;
+            }
+            hir::ExprKind::Ident(res) if !self.callee_idents.contains(&expr.span) => {
+                for res in *res {
+                    if let hir::Res::Item(hir::ItemId::Function(id)) = res
+                        && let Some(key) = self.function_key(self.gcx.hir.function(*id))
+                    {
+                        *self.value_refs.entry(key).or_default() += 1;
+                    }
+                }
+            }
+            _ => {}
+        }
         if let Some((callee, args, _)) = expr.as_call()
             && args.is_empty()
             && let Some(hir::Res::Item(hir::ItemId::Error(error))) = self.gcx.resolved_expr(callee)
@@ -816,6 +847,9 @@ impl<'gcx> hir::Visit<'gcx> for SourceVisitor<'gcx> {
                 let prev = std::mem::replace(&mut self.contract_name, scope);
                 self.push_stmt(expr.span);
                 self.contract_name = prev;
+            }
+            if matches!(lhs.peel_parens().kind, hir::ExprKind::Ident(_)) {
+                self.callee_idents.insert(lhs.peel_parens().span);
             }
             self.push_callees(expr, lhs, scope.is_some());
         }
@@ -897,8 +931,10 @@ pub struct SourceAnalysis {
     branch_kinds: HashMap<(u32, u32), BranchKind>,
     /// How many calls by name resolve to each function, by [`callee_key`], with its name.
     callee_calls: HashMap<(usize, u32, u32), (u32, Arc<str>)>,
-    /// How many calls through a member access name each function.
+    /// How many member accesses name each function.
     member_calls: HashMap<Arc<str>, u32>,
+    /// How many references to each function are not the callee of a call, by [`callee_key`].
+    value_refs: HashMap<(usize, u32, u32), u32>,
     /// Source ID to `(offset, len)` into `all_items`.
     map: Vec<(u32, u32)>,
     /// Empty receive and fallback items keyed by coverage item ID.
@@ -993,6 +1029,7 @@ impl SourceAnalysis {
                         visitor.branch_kinds,
                         visitor.callee_calls,
                         visitor.member_calls,
+                        visitor.value_refs,
                     )
                 })
                 .collect::<Vec<_>>()
@@ -1009,7 +1046,11 @@ impl SourceAnalysis {
         let mut branch_kinds = HashMap::default();
         let mut callee_calls = HashMap::<_, (u32, Arc<str>)>::default();
         let mut member_calls = HashMap::<_, u32>::default();
-        for (idx, items, hints, branches, calls, members) in sourced_items {
+        let mut value_refs = HashMap::<_, u32>::default();
+        for (idx, items, hints, branches, calls, members, refs) in sourced_items {
+            for (function, count) in refs {
+                *value_refs.entry(function).or_default() += count;
+            }
             for (callee, (count, name)) in calls {
                 callee_calls.entry(callee).or_insert((0, name)).0 += count;
             }
@@ -1059,6 +1100,7 @@ impl SourceAnalysis {
             branch_kinds,
             callee_calls,
             member_calls,
+            value_refs,
             empty_special_functions,
             contract_empty_special_functions,
         })
@@ -1070,8 +1112,11 @@ impl SourceAnalysis {
 
     /// Returns how many calls by name in the analyzed sources resolve to the function at `loc`.
     pub(crate) fn callee_calls(&self, loc: &SourceLocation) -> u32 {
-        self.callee_calls.get(&callee_key(loc)).map_or(0, |(count, name)| {
-            count + self.member_calls.get(name).copied().unwrap_or_default()
+        let key = callee_key(loc);
+        self.callee_calls.get(&key).map_or(0, |(count, name)| {
+            count
+                + self.member_calls.get(name).copied().unwrap_or_default()
+                + self.value_refs.get(&key).copied().unwrap_or_default()
         })
     }
 
