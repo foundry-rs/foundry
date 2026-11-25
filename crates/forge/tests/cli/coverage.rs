@@ -2985,6 +2985,261 @@ BRDA:14,0,0,-
     );
 }
 
+// An arm of an `if` with a proved condition has no jump, and it takes the hits of the function it
+// calls only when nothing else can run that function. Every `never` below is not compiled and its
+// function runs another way, so no arm may report hits, while the live control reports its own.
+// Solc legacy with the optimizer is the mode where a wrong attribution shows as hits.
+#[forgetest]
+fn if_arms_do_not_take_other_ways_to_run_a_function_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Matrix.sol",
+        r#"
+// C0: control, the only call of `T` is the arm of a live function.
+contract C0 {
+    uint256 public t;
+    function T() internal { t += 1; }
+    function live() external { if (true) { T(); } }
+}
+
+// C1: local function pointer.
+contract C1 {
+    uint256 public t;
+    function T() internal { t += 1; }
+    function never() internal { if (true) { T(); } }
+    function run() external { function() internal f = T; f(); }
+}
+
+// C2: state variable pointer.
+contract C2 {
+    uint256 public t;
+    function() internal p;
+    function T() internal { t += 1; }
+    function never() internal { if (true) { T(); } }
+    function run() external { p = T; p(); }
+}
+
+// C3: pointer passed as an argument.
+contract C3 {
+    uint256 public t;
+    function T() internal { t += 1; }
+    function never() internal { if (true) { T(); } }
+    function runit(function() internal f) internal { f(); }
+    function run() external { runit(T); }
+}
+
+// C4: pointer returned.
+contract C4 {
+    uint256 public t;
+    function T() internal { t += 1; }
+    function never() internal { if (true) { T(); } }
+    function get() internal pure returns (function() internal f) { f = T; }
+    function run() external { get()(); }
+}
+
+// C5: `super` and a virtual override.
+contract B5 {
+    uint256 public t;
+    function T() internal virtual { t += 1; }
+    function never() internal { if (true) { T(); } }
+}
+contract C5 is B5 {
+    function T() internal override { t += 2; super.T(); }
+    function run() external { T(); }
+}
+
+// C6: library `using for`.
+library L6 {
+    function T(uint256[] storage a) internal { a.push(1); }
+    function never(uint256[] storage a) internal { if (true) { T(a); } }
+}
+contract C6 {
+    using L6 for uint256[];
+    uint256[] a;
+    function run() external { a.T(); }
+}
+
+// C7: modifier.
+contract C7 {
+    uint256 public t;
+    modifier m() { T(); _; }
+    function T() internal { t += 1; }
+    function never() internal { if (true) { T(); } }
+    function run() external m {}
+}
+
+// C8: constructor of a derived contract.
+contract B8 {
+    uint256 public t;
+    function T() internal { t += 1; }
+    function never() internal { if (true) { T(); } }
+}
+contract C8 is B8 {
+    constructor() { T(); }
+}
+
+// C9: public function reached externally and internally.
+contract C9 {
+    uint256 public t;
+    function T() public { t += 1; }
+    function never() internal { if (true) { T(); } }
+}
+
+// C10: try/catch arm.
+contract C10 {
+    uint256 public t;
+    function T() internal { t += 1; }
+    function never() internal { if (true) { T(); } }
+    function bad() external pure { revert(); }
+    function run() external { try this.bad() {} catch { T(); } }
+}
+
+// C11: inheriting test.
+contract B11 {
+    uint256 public t;
+    function T() internal { t += 1; }
+    function never() internal { if (true) { T(); } }
+}
+
+// C12: the same function name in two contracts.
+contract A12 {
+    uint256 public t;
+    function T() internal { t += 1; }
+    function never() internal { if (true) { T(); } }
+}
+contract B12 {
+    uint256 public t;
+    function T() internal { t += 1; }
+    function run() external { T(); }
+}
+
+// C14: by-name call from a derived contract.
+contract B14 {
+    uint256 public t;
+    function T() internal { t += 1; }
+    function never() internal { if (true) { T(); } }
+}
+contract C14 is B14 {
+    function run() external { T(); }
+}
+
+// C15: free function used by two contracts.
+function F15(uint256[] storage a) {
+    a.push(1);
+}
+contract A15 {
+    uint256[] a;
+    function never() internal { if (true) { F15(a); } }
+}
+contract B15 {
+    uint256[] a;
+    function run() external { F15(a); }
+}
+
+// C16: by-name call from a contract in another file.
+contract B16 {
+    uint256 public t;
+    function T() internal { t += 1; }
+    function never() internal { if (true) { T(); } }
+}
+
+// C17: overloads.
+contract C17 {
+    uint256 public t;
+    function T() internal { t += 1; }
+    function T(uint256 x) internal { t += x; }
+    function never() internal { if (true) { T(); } }
+    function run() external { T(5); }
+}
+"#,
+    );
+    prj.add_source(
+        "Other.sol",
+        r#"
+import "./Matrix.sol";
+
+contract C16 is B16 {
+    function run() external { T(); }
+}
+"#,
+    );
+    prj.add_test(
+        "Matrix.t.sol",
+        r#"
+import "../src/Matrix.sol";
+import "../src/Other.sol";
+
+contract MatrixTest is B11 {
+    function testAll() public {
+        for (uint256 i = 0; i < 3; i++) {
+            new C0().live();
+            new C1().run();
+            new C2().run();
+            new C3().run();
+            new C4().run();
+            new C5().run();
+            new C6().run();
+            new C7().run();
+            new C8();
+            new C9().T();
+            new C10().run();
+            T();
+            new A12();
+            new B12().run();
+            new C14().run();
+            new A15();
+            new B15().run();
+            new C16().run();
+            new C17().run();
+        }
+    }
+}
+"#,
+    );
+
+    assert_lcov(
+        cmd.args(["coverage", "--no-isolate", "--keep-optimizer", "--optimize"]),
+        str![[r#"
+...
+SF:src/Matrix.sol
+...
+BRDA:8,0,0,3
+...
+BRDA:15,1,0,-
+...
+BRDA:24,2,0,-
+...
+BRDA:32,3,0,-
+...
+BRDA:41,4,0,-
+...
+BRDA:50,5,0,-
+...
+BRDA:60,6,0,-
+...
+BRDA:73,7,0,-
+...
+BRDA:81,8,0,-
+...
+BRDA:91,9,0,-
+...
+BRDA:98,10,0,-
+...
+BRDA:107,12,0,-
+...
+BRDA:114,13,0,-
+...
+BRDA:126,14,0,-
+...
+BRDA:138,15,0,-
+...
+BRDA:149,16,0,-
+...
+BRDA:157,17,0,-
+...
+"#]],
+    );
+}
+
 #[forgetest]
 fn identical_bytecodes(prj: _, cmd: _) {
     prj.insert_ds_test();
