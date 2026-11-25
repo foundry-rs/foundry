@@ -5842,8 +5842,8 @@ impl<N: Network> Backend<N> {
                 difficulty: block.header.difficulty(),
                 // ensures prevrandao is set
                 prevrandao: Some(block.header.mix_hash().unwrap_or_default()),
-                gas_limit: block.header.gas_limit(),
-                // Keep previous `beneficiary` and `basefee` value
+                // Keep previous `beneficiary`, `basefee`, and `gas_limit` value
+                gas_limit: env.block_env.gas_limit,
                 beneficiary: env.block_env.beneficiary,
                 basefee: env.block_env.basefee,
                 ..Default::default()
@@ -8253,22 +8253,14 @@ where
         };
 
         // Acquire the only awaited mutation lock before publishing any part of the rewind.
-        let (rollback_gas_limit, rollback_base_fee) = if self
+        let rollback_gas_limit = self.evm_env.read().block_env.gas_limit;
+        let rollback_base_fee = if self
             .get_fork()
             .is_some_and(|fork| fork.block_number() == common_block.header.number())
         {
-            let node_config = self.node_config.read().await;
-            (
-                self.get_block(common_block.header.number().saturating_add(1))
-                    .map(|child| child.header.gas_limit())
-                    .unwrap_or_else(|| node_config.gas_limit()),
-                node_config.base_fee.unwrap_or_default(),
-            )
+            self.node_config.read().await.base_fee.unwrap_or_default()
         } else {
-            (
-                common_block.header.gas_limit(),
-                common_block.header.base_fee_per_gas().unwrap_or_default(),
-            )
+            common_block.header.base_fee_per_gas().unwrap_or_default()
         };
         let mut db = self.db.write().await;
         // Read the next-block fees while the retained block's child is still canonical.

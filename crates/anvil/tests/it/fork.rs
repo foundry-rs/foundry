@@ -746,6 +746,12 @@ async fn test_fork_transaction_hash_replay_preserves_cancun_header_inputs() {
     let next = fork_api.block_by_number_full(BlockNumberOrTag::Number(2)).await.unwrap().unwrap();
     assert!(next.header.timestamp > source.header.timestamp);
     assert_eq!(next.header.beneficiary, Address::ZERO);
+    assert_ne!(next.header.gas_limit, gas_limit);
+    fork_api.anvil_rollback(Some(1)).await.unwrap();
+    fork_api.mine_one().await.unwrap();
+    let remined =
+        fork_api.block_by_number_full(BlockNumberOrTag::Number(2)).await.unwrap().unwrap();
+    assert_eq!(remined.header.gas_limit, next.header.gas_limit);
 }
 
 #[tokio::test(flavor = "multi_thread")]
