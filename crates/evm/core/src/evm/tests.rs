@@ -224,6 +224,8 @@ fn lifecycle() {
     lifecycle_suite::<crate::evm::OpEvmNetwork>(op_evm2::OpEvmFactory, Default::default());
     #[cfg(feature = "monad")]
     lifecycle_suite::<crate::evm::MonadEvmNetwork>(monad_evm2::MonadEvmFactory, Default::default());
+    #[cfg(feature = "arc")]
+    lifecycle_suite::<crate::evm::ArcEvmNetwork>(arc_evm2::ArcEvmFactory, Default::default());
     #[cfg(feature = "base")]
     lifecycle_suite::<crate::evm::BaseEvmNetwork>(
         base_evm2::BaseEvmFactory::default(),
@@ -378,6 +380,41 @@ fn op_deposits_mint_without_fees() {
     // The deposit mints to the unfunded caller, then transfers the value without charging fees.
     assert_eq!(balance(&mut evm, caller), U256::from(7));
     assert_eq!(balance(&mut evm, to), U256::from(3));
+}
+
+#[cfg(feature = "arc")]
+#[test]
+fn arc_pays_the_whole_fee_to_the_beneficiary_and_logs_transfers() {
+    let (caller, to, coinbase) = (
+        Address::with_last_byte(0xA1),
+        Address::with_last_byte(0xA2),
+        Address::with_last_byte(0xC0),
+    );
+    let factory = arc_evm2::ArcEvmFactory;
+    let spec = arc_evm2::ArcSpecId::default();
+    let mut env =
+        EvmEnv::new(spec, FoundryEvmFactory::version(&factory, spec, 1), Default::default());
+    env.block.basefee = U256::from(5 * GWEI);
+    env.block.beneficiary = coinbase;
+    let mut evm = FoundryEvmFactory::create_evm(&factory, db_with(&[(caller, ETHER)], 0), env);
+
+    let request = alloy_rpc_types::TransactionRequest::default()
+        .with_from(caller)
+        .with_to(to)
+        .with_value(U256::from(7))
+        .with_nonce(0)
+        .with_chain_id(1)
+        .with_gas_limit(50_000)
+        .with_max_fee_per_gas(10 * GWEI)
+        .with_max_priority_fee_per_gas(2 * GWEI);
+    let tx = TypesFor::<crate::evm::ArcEvmNetwork>::tx_from_request(request).unwrap();
+    let result = evm.transact(&tx).unwrap().commit();
+    assert!(result.status);
+    assert_eq!(result.tx_gas_used(), 21_000);
+    // Arc emits an EIP-7708 `Transfer` log for the native value and burns no base fee.
+    assert_eq!(result.logs.len(), 1);
+    assert_eq!(result.logs[0].address, evm2::evm::SYSTEM_ADDRESS);
+    assert_eq!(balance(&mut evm, coinbase), U256::from(21_000 * 7 * GWEI));
 }
 
 #[cfg(feature = "monad")]
@@ -575,6 +612,8 @@ fn rpc_transactions_convert_natively() {
     rpc_conversion_suite::<crate::evm::OpEvmNetwork>();
     #[cfg(feature = "monad")]
     rpc_conversion_suite::<crate::evm::MonadEvmNetwork>();
+    #[cfg(feature = "arc")]
+    rpc_conversion_suite::<crate::evm::ArcEvmNetwork>();
     #[cfg(feature = "base")]
     rpc_conversion_suite::<crate::evm::BaseEvmNetwork>();
 }

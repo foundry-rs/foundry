@@ -1813,6 +1813,31 @@ mod tests {
         SpecFor::<FEN>::from_foundry_hardfork(hardfork).unwrap()
     }
 
+    #[test]
+    #[cfg(feature = "arc")]
+    fn resolve_execution_spec_follows_arc_mainnet_zero8_activation() {
+        use crate::evm::ArcEvmNetwork;
+        use foundry_evm_hardforks::ArcHardfork;
+
+        let config = Config::default();
+        for (timestamp, hardfork) in
+            [(1_789_052_399, ArcHardfork::Zero6), (1_789_052_400, ArcHardfork::Zero8)]
+        {
+            let mut env = env_at::<ArcEvmNetwork>(5_042, timestamp);
+            assert_eq!(
+                resolve_execution_spec::<EvmFactoryFor<ArcEvmNetwork>>(
+                    config.evm_version,
+                    config.hardfork,
+                    &mut env,
+                    ExecutionSpecContext::fork(5_042, None),
+                    None,
+                ),
+                Some(FoundryHardfork::Arc(hardfork))
+            );
+            assert_eq!(env.spec, spec_of::<ArcEvmNetwork>(FoundryHardfork::Arc(hardfork)));
+        }
+    }
+
     #[cfg(feature = "monad")]
     fn monad_env(timestamp: u64) -> EvmEnvFor<MonadEvmNetwork> {
         env_at::<MonadEvmNetwork>(NamedChain::Monad as u64, timestamp)

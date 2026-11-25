@@ -342,5 +342,7 @@ mod tests {
         assert_adds_only_probes::<op_evm2::OpEvmFactory>();
         #[cfg(feature = "base")]
         assert_adds_only_probes::<base_evm2::BaseEvmFactory>();
+        #[cfg(feature = "arc")]
+        assert_adds_only_probes::<arc_evm2::ArcEvmFactory>();
     }
 }

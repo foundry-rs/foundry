@@ -633,6 +633,13 @@ impl NodeConfig {
         Self { networks: NetworkConfigs::with_monad(), ..Self::test() }
     }
 
+    /// Returns a test config with Arc network enabled.
+    #[cfg(feature = "arc")]
+    #[doc(hidden)]
+    pub fn test_arc() -> Self {
+        Self { networks: NetworkConfigs::with_arc(), ..Self::test() }
+    }
+
     /// Returns a test config with Base network enabled.
     #[cfg(feature = "base")]
     #[doc(hidden)]
@@ -1451,6 +1458,16 @@ impl NodeConfig {
     #[must_use]
     pub fn with_monad(mut self) -> Self {
         self.networks = NetworkConfigs::with_monad();
+        self.inferred_fork_network = None;
+        self.chain_id_network_base = None;
+        self
+    }
+
+    /// Enable Arc network features.
+    #[cfg(feature = "arc")]
+    #[must_use]
+    pub fn with_arc(mut self) -> Self {
+        self.networks = NetworkConfigs::with_arc();
         self.inferred_fork_network = None;
         self.chain_id_network_base = None;
         self

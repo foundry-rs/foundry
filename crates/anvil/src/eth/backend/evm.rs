@@ -49,6 +49,8 @@ pub use foundry_evm_core::evm::{
     TxPayload, TypesFor, bsc_p256,
 };
 
+#[cfg(feature = "arc")]
+pub use foundry_evm_core::evm::ArcEvmNetwork;
 #[cfg(feature = "base")]
 pub use foundry_evm_core::evm::BaseEvmNetwork;
 #[cfg(feature = "monad")]
@@ -74,6 +76,11 @@ macro_rules! with_evm_network {
             #[cfg(feature = "monad")]
             foundry_evm_networks::NetworkVariant::Monad => {
                 type $N = $crate::eth::backend::evm::MonadEvmNetwork;
+                $body
+            }
+            #[cfg(feature = "arc")]
+            foundry_evm_networks::NetworkVariant::Arc => {
+                type $N = $crate::eth::backend::evm::ArcEvmNetwork;
                 $body
             }
             foundry_evm_networks::NetworkVariant::Tempo => {
@@ -322,6 +329,20 @@ impl AnvilEvmNetwork for MonadEvmNetwork {
     /// Monad charges the full gas limit of ordinary transactions.
     fn charged_gas(result: &TxResult<TypesFor<Self>>) -> u64 {
         result.ext.charged_gas
+    }
+}
+
+#[cfg(feature = "arc")]
+impl AnvilEvmNetwork for ArcEvmNetwork {
+    fn spec(hardfork: FoundryHardfork) -> foundry_evm_hardforks::ArcSpecId {
+        hardfork.into()
+    }
+
+    fn apply_authority_overrides(
+        tx: &mut evm2::ethereum::TxEnvelope,
+        overrides: &[(usize, Address)],
+    ) {
+        EthEvmNetwork::apply_authority_overrides(tx, overrides);
     }
 }
 
@@ -643,6 +664,7 @@ pub trait AnyInspector:
     + OpInspector
     + BaseInspector
     + MonadInspector
+    + ArcInspector
 {
 }
 
@@ -652,6 +674,7 @@ impl<I> AnyInspector for I where
         + OpInspector
         + BaseInspector
         + MonadInspector
+        + ArcInspector
 {
 }
 
@@ -687,6 +710,17 @@ impl<I: Inspector<TypesFor<MonadEvmNetwork>>> MonadInspector for I {}
 pub trait MonadInspector {}
 #[cfg(not(feature = "monad"))]
 impl<I> MonadInspector for I {}
+
+/// An inspector usable with Arc.
+#[cfg(feature = "arc")]
+pub trait ArcInspector: Inspector<TypesFor<ArcEvmNetwork>> {}
+#[cfg(feature = "arc")]
+impl<I: Inspector<TypesFor<ArcEvmNetwork>>> ArcInspector for I {}
+/// An inspector usable with Arc.
+#[cfg(not(feature = "arc"))]
+pub trait ArcInspector {}
+#[cfg(not(feature = "arc"))]
+impl<I> ArcInspector for I {}
 
 /// Converts a family result into a network-neutral one.
 pub fn exec_result<N: AnvilEvmNetwork>(result: TxResult<TypesFor<N>>) -> ExecResult {

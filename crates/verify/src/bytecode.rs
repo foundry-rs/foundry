@@ -47,6 +47,8 @@ use foundry_evm::{
 use foundry_evm_networks::NetworkVariant;
 use std::path::PathBuf;
 
+#[cfg(feature = "arc")]
+use foundry_evm::core::evm::ArcEvmNetwork;
 #[cfg(feature = "base")]
 use foundry_evm::core::evm::BaseEvmNetwork;
 
@@ -227,6 +229,16 @@ impl VerifyBytecodeArgs {
                     endpoint_identity,
                     network_was_inferred,
                     ExecutorBuilder::<EthEvmNetwork>::new(),
+                )
+                .await
+            }
+            #[cfg(feature = "arc")]
+            NetworkVariant::Arc => {
+                self.run_with_network::<ArcEvmNetwork>(
+                    config,
+                    endpoint_identity,
+                    network_was_inferred,
+                    ExecutorBuilder::<ArcEvmNetwork>::new(),
                 )
                 .await
             }

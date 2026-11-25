@@ -380,6 +380,8 @@ reth-evm = { git = "https://github.com/paradigmxyz/reth", rev = "95b1b67496514d3
 # Op and Base evm2 type families, on foundry-rs/evm2-networks at `b90cf83`.
 op-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "b90cf83a877af2d9141a282ae493ec54ca50f0c9", default-features = false }
 base-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "b90cf83a877af2d9141a282ae493ec54ca50f0c9", default-features = false }
+# Arc evm2 type family, from foundry-rs/evm2-networks#31 at `2cc4a6f`.
+arc-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "2cc4a6ff78aeea3fd19f429dfe49c7310e244c5c", default-features = false }
 # Monad's maintained evm2 type family.
 monad-evm2 = { git = "https://github.com/category-labs/monad-alloy-evm2", rev = "95db06bd60922cfc01f712ec66be9327df3d7f33", default-features = false }
 

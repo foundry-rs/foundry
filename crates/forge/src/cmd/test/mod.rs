@@ -96,6 +96,8 @@ use std::{
 use tempfile::TempDir;
 use yansi::Paint;
 
+#[cfg(feature = "arc")]
+use foundry_evm::core::evm::ArcEvmNetwork;
 #[cfg(feature = "base")]
 use foundry_evm::core::evm::BaseEvmNetwork;
 
@@ -226,6 +228,11 @@ fn count_fuzz_minimize_targets<FEN: FoundryEvmNetwork>(
 macro_rules! dispatch_network {
     ($evm_opts:expr, | $fen:ident | $body:expr) => {
         match $evm_opts.networks.execution_network() {
+            #[cfg(feature = "arc")]
+            NetworkVariant::Arc => {
+                type $fen = ArcEvmNetwork;
+                $body
+            }
             #[cfg(feature = "base")]
             NetworkVariant::Base => {
                 type $fen = BaseEvmNetwork;

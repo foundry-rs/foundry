@@ -78,6 +78,17 @@ monad = [
     "forge-script-sequence/monad",
     "forge-verify/monad",
 ]
+arc = [
+    "anvil/arc",
+    "foundry-config/arc",
+    "foundry-evm/arc",
+    "foundry-evm-networks/arc",
+    "foundry-common/arc",
+    "foundry-cheatcodes/arc",
+    "foundry-cli/arc",
+    "forge-script-sequence/arc",
+    "forge-verify/arc",
+]
 base = [
     "anvil/base",
     "foundry-evm/base",

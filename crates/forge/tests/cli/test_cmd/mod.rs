@@ -21,6 +21,8 @@ use std::{io::Write, path::PathBuf, str::FromStr};
 #[cfg(unix)]
 use std::fs;
 
+#[cfg(feature = "arc")]
+mod arc;
 #[cfg(feature = "base")]
 mod base;
 mod brutalize;
