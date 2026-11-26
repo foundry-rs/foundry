@@ -192,9 +192,10 @@ fn is_partial_match(
         return try_extract_and_compare_bytecode(local_bytecode, bytecode);
     }
 
-    // Init code embeds the runtime size and the offset it reads constructor args from, so
-    // creation code with metadata of a different length cannot match. A longer onchain metadata
-    // region could otherwise hide words the constructor decodes in front of the supplied args.
+    // A legitimate creation match has the same length: Solidity init code embeds the runtime
+    // size and the offset it reads constructor args from, and Vyper's footer length depends only
+    // on the code and the compiler version. A longer onchain metadata region could otherwise
+    // hide words the constructor decodes in front of the supplied args.
     if local_bytecode.len() != bytecode.len() {
         return false;
     }
