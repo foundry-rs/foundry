@@ -517,6 +517,9 @@ fn normalize_cmp_for_solver(
                 return SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ule, value, U256::MAX / factor);
             }
         }
+        if nested_const_quotient_eq(&left, &right) || nested_const_quotient_eq(&right, &left) {
+            return SymBoolExpr::constant(cx, true);
+        }
         for (quotient, expected) in [(&left, &right), (&right, &left)] {
             // solc's checked `x * c` guard, `(x * c) / x == c` under `x != 0`, holds exactly when
             // the product does not wrap: `x <= MAX / c`. Keep that bound instead of the quotient,
@@ -1799,6 +1802,24 @@ fn const_side_bound<'a>(left: &'a SymExpr, right: &'a SymExpr) -> Option<(&'a Sy
         .as_const()
         .map(|value| (left, value))
         .or_else(|| left.as_const().map(|value| (right, value)))
+}
+
+/// Returns whether `nested` is `(x u/ a) u/ b` and `single` is `x u/ c` for nonzero constants with
+/// `a * b == c` and no wrapping, since `floor(floor(x / a) / b)` is `floor(x / (a * b))`.
+fn nested_const_quotient_eq(nested: &SymExpr, single: &SymExpr) -> bool {
+    if let Some((quotient, outer)) = nested.udiv_operands()
+        && let Some((dividend, inner)) = quotient.udiv_operands()
+        && let Some((single_dividend, divisor)) = single.udiv_operands()
+        && dividend == single_dividend
+        && let Some(inner) = inner.as_const()
+        && let Some(outer) = outer.as_const()
+        && !inner.is_zero()
+        && !outer.is_zero()
+    {
+        divisor.as_const().is_some_and(|divisor| inner.checked_mul(outer) == Some(divisor))
+    } else {
+        false
+    }
 }
 
 /// Normalizes one word expression into an equivalent, solver-friendlier form.

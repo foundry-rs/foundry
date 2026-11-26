@@ -7750,6 +7750,41 @@ contract RoundedProductTest {
         assert(rounded <= value);
     }
 
+    function checkNestedConstantQuotient(uint256 value) external pure {
+        assert(value / 1e9 / 1e9 == value / 1e18);
+    }
+
+    // Equality orders two quotients by a stable hash, which puts this nested side on the right.
+    function checkReversedNestedConstantQuotient(uint256 value) external pure {
+        assert(value / 21 == value / 3 / 7);
+    }
+
+    function checkNestedQuotientIsNotFiner(uint256 value) external pure {
+        assert(value / 1e9 / 1e9 == value / 1e17);
+    }
+
+    function checkNestedQuotientOfOtherValue(uint256 value, uint256 other) external pure {
+        assert(value / 1e9 / 1e9 == other / 1e18);
+    }
+
+    // The divisors' product wraps to `2**129 + 1`, which must not stand in for it.
+    function checkWrappedNestedDivisor(uint256 value) external pure {
+        assert(value / (2 ** 128 + 1) / (2 ** 128 + 1) == value / (2 ** 129 + 1));
+    }
+
+    // A fee that is itself a constant division keeps its Euclidean and ceiling relations.
+    function checkNestedFeeEuclideanIdentity(uint128 amount, uint16 bps) external pure {
+        require(bps <= 10000);
+        uint256 fee = uint256(amount) * bps / 10000;
+        assert(fee / 3 * 3 + fee % 3 == fee);
+    }
+
+    function checkNestedFeeCeiling(uint128 amount, uint16 bps) external pure {
+        require(bps <= 10000);
+        uint256 fee = uint256(amount) * bps / 10000;
+        assert((fee + 2) / 3 >= fee / 3);
+    }
+
     function checkBasisPointsFee(uint64 amount, uint16 bps) external pure {
         require(bps <= 10000);
         assert(uint256(amount) * bps / 10000 <= amount);
@@ -7777,15 +7812,6 @@ contract RoundedProductTest {
     );
     for optimized in [false, true] {
         prj.update_config(|config| config.optimizer = Some(optimized));
-        cmd.forge_fuse().args([
-            "test",
-            "--symbolic",
-            "--symbolic-timeout",
-            "30",
-            "--match-test",
-            "check(FloorError|DividendRelation|WrappingDividendRelation|CeilingError|CeilingRoundTrip|SymbolicDivisorFacts|EuclideanIdentities|SymbolicEuclideanIdentity|NarrowFloorError|BasisPointsFee|SlippageMinimum|TransferConservation)",
-        ])
-        .assert_success();
         let output = cmd
             .forge_fuse()
             .args([
@@ -7795,13 +7821,46 @@ contract RoundedProductTest {
                 "--symbolic-timeout",
                 "30",
                 "--match-test",
-                "check(CeilingIsNotExact|WrappingCeiling|ReversedFloorError|MixedEuclideanSum)",
+                "check(FloorError|DividendRelation|WrappingDividendRelation|CeilingError|CeilingRoundTrip|SymbolicDivisorFacts|EuclideanIdentities|SymbolicEuclideanIdentity|NarrowFloorError|NestedConstantQuotient|ReversedNestedConstantQuotient|NestedFeeEuclideanIdentity|NestedFeeCeiling|BasisPointsFee|SlippageMinimum|TransferConservation)",
+            ])
+            .assert_success()
+            .get_output()
+            .stdout
+            .clone();
+        for signature in [
+            "checkNestedConstantQuotient(uint256)",
+            "checkReversedNestedConstantQuotient(uint256)",
+            "checkNestedFeeEuclideanIdentity(uint128,uint16)",
+            "checkNestedFeeCeiling(uint128,uint16)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+                "{signature}, optimized={optimized}: {result}"
+            );
+        }
+        let output = cmd
+            .forge_fuse()
+            .args([
+                "test",
+                "--symbolic",
+                "--json",
+                "--symbolic-timeout",
+                "30",
+                "--match-test",
+                "check(CeilingIsNotExact|WrappingCeiling|ReversedFloorError|NestedQuotientIsNotFiner|NestedQuotientOfOtherValue|WrappedNestedDivisor|MixedEuclideanSum)",
             ])
             .assert_failure()
             .get_output()
             .stdout
             .clone();
-        for test in ["checkCeilingIsNotExact", "checkWrappingCeiling", "checkReversedFloorError"] {
+        for test in [
+            "checkCeilingIsNotExact",
+            "checkWrappingCeiling",
+            "checkReversedFloorError",
+            "checkNestedQuotientIsNotFiner",
+            "checkWrappedNestedDivisor",
+        ] {
             let signature = format!("{test}(uint256)");
             let result = json_test_result(&output, &signature);
             assert_eq!(
@@ -7809,9 +7868,20 @@ contract RoundedProductTest {
                 "{test}, optimized={optimized}"
             );
         }
-        let result = json_test_result(&output, "checkMixedEuclideanSum(uint256,uint256,uint256)");
-        assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
-        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
+        for signature in [
+            "checkMixedEuclideanSum(uint256,uint256,uint256)",
+            "checkNestedQuotientOfOtherValue(uint256,uint256)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "{signature}, optimized={optimized}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "{signature}, optimized={optimized}"
+            );
+        }
     }
 }
 
