@@ -12436,3 +12436,29 @@ If you wish to simulate on-chain transactions pass a RPC URL.
 "#
     ]]);
 }
+
+// Tests that the default-sender script contract receives `initial_balance` during construction.
+#[forgetest]
+fn script_default_sender_initial_balance(prj: _, cmd: _) {
+    let script = prj.add_source(
+        "Foo",
+        r#"
+contract Demo {
+    constructor() {
+        require(address(this).balance == 0xFFFFFFFFFFFFFFFFFFFFFFFF, "wrong balance");
+    }
+
+    function run() external {}
+}
+"#,
+    );
+
+    cmd.arg("script").arg(script).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+[GAS]
+
+"#]]);
+}
