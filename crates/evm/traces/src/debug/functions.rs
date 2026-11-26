@@ -96,9 +96,8 @@ pub struct FunctionInfo {
     pub declared_name: String,
     /// What the ABI spells for each parameter, or `None` if the parameters are not known.
     pub abi_types: Option<Vec<AbiType>>,
-    /// The signature that a library dispatches this function by, which spells enums, structs and
-    /// contracts by name and storage pointers with `storage`, or `None` if a type is not known.
-    pub library_signature: Option<String>,
+    /// The signature that a library dispatches this function by.
+    pub library_signature: LibrarySignature,
     /// Whether the dispatcher or the call frame itself enters it.
     pub is_entry: bool,
     /// The names of the functions without an entry point that the compiler may have merged into
@@ -114,6 +113,18 @@ pub enum AbiType {
     Known(String),
     /// A type that Solar did not resolve.
     Unknown,
+}
+
+/// The signature that a library dispatches a function by, which spells enums, structs and
+/// contracts by name and storage pointers with `storage`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LibrarySignature {
+    /// The types of the parameters are not known.
+    Unknown,
+    /// A parameter has a type that no external function takes, an internal function type, so the
+    /// function is not dispatched.
+    Internal,
+    Exact(String),
 }
 
 impl FunctionInfo {
@@ -155,7 +166,7 @@ impl FunctionInfo {
             params: None,
             returns: None,
             abi_types: None,
-            library_signature: None,
+            library_signature: LibrarySignature::Unknown,
             is_entry,
             merged: Vec::new(),
         }
@@ -201,14 +212,16 @@ impl SourceFunction {
             .as_ref()
             .filter(|_| !self.is_yul)
             .map(|params| params.iter().map(|param| param.ty.abi.clone()).collect());
-        let library_signature = self
-            .params
-            .as_ref()
-            .filter(|_| !self.is_yul)
-            .and_then(|params| {
-                params.iter().map(|param| param.ty.library_name.clone()).collect::<Option<Vec<_>>>()
-            })
-            .map(|names| format!("{}({})", self.name, names.join(",")));
+        let library_signature = match self.params.as_ref().filter(|_| !self.is_yul) {
+            None => LibrarySignature::Unknown,
+            Some(params) => params
+                .iter()
+                .map(|param| param.ty.library_name.clone())
+                .collect::<Option<Vec<_>>>()
+                .map_or(LibrarySignature::Internal, |names| {
+                    LibrarySignature::Exact(format!("{}({})", self.name, names.join(",")))
+                }),
+        };
         let spelled = signature.as_ref().unwrap_or(&self.name);
         let name = match &self.contract {
             Some(contract) => format!("{contract}::{spelled}"),
@@ -268,7 +281,7 @@ pub fn resolve_types(
 }
 
 fn resolve_type<'gcx>(gcx: Gcx<'gcx>, ty: Ty<'gcx>) -> ResolvedType {
-    let library_name = library_name(gcx, ty, 0);
+    let library_name = library_name(gcx, ty, false);
     match dyn_type(gcx, ty, 0) {
         Some(dyn_type) => ResolvedType {
             abi: AbiType::Known(abi_name(&dyn_type)),
@@ -280,32 +293,30 @@ fn resolve_type<'gcx>(gcx: Gcx<'gcx>, ty: Ty<'gcx>) -> ResolvedType {
 }
 
 /// The name that the signature of a library function spells for a type: enums, structs and
-/// contracts by their qualified name, user-defined value types as their underlying type,
-/// external function types as `function`, and storage pointers with `storage`. `depth` stops what
-/// contains itself.
-fn library_name<'gcx>(gcx: Gcx<'gcx>, ty: Ty<'gcx>, depth: usize) -> Option<String> {
-    if depth > 8 {
-        return None;
-    }
+/// contracts by their qualified name, user-defined value types as their underlying type (but by
+/// their qualified name inside a mapping), external function types as `function`, and storage
+/// pointers with `storage`.
+fn library_name<'gcx>(gcx: Gcx<'gcx>, ty: Ty<'gcx>, in_mapping: bool) -> Option<String> {
     Some(match ty.kind {
         TyKind::Elementary(ty) => abi_name(&elementary(ty)),
         TyKind::Ref(inner, location) => {
-            let name = library_name(gcx, inner, depth + 1)?;
+            let name = library_name(gcx, inner, in_mapping)?;
             if matches!(location, DataLocation::Storage) { format!("{name} storage") } else { name }
         }
-        TyKind::Udvt(inner, _) => return library_name(gcx, inner, depth + 1),
+        TyKind::Udvt(_, id) if in_mapping => gcx.item_canonical_name(id).to_string(),
+        TyKind::Udvt(inner, _) => return library_name(gcx, inner, in_mapping),
         TyKind::Array(element, size) => {
             let size: usize = size.try_into().ok()?;
-            format!("{}[{size}]", library_name(gcx, element, depth + 1)?)
+            format!("{}[{size}]", library_name(gcx, element, in_mapping)?)
         }
-        TyKind::DynArray(element) => format!("{}[]", library_name(gcx, element, depth + 1)?),
+        TyKind::DynArray(element) => format!("{}[]", library_name(gcx, element, in_mapping)?),
         TyKind::Enum(id) => gcx.item_canonical_name(id).to_string(),
         TyKind::Struct(id) => gcx.item_canonical_name(id).to_string(),
         TyKind::Contract(id) => gcx.item_canonical_name(id).to_string(),
         TyKind::Mapping(key, value) => format!(
             "mapping({} => {})",
-            library_name(gcx, key, depth + 1)?,
-            library_name(gcx, value, depth + 1)?
+            library_name(gcx, key, true)?,
+            library_name(gcx, value, true)?
         ),
         TyKind::Fn(function) if function.is_external() => "function".to_string(),
         _ => return None,
@@ -801,6 +812,8 @@ library L {
     function d(S[] memory s, K[2] memory k) public pure {}
     function e(S storage s, Signed x) public {}
     function f(S storage s, function(uint256) external returns (uint256) cb, uint256 x) public {}
+    function g(mapping(Signed => Signed) storage m, mapping(address => Signed[]) storage n) public {}
+    function h(function(uint256) internal returns (uint256) cb) internal {}
 }
 ";
         let resolved = compiler(source, true).enter(|compiler| {
@@ -814,6 +827,9 @@ library L {
             let function = &resolved[&source.find(&format!("function {name}(")).unwrap()];
             function.params.iter().map(|ty| ty.library_name.clone().unwrap()).collect::<Vec<_>>()
         };
+        // No external function takes an internal function type.
+        let internal = &resolved[&source.find("function h(").unwrap()];
+        assert_eq!(internal.params[0].library_name, None);
 
         // The method identifiers that solc 0.8.39 gives: `a(L.K)`, `b(Tok)`, `c(L.S)` and
         // `d(L.S[],L.K[2])`.
@@ -823,5 +839,10 @@ library L {
         assert_eq!(signature("d"), ["L.S[]", "L.K[2]"]);
         assert_eq!(signature("e"), ["L.S storage", "int256"]);
         assert_eq!(signature("f"), ["L.S storage", "function", "uint256"]);
+        // A user-defined value type keeps its name inside a mapping.
+        assert_eq!(
+            signature("g"),
+            ["mapping(Signed => Signed) storage", "mapping(address => Signed[]) storage"]
+        );
     }
 }

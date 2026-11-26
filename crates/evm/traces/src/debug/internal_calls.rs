@@ -366,7 +366,7 @@ impl Tracker<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::debug::{AbiType, Param};
+    use crate::debug::{AbiType, LibrarySignature, Param};
     use alloy_dyn_abi::DynSolType;
     use evm2::interpreter::InstrStop;
 
@@ -418,7 +418,7 @@ mod tests {
             name: name.into(),
             declared_name: name.into(),
             abi_types: None,
-            library_signature: None,
+            library_signature: LibrarySignature::Unknown,
             merged: Vec::new(),
             params,
             returns: uint(1),

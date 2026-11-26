@@ -30,6 +30,10 @@ library Lib {
         d.v = cb(x);
     }
 
+    function mark(mapping(Signed => Signed) storage m, Signed k) public {
+        m[k] = Signed.wrap(Signed.unwrap(k) + 1);
+    }
+
     function plain(uint256 x) public pure returns (uint256) {
         return x + 1;
     }
@@ -75,6 +79,7 @@ library Store {
 contract User {
     Lib.D d;
     Store.Outer o;
+    mapping(Signed => Signed) m;
 
     function cb(uint256 x) external pure returns (uint256) {
         return x + 1;
@@ -83,6 +88,7 @@ contract User {
     function run() external returns (uint256) {
         Lib.set(d, 5);
         Lib.invoke(d, this.cb, 3);
+        Lib.mark(m, Signed.wrap(4));
         o.inner.v = 2;
         o.inner.next[0].v = 1;
         Store.h(o);

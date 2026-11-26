@@ -9,7 +9,7 @@ use alloy_primitives::{U256, keccak256};
 use evm2::interpreter::opcode::OpCode;
 use foundry_common::fmt::format_token;
 use foundry_compilers::{artifacts::sourcemap::Jump, buildinfo::SourceEdit};
-pub use functions::{AbiType, FunctionInfo, SourceFunction};
+pub use functions::{AbiType, FunctionInfo, LibrarySignature, SourceFunction};
 use functions::{names_agree, without_number};
 pub use internal_calls::{CallConvention, CodeFunctions, FunctionEntry, UnlistedFunction};
 use internal_calls::{ResolvedEntry, SourceMapFunction, TrackerContext, track_internal_calls};
@@ -66,8 +66,9 @@ impl DebugTraceIdentifier {
         let calldata_selector = node.trace.data.first_chunk::<4>();
         let is_dispatched =
             |function: &FunctionInfo| match (&function.library_signature, is_library) {
-                (Some(signature), true) => calldata_selector
+                (LibrarySignature::Exact(signature), true) => calldata_selector
                     .is_some_and(|selector| keccak256(signature)[..4] == selector[..]),
+                (LibrarySignature::Internal, true) => false,
                 _ => {
                     artifact.selectors.is_empty()
                         || selected.is_some_and(|selected| function.matches_signature(selected))
