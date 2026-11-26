@@ -747,6 +747,7 @@ impl SymbolicExecutor {
             }
             opcode::BALANCE => {
                 let target = state.stack.pop()?;
+                let target = self.fixed_address_word(state, target)?;
                 let balance = state.balance_word(&mut self.cx, executor, target)?;
                 state.stack.push(balance)?;
             }
@@ -756,11 +757,13 @@ impl SymbolicExecutor {
             }
             opcode::EXTCODESIZE => {
                 let target = state.stack.pop()?;
+                let target = self.fixed_address_word(state, target)?;
                 let size = state.extcode_size_word(&mut self.cx, executor, target)?;
                 state.stack.push(size)?;
             }
             opcode::EXTCODEHASH => {
                 let target = state.stack.pop()?;
+                let target = self.fixed_address_word(state, target)?;
                 let hash = state.extcode_hash_word(&mut self.cx, executor, target)?;
                 state.stack.push(hash)?;
             }
@@ -773,6 +776,7 @@ impl SymbolicExecutor {
                     return Ok(outcome);
                 }
                 let target = state.stack.pop()?;
+                let target = self.fixed_address_word(state, target)?;
                 let dest = state.stack.pop()?;
                 let offset = state.stack.pop()?;
                 let size = state.stack.pop()?;

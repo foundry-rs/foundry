@@ -24,6 +24,8 @@ pub struct LifecycleSnapshot<T: EvmTypesHost> {
     pub(super) env: EvmEnv<T>,
     /// Network extension state of the running context.
     pub(super) ext: StoredExt<T::EvmExt>,
+    /// The transaction the snapshot was taken in, as counted by the lifecycle.
+    pub(super) transaction: u64,
 }
 
 impl<T: EvmTypesHost<EvmExt: SendableExt>> Clone for LifecycleSnapshot<T> {
@@ -33,6 +35,7 @@ impl<T: EvmTypesHost<EvmExt: SendableExt>> Clone for LifecycleSnapshot<T> {
             forks: self.forks.clone(),
             env: self.env,
             ext: self.ext.clone(),
+            transaction: self.transaction,
         }
     }
 }

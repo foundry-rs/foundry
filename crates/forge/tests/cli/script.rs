@@ -3919,12 +3919,86 @@ contract SimpleScript is Script {
     ])
     .assert_success()
     .stdout_eq(str![[r#"
-{"logs":[],"returns":{"success":{"internal_type":"bool","value":"true"}},"success":true,"raw_logs":[],"traces":[["Deployment",{"arena":[{"parent":null,"children":[],"idx":0,"trace":{"depth":0,"success":true,"caller":"0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38","address":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","maybe_precompile":false,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CREATE","value":"0x0","data":"[..]","output":"[..]","bytecode":null,"gas_used":"{...}","gas_limit":"{...}","gas_refund_counter":0,"status":"Return","steps":[],"step_deltas":[],"decoded":{"label":"SimpleScript","return_data":null,"call_data":null}},"logs":[],"ordering":[]}]}],["Execution",{"arena":[{"parent":null,"children":[1,2],"idx":0,"trace":{"depth":0,"success":true,"caller":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","address":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0xc0406226","output":"0x0000000000000000000000000000000000000000000000000000000000000001","bytecode":null,"gas_used":"{...}","gas_limit":1073720760,"gas_refund_counter":0,"status":"Return","steps":[],"step_deltas":[],"decoded":{"label":"SimpleScript","return_data":"true","call_data":{"signature":"run()","args":[]}}},"logs":[],"ordering":[{"Call":0},{"Call":1}]},{"parent":0,"children":[],"idx":1,"trace":{"depth":1,"success":true,"caller":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","address":"0x7109709ecfa91a80626ff3989d68f67f5b1dd12d","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0x7fb5297f","output":"0x","bytecode":null,"gas_used":"{...}","gas_limit":1056940999,"gas_refund_counter":0,"status":"Return","steps":[],"step_deltas":[],"decoded":{"label":"VM","return_data":null,"call_data":{"signature":"startBroadcast()","args":[]}}},"logs":[],"ordering":[]},{"parent":0,"children":[],"idx":2,"trace":{"depth":1,"success":true,"caller":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","address":"0x0000000000000000000000000000000000000000","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0x","output":"0x","bytecode":null,"gas_used":"{...}","gas_limit":1056940650,"gas_refund_counter":0,"status":"Stop","steps":[],"step_deltas":[],"decoded":{"label":null,"return_data":null,"call_data":null}},"logs":[],"ordering":[]}]}]],"gas_used":"{...}","labeled_addresses":{},"returned":"0x0000000000000000000000000000000000000000000000000000000000000001","address":null}
+{"logs":[],"returns":{"success":{"internal_type":"bool","value":"true"}},"success":true,"raw_logs":[],"traces":[["Deployment",{"arena":[{"parent":null,"children":[],"idx":0,"trace":{"depth":0,"success":true,"caller":"0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38","address":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","maybe_precompile":false,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CREATE","value":"0x0","data":"[..]","output":"[..]","bytecode":null,"gas_used":"{...}","gas_limit":"{...}","gas_refund_counter":0,"status":"Return","steps":[],"step_deltas":[],"decoded":{"label":"SimpleScript","return_data":null,"call_data":null}},"logs":[],"ordering":[]}]}],["Execution",{"arena":[{"parent":null,"children":[1,2],"idx":0,"trace":{"depth":0,"success":true,"caller":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","address":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0xc0406226","output":"0x0000000000000000000000000000000000000000000000000000000000000001","bytecode":null,"gas_used":"{...}","gas_limit":1073720760,"gas_refund_counter":0,"status":"Return","steps":[],"step_deltas":[],"decoded":{"label":"SimpleScript","return_data":"true","call_data":{"signature":"run()","args":[]}}},"logs":[],"ordering":[{"Call":0},{"Call":1}]},{"parent":0,"children":[],"idx":1,"trace":{"depth":1,"success":true,"caller":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","address":"0x7109709ecfa91a80626ff3989d68f67f5b1dd12d","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0x7fb5297f","output":"0x","bytecode":null,"gas_used":"{...}","gas_limit":1056940999,"gas_refund_counter":0,"status":"Return","steps":[],"step_deltas":[],"decoded":{"label":"VM","return_data":null,"call_data":{"signature":"startBroadcast()","args":[]}}},"logs":[],"ordering":[]},{"parent":0,"children":[],"idx":2,"trace":{"depth":1,"success":true,"caller":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","address":"0x0000000000000000000000000000000000000000","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0x","output":"0x","bytecode":null,"gas_used":"{...}","gas_limit":1056940650,"gas_refund_counter":0,"status":"Stop","steps":[],"step_deltas":[],"decoded":{"label":null,"return_data":null,"call_data":null}},"logs":[],"ordering":[]}]}]],"gas_used":"{...}","labeled_addresses":{},"returned":"0x0000000000000000000000000000000000000000000000000000000000000001","address":null,"broadcastable_transactions":[{"from":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","to":"0x0000000000000000000000000000000000000000","value":"0x0","input":"0x","nonce":"0x0","chainId":"0x7a69"}]}
 {"chain":31337,"estimated_gas_price":"{...}","estimated_total_gas_used":"{...}","estimated_amount_required":"{...}","token_symbol":"ETH","estimated_max_fee_per_gas":"{...}","estimated_base_fee_per_gas":"{...}","estimated_max_priority_fee_per_gas":"{...}"}
 {"chain":"anvil-hardhat","status":"success","tx_hash":"0x4f78afe915fceb282c7625a68eb350bc0bf78acb59ad893e5c62b710a37f3156","contract_address":null,"block_number":1,"gas_used":"{...}","gas_price":"{...}"}
 {"status":"success","transactions":"[..]/broadcast/Foo.sol/31337/run-latest.json","sensitive":"[..]/cache/Foo.sol/31337/run-latest.json"}
 
 "#]].is_jsonlines());
+}
+
+// `--json` reports the recorded transactions, including when no RPC is given.
+#[forgetest]
+async fn script_json_broadcastable_transactions_fork(prj: _, cmd: _) {
+    prj.add_script(
+        "Foo",
+        r#"
+interface Vm {
+    function startBroadcast() external;
+}
+
+contract Dummy {}
+
+contract SimpleScript {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run() external {
+        vm.startBroadcast();
+        new Dummy();
+        (bool success, ) = address(0).call("");
+        success;
+    }
+
+    function none() external {}
+}
+   "#,
+    );
+    let sender = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+
+    cmd.args(["script", "SimpleScript", "--sig", "none()", "--sender", sender, "--json"])
+        .assert_success()
+        .stdout_eq(
+            str![[r#"
+{"logs":[],"returns":{},"success":true,"raw_logs":[],"traces":"{...}","gas_used":"{...}","labeled_addresses":{},"returned":"0x","address":null,"broadcastable_transactions":[]}
+
+"#]]
+            .is_jsonlines(),
+        );
+
+    // Without an RPC, the sender's nonce starts at 1 and the CREATE has no chain ID.
+    cmd.forge_fuse()
+        .args(["script", "SimpleScript", "--sender", sender, "--json"])
+        .assert_success()
+        .stdout_eq(
+            str![[r#"
+{"logs":[],"returns":{},"success":true,"raw_logs":[],"traces":"{...}","gas_used":"{...}","labeled_addresses":{},"returned":"0x","address":null,"broadcastable_transactions":[{"from":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","to":null,"value":"0x0","input":"{...}","nonce":"0x1"},{"from":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","to":"0x0000000000000000000000000000000000000000","value":"0x0","input":"0x","nonce":"0x2","chainId":"0x7a69"}]}
+
+"#]]
+            .is_jsonlines(),
+        );
+
+    // With an RPC, every unsigned transaction gets the RPC's chain ID, as in the broadcast file.
+    let (_api, handle) = spawn(NodeConfig::test().with_chain_id(Some(1234u64))).await;
+    cmd.forge_fuse()
+        .args([
+            "script",
+            "SimpleScript",
+            "--fork-url",
+            &handle.http_endpoint(),
+            "--sender",
+            sender,
+            "--json",
+        ])
+        .assert_success()
+        .stdout_eq(
+            str![[r#"
+{"logs":[],"returns":{},"success":true,"raw_logs":[],"traces":"{...}","gas_used":"{...}","labeled_addresses":{},"returned":"0x","address":null,"broadcastable_transactions":[{"from":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","to":null,"value":"0x0","input":"{...}","nonce":"0x0","chainId":"0x4d2"},{"from":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","to":"0x0000000000000000000000000000000000000000","value":"0x0","input":"0x","nonce":"0x1","chainId":"0x4d2"}]}
+{"chain":1234,"estimated_gas_price":"{...}","estimated_total_gas_used":"{...}","estimated_amount_required":"{...}","token_symbol":"ETH","estimated_max_fee_per_gas":"{...}","estimated_base_fee_per_gas":"{...}","estimated_max_priority_fee_per_gas":"{...}"}
+{"status":"success","transactions":"[..]/broadcast/Foo.sol/1234/dry-run/run-latest.json","sensitive":"[..]/cache/Foo.sol/1234/dry-run/run-latest.json"}
+
+"#]]
+            .is_jsonlines(),
+        );
 }
 
 #[forgetest]
@@ -11755,4 +11829,235 @@ contract Deploy {
 "#]]
         .is_json(),
     );
+}
+
+// `--skip-simulation` keeps `--json` stdout to JSON lines.
+#[forgetest]
+async fn script_json_skip_simulation_fork(prj: _, cmd: _) {
+    prj.add_script(
+        "Foo",
+        r#"
+interface Vm {
+    function startBroadcast() external;
+}
+
+contract SimpleScript {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run() external {
+        vm.startBroadcast();
+        (bool success, ) = address(0).call("");
+        success;
+    }
+}
+   "#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    cmd.args([
+        "script",
+        "SimpleScript",
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--sender",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--skip-simulation",
+        "--json",
+    ])
+    .assert_success()
+    .stdout_eq(
+        str![[r#"
+{"success":true,"...":"{...}"}
+{"status":"success","transactions":"[..]/broadcast/Foo.sol/31337/dry-run/run-latest.json","sensitive":"[..]/cache/Foo.sol/31337/dry-run/run-latest.json"}
+
+"#]]
+        .is_jsonlines(),
+    );
+}
+
+// `--no-compile` runs a script from cached artifacts, and fails instead of compiling when a source
+// changed.
+#[forgetest]
+fn script_no_compile(prj: _, cmd: _) {
+    let script = prj.add_source("Foo", "contract Demo { function run() external {} }");
+    cmd.arg("build").assert_success();
+    cmd.forge_fuse().arg("script").arg(&script).arg("--no-compile").assert_success().stdout_eq(
+        str![[r#"
+No files changed, compilation skipped
+Script ran successfully.
+...
+"#]],
+    );
+
+    prj.add_source("Foo", "contract Demo { function run() external pure {} }");
+    cmd.forge_fuse()
+        .arg("script")
+        .arg(&script)
+        .arg("--no-compile")
+        .assert_failure()
+        .stdout_eq(str![[""]])
+        .stderr_eq(str![[r#"
+Error: compilation disabled by --no-compile; sources need compiling:
+src/Foo.sol
+
+"#]]);
+
+    // The cache is untouched, so a normal run compiles the change.
+    cmd.forge_fuse().arg("script").arg(&script).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+...
+"#]]);
+
+    // `--debug` needs storage layouts the build lacks, and reports them stale without touching
+    // the cache, so a later cached run still works.
+    let script = prj.add_script("Bar.s.sol", "contract Bar { function run() external {} }");
+    cmd.forge_fuse().arg("build").assert_success();
+    let cache = fs::read(prj.cache()).unwrap();
+    cmd.forge_fuse()
+        .arg("script")
+        .arg(&script)
+        .args(["--no-compile", "--debug", "--dump", "dump.json"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: compilation disabled by --no-compile; sources need compiling:
+...
+"#]]);
+    assert_eq!(fs::read(prj.cache()).unwrap(), cache);
+    cmd.forge_fuse().arg("script").arg(&script).arg("--no-compile").assert_success();
+
+    prj.update_config(|config| config.decode_external_storage = true);
+    cmd.forge_fuse().arg("script").arg(&script).arg("--no-compile").assert_failure().stderr_eq(
+        str![[r#"
+Error: `--no-compile` cannot be used with `decode_external_storage`
+
+"#]],
+    );
+}
+
+// `--args-json` encodes structs, struct arrays, and big integers against `--sig`.
+#[forgetest]
+fn can_execute_script_with_args_json(prj: _, cmd: _) {
+    prj.add_source(
+        "Foo",
+        r#"
+contract ArgsJson {
+    struct Leg { address to; uint256 amount; }
+    struct Plan { string name; Leg main; Leg[] extra; }
+
+    function run(Plan memory plan, uint256 big, uint256 small, address owner)
+        external
+        pure
+        returns (Plan memory, uint256, uint256, address)
+    {
+        return (plan, big, small, owner);
+    }
+}
+"#,
+    );
+    let args = prj.root().join("args.json");
+    fs::write(
+        &args,
+        r#"[
+  {
+    "name": "plan",
+    "note": null,
+    "main": { "to": "0x0000000000000000000000000000000000000001", "amount": 1 },
+    "extra": [{ "to": "0x0000000000000000000000000000000000000002", "amount": "2" }]
+  },
+  115792089237316195423570985008687907853269984665640564039457584007913129639935,
+  "42",
+  "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+]"#,
+    )
+    .unwrap();
+    cmd.args(["script", "ArgsJson", "--args-json", args.to_str().unwrap()])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+[GAS]
+
+== Return ==
+0: struct ArgsJson.Plan Plan({ name: "plan", main: Leg({ to: 0x0000000000000000000000000000000000000001, amount: 1 }), extra: [Leg({ to: 0x0000000000000000000000000000000000000002, amount: 2 })] })
+1: uint256 115792089237316195423570985008687907853269984665640564039457584007913129639935 [1.157e77]
+2: uint256 42
+3: address 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+
+"#]]);
+
+    fs::write(
+        &args,
+        r#"[{ "name": "plan", "extra": [] }, 1, 2, "0x0000000000000000000000000000000000000001"]"#,
+    )
+    .unwrap();
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: argument `plan` (string,(address,uint256),(address,uint256)[]): field "main" not found in JSON object
+
+"#]]);
+
+    // `null` must not be encoded as the string "null".
+    fs::write(
+        &args,
+        r#"[{ "name": null, "main": { "to": "0x0000000000000000000000000000000000000001", "amount": 1 }, "extra": [] }, 1, 2, "0x0000000000000000000000000000000000000001"]"#,
+    )
+    .unwrap();
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: argument `plan` (string,(address,uint256),(address,uint256)[]): JSON null is not supported
+
+"#]]);
+}
+
+// A relink for a new library deployer reruns the script with the arguments read before the
+// first run, even if the script rewrites its `--args-json` file.
+#[forgetest]
+fn args_json_survives_deployer_relink(prj: _, cmd: _) {
+    prj.add_source(
+        "Foo",
+        r#"
+interface Vm {
+    function writeFile(string calldata path, string calldata data) external;
+    function startBroadcast(address signer) external;
+}
+
+library Lib {
+    function id(uint256 value) external pure returns (uint256) { return value; }
+}
+
+contract Dummy {}
+
+contract Relink {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run(uint256 value) external returns (uint256) {
+        vm.writeFile("args.json", "[2]");
+        vm.startBroadcast(address(0xBEEF));
+        new Dummy();
+        return Lib.id(value);
+    }
+}
+"#,
+    );
+    prj.update_config(|config| {
+        config.fs_permissions = foundry_config::FsPermissions::new(vec![
+            foundry_config::fs_permissions::PathPermission::read_write("./"),
+        ]);
+    });
+    fs::write(prj.root().join("args.json"), "[1]").unwrap();
+    cmd.args(["script", "Relink", "--args-json", "args.json"]).assert_success().stdout_eq(str![[
+        r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+[GAS]
+
+== Return ==
+0: uint256 1
+
+If you wish to simulate on-chain transactions pass a RPC URL.
+
+"#
+    ]]);
 }

@@ -1041,7 +1041,7 @@ impl CallTraceDecoder {
         for node in traces {
             if !self.opcodes.is_empty() {
                 for step in &mut node.trace.steps {
-                    if step.decoded.is_some() || !self.opcodes.contains(&step.op) {
+                    if step.decoded().is_some() || !self.opcodes.contains(&step.op) {
                         continue;
                     }
                     let res = match &step.storage_change {
@@ -1065,7 +1065,7 @@ impl CallTraceDecoder {
                         None => format!("[{}] {}", step.gas_cost, step.op),
                     };
 
-                    step.decoded = Some(Box::new(DecodedTraceStep::Line(res)));
+                    *step.decoded_mut() = DecodedTraceStep::Line(res);
                 }
             }
 

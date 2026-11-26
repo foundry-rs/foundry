@@ -71,8 +71,21 @@ update_cargo_toml() {
   local old_rev="$1"
   local new_rev="$2"
 
+  # reth-evm must match Tempo's reth rev, or the lockfile carries two reth graphs.
+  # Resolve it before editing so a failed lookup leaves Cargo.toml untouched and the bump retryable.
+  local reth_rev
+  reth_rev=$(gh api "repos/tempoxyz/tempo/contents/Cargo.toml?ref=$new_rev" -H "Accept: application/vnd.github.raw" |
+    grep -om1 'paradigmxyz/reth", rev = "[0-9a-f]\{40\}' | cut -d'"' -f3) || true
+  if [[ ! "$reth_rev" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "ERROR: Failed to resolve Tempo's reth revision at $new_rev"
+    return 1
+  fi
+
   sed -i "s|git = \"https://github.com/tempoxyz/tempo\", rev = \"$old_rev\"|git = \"https://github.com/tempoxyz/tempo\", rev = \"$new_rev\"|g" "$CARGO_TOML"
   echo "Updated Cargo.toml: $old_rev -> $new_rev"
+
+  sed -i "/^reth-evm = /s/rev = \"[0-9a-f]*\"/rev = \"$reth_rev\"/" "$CARGO_TOML"
+  echo "Updated reth-evm to Tempo's reth rev: $reth_rev"
 }
 
 # Resolve the new revision while preserving unrelated locked dependencies.

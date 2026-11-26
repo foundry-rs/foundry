@@ -113,8 +113,10 @@ pub struct Parked<T: EvmTypesHost> {
     /// cleared when the context finishes a transaction.
     pub(super) loaded: AddressMap<HashSet<U256>>,
     /// Accounts created in this context before it was suspended, with the same lifetime as
-    /// `loaded`.
-    pub(super) created: AddressSet,
+    /// `loaded`, and whether the running transaction created them, which makes them created
+    /// again when it resumes the context, so that EIP-6780 SELFDESTRUCT deletes them. An earlier
+    /// transaction's creations are only carried.
+    pub(super) created: AddressMap<bool>,
     /// Accounts warm in this context when the running transaction last suspended it, with their
     /// warm slots. Cleared between transactions, so the next transaction starts them cold.
     pub(super) warm: AddressMap<HashSet<U256>>,
@@ -142,7 +144,7 @@ impl<T: EvmTypesHost<EvmExt: SendableExt>> Parked<T> {
             cache: None,
             needs_init: false,
             loaded: AddressMap::default(),
-            created: AddressSet::default(),
+            created: AddressMap::default(),
             warm: AddressMap::default(),
             originals: AddressMap::default(),
             switched: AddressMap::default(),
@@ -166,7 +168,7 @@ impl<T: EvmTypesHost<EvmExt: SendableExt>> Parked<T> {
     pub(super) fn inherit(
         &mut self,
         loaded: &AddressMap<HashSet<U256>>,
-        created: &AddressSet,
+        created: &AddressMap<bool>,
         source: &Cache,
     ) {
         for (address, slots) in loaded {
@@ -177,13 +179,13 @@ impl<T: EvmTypesHost<EvmExt: SendableExt>> Parked<T> {
         }
         self.needs_init |= self.cache.is_none();
         let target = Arc::make_mut(self.cache.get_or_insert_default());
-        for address in created {
+        for (address, in_tx) in created {
             copy_account(address, source, target);
             let mut storage = source.storage.get(address).cloned().unwrap_or_default();
             storage.wiped = true;
             target.storage.insert(*address, storage);
+            *self.created.entry(*address).or_default() |= in_tx;
         }
-        self.created.extend(created);
     }
 
     /// Starts this fork from what the running transaction loaded and created in the `local`

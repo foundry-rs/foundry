@@ -9,6 +9,7 @@ use alloy_signer::Signer;
 use eyre::Result;
 use foundry_cli::utils::get_chain;
 use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
+use foundry_evm::hardforks::latest_active_tempo_hardfork;
 use rand::{RngCore, SeedableRng, rngs::StdRng};
 use std::time::{Duration, Instant};
 use tempo_alloy::{
@@ -78,7 +79,9 @@ pub(crate) fn find_salt(
     quiet: bool,
     label: &str,
 ) -> Result<(Output, Option<Duration>)> {
-    if !master.is_valid_master() {
+    // The rules a master must satisfy depend on the hardfork, so check the latest active one;
+    // the chain enforces its own when the registration is submitted.
+    if !master.is_valid_master(latest_active_tempo_hardfork()) {
         eyre::bail!(
             "invalid {label} address {master}; see https://docs.tempo.xyz/protocol/tips/tip-1022"
         );

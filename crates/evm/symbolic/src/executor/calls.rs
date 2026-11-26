@@ -13,6 +13,7 @@ impl SymbolicExecutor {
         kind: CallKind,
     ) -> Result<StepOutcome, SymbolicError> {
         let free_write_targets = self.free_address_write_targets(executor, state, kind)?;
+        self.guard_free_address_words(state, &free_write_targets)?;
         let pre_call_state = (!state.function_mocks.is_empty()
             || !free_write_targets.is_empty()
             || !state.expected_calls.is_empty()
@@ -23,6 +24,7 @@ impl SymbolicExecutor {
         // A word the fork decides in place leaves the remaining words to decide.
         for (write_target, candidates) in &free_write_targets {
             if self.branch_free_address_write_if_needed(
+                executor,
                 state,
                 worklist,
                 pre_call_state.as_ref().expect("free address writes require pre-call state"),
@@ -32,9 +34,6 @@ impl SymbolicExecutor {
             )? {
                 return Ok(StepOutcome::Forked);
             }
-        }
-        if state.prank.has_active() {
-            state.resolve_prank_addresses(&mut self.cx);
         }
 
         let has_value = matches!(kind, CallKind::Call | CallKind::CallCode);
@@ -62,6 +61,9 @@ impl SymbolicExecutor {
         let target = state.stack.pop()?;
         self.ensure_gas_modeled(&target)?;
         let target = target.address_operand(&mut self.cx);
+        // A target the path fixes runs as that account. A guarded alias that holds state stands
+        // for the fixed account, so it stays on the symbolic call path.
+        let target = self.fixed_address_word(state, target)?;
         let target_address = state.world.resolve_address(&target);
         let value = match (kind, target_address) {
             (CallKind::Call, Some(to))
@@ -1278,8 +1280,8 @@ impl SymbolicExecutor {
             }
         }
         let inherited_prank = state.callers();
-        let call_context =
-            (!matches!(kind, CallKind::DelegateCall)).then(|| state.prank_for_next_call());
+        let call_context = (!matches!(kind, CallKind::DelegateCall))
+            .then(|| state.prank_for_next_call(&mut self.cx, executor));
         // An isolated CALL is its own transaction, so it bumps the caller's nonce even when the
         // call fails. Concrete Forge answers a mocked call before isolating it.
         let isolated =
@@ -1334,7 +1336,7 @@ impl SymbolicExecutor {
             return Err(SymbolicError::Unsupported("symbolic prank delegatecall"));
         }
         let (call_caller, call_caller_word, pranked_origin) =
-            call_context.unwrap_or_else(|| state.prank_for_next_call());
+            call_context.unwrap_or_else(|| state.prank_for_next_call(&mut self.cx, executor));
 
         // A call beyond the call depth limit fails before it transfers value or runs
         // any code, including a precompile.
@@ -2014,7 +2016,7 @@ impl SymbolicExecutor {
             if matches!(kind, CallKind::DelegateCall) && branch.prank.has_active() {
                 return Err(SymbolicError::Unsupported("symbolic prank delegatecall"));
             }
-            let (call_caller, _, _) = branch.prank_for_next_call();
+            let (call_caller, _, _) = branch.prank_for_next_call(&mut self.cx, executor);
             if matches!(kind, CallKind::Call) && branch.starts_isolated_transaction(executor) {
                 branch.world.increment_nonce(executor, call_caller)?;
             }
