@@ -1000,6 +1000,16 @@ impl ConstraintContext {
             SymBoolExprKind::Const(value) => Some(*value),
             SymBoolExprKind::Not(value) => self.bounded_bool_value(value).map(|value| !value),
             SymBoolExprKind::Cmp(op, left, right) => {
+                // Solmate's `mulDivDown` overflow guard `MAX / y < x` is false once `x * y`
+                // cannot overflow, as `x * y <= MAX` implies `x <= MAX / y` for `y != 0`.
+                if *op == SymCmpOp::Ult
+                    && let Some((numerator, divisor)) = left.udiv_operands()
+                    && numerator.as_const() == Some(U256::MAX)
+                    && self.interval(divisor).is_some_and(|interval| !interval.min.is_zero())
+                    && self.mul_cannot_overflow_256(right, divisor)
+                {
+                    return Some(false);
+                }
                 let left = self.interval(left)?;
                 let right = self.interval(right)?;
                 if *op == SymCmpOp::Eq {
