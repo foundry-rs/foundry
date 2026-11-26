@@ -28,6 +28,8 @@ const PUBLIC: (&str, &str) =
     ("Public.t.sol", include_str!("../../fixtures/internal_calls/Public.t.sol"));
 const MATRIX: (&str, &str) =
     ("Matrix.t.sol", include_str!("../../fixtures/internal_calls/Matrix.t.sol"));
+const LIBRARY: (&str, &str) =
+    ("Library.t.sol", include_str!("../../fixtures/internal_calls/Library.t.sol"));
 const C: (&str, &str) = ("C.t.sol", include_str!("../../fixtures/internal_calls/C.t.sol"));
 
 #[forgetest]
@@ -244,6 +246,53 @@ fn matrix_via_ir_optimized(prj: _, cmd: _) {
         MATRIX,
         (true, true),
         file!["../../fixtures/internal_calls/matrix_via_ir_optimized.txt"],
+    );
+}
+
+// The functions that a library runs for a delegatecall are entered by its dispatcher: library ABIs
+// spell enums, structs and contracts by qualified name, and leave out the functions with `storage`
+// parameters, so the selector of the call does not name them in the ABI.
+#[forgetest]
+fn library_legacy(prj: _, cmd: _) {
+    assert_internal_calls(
+        &prj,
+        &mut cmd,
+        LIBRARY,
+        (false, false),
+        file!["../../fixtures/internal_calls/library_legacy.txt"],
+    );
+}
+
+#[forgetest]
+fn library_legacy_optimized(prj: _, cmd: _) {
+    assert_internal_calls(
+        &prj,
+        &mut cmd,
+        LIBRARY,
+        (false, true),
+        file!["../../fixtures/internal_calls/library_legacy_optimized.txt"],
+    );
+}
+
+#[forgetest]
+fn library_via_ir(prj: _, cmd: _) {
+    assert_internal_calls(
+        &prj,
+        &mut cmd,
+        LIBRARY,
+        (true, false),
+        file!["../../fixtures/internal_calls/library_via_ir.txt"],
+    );
+}
+
+#[forgetest]
+fn library_via_ir_optimized(prj: _, cmd: _) {
+    assert_internal_calls(
+        &prj,
+        &mut cmd,
+        LIBRARY,
+        (true, true),
+        file!["../../fixtures/internal_calls/library_via_ir_optimized.txt"],
     );
 }
 

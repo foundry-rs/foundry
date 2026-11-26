@@ -31,12 +31,14 @@ use std::{
     sync::Arc,
 };
 
-/// What a source declares: its functions by the offset of their definition, and the bases of its
-/// contracts.
+/// What a source declares: its functions by the offset of their definition, the bases of its
+/// contracts, and whether each contract is a library.
 #[derive(Debug, Default)]
 pub struct Declarations {
     pub functions: HashMap<usize, Arc<SourceFunction>>,
     pub bases: Vec<(String, Vec<String>)>,
+    /// The contracts by name, and whether they are libraries.
+    pub libraries: Vec<(String, bool)>,
 }
 
 /// The types of the parameters and return values of a function that Solar resolved.
@@ -339,6 +341,7 @@ pub fn collect<'ast>(
                     .filter_map(|base| base.name.segments().last().map(|last| last.to_string()))
                     .collect();
                 declarations.bases.push((name.clone(), bases));
+                declarations.libraries.push((name.clone(), contract.kind.is_library()));
                 for member in contract.body.iter() {
                     collect_item(member, Some(&name), source_map, types, declarations);
                 }

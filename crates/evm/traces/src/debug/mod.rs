@@ -57,9 +57,14 @@ impl DebugTraceIdentifier {
         // Without an ABI every external function counts as dispatched.
         let selected =
             node.trace.data.first_chunk().and_then(|selector| artifact.selectors.get(selector));
-        // The signature tells overloads apart.
+        // The signature tells overloads apart. A library dispatches by a signature that its ABI
+        // does not spell, with enums, structs and contracts by qualified name, and leaves out the
+        // functions with `storage` parameters, so the entry of a library is any of its public
+        // functions: nothing but its dispatcher delegates to it.
+        let is_library = sources.is_library(contract_name);
         let is_dispatched = |function: &FunctionInfo| {
-            artifact.selectors.is_empty()
+            is_library
+                || artifact.selectors.is_empty()
                 || selected.is_some_and(|selected| function.matches_signature(selected))
         };
         let resolve = |pc: u32, entries: &[FunctionEntry]| {

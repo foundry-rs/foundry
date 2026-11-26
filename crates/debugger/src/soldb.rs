@@ -1023,6 +1023,7 @@ mod tests {
                 functions: Default::default(),
                 call_sites: Default::default(),
                 contract_bases: Vec::new(),
+                contract_libraries: Vec::new(),
                 source_edits: Vec::new(),
             }),
         );

@@ -44,6 +44,8 @@ pub struct SourceData {
     pub call_sites: HashMap<usize, String>,
     /// The base contracts of the contracts that the source declares, by name.
     pub contract_bases: Vec<(String, Vec<String>)>,
+    /// The contracts that the source declares by name, and whether they are libraries.
+    pub contract_libraries: Vec<(String, bool)>,
     /// The edits that a preprocessor made to the source before compilation, sorted by start
     /// offset. The compiler's source locations refer to the edited source.
     pub source_edits: Vec<SourceEdit>,
@@ -79,8 +81,18 @@ impl SourceData {
             }
         }
 
-        let Declarations { functions, bases: contract_bases } = declarations;
-        Self { source, language, path, functions, call_sites, contract_bases, source_edits }
+        let Declarations { functions, bases: contract_bases, libraries: contract_libraries } =
+            declarations;
+        Self {
+            source,
+            language,
+            path,
+            functions,
+            call_sites,
+            contract_bases,
+            contract_libraries,
+            source_edits,
+        }
     }
 }
 
@@ -242,6 +254,8 @@ pub struct ContractSources {
     pub artifacts_by_name: HashMap<String, Vec<ArtifactData>>,
     /// The bases of the contracts by name.
     pub bases: HashMap<String, Vec<String>>,
+    /// Whether the contracts of a name are libraries, if every contract of that name is.
+    pub libraries: HashMap<String, bool>,
     /// The functions of all sources by the hash of their body, which functions with the same code
     /// share.
     pub functions_by_body: HashMap<u64, Vec<BodyFunction>>,
@@ -348,6 +362,10 @@ impl ContractSources {
         }
 
         for source_data in files.values().filter_map(|variants| variants.first()) {
+            for (contract, is_library) in &source_data.contract_libraries {
+                let known = self.libraries.entry(contract.clone()).or_insert(*is_library);
+                *known &= *is_library;
+            }
             for (contract, bases) in &source_data.contract_bases {
                 let known = self.bases.entry(contract.clone()).or_default();
                 for base in bases {
@@ -419,6 +437,11 @@ impl ContractSources {
         }
     }
 
+    /// Whether `contract` is a library.
+    pub fn is_library(&self, contract: &str) -> bool {
+        self.libraries.get(contract).copied().unwrap_or(false)
+    }
+
     /// The contract and the contracts it inherits from.
     pub fn contract_and_bases(&self, contract: &str) -> Vec<String> {
         let mut contracts = vec![contract.to_string()];
@@ -438,6 +461,10 @@ impl ContractSources {
     /// Merges given contract sources.
     pub fn merge(&mut self, sources: Self) {
         self.sources_by_id.extend(sources.sources_by_id);
+        for (contract, is_library) in sources.libraries {
+            let known = self.libraries.entry(contract).or_insert(is_library);
+            *known &= is_library;
+        }
         for (contract, bases) in sources.bases {
             let known = self.bases.entry(contract).or_default();
             for base in bases {
@@ -582,6 +609,7 @@ mod tests {
                 functions: HashMap::new(),
                 call_sites: HashMap::new(),
                 contract_bases: Vec::new(),
+                contract_libraries: Vec::new(),
                 source_edits: Vec::new(),
             })
         };
