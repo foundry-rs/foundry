@@ -2846,6 +2846,7 @@ async fn test_trace_filter_block_hash_fork_rpc() {
         .unwrap();
     let hash = receipt.block_hash.unwrap();
     let expected = origin.trace_block(receipt.block_number.unwrap().into()).await.unwrap();
+    let root_snapshot = origin_api.evm_snapshot().await.unwrap();
     origin_api.mine_one().await.unwrap();
     let root = origin.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
     let (api, handle) =
@@ -2884,6 +2885,24 @@ async fn test_trace_filter_block_hash_fork_rpc() {
             .unwrap()
             .is_empty()
     );
+
+    // A reorg that replaces only the fork root keeps the blocks below it available.
+    assert!(origin_api.evm_revert(root_snapshot).await.unwrap());
+    origin_api.evm_set_next_block_timestamp(root.header.timestamp + 1).unwrap();
+    origin_api.mine_one().await.unwrap();
+    assert_ne!(
+        origin.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap().header.hash,
+        root.header.hash
+    );
+    assert_eq!(
+        provider.trace_filter(&TraceFilter::default().block_hash(hash)).await.unwrap(),
+        expected
+    );
+    let err = provider
+        .trace_filter(&TraceFilter::default().block_hash(root.header.hash))
+        .await
+        .unwrap_err();
+    assert_eq!(err.as_error_resp().unwrap().code, -32001);
 
     // Do not accept blocks on a replacement upstream branch, even below the old fork boundary.
     assert!(origin_api.evm_revert(snapshot).await.unwrap());
@@ -2976,6 +2995,16 @@ async fn test_trace_filter_block_hash_pruned_rpc() {
     api.mine_one().await.unwrap();
     api.mine_one().await.unwrap();
     let err = provider
+        .trace_filter(&TraceFilter::default().block_hash(receipt.block_hash.unwrap()))
+        .await
+        .unwrap_err();
+    assert_eq!(err.as_error_resp().unwrap().code, -32603);
+
+    // A fork of the pruned node gets an empty body with a nonempty transactions root.
+    let (_fork_api, fork_handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(handle.http_endpoint()))).await;
+    let err = fork_handle
+        .http_provider()
         .trace_filter(&TraceFilter::default().block_hash(receipt.block_hash.unwrap()))
         .await
         .unwrap_err();
