@@ -3105,7 +3105,7 @@ fn if_arm_calling_function_with_conditional_modifier_lcov(prj: _, cmd: _) {
         r#"
 contract Gate {
     uint256 public total;
-    modifier gate(bool allowed) { if (allowed) { _; } }
+    modifier gate(bool allowed) { while (allowed) { _; break; } }
     function bump(bool allowed) internal gate(allowed) { total += 1; }
     function run(bool allowed) external { if (true) { bump(allowed); } }
 }
@@ -3134,7 +3134,7 @@ contract GateTest {
         cmd.args(optimized),
         str![[r#"
 ...
-BRDA:8,1,0,3
+BRDA:8,0,0,3
 ...
 "#]],
     );
@@ -3143,7 +3143,7 @@ BRDA:8,1,0,3
         cmd.forge_fuse().args(optimized),
         str![[r#"
 ...
-BRDA:8,1,0,-
+BRDA:8,0,0,-
 ...
 "#]],
     );
@@ -3153,7 +3153,7 @@ BRDA:8,1,0,-
         cmd.forge_fuse().args(optimized).arg("--use").arg(&solar),
         str![[r#"
 ...
-BRDA:8,1,0,0
+BRDA:8,0,0,0
 ...
 "#]],
     );
