@@ -51,7 +51,7 @@ use foundry_common::{
         pretty_calldata,
     },
     shell, stdin,
-    tempo::{NATIVE_BALANCE_PLACEHOLDER, PATH_USD_ADDRESS, classify_payment_lane},
+    tempo::{NATIVE_BALANCE_PLACEHOLDER, OUSD_ADDRESS, PATH_USD_ADDRESS, classify_payment_lane},
 };
 use foundry_config::Chain;
 use foundry_evm_networks::NetworkVariant;
@@ -620,7 +620,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                         sh_warn!(
                             "Tempo has no native token, so this balance is a placeholder; use \
                              `cast erc20 balance <TOKEN> {account_addr}` for a TIP-20 balance, \
-                             such as pathUSD at {PATH_USD_ADDRESS}"
+                             such as PathUSD ({PATH_USD_ADDRESS}) or OUSD ({OUSD_ADDRESS})"
                         )?;
                     }
                     let out = if ether {

@@ -2235,7 +2235,7 @@ async fn balance_warns_about_tempo_placeholder(cmd: _) {
 
 "#]])
         .stderr_eq(str![[r#"
-Warning: Tempo has no native token, so this balance is a placeholder; use `cast erc20 balance <TOKEN> 0x4242424242424242424242424242424242424242` for a TIP-20 balance, such as pathUSD at 0x20C0000000000000000000000000000000000000
+Warning: Tempo has no native token, so this balance is a placeholder; use `cast erc20 balance <TOKEN> 0x4242424242424242424242424242424242424242` for a TIP-20 balance, such as PathUSD (0x20C0000000000000000000000000000000000000) or OUSD (0x20c0000000000000000000006a37DA5C996874BE)
 
 "#]]);
 }
