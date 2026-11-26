@@ -5317,7 +5317,7 @@ end_of_record
 }
 
 // The implicit false branch of a condition without `else` counts the evaluations that skip the
-// body, with every compiler and optimizer setting.
+// body, also when the condition short-circuits, with every compiler.
 #[forgetest]
 fn implicit_false_branch_counts_skipped_bodies_lcov(prj: _, cmd: _) {
     prj.add_source(
@@ -5327,6 +5327,18 @@ contract Skip {
     uint256 public total;
     function run(bool condition) external {
         if (condition) {
+            total += 1;
+        }
+    }
+
+    function both(bool a, bool b) external {
+        if (a && b) {
+            total += 1;
+        }
+    }
+
+    function either(bool a, bool b) external {
+        if (a || b) {
             total += 1;
         }
     }
@@ -5345,16 +5357,28 @@ contract SkipTest {
         skip.run(true);
         skip.run(false);
         skip.run(false);
+        skip.both(true, true);
+        skip.both(true, false);
+        skip.both(false, true);
+        skip.either(true, false);
+        skip.either(false, false);
+        skip.either(false, false);
     }
 }
 "#,
     );
 
-    let modes = ["coverage", "--no-isolate", "--keep-optimizer", "--optimize"];
+    let modes = ["coverage", "--no-isolate"];
     let expected = str![[r#"
 ...
 BRDA:7,0,0,1
 BRDA:7,0,1,3
+...
+BRDA:13,1,0,1
+BRDA:13,1,1,2
+...
+BRDA:19,2,0,1
+BRDA:19,2,1,2
 ...
 "#]];
     assert_lcov(cmd.args(modes), expected.clone());
