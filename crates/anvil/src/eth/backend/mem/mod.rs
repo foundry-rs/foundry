@@ -5830,6 +5830,12 @@ impl<N: Network> Backend<N> {
         if let Some(gas_limit) = replayed_gas_limit {
             self.fork_replayed_blocks.lock().insert(hash, gas_limit);
         }
+        // The fork root's live base fee is the configured override, not the upstream header's.
+        let fork_root_base_fee = if self.get_fork().is_some_and(|fork| fork.block_number() == num) {
+            Some(self.node_config.read().await.base_fee.unwrap_or_default())
+        } else {
+            None
+        };
         let removed_logs = self.removed_logs_since(num);
         let mut db = self.db.write().await;
         let tempo_anchor = {
@@ -5892,6 +5898,9 @@ impl<N: Network> Backend<N> {
             block_env.beneficiary = env.block_env.beneficiary;
             if let Some(gas_limit) = replayed_gas_limit {
                 block_env.gas_limit = gas_limit;
+            }
+            if let Some(base_fee) = fork_root_base_fee {
+                block_env.basefee = base_fee;
             }
             env.block_env = block_env;
         }

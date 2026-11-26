@@ -6097,3 +6097,27 @@ async fn test_fork_debug_get_raw_header_and_block_pre_fork() {
         assert_eq!(err.as_error_resp().unwrap().code, -32001, "{method}");
     }
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_revert_to_fork_block_keeps_base_fee_override() {
+    let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_base_fee(Some(7)),
+    )
+    .await;
+    let snapshot = api.evm_snapshot().await.unwrap();
+    api.mine_one().await.unwrap();
+    assert!(api.evm_revert(snapshot).await.unwrap());
+
+    // Latest execution at the fork block sees the configured base fee, not the upstream header's.
+    let basefee_call = WithOtherFields::new(
+        TransactionRequest::default()
+            .from(handle.dev_accounts().next().unwrap())
+            .with_deploy_code(Bytes::from_static(&[0x48, 0x5f, 0x52, 0x60, 0x20, 0x5f, 0xf3]))
+            .gas_price(7),
+    );
+    let basefee = api.call(basefee_call, None, Default::default()).await.unwrap();
+    assert_eq!(U256::from_be_slice(&basefee), U256::from(7));
+}
