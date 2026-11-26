@@ -6106,7 +6106,7 @@ dependencies = [
 [[package]]
 name = "foundry-block-explorers"
 version = "0.26.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=9a37467506dcb19d6a132bd046b640bac3516856#9a37467506dcb19d6a132bd046b640bac3516856"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=dee3fe152a028e0ecce4ce06d732d39a3c447118#dee3fe152a028e0ecce4ce06d732d39a3c447118"
 dependencies = [
  "alloy-chains",
  "alloy-json-abi",
@@ -6369,7 +6369,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=9a37467506dcb19d6a132bd046b640bac3516856#9a37467506dcb19d6a132bd046b640bac3516856"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=dee3fe152a028e0ecce4ce06d732d39a3c447118#dee3fe152a028e0ecce4ce06d732d39a3c447118"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -6406,7 +6406,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=9a37467506dcb19d6a132bd046b640bac3516856#9a37467506dcb19d6a132bd046b640bac3516856"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=dee3fe152a028e0ecce4ce06d732d39a3c447118#dee3fe152a028e0ecce4ce06d732d39a3c447118"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -6415,7 +6415,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-solc"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=9a37467506dcb19d6a132bd046b640bac3516856#9a37467506dcb19d6a132bd046b640bac3516856"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=dee3fe152a028e0ecce4ce06d732d39a3c447118#dee3fe152a028e0ecce4ce06d732d39a3c447118"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -6435,7 +6435,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=9a37467506dcb19d6a132bd046b640bac3516856#9a37467506dcb19d6a132bd046b640bac3516856"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=dee3fe152a028e0ecce4ce06d732d39a3c447118#dee3fe152a028e0ecce4ce06d732d39a3c447118"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -6448,7 +6448,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-core"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=9a37467506dcb19d6a132bd046b640bac3516856#9a37467506dcb19d6a132bd046b640bac3516856"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=dee3fe152a028e0ecce4ce06d732d39a3c447118#dee3fe152a028e0ecce4ce06d732d39a3c447118"
 dependencies = [
  "alloy-primitives",
  "dunce",
@@ -6804,7 +6804,7 @@ dependencies = [
 [[package]]
 name = "foundry-fork-db"
 version = "0.27.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=9a37467506dcb19d6a132bd046b640bac3516856#9a37467506dcb19d6a132bd046b640bac3516856"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=dee3fe152a028e0ecce4ce06d732d39a3c447118#dee3fe152a028e0ecce4ce06d732d39a3c447118"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
