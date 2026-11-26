@@ -1424,7 +1424,13 @@ impl<F: FoundryEvmFactory> ExecutionLifecycle<F> {
     ) {
         let current = evm_env(evm);
         self.sync_database_policy(evm);
-        if current.spec == env.spec && current.chain_id() == env.chain_id() {
+        // A fork switch can change the precompiles under the same spec and chain ID, such as BSC's
+        // `P256VERIFY`, which follows the fork's source chain.
+        if current.spec == env.spec
+            && current.chain_id() == env.chain_id()
+            && factory.precompiles(&env, evm.ext()).precompile_ids()
+                == evm.precompiles().precompile_ids()
+        {
             evm.set_block(env.block);
             // `evm` can be a frame EVM that already runs the pending environment while the frames
             // it suspended do not, so the request stays pending for them.

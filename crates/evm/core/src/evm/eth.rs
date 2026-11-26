@@ -253,6 +253,10 @@ pub const fn bsc_p256(chain_id: u64, timestamp: u64) -> Option<Option<bool>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        evm::{ExecutionLifecycle, ExecutionPhase, ForkInfo},
+        fork::ForkId,
+    };
     use alloy_primitives::B256;
     use alloy_sol_types::SolValue;
     use evm2::{
@@ -288,6 +292,7 @@ mod tests {
     }
 
     /// An empty fork database whose remote state belongs to BSC mainnet.
+    #[derive(Clone)]
     struct BscForkDb(EmptyDB);
 
     impl DynDatabase for BscForkDb {
@@ -322,8 +327,17 @@ mod tests {
         };
         let eth = EthEvmFactory::default();
         let env = EvmEnv::new(SpecId::CANCUN, eth.version(SpecId::CANCUN, 1), block);
-        let evm = eth.create_evm(BscForkDb(EmptyDB::default()), env);
+        let mut lifecycle = ExecutionLifecycle::new(eth, InMemoryDB::default(), env);
+        let mut evm = lifecycle.create_evm();
+        let info = ForkInfo::new(ForkId::new("http://bsc", Some(1)), "http://bsc", Some(1));
+        let fork = lifecycle.create_fork(info, BscForkDb(EmptyDB::default()), env);
+
+        // Switching forks under the same spec and chain ID still swaps the precompiles.
+        let phase = ExecutionPhase::Boundary;
+        lifecycle.select_fork(&mut evm, Some(fork), phase).unwrap();
         assert!(evm.precompiles().contains(&BSC_P256_ADDRESS));
+        lifecycle.select_fork(&mut evm, None, phase).unwrap();
+        assert!(!evm.precompiles().contains(&BSC_P256_ADDRESS));
     }
 
     #[test]
