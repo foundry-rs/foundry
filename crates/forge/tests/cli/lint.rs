@@ -2634,3 +2634,32 @@ fn lint_resolves_nested_library_absolute_imports(prj: _, cmd: _) {
     // Lint diagnostics during `forge test` don't fail the run, so check none were printed.
     cmd.forge_fuse().arg("test").assert_success().stderr_eq(str![[""]]);
 }
+
+// Symlinked sources are loaded under their canonical path and must still be linted.
+#[cfg(unix)]
+#[forgetest]
+fn lint_symlinked_source(prj: _, cmd: _) {
+    prj.create_file(
+        "hidden/Entry.sol",
+        "pragma solidity ^0.8.0; contract Entry { function f() public { uint256 BAD_CASE = 1; } }",
+    );
+    std::os::unix::fs::symlink(
+        prj.root().join("hidden/Entry.sol"),
+        prj.root().join("src/Entry.sol"),
+    )
+    .unwrap();
+
+    cmd.args(["lint", "--only-lint", "mixed-case-variable"])
+        .assert_success()
+        .stderr_eq(str![[r#"
+note[mixed-case-variable]: mutable variable name is not `mixedCase`
+  [FILE]:1:72
+  │
+1 │ pragma solidity ^0.8.0; contract Entry { function f() public { uint256 BAD_CASE = 1; } }
+  │                                                                        ━━━━━━━━ help: consider using: `badCase`
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/mixed-case-variable
+
+
+"#]]);
+}
