@@ -3096,6 +3096,118 @@ BRDA:10,0,0,-
     assert_lcov(cmd.forge_fuse().args(optimized).arg("--use").arg(&solar), expected);
 }
 
+// The run of an inlined function is entered once per call only when the function always runs its
+// body. A modifier that runs `_` only sometimes makes the body run less often than the arm.
+#[forgetest]
+fn if_arm_calling_function_with_conditional_modifier_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Gate.sol",
+        r#"
+contract Gate {
+    uint256 public total;
+    modifier gate(bool allowed) { if (allowed) { _; } }
+    function bump(bool allowed) internal gate(allowed) { total += 1; }
+    function run(bool allowed) external { if (true) { bump(allowed); } }
+}
+"#,
+    );
+    prj.add_test(
+        "Gate.t.sol",
+        r#"
+import "../src/Gate.sol";
+
+contract GateTest {
+    function testRun() public {
+        Gate gate = new Gate();
+        gate.run(false);
+        gate.run(true);
+        gate.run(false);
+    }
+}
+"#,
+    );
+
+    let optimized = ["coverage", "--no-isolate", "--keep-optimizer", "--optimize"];
+    // The arm is entered three times. Solc legacy counts them from its jump. Where the arm has no
+    // jump, the body runs once for the three calls, so the arm is left without hits.
+    assert_lcov(
+        cmd.args(optimized),
+        str![[r#"
+...
+BRDA:8,1,0,3
+...
+"#]],
+    );
+    prj.update_config(|config| config.via_ir = true);
+    assert_lcov(
+        cmd.forge_fuse().args(optimized),
+        str![[r#"
+...
+BRDA:8,1,0,-
+...
+"#]],
+    );
+    prj.update_config(|config| config.via_ir = false);
+    let solar = prj.ensure_foundry_bin("solar");
+    assert_lcov(
+        cmd.forge_fuse().args(optimized).arg("--use").arg(&solar),
+        str![[r#"
+...
+BRDA:8,1,0,0
+...
+"#]],
+    );
+}
+
+// An operator that a `using` directive binds to a function runs it from every use of the operator,
+// so a dead arm that calls the function by name must not take the hits of those uses.
+#[forgetest]
+fn if_arm_calling_operator_function_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Operator.sol",
+        r#"
+type Value is uint256;
+using {combine as +} for Value global;
+
+function combine(Value a, Value b) pure returns (Value) {
+    return Value.wrap(Value.unwrap(a) + Value.unwrap(b));
+}
+
+contract Operator {
+    Value public total;
+    function never(Value a, Value b) internal { if (true) { combine(a, b); } }
+    function run(Value a, Value b) external { total = a + b; }
+}
+"#,
+    );
+    prj.add_test(
+        "Operator.t.sol",
+        r#"
+import "../src/Operator.sol";
+
+contract OperatorTest {
+    function testRun() public {
+        Operator op = new Operator();
+        for (uint256 i = 0; i < 3; i++) op.run(Value.wrap(1), Value.wrap(2));
+    }
+}
+"#,
+    );
+
+    let optimized = ["coverage", "--no-isolate", "--keep-optimizer", "--optimize"];
+    let expected = str![[r#"
+...
+BRDA:13,0,0,-
+...
+"#]];
+    assert_lcov(cmd.args(optimized), expected.clone());
+    prj.update_config(|config| config.via_ir = true);
+    assert_lcov(cmd.forge_fuse().args(optimized), expected.clone());
+    prj.update_config(|config| config.via_ir = false);
+    let solar = prj.ensure_foundry_bin("solar");
+    assert_lcov(cmd.forge_fuse().args(optimized).arg("--use").arg(&solar), expected);
+}
+
 // An arm of an `if` with a proved condition has no jump, and it takes the hits of the function it
 // calls only when nothing else can run that function. Every `never` below is not compiled and its
 // function runs another way, so no arm may report hits, while the live control reports its own.
