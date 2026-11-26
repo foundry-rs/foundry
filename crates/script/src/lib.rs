@@ -561,16 +561,15 @@ impl ScriptArgs {
             NetworkVariant::Tempo => {
                 let batch = self.batch;
                 Box::pin(async move {
-                    let bundled = match self
+                    let Some(bundled) = self
                         .prepare_bundled::<TempoEvmNetwork>(
                             config,
                             evm_opts,
                             ExecutorBuilder::<TempoEvmNetwork>::new(),
                         )
                         .await?
-                    {
-                        Some(bundled) => bundled,
-                        None => return Ok(()),
+                    else {
+                        return Ok(());
                     };
                     // batch mode owns its own pending recovery inside broadcast_batch(); running
                     // the generic wait_for_pending() first would race with that and could
@@ -791,9 +790,9 @@ impl ScriptArgs {
         evm_opts: EvmOpts,
         executor_builder: ExecutorBuilder<FEN>,
     ) -> Result<()> {
-        let bundled = match self.prepare_bundled::<FEN>(config, evm_opts, executor_builder).await? {
-            Some(bundled) => bundled,
-            None => return Ok(()),
+        let Some(bundled) = self.prepare_bundled::<FEN>(config, evm_opts, executor_builder).await?
+        else {
+            return Ok(());
         };
 
         // Wait for pending txes and broadcast others.
@@ -903,18 +902,17 @@ impl ScriptArgs {
 
         let func = if self.sig.contains('(') {
             let func = get_func(&self.sig)?;
-            abi.functions()
-                .find(|&abi_func| abi_func.selector() == func.selector())
-                .wrap_err(format!("Function `{}` is not implemented in your script.", self.sig))?
+            abi.functions().find(|&abi_func| abi_func.selector() == func.selector()).wrap_err_with(
+                || format!("Function `{}` is not implemented in your script.", self.sig),
+            )?
         } else {
-            let matching_functions =
-                abi.functions().filter(|func| func.name == self.sig).collect::<Vec<_>>();
-            match matching_functions.len() {
-                0 => {
+            let mut matching_functions = abi.functions().filter(|func| func.name == self.sig);
+            match (matching_functions.next(), matching_functions.next()) {
+                (None, _) => {
                     eyre::bail!("Function `{}` not found in the ABI", self.sig);
                 }
-                1 => matching_functions[0],
-                2.. => {
+                (Some(func), None) => func,
+                _ => {
                     eyre::bail!(
                         "Multiple functions with the same name `{}` found in the ABI",
                         self.sig
@@ -1016,17 +1014,13 @@ impl ScriptArgs {
                     .map(|data| (data, tx.transaction.to()))
             })
         }) {
-            let mut offset = 0;
-
             // Find if it's a CREATE or CREATE2. Otherwise, skip transaction.
-            if let Some(to) = to {
-                if to == create2_deployer {
-                    // Size of the salt prefix.
-                    offset = 32;
-                } else {
-                    continue;
-                }
-            }
+            let offset = match to {
+                None => 0,
+                // Size of the salt prefix.
+                Some(to) if to == create2_deployer => 32,
+                Some(_) => continue,
+            };
 
             // Find artifact with a deployment code same as the data.
             if let Some((name, _, deployed_code)) =
@@ -1050,7 +1044,7 @@ impl ScriptArgs {
                     "contract above the code size limit requires confirmation; pass --non-interactive to continue without confirmation"
                 );
             }
-            if !Confirm::new().with_prompt("Do you wish to continue?".to_string()).interact()? {
+            if !Confirm::new().with_prompt("Do you wish to continue?").interact()? {
                 eyre::bail!("User canceled the script.");
             }
         }

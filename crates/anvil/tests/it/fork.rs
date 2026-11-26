@@ -679,6 +679,10 @@ async fn test_fork_transaction_hash_replay_preserves_cancun_header_inputs() {
     origin_api.evm_set_next_block_timestamp(source_timestamp).unwrap();
     let coinbase = Address::random();
     origin_api.anvil_set_coinbase(coinbase).await.unwrap();
+    let gas_limit = 12_345_678u64;
+    origin_api.evm_set_block_gas_limit(U256::from(gas_limit)).unwrap();
+    let prevrandao = B256::repeat_byte(0x42);
+    origin_api.anvil_set_next_block_prevrandao(prevrandao).await.unwrap();
 
     let first = origin_provider
         .send_transaction(WithOtherFields::new(
@@ -731,6 +735,10 @@ async fn test_fork_transaction_hash_replay_preserves_cancun_header_inputs() {
     assert_eq!(replayed.header.timestamp, source.header.timestamp);
     assert_eq!(replayed.header.parent_beacon_block_root, source.header.parent_beacon_block_root);
     assert_eq!(replayed.header.beneficiary, source.header.beneficiary);
+    assert_eq!(source.header.gas_limit, gas_limit);
+    assert_eq!(source.header.mix_hash, Some(prevrandao));
+    assert_eq!(replayed.header.gas_limit, source.header.gas_limit);
+    assert_eq!(replayed.header.mix_hash, source.header.mix_hash);
     let fork_provider = fork_handle.http_provider();
     assert_eq!(fork_provider.get_balance(coinbase).await.unwrap(), coinbase_balance);
 
@@ -738,6 +746,12 @@ async fn test_fork_transaction_hash_replay_preserves_cancun_header_inputs() {
     let next = fork_api.block_by_number_full(BlockNumberOrTag::Number(2)).await.unwrap().unwrap();
     assert!(next.header.timestamp > source.header.timestamp);
     assert_eq!(next.header.beneficiary, Address::ZERO);
+    assert_ne!(next.header.gas_limit, gas_limit);
+    fork_api.anvil_rollback(Some(1)).await.unwrap();
+    fork_api.mine_one().await.unwrap();
+    let remined =
+        fork_api.block_by_number_full(BlockNumberOrTag::Number(2)).await.unwrap().unwrap();
+    assert_eq!(remined.header.gas_limit, next.header.gas_limit);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1120,6 +1134,23 @@ async fn test_scroll_fork_transaction_hash_replay_skips_beacon_root() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_rollback_restores_ordinary_block_gas_limit() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+    api.mine_one().await.unwrap();
+    let first = api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
+
+    api.evm_set_block_gas_limit(U256::from(12_345_678u64)).unwrap();
+    api.mine_one().await.unwrap();
+    api.anvil_rollback(Some(1)).await.unwrap();
+    api.mine_one().await.unwrap();
+
+    let remined = api.block_by_number_full(BlockNumberOrTag::Number(2)).await.unwrap().unwrap();
+    assert_eq!(remined.header.gas_limit, first.header.gas_limit);
+    assert_ne!(remined.header.gas_limit, 12_345_678);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_fork_transaction_hash_replay_error_fails_startup() {
     let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
     let origin_provider = origin_handle.http_provider();
@@ -1136,7 +1167,7 @@ async fn test_fork_transaction_hash_replay_error_fails_startup() {
     let config = NodeConfig::test()
         .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
         .with_fork_transaction_hash(Some(transaction_hash))
-        .with_gas_limit(Some(20_000));
+        .with_base_fee(Some(1_000_000_000_000u64));
     let cache_path = config.block_cache_path(0).unwrap();
     match std::fs::remove_file(&cache_path) {
         Ok(()) => {}
@@ -6020,5 +6051,49 @@ async fn test_fork_dump_keeps_fetched_state_after_rollback_and_revert() {
             U256::from(7),
             "revert: {revert}"
         );
+    }
+}
+
+// `debug_getRawHeader` and `debug_getRawBlock` must serve pre-fork blocks from the upstream.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_debug_get_raw_header_and_block_pre_fork() {
+    let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let origin = origin_handle.http_provider();
+    let from = origin_handle.dev_accounts().next().unwrap();
+    origin
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(from).to(Address::random()).value(U256::from(1)),
+        ))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    origin_api.mine_one().await.unwrap();
+
+    let (_fork_api, fork_handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+    let fork = fork_handle.http_provider();
+
+    // Block 2 is the fork block and block 1 predates it; neither is stored by the fork.
+    let fork_block = BlockId::number(2);
+    let latest = BlockId::latest();
+    let pre_fork_hash = origin.get_block(BlockId::number(1)).await.unwrap().unwrap().header.hash;
+    for method in ["debug_getRawHeader", "debug_getRawBlock"] {
+        for (origin_id, fork_id) in [
+            (fork_block, fork_block),
+            (fork_block, latest),
+            (BlockId::number(1), BlockId::number(1)),
+            (BlockId::number(1), BlockId::hash(pre_fork_hash)),
+        ] {
+            let expected: Bytes = origin.client().request(method, (origin_id,)).await.unwrap();
+            let raw: Bytes = fork.client().request(method, (fork_id,)).await.unwrap();
+            assert_eq!(raw, expected, "{method} {fork_id}");
+        }
+
+        // A block past the head is not found, as it is without a fork.
+        let err =
+            fork.client().request::<_, Bytes>(method, (BlockId::number(3),)).await.unwrap_err();
+        assert_eq!(err.as_error_resp().unwrap().code, -32001, "{method}");
     }
 }

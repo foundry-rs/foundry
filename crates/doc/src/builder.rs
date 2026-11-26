@@ -129,10 +129,8 @@ impl DocBuilder {
             let gcx = compiler.gcx();
 
             // Restrict cross-reference resolution to files we'll actually emit pages for.
-            let allowed_sources: HashSet<PathBuf> = sources
-                .iter()
-                .map(|(p, _)| if p.is_absolute() { p.clone() } else { root.join(p) })
-                .collect();
+            let allowed_sources: HashSet<PathBuf> =
+                sources.iter().map(|(p, _)| root.join(p)).collect();
 
             let name_to_page = hir_ext::build_name_to_page(gcx, root, &allowed_sources);
 
@@ -141,7 +139,7 @@ impl DocBuilder {
             let results: Vec<RenderResult> = sources
                 .par_iter()
                 .map(|(path, from_library)| -> RenderResult {
-                    let abs_path = if path.is_absolute() { path.clone() } else { root.join(path) };
+                    let abs_path = root.join(path);
 
                     let Some((_, ast_source)) = gcx.get_ast_source(&abs_path) else {
                         if !from_library {
@@ -283,13 +281,10 @@ fn update_manifest(pages_dir: &Path, all_rel: &[PathBuf]) -> Result<()> {
     // never listed in the manifest.
     let manifest_path = pages_dir.join(".forge-doc-manifest");
     // Missing or unreadable manifests grant no ownership over existing pages.
-    let prev_generated = fs::read_to_string(&manifest_path)
-        .unwrap_or_default()
-        .lines()
-        .filter(|line| !line.is_empty())
-        .map(PathBuf::from)
-        .collect::<HashSet<_>>();
-    let new_generated: HashSet<PathBuf> = all_rel.iter().cloned().collect();
+    let manifest = fs::read_to_string(&manifest_path).unwrap_or_default();
+    let prev_generated =
+        manifest.lines().filter(|line| !line.is_empty()).map(Path::new).collect::<HashSet<_>>();
+    let new_generated = all_rel.iter().map(PathBuf::as_path).collect::<HashSet<_>>();
     for stale in prev_generated.difference(&new_generated) {
         if !is_safe_output_path(stale) {
             warn!("forge doc: ignoring unsafe manifest entry '{}'", stale.display());

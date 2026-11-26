@@ -12,7 +12,7 @@ use alloy_consensus::{
     BlockHeader, Transaction, Typed2718,
     transaction::{Recovered, SignerRecoverable, TxHashRef},
 };
-use alloy_network::{BlockResponse, TransactionResponse};
+use alloy_network::{AnyRpcBlock, BlockResponse, TransactionResponse};
 use alloy_primitives::{Address, B256};
 use anvil_core::eth::transaction::{MaybeImpersonatedTransaction, TransactionInfo};
 use evm2::evm::BlockStateAccumulator;
@@ -35,6 +35,9 @@ pub(crate) struct HistoricalReplayTransaction {
 pub(crate) struct PreparedForkTransactionReplay {
     pub(crate) transactions: Vec<HistoricalReplayTransaction>,
     pub(crate) beneficiary: Address,
+    pub(crate) gas_limit: u64,
+    pub(crate) prevrandao: Option<B256>,
+    pub(crate) source_block: AnyRpcBlock,
     pub(crate) timestamp: u64,
     pub(crate) parent_beacon_block_root: Option<B256>,
 }
@@ -78,6 +81,8 @@ pub(crate) fn prepare_fork_transaction_replay(
     let source_hash = replay.source_block.header().hash;
     let source_number = replay.source_block.header().number;
     let beneficiary = replay.source_block.header().beneficiary();
+    let gas_limit = replay.source_block.header().gas_limit();
+    let prevrandao = replay.source_block.header().mix_hash();
     let timestamp = replay.source_block.header().timestamp();
     let parent_beacon_block_root = replay.source_block.header().parent_beacon_block_root();
     let source_transactions = replay
@@ -160,6 +165,9 @@ pub(crate) fn prepare_fork_transaction_replay(
     Ok(PreparedForkTransactionReplay {
         transactions,
         beneficiary,
+        gas_limit,
+        prevrandao,
+        source_block: replay.source_block,
         timestamp,
         parent_beacon_block_root,
     })
@@ -217,7 +225,6 @@ pub(crate) fn execute_historical_replay<N: AnvilEvmNetwork>(
 mod tests {
     use super::*;
     use alloy_consensus::{SignableTransaction, TxEip1559};
-    use alloy_network::AnyRpcBlock;
     use alloy_primitives::{Signature, U256};
     use alloy_rpc_types::BlockTransactions;
     use foundry_primitives::TxCip64;

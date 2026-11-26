@@ -385,6 +385,31 @@ async fn keychain_authorize_sponsor_hash_json_is_object(cmd: _) {
     assert_eq!(hash.len(), 66, "sponsor_hash should be 32-byte hex (66 chars), got: {hash}");
 }
 
+// A `--from` that does not match the resolved root signer must be rejected, as in `cast send`.
+#[casttest]
+async fn keychain_authorize_rejects_mismatched_from(cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+
+    cmd.args([
+        "keychain",
+        "authorize",
+        accounts::ADDR2,
+        "--private-key",
+        accounts::PK1,
+        "--from",
+        accounts::ADDR3,
+        "--rpc-url",
+        &rpc,
+        "--tempo.print-sponsor-hash",
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+Error: AccountKeychain transaction must be signed by root account 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC; resolved signer is 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+
+"#]]);
+}
+
 #[casttest]
 async fn keychain_rejects_remote_sponsor_instead_of_ignoring_it(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
