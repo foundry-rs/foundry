@@ -181,7 +181,9 @@ impl FoundryEvmFactory for TempoEvmFactory {
     fn initialize_evm(&self, evm: &mut Evm<'_, TempoEvmTypes>, is_forked: bool) {
         if is_forked {
             // Tempo precompile accounts hold no balance or nonce, and at most the sentinel code, so
-            // they are seeded without fetching each one from the fork.
+            // they are seeded without fetching each one from the fork. PathUSD is in every Tempo
+            // genesis; tokens created later, such as OUSD, are not seeded, since a fork of a
+            // devnet or of an earlier block may lack them.
             let sentinel = Bytecode::new_legacy(Bytes::from_static(SYSTEM_PRECOMPILE_STUB));
             let db = evm.overlay_db_mut();
             for address in TEMPO_PRECOMPILE_ADDRESSES.iter().chain([&PATH_USD_ADDRESS]) {
