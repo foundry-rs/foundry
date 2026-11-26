@@ -9,7 +9,7 @@ use foundry_common::{
     fs::json_files,
 };
 use foundry_compilers::{
-    Graph, Project,
+    Graph, Project, VYPER_EXTENSIONS,
     artifacts::{Contract, output_selection::OutputSelection},
     cache::CompilerCache,
     compilers::{Compiler, CompilerOutput, CompilerSettings, CompilerVersion},
@@ -318,8 +318,7 @@ impl BindArgs {
             .collect::<HashSet<_>>();
         for (source, contexts) in contexts {
             if let Some(entry) = cache.entry(&source) {
-                let vyper =
-                    matches!(source.extension().and_then(|s| s.to_str()), Some("vy" | "vyi"));
+                let vyper = is_vyper(&source);
                 let (unavailable, compiler, hint) = if vyper {
                     (project.compiler.vyper_unknown, "Vyper", "configure `vyper.path`")
                 } else {
@@ -519,7 +518,7 @@ fn collect_enum_definitions<'ast>(
             ItemKind::Enum(enum_item) => {
                 let name = enum_item.name.to_string();
                 let key = owner.map_or_else(|| name.clone(), |owner| format!("{owner}.{name}"));
-                let variants = enum_item.variants.iter().map(ToString::to_string).collect();
+                let variants = enum_item.variants.iter().map(|v| v.name.to_string()).collect();
                 if definitions.get(&key).is_some_and(|existing| existing != &variants) {
                     definitions.remove(&key);
                     ambiguous.insert(key);
@@ -632,6 +631,10 @@ fn resolved_artifact_contexts<C: Compiler<CompilerContract = Contract>>(
     Ok(contexts)
 }
 
+fn is_vyper(path: &Path) -> bool {
+    path.extension().and_then(|s| s.to_str()).is_some_and(|ext| VYPER_EXTENSIONS.contains(&ext))
+}
+
 fn binding_name(name: &str) -> String {
     name.replace(char::is_whitespace, "").replace(['-', '$'], "_")
 }
@@ -651,10 +654,7 @@ impl CachedCompiler {
             cache
                 .files
                 .iter()
-                .filter(|(source, _)| {
-                    matches!(source.extension().and_then(|s| s.to_str()), Some("vy" | "vyi"))
-                        == vyper
-                })
+                .filter(|(source, _)| is_vyper(source) == vyper)
                 .flat_map(|(_, entry)| {
                     entry.artifacts.values().flat_map(|versions| versions.keys().cloned())
                 })
@@ -663,22 +663,17 @@ impl CachedCompiler {
                 .map(CompilerVersion::Installed)
                 .collect::<Vec<_>>()
         };
-        let mut solc_unknown = false;
-        let solc = match &config.solc {
-            Some(request) => {
-                if let Ok(version) = request.try_version() {
-                    vec![CompilerVersion::Installed(Version::new(
-                        version.major,
-                        version.minor,
-                        version.patch,
-                    ))]
-                } else {
-                    solc_unknown = true;
-                    cached_versions(false)
-                }
-            }
+        let solc_version = config.solc.as_ref().map(|request| request.try_version());
+        let solc_unknown = matches!(solc_version, Some(Err(_)));
+        let solc = if let Some(Ok(version)) = solc_version {
+            vec![CompilerVersion::Installed(Version::new(
+                version.major,
+                version.minor,
+                version.patch,
+            ))]
+        } else {
             // Cached bindings must not change when another compiler is installed after the build.
-            None => cached_versions(false),
+            cached_versions(false)
         };
         let mut vyper_unknown = false;
         let vyper = if let Ok(Some(compiler)) = config.vyper_compiler() {

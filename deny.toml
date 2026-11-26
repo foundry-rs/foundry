@@ -19,21 +19,9 @@ ignore = [
     # alloy-signer and has no patched release. Update 0.7.5 to the patched
     # 0.7.6 once CI can download it; keep this ignore until alloy drops 0.5.
     "RUSTSEC-2026-0387",
-    # zstd 0.13 and zstd-safe 7 come from commonware-storage and
-    # reth-zstd-compressors and have no patched release. zstd 0.14 is updated to
-    # the patched 0.14.3.
-    "RUSTSEC-2026-0391",
-    "RUSTSEC-2026-0398",
-    "RUSTSEC-2026-0403",
     # https://rustsec.org/advisories/RUSTSEC-2026-0441 pin-utils is unmaintained
     # and is pulled in transitively with no safe upgrade available.
     "RUSTSEC-2026-0441",
-    # https://rustsec.org/advisories/RUSTSEC-2026-0459 SQLite before 3.54.0 can
-    # read uninitialized memory from a crafted database and `-wal` file pair.
-    # libsqlite3-sys 0.36 comes from rusqlite 0.38 via mpp, which only opens its
-    # own channel store under ~/.tempo/wallet. Remove once mpp-rs moves to
-    # rusqlite 0.41 (libsqlite3-sys 0.39) and Foundry bumps its mpp rev.
-    "RUSTSEC-2026-0459",
     # https://rustsec.org/advisories/RUSTSEC-2026-0543 chrono is unmaintained.
     # No patched release exists; remove once direct and transitive dependencies
     # (including gcloud-sdk, quick-junit, and soldeer) have migrated away.

@@ -17,6 +17,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: full
   RUSTC_WRAPPER: "sccache"
+  PIP_CONSTRAINT: ${{ github.workspace }}/.github/constraints.txt
 
 jobs:
   test:
@@ -39,7 +40,7 @@ jobs:
       - uses: rui314/setup-mold@339e96b4ff1f3bd865856ba4cbbe8818a7acb038 # v1
       - name: Install Linux system dependencies
         run: sudo apt-get update && sudo apt-get install --yes libudev-dev
-      - uses: taiki-e/install-action@1919c4a95903d2c33e4a221102edca87309fc14b # v2.89.0
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
         with:
           tool: nextest
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0

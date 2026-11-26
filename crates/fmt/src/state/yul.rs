@@ -19,8 +19,7 @@ impl<'ast> State<'_, 'ast> {
     }
 
     pub(crate) fn print_yul_stmt(&mut self, stmt: &'ast yul::Stmt<'ast>) {
-        let yul::Stmt { ref docs, span, ref kind } = *stmt;
-        self.print_docs(docs);
+        let yul::Stmt { span, ref kind, .. } = *stmt;
         if self.handle_span(span, false) {
             return;
         }

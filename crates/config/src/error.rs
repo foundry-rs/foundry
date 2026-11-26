@@ -144,6 +144,11 @@ pub enum SolidityErrorCode {
     TransferDeprecated,
     /// Warning: Natspec memory-safe-assembly special comment for inline assembly is deprecated.
     NatspecMemorySafeAssemblyDeprecated,
+    /// Warning that contract code size exceeds 65536 bytes (a limit introduced in Amsterdam).
+    ContractExceeds65536Bytes,
+    /// Warning that contract init code size exceeds 131072 bytes (a limit introduced in
+    /// Amsterdam).
+    ContractInitCodeSizeExceeds131072Bytes,
     /// All other error codes
     Other(u64),
 }
@@ -173,6 +178,8 @@ impl SolidityErrorCode {
             Self::TooManyWarnings => "too-many-warnings",
             Self::TransferDeprecated => "transfer-deprecated",
             Self::NatspecMemorySafeAssemblyDeprecated => "natspec-memory-safe-assembly-deprecated",
+            Self::ContractExceeds65536Bytes => "code-size-amsterdam",
+            Self::ContractInitCodeSizeExceeds131072Bytes => "init-code-size-amsterdam",
             Self::Other(code) => return Err(*code),
         };
         Ok(s)
@@ -201,6 +208,8 @@ impl From<SolidityErrorCode> for u64 {
             SolidityErrorCode::TooManyWarnings => 4591,
             SolidityErrorCode::TransferDeprecated => 9207,
             SolidityErrorCode::NatspecMemorySafeAssemblyDeprecated => 2424,
+            SolidityErrorCode::ContractExceeds65536Bytes => 5776,
+            SolidityErrorCode::ContractInitCodeSizeExceeds131072Bytes => 7868,
             SolidityErrorCode::Other(code) => code,
         }
     }
@@ -239,6 +248,8 @@ impl FromStr for SolidityErrorCode {
             "too-many-warnings" => Self::TooManyWarnings,
             "transfer-deprecated" => Self::TransferDeprecated,
             "natspec-memory-safe-assembly-deprecated" => Self::NatspecMemorySafeAssemblyDeprecated,
+            "code-size-amsterdam" => Self::ContractExceeds65536Bytes,
+            "init-code-size-amsterdam" => Self::ContractInitCodeSizeExceeds131072Bytes,
             _ => return Err(format!("Unknown variant {s}")),
         };
 
@@ -268,6 +279,8 @@ impl From<u64> for SolidityErrorCode {
             4591 => Self::TooManyWarnings,
             9207 => Self::TransferDeprecated,
             2424 => Self::NatspecMemorySafeAssemblyDeprecated,
+            5776 => Self::ContractExceeds65536Bytes,
+            7868 => Self::ContractInitCodeSizeExceeds131072Bytes,
             other => Self::Other(other),
         }
     }

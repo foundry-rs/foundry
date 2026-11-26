@@ -656,3 +656,82 @@ contract ExpectRevertWithErrorTest is Test {
         }
     }
 }
+
+contract Halter {
+    fallback() external {
+        assembly {
+            invalid()
+        }
+    }
+}
+
+/// An expected halt gives back the gas its frame did not use, as an expected revert does.
+contract ExpectRevertHaltGasTest is Test {
+    Halter halter;
+
+    function setUp() public {
+        halter = new Halter();
+    }
+
+    function testExpectRevertHaltReturnsUnusedGas() public {
+        for (uint256 i; i < 4; ++i) {
+            uint256 gasBefore = gasleft();
+            vm.expectRevert();
+            Reverter(address(halter)).revertWithoutReason();
+            assertLt(gasBefore - gasleft(), 100_000);
+        }
+    }
+
+    function testExpectRevertCountHaltReturnsUnusedGas() public {
+        uint256 gasBefore = gasleft();
+        vm.expectRevert(3);
+        for (uint256 i; i < 3; ++i) {
+            Reverter(address(halter)).revertWithoutReason();
+        }
+        assertLt(gasBefore - gasleft(), 100_000);
+    }
+
+    /// An expected halting create keeps consuming its gas, so it does not give gas to a later
+    /// failing precompile call at the same depth.
+    function testExpectRevertCreateHaltConsumesGas() public {
+        uint256 gasBefore = gasleft();
+        vm.expectRevert(2);
+        new HaltingConstructor();
+        (bool success,) = address(0x09).call(hex"00");
+        success;
+        assertGt(gasBefore - gasleft(), 1_000_000_000);
+    }
+
+    /// A non-static call keeps consuming the gas of an expected halt, as on revm.
+    function testExpectRevertNonStaticHaltConsumesGas() public {
+        uint256 gasBefore = gasleft();
+        vm.expectRevert();
+        (bool success,) = address(halter).call("");
+        success;
+        assertGt(gasBefore - gasleft(), 1_000_000_000);
+    }
+
+    /// Only the halts on the stepped instructions give gas back, also when another cheatcode
+    /// steps every instruction.
+    function testExpectRevertBadJumpConsumesGasWhenStepped() public {
+        vm.setArbitraryStorage(address(this));
+        // Runtime code `PUSH1 0 JUMP`, which jumps to a non-JUMPDEST.
+        bytes memory initcode = hex"626000566000526003601df3";
+        address jumper;
+        assembly {
+            jumper := create(0, add(initcode, 32), mload(initcode))
+        }
+        uint256 gasBefore = gasleft();
+        vm.expectRevert();
+        Reverter(jumper).revertWithoutReason();
+        assertGt(gasBefore - gasleft(), 1_000_000_000);
+    }
+}
+
+contract HaltingConstructor {
+    constructor() {
+        assembly {
+            invalid()
+        }
+    }
+}

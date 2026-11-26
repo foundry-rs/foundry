@@ -1,4 +1,5 @@
 use super::{abi::*, runtime::*, *};
+use evm2::interpreter::InstrStop;
 use foundry_evm::{
     constants::{MAGIC_ASSUME, MAGIC_SKIP},
     inspectors::cheatcodes::{DUMMY_CALL_OUTPUT, DUMMY_CREATE_ADDRESS},
@@ -251,7 +252,8 @@ impl SymbolicExecutor {
                             .cheatcodes
                             .map_or(&no_contracts, |cheats| &cheats.config.available_artifacts);
                         let error = expected
-                            .mismatch_error(reverter, &retdata, known_contracts)
+                            .mismatch_error(reverter, InstrStop::Revert, &retdata, known_contracts)
+                            .flatten()
                             .ok_or(SymbolicError::Unsupported(REASON))?;
                         outcome.state.frame.return_data =
                             SymReturnData::from_concrete_bytes(&mut self.cx, error.abi_encode());

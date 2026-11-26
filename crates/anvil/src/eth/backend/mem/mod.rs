@@ -17,6 +17,7 @@ use crate::{
             },
             env::{
                 BlobExcessGasAndPrice, BlockEnv, CfgEnv, EvmEnv, SpecId,
+                apply_chain_and_block_specific_env_changes_for_chain,
                 apply_chain_specific_tx_replay_env_changes_for_chain, block_env_from_header,
             },
             evm::{
@@ -77,7 +78,7 @@ use alloy_eips::{
 };
 use alloy_genesis::Genesis;
 use alloy_network::{
-    AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType,
+    AnyHeader, AnyNetwork, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType,
     BlockResponse, Network, NetworkTransactionBuilder, ReceiptResponse, UnknownTxEnvelope,
     UnknownTypedTransaction,
 };
@@ -1213,6 +1214,8 @@ struct StateSnapshot {
     fees: FeeSnapshot,
     time: TimeSnapshot,
     next_block: NextBlockOverrides,
+    /// Local gas limit of the snapshot block, when it is a transaction-hash fork replay block.
+    replayed_gas_limit: Option<u64>,
 }
 
 #[cfg(test)]
@@ -1281,6 +1284,8 @@ pub struct Backend<N: Network> {
     new_block_listeners: Arc<Mutex<Vec<UnboundedSender<ChainNotification>>>>,
     /// Keeps track of active state snapshots at a specific block.
     active_state_snapshots: Arc<Mutex<HashMap<U256, StateSnapshot>>>,
+    /// Local gas limits that transaction-hash fork replays executed with, by replayed block hash.
+    fork_replayed_blocks: Arc<Mutex<BTreeMap<B256, u64>>>,
     enable_steps_tracing: bool,
     print_logs: bool,
     print_traces: bool,
@@ -1335,6 +1340,7 @@ impl<N: Network> Clone for Backend<N> {
             genesis: self.genesis.clone(),
             new_block_listeners: self.new_block_listeners.clone(),
             active_state_snapshots: self.active_state_snapshots.clone(),
+            fork_replayed_blocks: self.fork_replayed_blocks.clone(),
             enable_steps_tracing: self.enable_steps_tracing,
             print_logs: self.print_logs,
             print_traces: self.print_traces,
@@ -1697,6 +1703,12 @@ impl<N: Network> Backend<N> {
             hardfork,
             deposit_contract_address: self.ethereum_deposit_contract_address(),
             parent_beacon_block_root,
+            // Scroll's l2geth applies EIP-2935 but has no beacon chain: its headers carry no
+            // beacon root and it never calls the EIP-4788 contract.
+            eip4788: !matches!(
+                NamedChain::try_from(self.protocol_chain_id()),
+                Ok(NamedChain::Scroll | NamedChain::ScrollSepolia)
+            ),
             execution_kind,
         })
     }
@@ -2153,6 +2165,7 @@ impl<N: Network> Backend<N> {
                 fees: self.fees.snapshot(),
                 time: self.time.snapshot(),
                 next_block: self.cheats.next_block_overrides(),
+                replayed_gas_limit: self.fork_replayed_blocks.lock().get(&hash).copied(),
             },
         );
         id
@@ -4879,6 +4892,7 @@ impl<N: Network> Backend<N> {
             fees,
             genesis,
             active_state_snapshots: Arc::new(Mutex::new(Default::default())),
+            fork_replayed_blocks: Arc::new(Mutex::new(Default::default())),
             enable_steps_tracing,
             print_logs,
             print_traces,
@@ -5798,7 +5812,7 @@ impl<N: Network> Backend<N> {
     where
         N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
     {
-        let Some((num, hash, fees, time, next_block)) =
+        let Some((num, hash, fees, time, next_block, replayed_gas_limit)) =
             self.active_state_snapshots.lock().get(&id).map(|snapshot| {
                 (
                     snapshot.block_number,
@@ -5806,12 +5820,16 @@ impl<N: Network> Backend<N> {
                     snapshot.fees,
                     snapshot.time,
                     snapshot.next_block,
+                    snapshot.replayed_gas_limit,
                 )
             })
         else {
             return Ok(false);
         };
         let block = self.block_by_hash(hash).await?.ok_or(BlockchainError::BlockNotFound)?;
+        if let Some(gas_limit) = replayed_gas_limit {
+            self.fork_replayed_blocks.lock().insert(hash, gas_limit);
+        }
         let removed_logs = self.removed_logs_since(num);
         let mut db = self.db.write().await;
         let tempo_anchor = {
@@ -5875,8 +5893,8 @@ impl<N: Network> Backend<N> {
                 difficulty: block.header.difficulty(),
                 // ensures prevrandao is set
                 prevrandao: Some(block.header.mix_hash().unwrap_or_default()),
-                gas_limit: block.header.gas_limit(),
                 // Keep previous `beneficiary` and `basefee` value
+                gas_limit: replayed_gas_limit.unwrap_or_else(|| block.header.gas_limit()),
                 beneficiary: env.block_env.beneficiary,
                 basefee: env.block_env.basefee,
                 ..Default::default()
@@ -6301,6 +6319,9 @@ where
         let PreparedForkTransactionReplay {
             transactions,
             beneficiary,
+            gas_limit,
+            prevrandao,
+            source_block,
             timestamp,
             parent_beacon_block_root,
         } = prepared;
@@ -6336,6 +6357,21 @@ where
         // Execute the prefix with the source block's coinbase so priority fees, COINBASE, and the
         // header miner match the source. Later blocks keep the local beneficiary.
         replay_env.block_env.beneficiary = beneficiary;
+        let local_gas_limit = replay_env.block_env.gas_limit;
+        if gas_limit != 0 {
+            replay_env.block_env.gas_limit = gas_limit;
+        }
+        replay_env.block_env.prevrandao = prevrandao;
+        let blob_excess_gas_and_price = replay_env.block_env.blob_excess_gas_and_price;
+        replay_env.block_env.difficulty = source_block.header().difficulty();
+        apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork>(
+            &mut replay_env,
+            &source_block,
+            source_chain_id,
+            self.networks,
+        );
+        replay_env.block_env.difficulty = source_block.header().difficulty();
+        replay_env.block_env.blob_excess_gas_and_price = blob_excess_gas_and_price;
         let arbitrum_rpc_block_number = arbitrum_block_numbers.map(|(rpc, evm)| {
             replay_env.block_env.number = evm;
             rpc
@@ -6490,6 +6526,7 @@ where
 
         evm_env.block_env.difficulty = U256::ZERO;
         *self.evm_env.write() = evm_env;
+        self.fork_replayed_blocks.lock().insert(block_hash, local_gas_limit);
         self.time.reset(timestamp);
         self.time.set_next_block_timestamp(next_timestamp)?;
 
@@ -8269,20 +8306,30 @@ where
         };
 
         // Acquire the only awaited mutation lock before publishing any part of the rewind.
+        let replayed_gas_limit =
+            self.fork_replayed_blocks.lock().get(&common_block.header.hash_slow()).copied();
         let (rollback_gas_limit, rollback_base_fee) = if self
             .get_fork()
             .is_some_and(|fork| fork.block_number() == common_block.header.number())
         {
             let node_config = self.node_config.read().await;
             (
-                self.get_block(common_block.header.number().saturating_add(1))
-                    .map(|child| child.header.gas_limit())
-                    .unwrap_or_else(|| node_config.gas_limit()),
+                replayed_gas_limit.unwrap_or_else(|| {
+                    self.get_block(common_block.header.number().saturating_add(1))
+                        .filter(|child| {
+                            !self
+                                .fork_replayed_blocks
+                                .lock()
+                                .contains_key(&child.header.hash_slow())
+                        })
+                        .map(|child| child.header.gas_limit())
+                        .unwrap_or_else(|| node_config.gas_limit())
+                }),
                 node_config.base_fee.unwrap_or_default(),
             )
         } else {
             (
-                common_block.header.gas_limit(),
+                replayed_gas_limit.unwrap_or_else(|| common_block.header.gas_limit()),
                 common_block.header.base_fee_per_gas().unwrap_or_default(),
             )
         };
@@ -8996,6 +9043,8 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
             state.monad_block_replay_profiles = monad_block_replay_profiles;
             state
         };
+        let mut state = state;
+        state.fork_replayed_blocks = self.fork_replayed_blocks.lock().clone();
         Ok(state)
     }
 
@@ -9016,6 +9065,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
     pub async fn load_state(&self, mut state: SerializableState) -> Result<bool, BlockchainError> {
         let _mining_guard = self.mining.lock().await;
         let mut block_env = state.block.take();
+        let replayed_blocks = std::mem::take(&mut state.fork_replayed_blocks);
         let mut fork_block_boundary = None;
         let mut selected_head = None;
         let mut selected_header = None;
@@ -9304,6 +9354,8 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
             }
         }
 
+        // A dump without the marker keeps the current one; the hash check ignores stale markers.
+        self.fork_replayed_blocks.lock().extend(replayed_blocks);
         Ok(true)
     }
 

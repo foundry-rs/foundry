@@ -376,3 +376,12 @@ pub(super) fn word_division_operands(expr: &SymExpr) -> Option<(&SymExpr, &SymEx
     };
     division.udiv_operands()
 }
+
+/// Returns `n` for the rounded product `(n / t) * t`. The EVM `DIV` may still carry its guard
+/// selecting zero for `t == 0`.
+pub(super) fn rounded_down_dividend(product: &SymExpr) -> Option<&SymExpr> {
+    let SymExprKind::BinOp(SymBinOp::Mul, left, right) = product.kind() else { return None };
+    [(left, right), (right, left)].into_iter().find_map(|(quotient, factor)| {
+        word_division_operands(quotient).and_then(|(n, t)| (t == factor).then_some(n))
+    })
+}

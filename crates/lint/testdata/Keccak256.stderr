@@ -114,7 +114,7 @@ note[unused-state-variables]: state variable is never used
    ╭▸ ROOT/testdata/Keccak256.sol:LL:CC
    │
 LL │     uint256 Enabled_MixedCase_Variable;
-   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/unused-state-variables
 
