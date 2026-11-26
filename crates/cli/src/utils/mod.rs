@@ -46,10 +46,33 @@ pub const STATIC_FUZZ_SEED: [u8; 32] = [
     0x5d, 0x64, 0x0b, 0x19, 0xad, 0xf0, 0xe3, 0x57, 0xb8, 0xd4, 0xbe, 0x7d, 0x49, 0xee, 0x70, 0xe6,
 ];
 
-/// Applies an optional percentage multiplier to a gas estimate.
-pub fn apply_gas_estimate_multiplier(estimate: u64, multiplier: Option<u64>) -> Result<u64> {
+/// Applies an optional percentage multiplier to a gas estimate for a transaction on `chain_id`.
+///
+/// The margin never raises the gas limit above the chain's per-transaction cap, such as
+/// EIP-7825's on Ethereum or Tempo's, so an estimate the chain accepts stays sendable. It never
+/// lowers the estimate itself either.
+pub fn apply_gas_estimate_multiplier(
+    estimate: u64,
+    multiplier: Option<u64>,
+    chain_id: Option<u64>,
+) -> Result<u64> {
+    let cap = chain_id.and_then(|chain_id| {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(u64::MAX, |d| d.as_secs());
+        foundry_evm::core::evm::tx_gas_limit_cap(chain_id, now)
+    });
+    apply_capped_gas_estimate_multiplier(estimate, multiplier, cap)
+}
+
+fn apply_capped_gas_estimate_multiplier(
+    estimate: u64,
+    multiplier: Option<u64>,
+    cap: Option<u64>,
+) -> Result<u64> {
     let Some(multiplier) = multiplier else { return Ok(estimate) };
-    let adjusted = u128::from(estimate) * u128::from(multiplier) / 100;
+    let mut adjusted = u128::from(estimate) * u128::from(multiplier) / 100;
+    if let Some(cap) = cap {
+        adjusted = adjusted.min(u128::from(cap)).max(u128::from(estimate));
+    }
     adjusted.try_into().map_err(|_| eyre::eyre!("multiplied gas estimate exceeds u64"))
 }
 
@@ -1296,13 +1319,55 @@ mod tests {
 
     #[test]
     fn applies_gas_estimate_multiplier() {
-        assert_eq!(apply_gas_estimate_multiplier(21_000, None).unwrap(), 21_000);
-        assert_eq!(apply_gas_estimate_multiplier(21_000, Some(150)).unwrap(), 31_500);
+        assert_eq!(apply_gas_estimate_multiplier(21_000, None, None).unwrap(), 21_000);
+        assert_eq!(apply_gas_estimate_multiplier(21_000, Some(150), None).unwrap(), 31_500);
         assert_eq!(
-            apply_gas_estimate_multiplier(21_000, Some(1_000_000_000_000_000)).unwrap(),
+            apply_gas_estimate_multiplier(21_000, Some(1_000_000_000_000_000), None).unwrap(),
             210_000_000_000_000_000
         );
-        assert!(apply_gas_estimate_multiplier(u64::MAX, Some(101)).is_err());
+        assert!(apply_gas_estimate_multiplier(u64::MAX, Some(101), None).is_err());
+    }
+
+    #[test]
+    fn caps_gas_estimate_multiplier() {
+        let cap = Some(30_000_000);
+        assert_eq!(
+            apply_capped_gas_estimate_multiplier(20_000_000, Some(130), cap).unwrap(),
+            26_000_000
+        );
+        assert_eq!(
+            apply_capped_gas_estimate_multiplier(25_000_000, Some(130), cap).unwrap(),
+            30_000_000
+        );
+        // An estimate above the cap is kept as it is, for the node to reject with its reason.
+        assert_eq!(
+            apply_capped_gas_estimate_multiplier(31_000_000, Some(130), cap).unwrap(),
+            31_000_000
+        );
+        assert_eq!(
+            apply_capped_gas_estimate_multiplier(u64::MAX, Some(101), cap).unwrap(),
+            u64::MAX
+        );
+        assert_eq!(
+            apply_capped_gas_estimate_multiplier(25_000_000, None, cap).unwrap(),
+            25_000_000
+        );
+
+        // Tempo mainnet and Moderato cap transactions at 30M, Ethereum mainnet at 2^24.
+        assert_eq!(
+            apply_gas_estimate_multiplier(25_000_000, Some(130), Some(4217)).unwrap(),
+            30_000_000
+        );
+        assert_eq!(
+            apply_gas_estimate_multiplier(25_000_000, Some(130), Some(42431)).unwrap(),
+            30_000_000
+        );
+        assert_eq!(apply_gas_estimate_multiplier(15_000_000, Some(130), Some(1)).unwrap(), 1 << 24);
+        // Chains without a known cap keep the whole margin.
+        assert_eq!(
+            apply_gas_estimate_multiplier(25_000_000, Some(130), Some(31337)).unwrap(),
+            32_500_000
+        );
     }
 
     #[test]
