@@ -2662,4 +2662,22 @@ note[mixed-case-variable]: mutable variable name is not `mixedCase`
 
 
 "#]]);
+
+    // A test alias listed first must not hide the source's lints.
+    std::os::unix::fs::symlink(prj.root().join("src/Entry.sol"), prj.root().join("test/Alias.sol"))
+        .unwrap();
+    cmd.forge_fuse()
+        .args(["lint", "test/Alias.sol", "src/Entry.sol", "--only-lint", "mixed-case-variable"])
+        .assert_success()
+        .stderr_eq(str![[r#"
+note[mixed-case-variable]: mutable variable name is not `mixedCase`
+  [FILE]:1:72
+  │
+1 │ pragma solidity ^0.8.0; contract Entry { function f() public { uint256 BAD_CASE = 1; } }
+  │                                                                        ━━━━━━━━ help: consider using: `badCase`
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/mixed-case-variable
+
+
+"#]]);
 }

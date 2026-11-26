@@ -23,7 +23,7 @@ use solar::{
 };
 use solar_lint::{LintRegistry, LintRunContext, LintRunError, LintSource, LintSuite, run_lints};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, hash_map::Entry},
     path::{Path, PathBuf},
     str::FromStr,
     sync::{Arc, LazyLock},
@@ -339,8 +339,8 @@ impl<'a> Linter for SolidityLinter<'a> {
             let gcx = compiler.gcx();
             let mut suite = self.to_suite();
             let mut targets = Vec::with_capacity(input.len());
-            let mut sources = Vec::with_capacity(input.len());
-            let mut seen_sources = HashSet::new();
+            let mut sources = Vec::<SourceLintPolicy>::with_capacity(input.len());
+            let mut seen_sources = HashMap::<_, usize>::new();
             for path in input {
                 let path = self.path_config.root.join(path);
                 // Sources are loaded under canonical paths, so resolve symlinks for the lookup
@@ -352,17 +352,30 @@ impl<'a> Linter for SolidityLinter<'a> {
                     _ = sh_warn!("AST source not found for {}", path.display());
                     continue;
                 };
-                if seen_sources.insert(source.file.start_pos) {
-                    let ast = source.ast.as_ref().expect("AST source has an AST");
-                    let comments =
-                        Comments::new(&source.file, gcx.sess.source_map(), false, false, None);
-                    sources.push(SourceLintPolicy {
-                        file: source.file.clone(),
-                        inline: Arc::new(parse_inline_config(gcx.sess, &comments, ast)),
-                        active: suite.active_lints(Some(&path)),
-                    });
-                    targets.push(canonical);
+                let active = suite.active_lints(Some(&path));
+                // Inputs that resolve to the same source share one target with their combined
+                // lints.
+                match seen_sources.entry(source.file.start_pos) {
+                    Entry::Occupied(entry) => {
+                        let policy = &mut sources[*entry.get()];
+                        for id in active {
+                            if !policy.active.contains(&id) {
+                                policy.active.push(id);
+                            }
+                        }
+                        continue;
+                    }
+                    Entry::Vacant(entry) => _ = entry.insert(sources.len()),
                 }
+                let ast = source.ast.as_ref().expect("AST source has an AST");
+                let comments =
+                    Comments::new(&source.file, gcx.sess.source_map(), false, false, None);
+                sources.push(SourceLintPolicy {
+                    file: source.file.clone(),
+                    inline: Arc::new(parse_inline_config(gcx.sess, &comments, ast)),
+                    active,
+                });
+                targets.push(canonical);
             }
             sources.sort_unstable_by_key(|source| source.file.start_pos);
             suite.run_active = Some(Arc::new(
