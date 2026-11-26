@@ -5,6 +5,7 @@ use foundry_common::{
         inline_config::{InlineConfig, InlineConfigItem},
     },
     errors::convert_solar_errors,
+    fs::canonicalize_path,
     sh_warn,
 };
 use foundry_compilers::{ProjectPathsConfig, solc::SolcLanguage};
@@ -22,7 +23,7 @@ use solar::{
 };
 use solar_lint::{LintRegistry, LintRunContext, LintRunError, LintSource, LintSuite, run_lints};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, hash_map::Entry},
     path::{Path, PathBuf},
     str::FromStr,
     sync::{Arc, LazyLock},
@@ -336,37 +337,46 @@ impl<'a> Linter for SolidityLinter<'a> {
             note_count_before = compiler.dcx().note_count();
 
             let gcx = compiler.gcx();
+            let mut suite = self.to_suite();
             let mut targets = Vec::with_capacity(input.len());
-            let mut seen_sources = HashSet::new();
+            let mut sources = Vec::<SourceLintPolicy>::with_capacity(input.len());
+            let mut seen_sources = HashMap::<_, usize>::new();
             for path in input {
                 let path = self.path_config.root.join(path);
-                let Some((_, source)) = gcx.get_ast_source(&path) else {
+                // Sources are loaded under canonical paths, so resolve symlinks for the lookup
+                // but keep the given path for lint policy.
+                let canonical = canonicalize_path(&path).unwrap_or_else(|_| path.clone());
+                let Some((_, source)) = gcx.get_ast_source(&canonical) else {
                     // Issue a warning rather than panicking when some input files use old
                     // Solidity versions that Solar does not support.
                     _ = sh_warn!("AST source not found for {}", path.display());
                     continue;
                 };
-                if seen_sources.insert(source.file.start_pos) {
-                    targets.push(path);
-                }
-            }
-
-            let mut suite = self.to_suite();
-            let mut sources = targets
-                .iter()
-                .map(|path| {
-                    let (_, source) =
-                        gcx.get_ast_source(path).expect("lint target was validated above");
-                    let ast = source.ast.as_ref().expect("lint target AST was validated above");
-                    let comments =
-                        Comments::new(&source.file, gcx.sess.source_map(), false, false, None);
-                    SourceLintPolicy {
-                        file: source.file.clone(),
-                        inline: Arc::new(parse_inline_config(gcx.sess, &comments, ast)),
-                        active: suite.active_lints(Some(path)),
+                let active = suite.active_lints(Some(&path));
+                // Inputs that resolve to the same source share one target with their combined
+                // lints.
+                match seen_sources.entry(source.file.start_pos) {
+                    Entry::Occupied(entry) => {
+                        let policy = &mut sources[*entry.get()];
+                        for id in active {
+                            if !policy.active.contains(&id) {
+                                policy.active.push(id);
+                            }
+                        }
+                        continue;
                     }
-                })
-                .collect::<Vec<_>>();
+                    Entry::Vacant(entry) => _ = entry.insert(sources.len()),
+                }
+                let ast = source.ast.as_ref().expect("AST source has an AST");
+                let comments =
+                    Comments::new(&source.file, gcx.sess.source_map(), false, false, None);
+                sources.push(SourceLintPolicy {
+                    file: source.file.clone(),
+                    inline: Arc::new(parse_inline_config(gcx.sess, &comments, ast)),
+                    active,
+                });
+                targets.push(canonical);
+            }
             sources.sort_unstable_by_key(|source| source.file.start_pos);
             suite.run_active = Some(Arc::new(
                 suite

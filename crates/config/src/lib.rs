@@ -2715,18 +2715,12 @@ impl Config {
 
         for res in &self.compilation_restrictions {
             for source in sources.keys().filter(|path| {
-                if res.paths.is_match(path) {
-                    true
-                } else if let Ok(path) = path.strip_prefix(&paths.root) {
-                    res.paths.is_match(path)
-                } else {
-                    false
-                }
+                res.paths.is_match(path)
+                    || path.strip_prefix(&paths.root).is_ok_and(|path| res.paths.is_match(path))
             }) {
                 let res: RestrictionsWithVersion<_> =
                     res.clone().try_into().map_err(SolcError::msg)?;
-                if map.contains_key(source) {
-                    let value = map.remove(source.as_path()).unwrap();
+                if let Some(value) = map.remove(source.as_path()) {
                     if let Some(merged) = value.clone().merge(res) {
                         map.insert(source.clone(), merged);
                     } else {
@@ -3242,11 +3236,7 @@ impl Config {
     /// ```
     pub fn get_rpc_url(&self) -> Option<Result<Cow<'_, str>, UnresolvedEnvVarError>> {
         let maybe_alias = self.eth_rpc_url.as_deref()?;
-        if let Some(alias) = self.get_rpc_url_with_alias(maybe_alias) {
-            Some(alias)
-        } else {
-            Some(Ok(Cow::Borrowed(self.eth_rpc_url.as_deref()?)))
-        }
+        Some(self.get_rpc_url_with_alias(maybe_alias).unwrap_or(Ok(Cow::Borrowed(maybe_alias))))
     }
 
     /// Resolves the given alias to a matching rpc url
@@ -3277,9 +3267,8 @@ impl Config {
         &self,
         maybe_alias: &str,
     ) -> Option<Result<Cow<'_, str>, UnresolvedEnvVarError>> {
-        let mut endpoints = self.rpc_endpoints.clone().resolved();
-        if let Some(endpoint) = endpoints.remove(maybe_alias) {
-            return Some(endpoint.url().map(Cow::Owned));
+        if let Some(endpoint) = self.rpc_endpoints.get(maybe_alias) {
+            return Some(endpoint.clone().resolve().url().map(Cow::Owned));
         }
 
         if let Some(mesc_url) = self.get_rpc_url_from_mesc(maybe_alias) {
@@ -3802,8 +3791,7 @@ impl Config {
                 .libs
                 .iter()
                 .map(|path| {
-                    let path =
-                        if let Ok(relative) = path.strip_prefix(root) { relative } else { path };
+                    let path = path.strip_prefix(root).unwrap_or(path);
                     toml_edit::Value::from(&*path.to_string_lossy())
                 })
                 .collect();
@@ -3833,8 +3821,7 @@ impl Config {
         let standalone_sections = Self::STANDALONE_SECTIONS
             .iter()
             .filter_map(|section| {
-                let section = section.to_string();
-                value_table.remove(&section).map(|value| (section, value))
+                value_table.remove(*section).map(|value| (section.to_string(), value))
             })
             .collect::<Vec<_>>();
         // wrap inner table in [profile.<profile>]
@@ -3969,10 +3956,7 @@ impl Config {
     pub fn find_config_file() -> Option<PathBuf> {
         fn find(path: &Path) -> Option<PathBuf> {
             if path.is_absolute() {
-                return match path.is_file() {
-                    true => Some(path.to_path_buf()),
-                    false => None,
-                };
+                return path.is_file().then(|| path.to_path_buf());
             }
             let cwd = std::env::current_dir().ok()?;
             let mut cwd = cwd.as_path();
@@ -4161,11 +4145,12 @@ impl Config {
 
     fn get_cached_block(block: fs::DirEntry) -> eyre::Result<Option<(String, u64)>> {
         let file_name = block.file_name();
-        let Some(metadata) = Self::ignore_not_found(fs::symlink_metadata(block.path()))? else {
+        let path = block.path();
+        let Some(metadata) = Self::ignore_not_found(fs::symlink_metadata(&path))? else {
             return Ok(None);
         };
         let size = if metadata.is_dir() {
-            let Some(cache_files) = Self::ignore_not_found(block.path().read_dir())? else {
+            let Some(cache_files) = Self::ignore_not_found(path.read_dir())? else {
                 return Ok(None);
             };
             let mut size = 0;
@@ -4228,11 +4213,12 @@ impl Config {
     }
 
     fn get_cached_entry_size(entry: fs::DirEntry) -> eyre::Result<Option<u64>> {
-        let Some(metadata) = Self::ignore_not_found(fs::symlink_metadata(entry.path()))? else {
+        let path = entry.path();
+        let Some(metadata) = Self::ignore_not_found(fs::symlink_metadata(&path))? else {
             return Ok(None);
         };
         if metadata.is_dir() {
-            let Some(entries) = Self::ignore_not_found(fs::read_dir(entry.path()))? else {
+            let Some(entries) = Self::ignore_not_found(fs::read_dir(&path))? else {
                 return Ok(None);
             };
             Ok(Some(Self::get_cached_dir_size(entries)?))
@@ -4475,11 +4461,9 @@ pub(crate) mod from_opt_glob {
     where
         D: Deserializer<'de>,
     {
-        let s: Option<String> = Option::deserialize(deserializer)?;
-        if let Some(s) = s {
-            return Ok(Some(globset::Glob::new(&s).map_err(serde::de::Error::custom)?));
-        }
-        Ok(None)
+        Option::<String>::deserialize(deserializer)?
+            .map(|s| globset::Glob::new(&s).map_err(serde::de::Error::custom))
+            .transpose()
     }
 }
 
@@ -4517,7 +4501,7 @@ impl Provider for Config {
     #[track_caller]
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
         let mut data = Serialized::defaults(self).data()?;
-        let root = Value::serialize(self.root.clone())?;
+        let root = Value::serialize(&self.root)?;
         let labels = Value::serialize(&self.labels)?;
         if let Some(entry) = data.get_mut(&Self::DEFAULT_PROFILE) {
             entry.insert("root".to_string(), root.clone());
@@ -4722,7 +4706,7 @@ impl Serialize for GasLimit {
         if self.0 == u64::MAX {
             serializer.serialize_str("max")
         } else if self.0 > i64::MAX as u64 {
-            serializer.serialize_str(&self.0.to_string())
+            serializer.collect_str(&self.0)
         } else {
             serializer.serialize_u64(self.0)
         }
@@ -4876,10 +4860,11 @@ impl BasicConfig {
             document.insert("rpc_endpoints".to_string(), toml::Value::Table(endpoints));
         }
 
-        let body = toml::to_string_pretty(&toml::Value::Table(document))?;
-        Ok(format!(
-            "{body}\n# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options\n"
-        ))
+        let mut body = toml::to_string_pretty(&toml::Value::Table(document))?;
+        body.push_str(
+            "\n# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options\n",
+        );
+        Ok(body)
     }
 }
 

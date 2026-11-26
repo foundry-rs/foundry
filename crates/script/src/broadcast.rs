@@ -786,7 +786,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
         self.sequence.save(true, false)?;
 
         if !errors.is_empty() {
-            return Err(eyre::eyre!("{}", errors.iter().format("\n")));
+            return Err(crate::joined(errors));
         }
 
         Ok(self)
