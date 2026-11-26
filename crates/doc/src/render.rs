@@ -623,7 +623,6 @@ fn is_known_custom_tag(tag: &str) -> bool {
     !tag.is_empty() && tag.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-/// Returns the base contract name from `@inheritdoc Base`, or `None`.
 /// Whether the declaration carries any local NatSpec item other than `@inheritdoc`. Solidity
 /// only auto-inherits documentation for a member with none, so implicit inheritance is gated
 /// on this being false; a local `@custom:*`, `@title` or `@author` counts as local
@@ -678,7 +677,7 @@ fn write_frontmatter(out: &mut String, title: &str, description: Option<&str>) {
     writeln!(out, "title: \"{}\"", yaml_escape_double_quoted(title)).unwrap();
     if let Some(desc) = description {
         // Collapse whitespace so multi-line notices stay on one line, then escape.
-        let collapsed: String = desc.split_whitespace().collect::<Vec<_>>().join(" ");
+        let collapsed = desc.split_whitespace().collect::<Vec<_>>().join(" ");
         writeln!(out, "description: \"{}\"", yaml_escape_double_quoted(&collapsed)).unwrap();
     }
     writeln!(out, "---").unwrap();
@@ -982,10 +981,10 @@ fn return_description<'a>(
         return desc;
     }
 
-    match return_name {
-        Some(return_name) => desc.strip_prefix(return_name).and_then(strip_one_ws).unwrap_or(desc),
-        None => desc,
-    }
+    return_name
+        .and_then(|return_name| desc.strip_prefix(return_name))
+        .and_then(strip_one_ws)
+        .unwrap_or(desc)
 }
 
 fn strip_one_ws(s: &str) -> Option<&str> {

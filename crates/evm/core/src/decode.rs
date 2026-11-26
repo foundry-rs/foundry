@@ -156,22 +156,16 @@ impl RevertDecoder {
         }
 
         // Custom errors.
-        if let Some((selector, data)) = err.split_first_chunk::<SELECTOR_LEN>()
-            && let Some(errors) = self.errors.get(selector)
-        {
-            for error in errors {
-                // If we don't decode, don't return an error, try to decode as a string later.
-                if let Ok(decoded) = error.abi_decode_input(data) {
-                    return Some(format!(
-                        "{}({})",
-                        error.name,
-                        decoded.iter().map(foundry_common::fmt::format_token).format(", ")
-                    ));
-                }
-            }
-        }
-
-        None
+        let (selector, data) = err.split_first_chunk::<SELECTOR_LEN>()?;
+        // If we don't decode, don't return an error, try to decode as a string later.
+        self.errors.get(selector)?.iter().find_map(|error| {
+            let decoded = error.abi_decode_input(data).ok()?;
+            Some(format!(
+                "{}({})",
+                error.name,
+                decoded.iter().map(foundry_common::fmt::format_token).format(", ")
+            ))
+        })
     }
 
     /// Formats revert bytes that could not be decoded as a known error.
