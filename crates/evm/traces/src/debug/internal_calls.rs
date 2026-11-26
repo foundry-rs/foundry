@@ -694,6 +694,17 @@ mod tests {
                 .matches_signature("f((uint256,address)[],uint256)")
         );
         assert!(!function(vec![known("(uint256)")]).matches_signature("f((int256))"));
+        // A library ABI spells enums, structs and contracts by name: any name that is no
+        // elementary type matches.
+        let library = FunctionInfo {
+            library_abi_types: Some(vec![AbiType::ByName, known("uint256")]),
+            ..FunctionInfo::untyped("f".into(), true)
+        };
+        assert!(library.matches_library_signature("f(Lib.K,uint256)"));
+        assert!(library.matches_library_signature("f(Lib.S[],uint256)"));
+        assert!(!library.matches_library_signature("f(uint256,uint256)"));
+        assert!(!library.matches_library_signature("f(int256[2],uint256)"));
+        assert!(!library.matches_library_signature("f(bytes32,uint256)"));
         // Without the parameters only the name counts.
         assert!(FunctionInfo::untyped("f".into(), true).matches_signature("f(uint256)"));
     }

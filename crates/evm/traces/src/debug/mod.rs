@@ -57,9 +57,9 @@ impl DebugTraceIdentifier {
         // Without an ABI every external function counts as dispatched.
         let selected =
             node.trace.data.first_chunk().and_then(|selector| artifact.selectors.get(selector));
-        // The signature tells overloads apart. A library ABI spells enums, structs, contracts and
-        // user-defined value types by name, and leaves out the functions with `storage`
-        // parameters: the types spelled by name match any, and a selector that the ABI does not
+        // The signature tells overloads apart. A library ABI spells enums, structs and contracts
+        // by name, and leaves out the functions with `storage` parameters: the types spelled by
+        // name match any name that is no elementary type, and a selector that the ABI does not
         // have is the one of such a function. The source of the artifact tells whether it is a
         // library; contracts of the same name in other sources are others.
         let is_library = sources.is_library(artifact, contract_name);

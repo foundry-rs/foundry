@@ -1,3 +1,5 @@
+type Signed is int256;
+
 library Lib {
     enum K {
         A,
@@ -21,11 +23,12 @@ library Lib {
     }
 
     function f(uint256 x) public pure returns (uint256) {
-        return uint256(f(int256(x)));
+        return uint256(Signed.unwrap(f(Signed.wrap(int256(x)))));
     }
 
-    function f(int256 x) public pure returns (int256) {
-        return x <= 0 ? int256(1) : f(x - 1) + 1;
+    function f(Signed x) public pure returns (Signed) {
+        int256 n = Signed.unwrap(x);
+        return n <= 0 ? Signed.wrap(1) : Signed.wrap(Signed.unwrap(f(Signed.wrap(n - 1))) + 1);
     }
 }
 

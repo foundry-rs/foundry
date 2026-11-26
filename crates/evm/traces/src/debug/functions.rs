@@ -55,7 +55,7 @@ struct ResolvedType {
     decodable: Option<DynSolType>,
     abi: AbiType,
     /// Whether a library ABI spells the type other than `abi`, or leaves out the function: enums,
-    /// structs, contracts and user-defined value types by name, and storage pointers.
+    /// structs and contracts by name, and storage pointers.
     library_spelled: bool,
 }
 
@@ -110,6 +110,15 @@ pub struct FunctionInfo {
     pub merged: Vec<String>,
 }
 
+/// Whether `name`, as the ABI spells a type, is an elementary type or an array of one.
+fn is_elementary(name: &str) -> bool {
+    let base = name.split('[').next().unwrap_or(name);
+    let digits = |rest: &str| rest.bytes().all(|b| b.is_ascii_digit());
+    matches!(base, "address" | "bool" | "string" | "bytes" | "function")
+        || base.strip_prefix("bytes").is_some_and(|rest| !rest.is_empty() && digits(rest))
+        || base.strip_prefix("uint").or_else(|| base.strip_prefix("int")).is_some_and(digits)
+}
+
 /// What the ABI spells for a parameter of a function.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AbiType {
@@ -117,6 +126,9 @@ pub enum AbiType {
     Known(String),
     /// A type that Solar did not resolve.
     Unknown,
+    /// A type that a library ABI spells by name, such as `Lib.K` or `Token`, and not by an
+    /// elementary type.
+    ByName,
 }
 
 impl FunctionInfo {
@@ -155,6 +167,7 @@ impl FunctionInfo {
             arguments.next().is_some_and(|argument| match ty {
                 AbiType::Known(known) => known == argument,
                 AbiType::Unknown => true,
+                AbiType::ByName => !is_elementary(argument),
             })
         });
         matches && arguments.next().is_none()
@@ -223,7 +236,7 @@ impl SourceFunction {
                 params
                     .iter()
                     .map(|param| {
-                        if spelled_by_name(param) { AbiType::Unknown } else { param.ty.abi.clone() }
+                        if spelled_by_name(param) { AbiType::ByName } else { param.ty.abi.clone() }
                     })
                     .collect()
             });
@@ -300,18 +313,16 @@ fn resolve_type<'gcx>(gcx: Gcx<'gcx>, ty: Ty<'gcx>) -> ResolvedType {
 }
 
 /// Whether the ABI of a library spells the type by name, or leaves out a function that has it:
-/// enums, structs, contracts and user-defined value types, mappings, and storage pointers.
+/// enums, structs and contracts, mappings, and storage pointers. User-defined value types are
+/// spelled as their underlying type.
 fn library_spelled(ty: Ty<'_>) -> bool {
     match ty.kind {
         TyKind::Ref(inner, location) => {
             matches!(location, DataLocation::Storage) || library_spelled(inner)
         }
         TyKind::Array(element, _) | TyKind::DynArray(element) => library_spelled(element),
-        TyKind::Enum(_)
-        | TyKind::Struct(_)
-        | TyKind::Contract(_)
-        | TyKind::Udvt(..)
-        | TyKind::Mapping(..) => true,
+        TyKind::Enum(_) | TyKind::Struct(_) | TyKind::Contract(_) | TyKind::Mapping(..) => true,
+        TyKind::Udvt(inner, _) => library_spelled(inner),
         _ => false,
     }
 }
