@@ -16,6 +16,7 @@ use alloy_network::{AnyNetwork, ReceiptResponse};
 use alloy_primitives::{Address, B256, map::AddressHashSet};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
+use alloy_signer::Signer;
 use eyre::{ContextCompat, OptionExt, Result};
 use forge_script_sequence::ScriptSequence;
 use foundry_cheatcodes::Wallets;
@@ -35,6 +36,7 @@ use foundry_compilers::{
     ArtifactId, ProjectCompileOutput,
     artifacts::{BytecodeObject, Libraries},
     compilers::{Language, multi::MultiCompilerLanguage},
+    error::SolcError,
     info::ContractInfo,
     utils::source_files_iter,
 };
@@ -219,7 +221,23 @@ impl<FEN: FoundryEvmNetwork> PreprocessedState<FEN> {
     /// After compilation, finds exact [ArtifactId] of the target contract.
     pub fn compile(self) -> Result<CompiledState<FEN>> {
         let Self { args, script_config, script_wallets, browser_wallet } = self;
-        let project = script_config.config.project()?;
+        // `force` wipes the cache when the project is created.
+        eyre::ensure!(
+            !(args.no_compile && script_config.config.force),
+            "`--no-compile` cannot be used with `force`"
+        );
+        // Decoding external storage compiles verified sources during execution.
+        eyre::ensure!(
+            !(args.no_compile && script_config.config.decode_external_storage),
+            "`--no-compile` cannot be used with `decode_external_storage`"
+        );
+        let mut project = script_config.config.project()?;
+        eyre::ensure!(
+            !args.no_compile || project.cached,
+            "`--no-compile` needs the build cache, which `cache = false`, `--no-cache`, and \
+             `deny = \"warnings\"` disable"
+        );
+        project.no_compile = args.no_compile;
 
         let mut target_name = args.target_contract.clone();
 
@@ -253,7 +271,14 @@ impl<FEN: FoundryEvmNetwork> PreprocessedState<FEN> {
         } else {
             compiler.target_files([target_path.clone()])
         };
-        let output = compiler.compile(&project)?;
+        let output = compiler.compile(&project).map_err(|err| {
+            let Some(SolcError::StaleSources(files)) = err.downcast_ref() else { return err };
+            let files = files.iter().map(|file| file.strip_prefix(project.root()).unwrap_or(file));
+            eyre::eyre!(
+                "compilation disabled by --no-compile; sources need compiling:\n{}",
+                files.map(|file| file.display()).join("\n")
+            )
+        })?;
 
         let mut target_id: Option<ArtifactId> = None;
 
@@ -714,8 +739,9 @@ async fn configurable_account_signers_available<FEN: FoundryEvmNetwork>(
         .map_err(|e| eyre::eyre!("Failed to get available signers: {}", e))?;
     let config = tempo.configurable_account_config.as_deref().map(parse_config).transpose()?;
     // Broadcast also signs with the `--tempo.owner` keys.
-    let Ok(owners) = tempo.owner_addresses().await else { return Ok(false) };
-    let keys = signers.iter().chain(&owners).copied().collect::<Vec<_>>();
+    let Ok(owners) = tempo.owner_signers().await else { return Ok(false) };
+    let keys =
+        signers.iter().copied().chain(owners.iter().map(Signer::address)).collect::<Vec<_>>();
     let mut scopes = remaining.to_vec();
     scopes.sort_unstable_by_key(|scope| (scope.chain, scope.sender));
     scopes.dedup();

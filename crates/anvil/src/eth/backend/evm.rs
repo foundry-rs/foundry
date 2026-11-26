@@ -96,9 +96,9 @@ pub(crate) use with_evm_network;
 pub struct ResultExt {
     /// Whether an OP-stack deposit failed and kept only its mint and nonce bump.
     pub failed_deposit: bool,
-    /// Per-phase statuses of an included signed Base EIP-8130 transaction.
-    pub eip8130_phase_statuses: Option<Vec<u8>>,
-    /// Gas charged for fees, receipts and mined block totals; see
+    /// Number of committed call phases of an included signed Base EIP-8130 transaction.
+    pub eip8130_committed_phases: Option<u64>,
+    /// Gas charged for fees, receipts and block totals; see
     /// [`AnvilEvmNetwork::charged_gas`].
     pub charged_gas: u64,
 }
@@ -205,7 +205,7 @@ pub trait AnvilEvmNetwork: FoundryEvmNetwork {
         evm_tx::<Self>(&prepared.tx, prepared.sender, prepared.payload, cheats)
     }
 
-    /// Returns the gas `result` charges for fees, receipts and mined block totals.
+    /// Returns the gas `result` charges for fees, receipts and block totals.
     fn charged_gas(result: &TxResult<TypesFor<Self>>) -> u64 {
         result.tx_gas_used()
     }
@@ -591,9 +591,7 @@ pub fn evm_tx<N: AnvilEvmNetwork>(
     let mut evm_tx = TypesFor::<N>::evm_tx(envelope, sender, payload)
         .map_err(|err| BlockchainError::Message(err.to_string()))?;
     if !payload.is_simulated() {
-        let (mut inner, signer) = evm_tx.into_parts();
-        N::apply_impersonation(&mut inner);
-        evm_tx = Recovered::new_unchecked(inner, signer);
+        N::apply_impersonation(evm_tx.inner_mut());
     }
     if let Some(cheats) = cheats {
         let overrides = authority_overrides(tx, cheats);
@@ -694,7 +692,7 @@ impl<I> MonadInspector for I {}
 pub fn exec_result<N: AnvilEvmNetwork>(result: TxResult<TypesFor<N>>) -> ExecResult {
     let ext = ResultExt {
         failed_deposit: result.ext.is_failed_deposit(),
-        eip8130_phase_statuses: result.ext.eip8130_phase_statuses().map(<[u8]>::to_vec),
+        eip8130_committed_phases: result.ext.eip8130_committed_phases(),
         charged_gas: N::charged_gas(&result),
     };
     result.with_ext(ext)

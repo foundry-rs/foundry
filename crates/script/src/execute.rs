@@ -6,7 +6,7 @@ use crate::{
 };
 use alloy_dyn_abi::FunctionExt;
 use alloy_json_abi::{Function, InternalType, JsonAbi};
-use alloy_network::{AnyNetwork, Network};
+use alloy_network::{AnyNetwork, Network, TransactionBuilder};
 use alloy_primitives::{
     Address, Bytes,
     map::{HashMap, HashSet},
@@ -68,7 +68,7 @@ impl<FEN: FoundryEvmNetwork> LinkedState<FEN> {
     /// Given linked and compiled artifacts, prepares data we need for execution.
     /// This includes the function to call and the calldata to pass to it.
     pub async fn prepare_execution(self) -> Result<PreExecutionState<FEN>> {
-        let Self { args, script_config, script_wallets, browser_wallet, build_data } = self;
+        let Self { mut args, script_config, script_wallets, browser_wallet, build_data } = self;
 
         let target_contract = build_data.get_target_contract()?;
 
@@ -492,10 +492,27 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
             }
         }
 
+        // Like simulation, set each unsigned transaction's chain ID to its RPC's chain, since
+        // CREATE broadcasts and library deployments are recorded without one.
+        for tx in result.transactions.iter_mut().flatten() {
+            if let Some(rpc) = &tx.rpc
+                && let Some(&chain_id) = self.execution_artifacts.rpc_data.chain_ids.get(rpc)
+                && let Some(tx) = tx.transaction.as_unsigned_mut()
+            {
+                tx.set_chain_id(chain_id);
+            }
+        }
+
         let json_result = JsonResult {
             logs: decode_console_logs(&result.logs),
             returns: &self.execution_artifacts.returns,
             result: &result,
+            broadcastable_transactions: result
+                .transactions
+                .iter()
+                .flatten()
+                .map(|tx| &tx.transaction)
+                .collect(),
         };
         let json = serde_json::to_string(&json_result)?;
 

@@ -557,7 +557,7 @@
       "section": null,
       "type": "array of string or integer",
       "table": false,
-      "default": "[\"license\", \"code-size\", \"init-code-size\", \"transient-storage\", \"transfer-deprecated\", \"natspec-memory-safe-assembly-deprecated\"]",
+      "default": "[\"license\", \"code-size\", \"init-code-size\", \"transient-storage\", \"transfer-deprecated\", \"natspec-memory-safe-assembly-deprecated\", \"code-size-amsterdam\", \"init-code-size-amsterdam\"]",
       "env": [
         "FOUNDRY_IGNORED_ERROR_CODES",
         "DAPP_IGNORED_ERROR_CODES",
@@ -2524,10 +2524,14 @@
       "type": "string or integer (chain name or ID)",
       "table": false,
       "default": null,
+      "aliases": [
+        "chain"
+      ],
       "env": [
         "FOUNDRY_CHAIN_ID",
         "DAPP_CHAIN_ID",
-        "DAPP_TEST_CHAIN_ID"
+        "DAPP_TEST_CHAIN_ID",
+        "FOUNDRY_CHAIN"
       ],
       "description": "The chain Foundry targets, as a chain name or EIP-155 chain ID.\n\nAccepts a name such as `\"mainnet\"` or `\"sepolia\"`, or a number such as `1`. It sets the\n`chainid` value during EVM execution: when unset, local execution uses 31337 and forks use\nthe chain ID reported by the RPC, and when set it overrides the fork's chain ID. Commands\nalso use it to choose the block explorer settings and API key from `[etherscan]`, and\n`cast` commands use it as the transaction chain. The `--chain` (`--chain-id`) flag\noverrides it.\n\n```toml\n[profile.default]\nchain_id = \"sepolia\"\n```"
     },
@@ -3485,7 +3489,7 @@
         "DAPP_ENABLE_TX_GAS_LIMIT",
         "DAPP_TEST_ENABLE_TX_GAS_LIMIT"
       ],
-      "description": "Whether to enforce the per-transaction gas limit cap introduced in Osaka (EIP-7825).\n\nThe cap is off by default, so tests and scripts can run calls that need more gas. Enable it\nto catch transactions that a chain enforcing the cap would reject. The\n`--enable-tx-gas-limit` (`--tx-gas-limit`) flag enables it for one run."
+      "description": "Whether to enforce the per-transaction gas limit caps introduced in Osaka (EIP-7825) and\nAmsterdam (EIP-8037).\n\nThe caps are off by default, so tests and scripts can run calls that need more gas. Enable\nthem to catch transactions that a chain enforcing the caps would reject. The\n`--enable-tx-gas-limit` (`--tx-gas-limit`) flag enables it for one run."
     },
     {
       "key": "labels",

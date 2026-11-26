@@ -1476,6 +1476,12 @@ pub struct RawCallResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     ///
     /// `None` when not recorded or unknown.
     pub failure_identity: Option<B256>,
+    /// Pc of the instruction that halted this call's frame and the end of the memory that
+    /// instruction accessed, or zero, recorded only while
+    /// [`InspectorStack::collect_failure_identity`] is set.
+    ///
+    /// `None` when not recorded, when the call succeeded, or when the failure identity is unknown.
+    pub failure_halt: Option<(usize, U256)>,
     /// Where this call failed, recorded only while
     /// [`InspectorStack::collect_failure_provenance`] is set: its failed assertions, by the calls
     /// that led to them, and its failed frames, by the sites that failed, in order, with their
@@ -1522,6 +1528,7 @@ impl<FEN: FoundryEvmNetwork> Default for RawCallResult<FEN> {
             post_execution_backend: None,
             failed_assertion: None,
             failure_identity: None,
+            failure_halt: None,
             failure_provenance: None,
         }
     }
@@ -1871,6 +1878,8 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
     let skip_payloads =
         cheatcodes.as_mut().map(|c| std::mem::take(&mut c.skip_payloads)).unwrap_or_default();
     let failed_assertion = cheatcodes.as_mut().and_then(|c| c.failed_assertion.take());
+    let failure_halt =
+        cheatcodes.as_ref().and_then(|c| c.failure_trace.as_ref()).and_then(|trace| trace.halt());
     let failure_identity = cheatcodes
         .as_mut()
         .and_then(|c| c.failure_trace.as_mut())
@@ -1910,6 +1919,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         post_execution_backend: None,
         failed_assertion,
         failure_identity,
+        failure_halt,
         failure_provenance,
     };
     if sancov_edges {

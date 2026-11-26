@@ -40,23 +40,23 @@ fn is_hard_arith_node(expr: &SymExpr) -> bool {
     }
 }
 
-/// Returns whether local hard-arithmetic search should run before asking the solver.
-pub(crate) fn constraints_prefer_hard_arith_fallback_first(
+/// Returns how many variables local hard-arithmetic search assigns when it should run before
+/// asking the solver.
+pub(crate) fn hard_arith_fallback_first_vars(
     cx: &SymCx,
     constraints: &[SymBoolExpr],
-) -> bool {
+) -> Option<usize> {
     if !constraints.iter().any(SymBoolExpr::contains_hard_arith)
         || constraints.iter().any(SymBoolExpr::contains_symbolic_hash)
     {
-        return false;
+        return None;
     }
 
     let mut vars = SymbolicVars::default();
     for constraint in constraints {
         collect_bool_fallback_vars(constraint, &mut vars);
     }
-    let vars = fallback_search_vars(cx, vars, constraints);
-    !vars.is_empty() && vars.len() <= HARD_ARITH_FALLBACK_MAX_VARS
+    hard_arith_search_vars(cx, &vars, constraints).map(|vars| vars.len())
 }
 
 pub(crate) fn hard_arith_fallback_model(
@@ -77,10 +77,7 @@ pub(crate) fn hard_arith_fallback_model(
     }
     let mut constants = constants.into_iter().collect::<Vec<_>>();
     constants.sort_unstable();
-    let vars = fallback_search_vars(cx, vars, constraints);
-    if vars.is_empty() || vars.len() > HARD_ARITH_FALLBACK_MAX_VARS {
-        return None;
-    }
+    let vars = hard_arith_search_vars(cx, &vars, constraints)?;
 
     let candidates = vars
         .iter()
@@ -105,7 +102,7 @@ pub(crate) fn hard_arith_fallback_model(
         candidates: &candidates,
         max_assignments: HARD_ARITH_FALLBACK_MAX_ASSIGNMENTS,
     };
-    search.model(0, &mut model, &mut assignments)
+    search.model(0, &mut model, &mut assignments).ok()
 }
 
 // Constructive checked-multiply modeling is optional. Bound repeated support scans to keep a miss
@@ -367,23 +364,41 @@ fn checked_mul_guard_operands(condition: &SymBoolExpr) -> Option<(SymExpr, SymEx
     None
 }
 
+/// Returns the variables local hard-arithmetic search assigns.
+///
+/// A selection within `HARD_ARITH_DEFER_MAX_VARS` is preferred because it leaves variables bound by
+/// support constraints to constructive completion; the search widens to
+/// `HARD_ARITH_FALLBACK_MAX_VARS` only when no such selection fits.
+fn hard_arith_search_vars(
+    cx: &SymCx,
+    vars: &SymbolicVars,
+    constraints: &[SymBoolExpr],
+) -> Option<Vec<Symbol>> {
+    [HARD_ARITH_DEFER_MAX_VARS, HARD_ARITH_FALLBACK_MAX_VARS].into_iter().find_map(|max_vars| {
+        let vars = fallback_search_vars(cx, vars, constraints, max_vars);
+        (!vars.is_empty() && vars.len() <= max_vars).then_some(vars)
+    })
+}
+
 fn fallback_search_vars(
     cx: &SymCx,
-    vars: SymbolicVars,
+    vars: &SymbolicVars,
     constraints: &[SymBoolExpr],
+    max_vars: usize,
 ) -> Vec<Symbol> {
-    if vars.len() <= HARD_ARITH_FALLBACK_MAX_VARS {
-        return vars.into_iter().collect();
+    if vars.len() <= max_vars {
+        return vars.iter().copied().collect();
     }
 
     let hard_arith_vars = hard_arith_fallback_vars(constraints);
-    if !hard_arith_vars.is_empty() && hard_arith_vars.len() <= HARD_ARITH_FALLBACK_MAX_VARS {
+    if !hard_arith_vars.is_empty() && hard_arith_vars.len() <= max_vars {
         let mut vars = hard_arith_vars;
-        add_zero_invalid_support_vars(&mut vars, constraints);
+        add_zero_invalid_support_vars(&mut vars, constraints, max_vars);
         return vars.into_iter().collect();
     }
 
-    vars.into_iter()
+    vars.iter()
+        .copied()
         .filter(|var| {
             let var = cx.symbol_name(*var);
             var.starts_with("calldata")
@@ -403,7 +418,11 @@ fn hard_arith_fallback_vars(constraints: &[SymBoolExpr]) -> SymbolicVars {
     vars
 }
 
-fn add_zero_invalid_support_vars(vars: &mut SymbolicVars, constraints: &[SymBoolExpr]) {
+fn add_zero_invalid_support_vars(
+    vars: &mut SymbolicVars,
+    constraints: &[SymBoolExpr],
+    max_vars: usize,
+) {
     let zero_model = SymbolicModel::default();
     for constraint in constraints {
         if constraint.eval_model(&zero_model).unwrap_or(false) {
@@ -434,7 +453,7 @@ fn add_zero_invalid_support_vars(vars: &mut SymbolicVars, constraints: &[SymBool
         constraint.collect_vars(&mut constraint_vars);
         let missing =
             constraint_vars.iter().filter(|var| !vars.contains(*var)).copied().collect::<Vec<_>>();
-        if vars.len() + missing.len() > HARD_ARITH_FALLBACK_MAX_VARS {
+        if vars.len() + missing.len() > max_vars {
             continue;
         }
         vars.extend(missing);
@@ -497,12 +516,20 @@ struct FallbackSearch<'a> {
 }
 
 impl FallbackSearch<'_> {
+    /// Searches assignments of `vars[index..]` depth first with conflict-directed backjumping.
+    ///
+    /// On failure, returns `Err(Some(conflict))` with the earlier variables whose values caused
+    /// every candidate of this subtree to fail, or `Err(None)` when the budget ran out. A level
+    /// whose variable is not in its subtree's conflict returns that conflict without trying its
+    /// other candidates, since no other value of its variable can make the subtree succeed. It
+    /// therefore visits a subset of the assignments a plain depth-first search visits, in the
+    /// same order.
     fn model(
         &self,
         index: usize,
         model: &mut SymbolicModel,
         assignments: &mut usize,
-    ) -> Option<SymbolicModel> {
+    ) -> Result<SymbolicModel, Option<SymbolicVars>> {
         if index == self.vars.len() {
             let mut completed = model.clone();
             let mut remaining_support_visits = usize::MAX;
@@ -511,38 +538,55 @@ impl FallbackSearch<'_> {
                 &mut completed,
                 &mut remaining_support_visits,
             ) {
-                return Some(completed);
+                return Ok(completed);
             }
             // Greedy completion can choose one endpoint before seeing a tighter bound. Retry
             // from the search assignment after intersecting all currently evaluable bounds.
             let mut completed = model.clone();
-            return (seed_bounded_support_vars(self.constraints, &mut completed)
+            if seed_bounded_support_vars(self.constraints, &mut completed)
                 && complete_fallback_support_model(
                     self.constraints,
                     &mut completed,
                     &mut remaining_support_visits,
-                ))
-            .then_some(completed);
+                )
+            {
+                return Ok(completed);
+            }
+            // Completion may depend on any searched value.
+            return Err(Some(self.searched_vars.clone()));
         }
 
+        let var = self.vars[index];
+        let mut conflict = SymbolicVars::default();
         for candidate in &self.candidates[index] {
             if *assignments >= self.max_assignments {
-                return None;
+                return Err(None);
             }
             *assignments += 1;
-            model.insert(self.vars[index], *candidate);
-            if fallback_partial_model_satisfies_known_constraints(
+            model.insert(var, *candidate);
+            if let Some(failed_vars) = fallback_partial_model_failed_constraint_vars(
                 self.constraints,
                 self.constraint_vars,
                 self.searched_vars,
                 model,
-            ) && let Some(model) = self.model(index + 1, model, assignments)
-            {
-                return Some(model);
+            ) {
+                conflict.extend(failed_vars.iter().filter(|failed| **failed != var));
+                continue;
+            }
+            match self.model(index + 1, model, assignments) {
+                Ok(model) => return Ok(model),
+                Err(None) => return Err(None),
+                Err(Some(child_conflict)) if !child_conflict.contains(&var) => {
+                    model.remove(&var);
+                    return Err(Some(child_conflict));
+                }
+                Err(Some(child_conflict)) => {
+                    conflict.extend(child_conflict.into_iter().filter(|failed| *failed != var));
+                }
             }
         }
-        model.remove(&self.vars[index]);
-        None
+        model.remove(&var);
+        Err(Some(conflict))
     }
 }
 
@@ -871,16 +915,18 @@ const fn support_target_for_known_right(op: SymCmpOp, value: U256) -> Option<U25
     }
 }
 
-fn fallback_partial_model_satisfies_known_constraints(
+/// Returns the variables of the first fully searched and assigned constraint that `model` fails.
+fn fallback_partial_model_failed_constraint_vars<'a>(
     constraints: &[SymBoolExpr],
-    constraint_vars: &[SymbolicVars],
+    constraint_vars: &'a [SymbolicVars],
     searched_vars: &SymbolicVars,
     model: &SymbolicModel,
-) -> bool {
-    constraints.iter().zip(constraint_vars).all(|(constraint, vars)| {
-        !vars.is_subset(searched_vars)
-            || !vars.iter().all(|var| model.contains_name(*var))
-            || constraint.eval_model(model).unwrap_or(false)
+) -> Option<&'a SymbolicVars> {
+    constraints.iter().zip(constraint_vars).find_map(|(constraint, vars)| {
+        (vars.is_subset(searched_vars)
+            && vars.iter().all(|var| model.contains_name(*var))
+            && !constraint.eval_model(model).unwrap_or(false))
+        .then_some(vars)
     })
 }
 
@@ -1023,7 +1069,7 @@ pub(crate) fn fallback_bounded_model(constraints: &[SymBoolExpr]) -> Option<Symb
     };
     let mut model = SymbolicModel::default();
     let mut assignments = 0usize;
-    search.model(0, &mut model, &mut assignments)
+    search.model(0, &mut model, &mut assignments).ok()
 }
 
 fn push_fallback_candidate(candidates: &mut HashSet<U256>, candidate: U256, hints: MaskHints) {

@@ -27,7 +27,7 @@ use super::get_deposit_tx_parts;
 use alloy_serde::OtherFields;
 
 #[cfg(feature = "base")]
-use base_common_consensus::EIP8130_TX_TYPE_ID as EIP8130_TRANSACTION_TYPE;
+use base_common_consensus::BASE_TX_TYPE_ID as EIP8130_TRANSACTION_TYPE;
 #[cfg(feature = "base")]
 use base_common_rpc_types::BaseTransactionRequest;
 

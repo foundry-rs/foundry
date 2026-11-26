@@ -166,6 +166,17 @@ contract CheatcodeWarmthTest is Test {
         vm.cool(address(target));
         vm.stopAndReturnStateDiff();
         vm.assertFalse(isWarm(address(target)), "stopAndReturnStateDiff");
+
+        WarmthTarget mock = new WarmthTarget();
+        vm.cool(address(mock));
+        vm.mockFunction(address(target), address(mock), abi.encodeWithSignature("x()"));
+        vm.startStateDiffRecording();
+        target.x();
+        // A delegatecall records the callee, here the mock.
+        (bool success,) = address(target).delegatecall(abi.encodeWithSignature("x()"));
+        vm.assertTrue(success, "delegatecall");
+        vm.stopAndReturnStateDiff();
+        vm.assertFalse(isWarm(address(mock)), "mockFunction target");
     }
 
     function testCheatcodesWarmSlot() public {

@@ -74,8 +74,8 @@ wallet_json_field() {
 }
 
 echo -e "\n=== CREATE TEMPO ACCOUNT AND ACCESS KEY ==="
-ROOT_WALLET_JSON="$(cast wallet new --json)"
-ACCESS_WALLET_JSON="$(cast wallet new --json)"
+ROOT_WALLET_JSON="$(cast wallet new --eoa --json)"
+ACCESS_WALLET_JSON="$(cast wallet new --eoa --json)"
 WALLET_ADDR="$(wallet_json_field "$ROOT_WALLET_JSON" address)"
 ROOT_PRIVATE_KEY="$(wallet_json_field "$ROOT_WALLET_JSON" private_key)"
 ACCESS_ADDR="$(wallet_json_field "$ACCESS_WALLET_JSON" address)"

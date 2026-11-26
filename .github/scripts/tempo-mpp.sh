@@ -98,8 +98,8 @@ if [ "$TEMPO_ROTATE_WALLET" = "1" ]; then
   fi
 
   echo "Creating a fresh Tempo account and pending access key in store.json"
-  ROOT_WALLET_JSON=$("$CAST" wallet new --json)
-  ACCESS_WALLET_JSON=$("$CAST" wallet new --json)
+  ROOT_WALLET_JSON=$("$CAST" wallet new --eoa --json)
+  ACCESS_WALLET_JSON=$("$CAST" wallet new --eoa --json)
   ROOT_PRIVATE_KEY=$(printf '%s' "$ROOT_WALLET_JSON" | jq -r '(.data // .)[0].private_key')
   ACCESS_PRIVATE_KEY=$(printf '%s' "$ACCESS_WALLET_JSON" | jq -r '(.data // .)[0].private_key')
   WALLET=$(printf '%s' "$ROOT_WALLET_JSON" | jq -r '(.data // .)[0].address')

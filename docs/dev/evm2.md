@@ -24,16 +24,22 @@ revm 43 and alloy-evm 0.39 through `base-evm2` and the Base crates it depends on
 
 ## User-visible output changes
 
-- **Cheatcode `EXTCODEHASH`**: the cheatcode address, and any network-specific extra cheatcode
-  addresses, hold the one-byte stub `0x00`, so `EXTCODEHASH` on them returns `keccak256(0x00)`.
-  revm reported `keccak256(abi.encodePacked(CHEATCODE_ADDRESS))` for the cheatcode address and the
-  hash of the address for extra ones.
 - **Step-trace JSON**: steps in `forge test --json` traces no longer carry `gas_used`. A `CREATE`
   or `CREATE2` step's `gas_cost` now excludes the gas forwarded to the new frame. Each call's
   `step_deltas` lists `gas_remaining_after` for call-like steps and for steps whose remaining gas
   differs from `gas_remaining - gas_cost`.
 - **`SLOAD` values**: with `-vvvvv --opcodes SLOAD`, every `SLOAD` shows its slot and loaded value,
-  including repeated reads of a slot that revm printed as a bare `SLOAD`.
+  including repeated reads of a slot that revm printed as a bare `SLOAD`. In `--json` step traces,
+  those reads carry a `storage_change` with reason `SLOAD`.
+- **Halted calls**: a call or create that halts, such as on `INVALID`, an invalid jump, an
+  out-of-bounds `RETURNDATACOPY`, the memory limit or a runtime code starting with `0xEF`, reports
+  all the gas forwarded to it as used, as the EVM charges it. This shows in `-vvvv` traces, `--json`
+  traces, gas reports and the debugger. revm-inspectors reported only the gas spent before the
+  halt, such as `[112]` instead of `[1056938743]`, and kept the output of a create rejected for
+  its `0xEF` prefix. This changes every halting frame except the root of a transaction: with
+  `isolate = true`, a non-static call or create made directly by the test is its own transaction
+  and already reported all its gas. Nested frames, `view` calls from the test, and every call with
+  `isolate = false` change.
 - **`prestateTracer` diff mode**: Anvil leaves every account that was empty before the transaction
   out of `pre`, also when the transaction funds it, such as the coinbase at its first fee credit.
   This matches geth. revm-inspectors reported such an account with `"balance":"0x0"`.
@@ -60,6 +66,16 @@ These compatibility differences affect execution, gas reports and Anvil library 
   call that switches forks can replace the outer transaction's warmth with its own. Transient
   storage follows the same lifetime, so it no longer leaks from `setUp` into a test through a fork.
   See [`ForkSwitch.t.sol`](../../testdata/default/cheats/ForkSwitch.t.sol).
+- **`vm.expectRevert` on a halt**: evm2 consumes a halted frame's gas before the cheatcodes see
+  it. When `vm.expectRevert` turns a halt on `INVALID` or `RETURNDATACOPY` in a static (`view`
+  or `pure`) call into a success, the cheatcodes give back the gas the call had left, as
+  revm-based Foundry did, so `invalid()`, pre-0.8 `assert` and out-of-bounds reads in such calls
+  stay cheap. Other halts, such as bad jumps, undefined opcodes, stack errors and out-of-gas, and
+  every halt in a non-static call or create, consume all the gas forwarded to the call.
+- **Monad isolated calls**: under `--network monad` with `isolate = true`, a slot that the test
+  transaction warmed, for example with `vm.store`, is cold again in an isolated call, as on
+  Ethereum. revm-based Foundry carried that warmth into the isolated call, so its first `SLOAD`
+  of the slot cost 8,000 gas less.
 - **Fork environment on re-select**: switching back to a fork restores the whole block environment
   it last ran with, including `vm.fee`, `vm.coinbase` and `vm.prevrandao` changes. revm kept only
   the block number and timestamp and restored the rest from the fork block.
@@ -85,9 +101,10 @@ These compatibility differences affect execution, gas reports and Anvil library 
   EIP-161 requires. revm-based Anvil kept it in state, for example an OP Stack fee vault after a
   zero fee credit or the target of a call to an address without code. For the same transactions,
   state roots and block hashes differ from revm-based Anvil.
-- **Anvil state dumps**: dumps written by this version do not load on revm-based Anvil. They store
-  historical-state code as raw bytes and trace steps without `gas_used`, which older versions cannot
-  deserialize. They also leave out zero-valued storage slots.
+- **Anvil state dumps**: ordinary dumps written by this version load on revm-based Anvil. Dumps
+  written with `--preserve-historical-states` do not, because they store historical-state code as
+  raw bytes, which older versions cannot deserialize. Dumps also leave out zero-valued storage
+  slots.
 - **Fork caches**: RPC fork caches written by revm-based Foundry are reused when their block
   environment metadata matches. Tempo caches, whose metadata revm wrote as Tempo's block
   environment, and caches of blocks without a `mixHash` that revm recorded with no `prevrandao` no

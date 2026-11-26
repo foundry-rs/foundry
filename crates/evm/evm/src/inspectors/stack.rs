@@ -81,7 +81,7 @@ pub struct InspectorStackBuilder<BLOCK: Clone> {
     /// Whether to print all opcode traces into the console. Useful for debugging the EVM.
     pub print: Option<bool>,
     /// The chisel state inspector.
-    pub chisel_state: Option<usize>,
+    pub chisel_state: Option<ChiselState>,
     /// Whether to enable call isolation.
     /// In isolation mode all top-level calls are executed as a separate transaction in a separate
     /// EVM context, enabling more precise gas accounting and transaction state changes.
@@ -172,8 +172,8 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
 
     /// Set the Chisel inspector.
     #[inline]
-    pub const fn chisel_state(mut self, final_pc: usize) -> Self {
-        self.chisel_state = Some(final_pc);
+    pub fn chisel_state(mut self, final_pc: Option<usize>) -> Self {
+        self.chisel_state = Some(ChiselState::new(final_pc));
         self
     }
 
@@ -498,8 +498,6 @@ pub struct InspectorStackInner {
     /// Whether the frame that just ended ran on a frame EVM with an in-flight environment change,
     /// whose hooks already ran there. See `InspectorStackRefMut::env_handoff`.
     env_handoff_ended: bool,
-    /// Accounts the running top-level transaction created, directly or through isolated calls.
-    tx_created: AddressSet,
     /// Accounts the running nested transaction, from `executeTransaction` or an isolated call,
     /// self-destructed, including the ones it created. Captured when its root frame ends, before
     /// the transaction destroys them. An isolated call that replaces the running state, such as by
@@ -603,6 +601,9 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         // transaction runs in.
         let origin_override = cheats.origin_override.take();
         let create2_redirects = cheats.pending_create2_redirects.len();
+        // The root frame skips the cheatcode hooks, so a call into the CREATE2 deployer recorded
+        // outside the transaction must not authorize its create.
+        cheats.create2_deployer_call = None;
         // The nested transaction has its own journal.
         let snapshot_restores = mem::take(&mut cheats.snapshot_restores);
         // The nested transaction's persistent writes refer to its own journal, so they are kept
@@ -830,9 +831,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
 
     /// Set the Chisel inspector.
     #[inline]
-    pub fn set_chisel(&mut self, final_pc: usize) {
-        self.chisel_state = Some(ChiselState::new(final_pc).into());
-        self.refresh_static_step_end_dispatch();
+    pub fn set_chisel(&mut self, chisel: ChiselState) {
+        self.chisel_state = Some(chisel.into());
+        self.refresh_static_opcode_dispatch();
     }
 
     /// Set whether to enable the line coverage collector.
@@ -937,6 +938,26 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
         if let Some(cheatcodes) = &mut self.cheatcodes {
             cheatcodes.failure_trace = yes.then(Default::default);
         }
+    }
+
+    /// Set whether recording failure identities is paused, see [`Self::collect_failure_identity`].
+    ///
+    /// Calls made while paused still skip cheatcodes with effects outside the EVM, but do not step
+    /// every instruction and have no identity.
+    #[inline]
+    pub fn pause_failure_identity(&mut self, yes: bool) {
+        if let Some(trace) = self.cheatcodes.as_mut().and_then(|c| c.failure_trace.as_mut()) {
+            trace.paused = yes;
+        }
+    }
+
+    /// Returns whether a call skipped a cheatcode with effects outside the EVM while recording
+    /// failure identities, and clears it for the copies of this stack that share it.
+    pub fn take_skipped_host_effects(&self) -> bool {
+        self.cheatcodes
+            .as_ref()
+            .and_then(|c| c.failure_trace.as_ref())
+            .is_some_and(|trace| trace.take_skipped_host_effects())
     }
 
     /// Set whether to record the failure provenance of each call, see
@@ -1255,12 +1276,6 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         result: &mut MessageResultFor<FEN>,
     ) {
         let stop = result.stop;
-        if !self.inner.in_inner_context
-            && stop.is_success()
-            && let Some(address) = result.created_address
-        {
-            self.inner.tx_created.insert(address);
-        }
         let backend = Some(&mut *self.backend);
         let cheats = self.cheatcodes.as_deref_mut();
         'inspectors: {
@@ -1346,8 +1361,14 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         // The frame EVM's hooks see their own interpreter, not the caller's memory the input of
         // a call instruction's message is a range of.
         message.input = message.input.to_bytes(interp.memory()).into();
-        // The new root interpreter describes the CREATE itself, so preserve its issuing code.
-        let creator = (message.kind.is_create() && interp.message().depth < message.depth)
+        // The new root interpreter describes the message itself, so preserve the code issuing a
+        // CREATE or a call into the CREATE2 deployer.
+        let issues_create = message.kind.is_create()
+            || self
+                .cheatcodes
+                .as_deref()
+                .is_some_and(|cheats| cheats.is_create2_deployer(message.code_address));
+        let creator = (issues_create && interp.message().depth < message.depth)
             .then_some(interp.message().code_address);
         let previous_creator = self
             .cheatcodes
@@ -1503,9 +1524,23 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         // Monad's reserve balance context and tracker.
         *child.ext_mut() = evm.ext().clone();
         child.ext_mut().set_preserve_transaction_state(true);
-        // Accounts the running transaction created stay created in the nested one, so that
-        // EIP-6780 SELFDESTRUCT still deletes them, and keep the storage it holds for them.
-        for address in &self.inner.tx_created {
+        // Accounts the running transaction holds created stay created in the nested one, so that
+        // EIP-6780 SELFDESTRUCT still deletes them, and keep the storage it holds for them. A
+        // revert past a fork switch can drop the mark the switch restored, so the accounts the
+        // switch resumed created stay created too. Only accounts the running transaction loaded
+        // are checked, so checking loads no others.
+        let resumed =
+            backend.backend().lifecycle().resumed_created().copied().collect::<AddressSet>();
+        let state = evm.state_mut();
+        let loaded = state.loaded_accounts().map(|(address, _)| *address).collect::<Vec<_>>();
+        let held = loaded
+            .into_iter()
+            .filter(|address| {
+                resumed.contains(address)
+                    || state.account(address).is_ok_and(|account| account.is_created())
+            })
+            .collect::<AddressSet>();
+        for address in &held {
             match child.state_mut().account(address) {
                 Ok(mut account) => {
                     if account.exists() {
@@ -1613,18 +1648,6 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         if skip_floor {
             result.floor_gas = floor;
         }
-        self.inner.tx_created.extend(
-            executed
-                .pending_state
-                .account_changes()
-                // A created account the call self-destructed is kept until the running
-                // transaction ends.
-                .filter(|change| {
-                    change.created && (change.current.is_some() || change.selfdestructed)
-                })
-                .map(|change| change.address),
-        );
-
         let fork_changed = backend.backend().active_fork_id() != source_fork;
         let replaced = restored
             || fork_changed
@@ -1678,9 +1701,26 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 }
             }
             // The new transaction overlay does not know which accounts the running transaction
-            // created, so a later isolated call that loads them would merge them as new and wipe
-            // their storage. Its database already holds their storage.
-            for address in &self.inner.tx_created {
+            // holds created: the ones the call's state held created, a created account the call
+            // self-destructed being kept until the running transaction ends, and the ones the
+            // last fork switch resumed created. The ones held created before the call stay
+            // created after a failed call that kept the running context, but not after one that
+            // left it or restored a snapshot, whose state replaced them. Without the mark, a later
+            // isolated call that loads them would merge them as new and wipe their storage. Its
+            // database already holds their storage.
+            let kept_context = !restored
+                && fork_epoch == self.cheatcodes.as_deref().map(|cheats| cheats.fork_epoch);
+            let created = executed
+                .pending_state
+                .account_changes()
+                .filter(|change| {
+                    change.created && (change.current.is_some() || change.selfdestructed)
+                })
+                .map(|change| change.address)
+                .chain(backend.backend().lifecycle().resumed_created().copied())
+                .chain(held.into_iter().filter(|_| kept_context))
+                .collect::<AddressSet>();
+            for address in &created {
                 if let Ok(mut account) = evm.state_mut().account(address)
                     && account.exists()
                 {
@@ -1763,7 +1803,6 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
     /// Invoked at the beginning of a new top-level frame, at the EVM's initial call depth.
     fn top_level_frame_start(&mut self, interp: &mut InterpreterFor<'_, '_, FEN>) {
         warm_arbitrum_system_contract::<FEN>(interp);
-        self.inner.tx_created.clear();
         // A transaction that ended with an error skipped the end hooks that pop the suspended
         // steps; keep only the entry this frame's message just pushed.
         let stale = self.inner.suspended_stepped.len().saturating_sub(1);
@@ -1937,8 +1976,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             if static_end_stepped {
                 call_inspectors!(
                     [
-                        // These are sorted in definition order.
-                        &mut inner.chisel_state,
+                        // These are sorted in definition order. Chisel dumps the running
+                        // transaction, not a nested one such as `vm.executeTransaction`'s.
+                        inner.chisel_state.as_mut().filter(|_| !inner.in_inner_context),
                         &mut inner.printer,
                         &mut inner.revert_diag,
                         &mut inner.script_execution_inspector,
@@ -1990,7 +2030,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             call_inspectors!(
                 [
                     // These are sorted in definition order.
-                    &mut inner.chisel_state,
+                    inner.chisel_state.as_mut().filter(|_| !inner.in_inner_context),
                     &mut inner.printer,
                     &mut inner.revert_diag,
                     &mut inner.tracer,
@@ -2183,9 +2223,14 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         }
 
         let inner = &mut *self.inner;
-        call_inspectors!([&mut inner.line_coverage, &mut inner.tracer], |inspector| {
-            Inspector::<TypesFor<FEN>>::initialize_interp(&mut **inspector, interp)
-        },);
+        call_inspectors!(
+            [
+                inner.chisel_state.as_mut().filter(|_| !inner.in_inner_context),
+                &mut inner.line_coverage,
+                &mut inner.tracer,
+            ],
+            |inspector| Inspector::<TypesFor<FEN>>::initialize_interp(&mut **inspector, interp),
+        );
         if let Some(cheats) = self.cheatcodes.as_deref_mut() {
             cheats.initialize_interp_hook(interp);
         }
@@ -3035,8 +3080,8 @@ mod tests {
         assert!(!stack.inner.has_static_step_inspectors);
         assert!(!stack.inner.has_static_step_end_inspectors);
 
-        stack.set_chisel(0);
-        assert!(!stack.inner.has_static_step_inspectors);
+        stack.set_chisel(ChiselState::new(None));
+        assert!(stack.inner.has_static_step_inspectors);
         assert!(stack.inner.has_static_step_end_inspectors);
     }
 
@@ -3067,9 +3112,11 @@ mod tests {
         stack.set_cheatcodes(Cheatcodes::new(Default::default()));
         assert_eq!(steps(&mut stack), OpcodeSet::EMPTY);
 
-        // Recording failure identities steps everything, only while set.
+        // Recording failure identities steps everything, only while set and not paused.
         stack.collect_failure_identity(true);
         assert_eq!(steps(&mut stack), OpcodeSet::ALL);
+        stack.pause_failure_identity(true);
+        assert_eq!(steps(&mut stack), OpcodeSet::EMPTY);
         stack.collect_failure_identity(false);
         assert_eq!(steps(&mut stack), OpcodeSet::EMPTY);
 

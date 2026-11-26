@@ -336,13 +336,30 @@ pub(crate) fn rounded_product_operands<'a>(
 }
 
 /// Returns `a` for the Euclidean sum `(a / d) * d + a % d` in either operand order.
-fn euclidean_sum_dividend<'a>(left: &'a SymExpr, right: &'a SymExpr) -> Option<&'a SymExpr> {
+pub(in crate::runtime) fn euclidean_sum_dividend<'a>(
+    left: &'a SymExpr,
+    right: &'a SymExpr,
+) -> Option<&'a SymExpr> {
     [(left, right), (right, left)].into_iter().find_map(|(product, remainder)| {
         let SymExprKind::BinOp(SymBinOp::URem, dividend, divisor) = remainder.kind() else {
             return None;
         };
         let SymExprKind::BinOp(SymBinOp::Mul, left, right) = product.kind() else { return None };
         (rounded_product_operands(left, right) == Some((dividend, divisor))).then_some(dividend)
+    })
+}
+
+/// Returns `a` for the sum `(a - b) + b` in either operand order.
+///
+/// Word addition and subtraction wrap modulo 2^256, so the terms cancel for every operand.
+fn cancelled_difference_minuend<'a>(left: &'a SymExpr, right: &'a SymExpr) -> Option<&'a SymExpr> {
+    [(left, right), (right, left)].into_iter().find_map(|(difference, term)| {
+        match difference.kind() {
+            SymExprKind::BinOp(SymBinOp::Sub, minuend, subtrahend) if subtrahend == term => {
+                Some(minuend)
+            }
+            _ => None,
+        }
     })
 }
 
@@ -550,6 +567,9 @@ impl SymExpr {
                     } else if let Some(dividend) = euclidean_sum_dividend(&left, &right) {
                         // `(a / d) * d + a % d => a`.
                         dividend.clone()
+                    } else if let Some(minuend) = cancelled_difference_minuend(&left, &right) {
+                        // `(a - b) + b => a`.
+                        minuend.clone()
                     } else {
                         Self::from_kind(cx, SymExprKind::BinOp(binop, left, right))
                     }
@@ -564,6 +584,17 @@ impl SymExpr {
                 (_, SymExprKind::Const(value)) if value.is_zero() => left,
                 // `a - a => 0`.
                 _ if left == right => Self::zero(cx),
+                // `(a + b) - a => b` and `(a + b) - b => a`.
+                (SymExprKind::BinOp(SymBinOp::Add, augend, addend), _) if *augend == right => {
+                    addend.clone()
+                }
+                (SymExprKind::BinOp(SymBinOp::Add, augend, addend), _) if *addend == right => {
+                    augend.clone()
+                }
+                // `a - (a - b) => b`.
+                (_, SymExprKind::BinOp(SymBinOp::Sub, minuend, subtrahend)) if *minuend == left => {
+                    subtrahend.clone()
+                }
                 // `a - a % d => (a / d) * d`.
                 (_, SymExprKind::BinOp(SymBinOp::URem, dividend, divisor)) if *dividend == left => {
                     let quotient = Self::binop(cx, SymBinOp::UDiv, left, divisor.clone());

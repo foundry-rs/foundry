@@ -2949,3 +2949,69 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 "#]]);
     }
 }
+
+// Test transactions enforce Amsterdam's EIP-8037 total gas cap only with `enable_tx_gas_limit`.
+#[forgetest]
+fn test_amsterdam_tx_total_gas_cap(prj: _, cmd: _) {
+    prj.add_test(
+        "TxTotalGasCap.t.sol",
+        r#"
+interface Vm {
+    function executeTransaction(bytes calldata rawTx) external returns (bytes memory);
+}
+
+contract TxTotalGasCapTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function test_over_tx_total_gas_cap() public view {
+        uint256 start = gasleft();
+        // Expanding memory to 48 MB costs more than 2^32 - 1 gas.
+        assembly {
+            mstore(48000000, 1)
+        }
+        require(start - gasleft() > type(uint32).max, "used too little gas");
+    }
+
+    // Signed transactions keep the spec's caps.
+    function test_execute_transaction_keeps_tx_total_gas_cap() public {
+        // Legacy call to 0xdead with a 2^32 gas limit, signed for chain 31337 by the first anvil key:
+        // cast mktx --legacy --chain 31337 --nonce 0 --gas-price 1 --gas-limit 4294967296
+        //   --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+        //   0x000000000000000000000000000000000000dEaD
+        try vm.executeTransaction(
+            hex"f864800185010000000094000000000000000000000000000000000000dead808082f4f6a046c7ace55fa7045f4c340d19623983d1d82aea7b644707759ce1bab3fe5bba33a073747c4b28bec5df83d8fb254b4914e4bf94270b277bec1990980289b1340812"
+        ) {
+            revert("executed over the cap");
+        } catch (bytes memory reason) {
+            require(keccak256(reason) == keccak256(abi.encodeWithSignature(
+                "CheatcodeError(string)",
+                "vm.executeTransaction: transaction execution failed: transaction validation error: transaction gas limit (4294967296) is greater than the cap (4294967295)"
+            )), "wrong error");
+        }
+    }
+}
+"#,
+    );
+
+    prj.update_config(|config| {
+        config.hardfork = Some("amsterdam".parse().unwrap());
+        config.gas_limit = (1u64 << 33).into();
+    });
+    cmd.args(["test", "--mc", "TxTotalGasCapTest"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 2 tests for test/TxTotalGasCap.t.sol:TxTotalGasCapTest
+[PASS] test_execute_transaction_keeps_tx_total_gas_cap() ([GAS])
+[PASS] test_over_tx_total_gas_cap() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    prj.update_config(|config| config.enable_tx_gas_limit = true);
+    cmd.forge_fuse().args(["test", "--mc", "TxTotalGasCapTest"]).assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/TxTotalGasCap.t.sol:TxTotalGasCapTest
+[FAIL: EVM error; transaction validation error: transaction [GAS_LIMIT] is greater than the cap (4294967295)] setUp() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}

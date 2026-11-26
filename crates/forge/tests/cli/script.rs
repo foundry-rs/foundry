@@ -5,6 +5,7 @@ use crate::{
     utils::{KillOnDrop, assert_debug_dump_identifies_contract, generate_large_runtime_contract},
 };
 use alloy_consensus::{SignableTransaction, TxEip1559, TxEip7702, TxEnvelope};
+use alloy_dyn_abi::DynSolValue;
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::{
     Ethereum, ReceiptResponse, TransactionBuilder, TxSignerSync,
@@ -3918,12 +3919,86 @@ contract SimpleScript is Script {
     ])
     .assert_success()
     .stdout_eq(str![[r#"
-{"logs":[],"returns":{"success":{"internal_type":"bool","value":"true"}},"success":true,"raw_logs":[],"traces":[["Deployment",{"arena":[{"parent":null,"children":[],"idx":0,"trace":{"depth":0,"success":true,"caller":"0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38","address":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","maybe_precompile":false,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CREATE","value":"0x0","data":"[..]","output":"[..]","bytecode":null,"gas_used":"{...}","gas_limit":"{...}","gas_refund_counter":0,"status":"Return","steps":[],"step_deltas":[],"decoded":{"label":"SimpleScript","return_data":null,"call_data":null}},"logs":[],"ordering":[]}]}],["Execution",{"arena":[{"parent":null,"children":[1,2],"idx":0,"trace":{"depth":0,"success":true,"caller":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","address":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0xc0406226","output":"0x0000000000000000000000000000000000000000000000000000000000000001","bytecode":null,"gas_used":"{...}","gas_limit":1073720760,"gas_refund_counter":0,"status":"Return","steps":[],"step_deltas":[],"decoded":{"label":"SimpleScript","return_data":"true","call_data":{"signature":"run()","args":[]}}},"logs":[],"ordering":[{"Call":0},{"Call":1}]},{"parent":0,"children":[],"idx":1,"trace":{"depth":1,"success":true,"caller":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","address":"0x7109709ecfa91a80626ff3989d68f67f5b1dd12d","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0x7fb5297f","output":"0x","bytecode":null,"gas_used":"{...}","gas_limit":1056940999,"gas_refund_counter":0,"status":"Return","steps":[],"step_deltas":[],"decoded":{"label":"VM","return_data":null,"call_data":{"signature":"startBroadcast()","args":[]}}},"logs":[],"ordering":[]},{"parent":0,"children":[],"idx":2,"trace":{"depth":1,"success":true,"caller":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","address":"0x0000000000000000000000000000000000000000","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0x","output":"0x","bytecode":null,"gas_used":"{...}","gas_limit":1056940650,"gas_refund_counter":0,"status":"Stop","steps":[],"step_deltas":[],"decoded":{"label":null,"return_data":null,"call_data":null}},"logs":[],"ordering":[]}]}]],"gas_used":"{...}","labeled_addresses":{},"returned":"0x0000000000000000000000000000000000000000000000000000000000000001","address":null}
+{"logs":[],"returns":{"success":{"internal_type":"bool","value":"true"}},"success":true,"raw_logs":[],"traces":[["Deployment",{"arena":[{"parent":null,"children":[],"idx":0,"trace":{"depth":0,"success":true,"caller":"0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38","address":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","maybe_precompile":false,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CREATE","value":"0x0","data":"[..]","output":"[..]","bytecode":null,"gas_used":"{...}","gas_limit":"{...}","gas_refund_counter":0,"status":"Return","steps":[],"step_deltas":[],"decoded":{"label":"SimpleScript","return_data":null,"call_data":null}},"logs":[],"ordering":[]}]}],["Execution",{"arena":[{"parent":null,"children":[1,2],"idx":0,"trace":{"depth":0,"success":true,"caller":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","address":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0xc0406226","output":"0x0000000000000000000000000000000000000000000000000000000000000001","bytecode":null,"gas_used":"{...}","gas_limit":1073720760,"gas_refund_counter":0,"status":"Return","steps":[],"step_deltas":[],"decoded":{"label":"SimpleScript","return_data":"true","call_data":{"signature":"run()","args":[]}}},"logs":[],"ordering":[{"Call":0},{"Call":1}]},{"parent":0,"children":[],"idx":1,"trace":{"depth":1,"success":true,"caller":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","address":"0x7109709ecfa91a80626ff3989d68f67f5b1dd12d","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0x7fb5297f","output":"0x","bytecode":null,"gas_used":"{...}","gas_limit":1056940999,"gas_refund_counter":0,"status":"Return","steps":[],"step_deltas":[],"decoded":{"label":"VM","return_data":null,"call_data":{"signature":"startBroadcast()","args":[]}}},"logs":[],"ordering":[]},{"parent":0,"children":[],"idx":2,"trace":{"depth":1,"success":true,"caller":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","address":"0x0000000000000000000000000000000000000000","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0x","output":"0x","bytecode":null,"gas_used":"{...}","gas_limit":1056940650,"gas_refund_counter":0,"status":"Stop","steps":[],"step_deltas":[],"decoded":{"label":null,"return_data":null,"call_data":null}},"logs":[],"ordering":[]}]}]],"gas_used":"{...}","labeled_addresses":{},"returned":"0x0000000000000000000000000000000000000000000000000000000000000001","address":null,"broadcastable_transactions":[{"from":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","to":"0x0000000000000000000000000000000000000000","value":"0x0","input":"0x","nonce":"0x0","chainId":"0x7a69"}]}
 {"chain":31337,"estimated_gas_price":"{...}","estimated_total_gas_used":"{...}","estimated_amount_required":"{...}","token_symbol":"ETH","estimated_max_fee_per_gas":"{...}","estimated_base_fee_per_gas":"{...}","estimated_max_priority_fee_per_gas":"{...}"}
 {"chain":"anvil-hardhat","status":"success","tx_hash":"0x4f78afe915fceb282c7625a68eb350bc0bf78acb59ad893e5c62b710a37f3156","contract_address":null,"block_number":1,"gas_used":"{...}","gas_price":"{...}"}
 {"status":"success","transactions":"[..]/broadcast/Foo.sol/31337/run-latest.json","sensitive":"[..]/cache/Foo.sol/31337/run-latest.json"}
 
 "#]].is_jsonlines());
+}
+
+// `--json` reports the recorded transactions, including when no RPC is given.
+#[forgetest]
+async fn script_json_broadcastable_transactions_fork(prj: _, cmd: _) {
+    prj.add_script(
+        "Foo",
+        r#"
+interface Vm {
+    function startBroadcast() external;
+}
+
+contract Dummy {}
+
+contract SimpleScript {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run() external {
+        vm.startBroadcast();
+        new Dummy();
+        (bool success, ) = address(0).call("");
+        success;
+    }
+
+    function none() external {}
+}
+   "#,
+    );
+    let sender = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+
+    cmd.args(["script", "SimpleScript", "--sig", "none()", "--sender", sender, "--json"])
+        .assert_success()
+        .stdout_eq(
+            str![[r#"
+{"logs":[],"returns":{},"success":true,"raw_logs":[],"traces":"{...}","gas_used":"{...}","labeled_addresses":{},"returned":"0x","address":null,"broadcastable_transactions":[]}
+
+"#]]
+            .is_jsonlines(),
+        );
+
+    // Without an RPC, the sender's nonce starts at 1 and the CREATE has no chain ID.
+    cmd.forge_fuse()
+        .args(["script", "SimpleScript", "--sender", sender, "--json"])
+        .assert_success()
+        .stdout_eq(
+            str![[r#"
+{"logs":[],"returns":{},"success":true,"raw_logs":[],"traces":"{...}","gas_used":"{...}","labeled_addresses":{},"returned":"0x","address":null,"broadcastable_transactions":[{"from":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","to":null,"value":"0x0","input":"{...}","nonce":"0x1"},{"from":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","to":"0x0000000000000000000000000000000000000000","value":"0x0","input":"0x","nonce":"0x2","chainId":"0x7a69"}]}
+
+"#]]
+            .is_jsonlines(),
+        );
+
+    // With an RPC, every unsigned transaction gets the RPC's chain ID, as in the broadcast file.
+    let (_api, handle) = spawn(NodeConfig::test().with_chain_id(Some(1234u64))).await;
+    cmd.forge_fuse()
+        .args([
+            "script",
+            "SimpleScript",
+            "--fork-url",
+            &handle.http_endpoint(),
+            "--sender",
+            sender,
+            "--json",
+        ])
+        .assert_success()
+        .stdout_eq(
+            str![[r#"
+{"logs":[],"returns":{},"success":true,"raw_logs":[],"traces":"{...}","gas_used":"{...}","labeled_addresses":{},"returned":"0x","address":null,"broadcastable_transactions":[{"from":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","to":null,"value":"0x0","input":"{...}","nonce":"0x0","chainId":"0x4d2"},{"from":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","to":"0x0000000000000000000000000000000000000000","value":"0x0","input":"0x","nonce":"0x1","chainId":"0x4d2"}]}
+{"chain":1234,"estimated_gas_price":"{...}","estimated_total_gas_used":"{...}","estimated_amount_required":"{...}","token_symbol":"ETH","estimated_max_fee_per_gas":"{...}","estimated_base_fee_per_gas":"{...}","estimated_max_priority_fee_per_gas":"{...}"}
+{"status":"success","transactions":"[..]/broadcast/Foo.sol/1234/dry-run/run-latest.json","sensitive":"[..]/cache/Foo.sol/1234/dry-run/run-latest.json"}
+
+"#]]
+            .is_jsonlines(),
+        );
 }
 
 #[forgetest]
@@ -10381,54 +10456,6 @@ Deployed contracts (chain 31337):
     assert_eq!(provider.get_transaction_count(account).await.unwrap(), 1);
 }
 
-/// On T14, `forge script` with a keystore that `cast wallet new` linked to a configurable account
-/// broadcasts from the account while `vm.sign` signs with the key, and `--sender` with the key
-/// broadcasts from the key.
-#[forgetest_init]
-async fn tempo_t14_script_broadcasts_from_linked_keystore(prj: _, cmd: _) {
-    prj.initialize_default_contracts();
-    let script = prj.add_script(
-        "LinkedDeploy.s.sol",
-        r#"
-import {Script} from "forge-std/Script.sol";
-import {Counter} from "../src/Counter.sol";
-
-contract LinkedDeployScript is Script {
-    function run() external {
-        // The keystore's key still signs messages for the script.
-        bytes32 digest = keccak256("linked");
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(digest);
-        require(ecrecover(digest, v, r, s) == 0xeC554aeAFE75601AaAb43Bd4621A22284dB566C2);
-        vm.startBroadcast();
-        new Counter();
-        vm.stopBroadcast();
-    }
-}
-"#,
-    );
-    let (api, handle) =
-        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
-    let rpc = handle.http_endpoint();
-    let provider = handle.http_provider();
-    let (keystore, account, owner) = crate::utils::tempo_linked_keystore(prj.root());
-    let fee_token = foundry_common::tempo::ALPHA_USD_ADDRESS;
-    for address in [account, owner] {
-        api.anvil_deal_tip20(address, fee_token, U256::from(1_000_000_000_000u64)).await.unwrap();
-    }
-    let owner_arg = owner.to_string();
-    for (extra, sender) in [(&[][..], account), (&["--sender", owner_arg.as_str()][..], owner)] {
-        cmd.forge_fuse().arg("script").arg(&script).args(["--rpc-url", &rpc, "--broadcast"]);
-        cmd.args(["--network", "tempo", "--tempo.fee-token", &fee_token.to_string()]);
-        cmd.args(["--keystore", keystore.to_str().unwrap(), "--password", "keystorepassword"]);
-        cmd.args(extra).assert_success();
-        let block = provider.get_block_number().await.unwrap();
-        let receipt = provider.get_block_receipts(block.into()).await.unwrap().unwrap();
-        let receipt = receipt.last().unwrap();
-        assert!(receipt.status());
-        assert_eq!(receipt.from(), sender);
-    }
-}
-
 /// `--resume` runs the script again when the owner keys that the wallet options provide do not
 /// reach a configurable account's threshold, so that the script can provide the others, here with
 /// `vm.rememberKey`.
@@ -10483,6 +10510,54 @@ contract CaRememberScript is Script {
     assert_eq!(provider.get_transaction_count(account).await.unwrap(), 1);
 }
 
+/// On T14, `forge script` with a keystore that `cast wallet new` linked to a configurable account
+/// broadcasts from the account while `vm.sign` signs with the key, and `--sender` with the key
+/// broadcasts from the key.
+#[forgetest_init]
+async fn tempo_t14_script_broadcasts_from_linked_keystore(prj: _, cmd: _) {
+    prj.initialize_default_contracts();
+    let script = prj.add_script(
+        "LinkedDeploy.s.sol",
+        r#"
+import {Script} from "forge-std/Script.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract LinkedDeployScript is Script {
+    function run() external {
+        // The keystore's key still signs messages for the script.
+        bytes32 digest = keccak256("linked");
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(digest);
+        require(ecrecover(digest, v, r, s) == 0xeC554aeAFE75601AaAb43Bd4621A22284dB566C2);
+        vm.startBroadcast();
+        new Counter();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let (keystore, account, owner) = crate::utils::tempo_linked_keystore(prj.root());
+    let fee_token = foundry_common::tempo::ALPHA_USD_ADDRESS;
+    for address in [account, owner] {
+        api.anvil_deal_tip20(address, fee_token, U256::from(1_000_000_000_000u64)).await.unwrap();
+    }
+    let owner_arg = owner.to_string();
+    for (extra, sender) in [(&[][..], account), (&["--sender", owner_arg.as_str()][..], owner)] {
+        cmd.forge_fuse().arg("script").arg(&script).args(["--rpc-url", &rpc, "--broadcast"]);
+        cmd.args(["--network", "tempo", "--tempo.fee-token", &fee_token.to_string()]);
+        cmd.args(["--keystore", keystore.to_str().unwrap(), "--password", "keystorepassword"]);
+        cmd.args(extra).assert_success();
+        let block = provider.get_block_number().await.unwrap();
+        let receipt = provider.get_block_receipts(block.into()).await.unwrap().unwrap();
+        let receipt = receipt.last().unwrap();
+        assert!(receipt.status());
+        assert_eq!(receipt.from(), sender);
+    }
+}
+
 /// A script that broadcasts from an upgraded EOA signs with its owners, also when the EOA's
 /// retired root key is among the wallets.
 #[forgetest_init]
@@ -10533,7 +10608,6 @@ contract UpgradeScript is Script {{
             new IConfigurableAccount.ConfigurableAccountOwner[](1);
         owners[0] = IConfigurableAccount.ConfigurableAccountOwner({owner}, 1);
         vm.startBroadcast();
-        // A low-level call: the precompile has no code for Solidity's code size check.
         (bool ok,) = address(0xAACC000000000000000000000000000000000000).call(
             abi.encodeCall(IConfigurableAccount.upgradeAccount, (1, owners))
         );
@@ -10644,11 +10718,9 @@ contract CaOfflineScript is Script {
     .unwrap();
     let account_arg = account.to_string();
     let fee_token = foundry_common::tempo::ALPHA_USD_ADDRESS.to_string();
-    let local_owner = keys[0].parse::<PrivateKeySigner>().unwrap().address();
-    let offline_owner = keys[1].parse::<PrivateKeySigner>().unwrap().address();
-
-    // One local owner does not reach the threshold, so nothing is sent.
-    cmd.forge_fuse().arg("script").arg(&script).args([
+    let [local_owner, offline_owner, other_owner] = [&keys[0], &keys[1], &keys[2]]
+        .map(|key| key.parse::<PrivateKeySigner>().unwrap().address());
+    let broadcast = [
         "--rpc-url",
         rpc.as_str(),
         "--sender",
@@ -10662,17 +10734,11 @@ contract CaOfflineScript is Script {
         &config,
         "--private-key",
         &keys[0],
-    ]);
+    ];
+
+    // One local owner does not reach the threshold, so nothing is sent.
+    cmd.forge_fuse().arg("script").arg(&script).args(broadcast);
     let stdout = cmd.assert_success().get_output().stdout_lossy();
-    assert!(
-        stdout.contains(&format!(
-            "Transactions of the Tempo configurable account {account} on chain 31337 await \
-             approvals from its owners, with threshold 2:"
-        )) && stdout.contains("cast wallet sign --no-hash <DIGEST>")
-            && stdout.contains("--tempo.owner-signature <SIGNATURE>")
-            && !stdout.contains("ONCHAIN EXECUTION COMPLETE"),
-        "{stdout}"
-    );
     assert_eq!(provider.get_transaction_count(account).await.unwrap(), 0);
 
     let sequence: Value =
@@ -10685,19 +10751,48 @@ contract CaOfflineScript is Script {
         assert_eq!(entry["index"], index);
         assert_eq!(entry["account"].as_str().unwrap().parse::<Address>().unwrap(), account);
         assert_eq!(entry["approvals"].as_array().unwrap().len(), 1, "{entry}");
-        // The nonces are fixed in order, and the digest is printed for the owners.
+        // The nonces are fixed in order.
         let unsigned = hex::decode(entry["unsignedTx"].as_str().unwrap()).unwrap();
         let tx =
             foundry_common::tempo::configurable_account::decode_unsigned_tx(&unsigned).unwrap();
         assert_eq!(tx.nonce, index as u64);
         unsigned_txs.push(tx);
-        let digest = entry["digest"].as_str().unwrap().to_string();
-        assert!(
-            stdout.contains(&format!("digest {digest}, approved by {local_owner}")),
-            "{stdout}"
-        );
-        digests.push(digest);
+        digests.push(entry["digest"].as_str().unwrap().to_string());
     }
+
+    // The transactions awaiting approvals, each with its digest and the owners that approved it,
+    // the owners missing from any of them, and how to approve and send them.
+    let one = format!("approved by {local_owner} (weight 1 of 2)");
+    let two = format!("approved by {local_owner}, {offline_owner} (weight 2 of 2)");
+    let awaiting = |approved: [&str; 3], missing: [Address; 2]| {
+        let transactions = (0..3)
+            .map(|i| {
+                format!(
+                    "  transaction {i} (nonce {i}, gas limit [..]): digest {}, {}",
+                    digests[i], approved[i]
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            "==========================\n\nTransactions of the Tempo configurable account \
+             {account} on chain 31337 await approvals from its owners, with threshold \
+             2:\n{transactions}\n\nOwners of {account} that have not approved every transaction: \
+             {} (weight 1), {} (weight 1)\n\nEach owner signs every digest without hashing it \
+             again, with `cast wallet sign --no-hash <DIGEST>` and their wallet options \
+             (`--p256 --private-key <KEY>` for a raw P-256 owner), or with a passkey: a WebAuthn \
+             assertion whose challenge is the digest, saved as JSON with the credential's public \
+             key. Then send the transactions by running the same command with `--resume` instead \
+             of `--broadcast`, adding `--tempo.owner-signature <SIGNATURE>` for each approval. \
+             Approvals are kept once given, so they can be collected over several runs.\n",
+            missing[0], missing[1]
+        )
+    };
+    let expected = awaiting([one.as_str(), &one, &one], [offline_owner, other_owner]);
+    // The report follows the gas estimates, which also end with a separator, and precedes the
+    // paths of the saved transactions.
+    let report = expected.strip_prefix("==========================\n\n").unwrap();
+    assert_data_eq!(stdout, format!("...\n{report}...\n"));
 
     // The offline owner signs each digest on its own machine.
     let sign = |cmd: &mut TestCommand, digest: &str, key: &str| {
@@ -10724,54 +10819,32 @@ contract CaOfflineScript is Script {
         }
     };
 
-    // A signature by a key that is not an owner approves nothing.
+    // A signature by a key that is not an owner approves nothing, but the owner's approval given
+    // with it is kept.
     let stranger = sign(&mut cmd, &digests[0], &format!("0x{}", "64".repeat(32)));
     resume(&mut cmd, &[&approvals[0], &stranger]);
-    let stderr = cmd.assert_failure().get_output().stderr_lossy();
-    assert!(
-        stderr.contains(
-            "--tempo.owner-signature 2 is not an owner's approval of any transaction awaiting \
-             owner approvals"
-        ),
-        "{stderr}"
-    );
+    cmd.assert_failure().stderr_eq(format!(
+        "...\nError: --tempo.owner-signature 2 is not an owner's approval of any transaction \
+         awaiting owner approvals: it must sign one of their digests with an owner key\n{}",
+        awaiting([two.as_str(), &one, &one], [other_owner, offline_owner])
+    ));
     assert_eq!(provider.get_transaction_count(account).await.unwrap(), 0);
 
     // Two of the three transactions are approved: nothing is sent, but the approvals are kept.
     resume(&mut cmd, &[&approvals[0], &approvals[1]]);
-    let stderr = cmd.assert_failure().get_output().stderr_lossy();
-    assert!(
-        stderr.contains("transactions await more owner approvals, so nothing was sent")
-            && stderr.contains(&format!(
-                "digest {}, approved by {local_owner}, {offline_owner} (weight 2 of 2)",
-                digests[0]
-            ))
-            && stderr.contains(&format!(
-                "digest {}, approved by {local_owner} (weight 1 of 2)",
-                digests[2]
-            )),
-        "{stderr}"
-    );
+    cmd.assert_failure().stderr_eq(format!(
+        "...\nError: transactions await more owner approvals, so nothing was sent\n{}",
+        awaiting([two.as_str(), &two, &one], [other_owner, offline_owner])
+    ));
     assert_eq!(provider.get_transaction_count(account).await.unwrap(), 0);
 
     // A new broadcast does not replace the approvals collected so far.
-    cmd.forge_fuse().arg("script").arg(&script).args([
-        "--rpc-url",
-        rpc.as_str(),
-        "--sender",
-        &account_arg,
-        "--broadcast",
-        "--network",
-        "tempo",
-        "--tempo.fee-token",
-        &fee_token,
-        "--tempo.config",
-        &config,
-        "--private-key",
-        &keys[0],
-    ]);
-    let stderr = cmd.assert_failure().get_output().stderr_lossy();
-    assert!(stderr.contains("has unfinished operations"), "{stderr}");
+    cmd.forge_fuse().arg("script").arg(&script).args(broadcast);
+    cmd.assert_failure().stderr_eq(str![[r#"
+...
+Error: the previous broadcast `[..]` has unfinished operations; finish it with `[..]`, or pass `--start-fresh` to archive it and broadcast anew
+
+"#]]);
     let sequence: Value =
         foundry_common::fs::read_json_file(&latest_broadcast_path(prj.root())).unwrap();
     let counts = sequence["awaiting_owners"]
@@ -10898,8 +10971,11 @@ contract CaPingScript is Script {
     assert_eq!(provider.get_transaction_count(account).await.unwrap(), 1);
 
     resume(&mut cmd);
-    let stderr = cmd.assert_failure().get_output().stderr_lossy();
-    assert!(stderr.contains("resume will not send them"), "{stderr}");
+    cmd.assert_failure().stderr_eq(str![[r#"
+...
+Error: [..]reverted, so the script would not have sent the operations after it; resume will not send them. Pass `--broadcast --start-fresh` to archive this broadcast and run the script again
+
+"#]]);
     assert_eq!(provider.get_transaction_count(account).await.unwrap(), 1);
 }
 
@@ -11055,7 +11131,14 @@ Error: the owners of a Tempo configurable account sender approve its transaction
              owner keys and Tempo options of the original --broadcast\n"
         )
     );
-    assert!(output.stdout_lossy().contains(new_digest), "{}", output.stdout_lossy());
+    let local_owner = keys[0].parse::<PrivateKeySigner>().unwrap().address();
+    assert_data_eq!(
+        output.stdout_lossy(),
+        format!(
+            "...\n  transaction 0 (nonce 0, gas limit [..]): digest {new_digest}, approved by \
+             {local_owner} (weight 1 of 2)\n...\n"
+        )
+    );
     assert_eq!(provider.get_transaction_count(account).await.unwrap(), 0);
     assert_eq!(provider.get_transaction_count(eoa).await.unwrap(), 0);
 
@@ -11171,14 +11254,16 @@ contract CaOnlyScript is Script {
     );
     let after = digests(&prj);
     assert_eq!(after.len(), 2);
-    let stdout = output.stdout_lossy();
-    for digest in &after {
-        assert!(!before.contains(digest), "{after:?}");
-        assert!(
-            stdout.contains(&format!("digest {digest}, approved by {local_owner}")),
-            "{stdout}"
-        );
-    }
+    assert!(after.iter().all(|digest| !before.contains(digest)), "{after:?}");
+    assert_data_eq!(
+        output.stdout_lossy(),
+        format!(
+            "...\n  transaction 0 (nonce 0, gas limit [..]): digest {}, approved by {local_owner} \
+             (weight 1 of 2)\n  transaction 1 (nonce 1, gas limit [..]): digest {}, approved by \
+             {local_owner} (weight 1 of 2)\n...\n",
+            after[0], after[1]
+        )
+    );
 
     // A deadline that has passed is refused before anything is saved.
     cmd.forge_fuse().arg("script").arg(&script).args(owner_options);
@@ -11417,9 +11502,24 @@ contract CaChecksScript is Script {
     )
     .await;
 
-    let update_config = &keccak256(
-        "updateConfig((bytes32,uint64,uint8,(address,uint8)[]),uint8,(address,uint8)[])",
-    )[..4];
+    // Complete calldata, since `forge script` decodes the arguments of known precompile calls.
+    let update_config = [
+        &keccak256(
+            "updateConfig((bytes32,uint64,uint8,(address,uint8)[]),uint8,(address,uint8)[])",
+        )[..4],
+        &DynSolValue::Tuple(vec![
+            DynSolValue::Tuple(vec![
+                DynSolValue::FixedBytes(B256::ZERO, 32),
+                DynSolValue::Uint(U256::ZERO, 64),
+                DynSolValue::Uint(U256::from(1), 8),
+                DynSolValue::Array(vec![]),
+            ]),
+            DynSolValue::Uint(U256::from(1), 8),
+            DynSolValue::Array(vec![]),
+        ])
+        .abi_encode_params(),
+    ]
+    .concat();
     let fee_token = foundry_common::tempo::ALPHA_USD_ADDRESS.to_string();
     let account_arg = account.to_string();
     let cases = [
@@ -11464,7 +11564,7 @@ contract CaChecksScript is Script {
         (
             upstream.as_str(),
             address!("0xAACC000000000000000000000000000000000000"),
-            update_config.to_vec(),
+            update_config,
             1,
             vec![],
             format!(
@@ -11649,4 +11749,315 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
         }
     }
     assert_eq!(receipts, 2);
+}
+
+// Raw trace data in JSON output applies the same cheatcode redaction as decoded traces.
+#[forgetest]
+fn script_json_redacts_raw_cheatcode_secrets(prj: _, cmd: _) {
+    prj.add_script(
+        "Deploy.s.sol",
+        r#"
+interface Vm {
+    function envUint(string calldata name) external view returns (uint256);
+    function startBroadcast(uint256 privateKey) external;
+    function stopBroadcast() external;
+}
+
+contract C {}
+
+contract Deploy {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run() external {
+        uint256 pk = vm.envUint("PRIVATE_KEY");
+        vm.startBroadcast(pk);
+        new C();
+        vm.stopBroadcast();
+    }
+}
+   "#,
+    );
+
+    cmd.env("PRIVATE_KEY", "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
+    let output: Value = serde_json::from_slice(
+        &cmd.args(["script", "script/Deploy.s.sol", "--tc", "Deploy", "--json"])
+            .assert_success()
+            .get_output()
+            .stdout,
+    )
+    .unwrap();
+    let execution =
+        output["traces"].as_array().unwrap().iter().find(|trace| trace[0] == "Execution").unwrap();
+    let vm_calls = execution[1]["arena"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|node| &node["trace"])
+        .filter(|trace| trace["decoded"]["label"] == "VM")
+        .map(|trace| {
+            serde_json::json!({
+                "call": trace["decoded"]["call_data"],
+                "return": trace["decoded"]["return_data"],
+                "data": trace["data"],
+                "output": trace["output"],
+            })
+        })
+        .collect::<Vec<_>>();
+    assert_data_eq!(
+        serde_json::to_string(&vm_calls).unwrap().is_json(),
+        str![[r#"
+[
+  {
+    "call": { "signature": "envUint(string)", "args": ["\"PRIVATE_KEY\""] },
+    "return": "<env var value>",
+    "data": "0xc1978d1f0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000b505249564154455f4b4559000000000000000000000000000000000000000000",
+    "output": "0x"
+  },
+  {
+    "call": { "signature": "startBroadcast(uint256)", "args": ["<pk>"] },
+    "return": null,
+    "data": "0xce817d47",
+    "output": "0x"
+  },
+  {
+    "call": { "signature": "stopBroadcast()", "args": [] },
+    "return": null,
+    "data": "0x76eadd36",
+    "output": "0x"
+  }
+]
+"#]]
+        .is_json(),
+    );
+}
+
+// `--skip-simulation` keeps `--json` stdout to JSON lines.
+#[forgetest]
+async fn script_json_skip_simulation_fork(prj: _, cmd: _) {
+    prj.add_script(
+        "Foo",
+        r#"
+interface Vm {
+    function startBroadcast() external;
+}
+
+contract SimpleScript {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run() external {
+        vm.startBroadcast();
+        (bool success, ) = address(0).call("");
+        success;
+    }
+}
+   "#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    cmd.args([
+        "script",
+        "SimpleScript",
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--sender",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--skip-simulation",
+        "--json",
+    ])
+    .assert_success()
+    .stdout_eq(
+        str![[r#"
+{"success":true,"...":"{...}"}
+{"status":"success","transactions":"[..]/broadcast/Foo.sol/31337/dry-run/run-latest.json","sensitive":"[..]/cache/Foo.sol/31337/dry-run/run-latest.json"}
+
+"#]]
+        .is_jsonlines(),
+    );
+}
+
+// `--no-compile` runs a script from cached artifacts, and fails instead of compiling when a source
+// changed.
+#[forgetest]
+fn script_no_compile(prj: _, cmd: _) {
+    let script = prj.add_source("Foo", "contract Demo { function run() external {} }");
+    cmd.arg("build").assert_success();
+    cmd.forge_fuse().arg("script").arg(&script).arg("--no-compile").assert_success().stdout_eq(
+        str![[r#"
+No files changed, compilation skipped
+Script ran successfully.
+...
+"#]],
+    );
+
+    prj.add_source("Foo", "contract Demo { function run() external pure {} }");
+    cmd.forge_fuse()
+        .arg("script")
+        .arg(&script)
+        .arg("--no-compile")
+        .assert_failure()
+        .stdout_eq(str![[""]])
+        .stderr_eq(str![[r#"
+Error: compilation disabled by --no-compile; sources need compiling:
+src/Foo.sol
+
+"#]]);
+
+    // The cache is untouched, so a normal run compiles the change.
+    cmd.forge_fuse().arg("script").arg(&script).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+...
+"#]]);
+
+    // `--debug` needs storage layouts the build lacks, and reports them stale without touching
+    // the cache, so a later cached run still works.
+    let script = prj.add_script("Bar.s.sol", "contract Bar { function run() external {} }");
+    cmd.forge_fuse().arg("build").assert_success();
+    let cache = fs::read(prj.cache()).unwrap();
+    cmd.forge_fuse()
+        .arg("script")
+        .arg(&script)
+        .args(["--no-compile", "--debug", "--dump", "dump.json"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: compilation disabled by --no-compile; sources need compiling:
+...
+"#]]);
+    assert_eq!(fs::read(prj.cache()).unwrap(), cache);
+    cmd.forge_fuse().arg("script").arg(&script).arg("--no-compile").assert_success();
+
+    prj.update_config(|config| config.decode_external_storage = true);
+    cmd.forge_fuse().arg("script").arg(&script).arg("--no-compile").assert_failure().stderr_eq(
+        str![[r#"
+Error: `--no-compile` cannot be used with `decode_external_storage`
+
+"#]],
+    );
+}
+
+// `--args-json` encodes structs, struct arrays, and big integers against `--sig`.
+#[forgetest]
+fn can_execute_script_with_args_json(prj: _, cmd: _) {
+    prj.add_source(
+        "Foo",
+        r#"
+contract ArgsJson {
+    struct Leg { address to; uint256 amount; }
+    struct Plan { string name; Leg main; Leg[] extra; }
+
+    function run(Plan memory plan, uint256 big, uint256 small, address owner)
+        external
+        pure
+        returns (Plan memory, uint256, uint256, address)
+    {
+        return (plan, big, small, owner);
+    }
+}
+"#,
+    );
+    let args = prj.root().join("args.json");
+    fs::write(
+        &args,
+        r#"[
+  {
+    "name": "plan",
+    "note": null,
+    "main": { "to": "0x0000000000000000000000000000000000000001", "amount": 1 },
+    "extra": [{ "to": "0x0000000000000000000000000000000000000002", "amount": "2" }]
+  },
+  115792089237316195423570985008687907853269984665640564039457584007913129639935,
+  "42",
+  "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+]"#,
+    )
+    .unwrap();
+    cmd.args(["script", "ArgsJson", "--args-json", args.to_str().unwrap()])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+[GAS]
+
+== Return ==
+0: struct ArgsJson.Plan Plan({ name: "plan", main: Leg({ to: 0x0000000000000000000000000000000000000001, amount: 1 }), extra: [Leg({ to: 0x0000000000000000000000000000000000000002, amount: 2 })] })
+1: uint256 115792089237316195423570985008687907853269984665640564039457584007913129639935 [1.157e77]
+2: uint256 42
+3: address 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+
+"#]]);
+
+    fs::write(
+        &args,
+        r#"[{ "name": "plan", "extra": [] }, 1, 2, "0x0000000000000000000000000000000000000001"]"#,
+    )
+    .unwrap();
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: argument `plan` (string,(address,uint256),(address,uint256)[]): field "main" not found in JSON object
+
+"#]]);
+
+    // `null` must not be encoded as the string "null".
+    fs::write(
+        &args,
+        r#"[{ "name": null, "main": { "to": "0x0000000000000000000000000000000000000001", "amount": 1 }, "extra": [] }, 1, 2, "0x0000000000000000000000000000000000000001"]"#,
+    )
+    .unwrap();
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: argument `plan` (string,(address,uint256),(address,uint256)[]): JSON null is not supported
+
+"#]]);
+}
+
+// A relink for a new library deployer reruns the script with the arguments read before the
+// first run, even if the script rewrites its `--args-json` file.
+#[forgetest]
+fn args_json_survives_deployer_relink(prj: _, cmd: _) {
+    prj.add_source(
+        "Foo",
+        r#"
+interface Vm {
+    function writeFile(string calldata path, string calldata data) external;
+    function startBroadcast(address signer) external;
+}
+
+library Lib {
+    function id(uint256 value) external pure returns (uint256) { return value; }
+}
+
+contract Dummy {}
+
+contract Relink {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run(uint256 value) external returns (uint256) {
+        vm.writeFile("args.json", "[2]");
+        vm.startBroadcast(address(0xBEEF));
+        new Dummy();
+        return Lib.id(value);
+    }
+}
+"#,
+    );
+    prj.update_config(|config| {
+        config.fs_permissions = foundry_config::FsPermissions::new(vec![
+            foundry_config::fs_permissions::PathPermission::read_write("./"),
+        ]);
+    });
+    fs::write(prj.root().join("args.json"), "[1]").unwrap();
+    cmd.args(["script", "Relink", "--args-json", "args.json"]).assert_success().stdout_eq(str![[
+        r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+[GAS]
+
+== Return ==
+0: uint256 1
+
+If you wish to simulate on-chain transactions pass a RPC URL.
+
+"#
+    ]]);
 }

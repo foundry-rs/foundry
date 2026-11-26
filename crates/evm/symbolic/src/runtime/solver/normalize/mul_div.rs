@@ -5,11 +5,11 @@ use super::*;
 /// Newton steps that lift the `(3 * d) ^ 2` seed, an inverse modulo `2**4`, to `2**256`.
 const MIN_NEWTON_STEPS: usize = 6;
 
-/// Returns `(a, b)` when `expr` computes the high word of `a * b` from `mulmod(a, b, MAX)`.
-pub(super) fn mul_high_operands(expr: &SymExpr) -> Option<(&SymExpr, &SymExpr)> {
-    let SymExprKind::BinOp(SymBinOp::Sub, minuend, subtrahend) = expr.kind() else {
-        return None;
-    };
+/// Returns `(a, b)` when `minuend - subtrahend` is the high word of `a * b`.
+pub(super) fn mul_high_operands<'a>(
+    minuend: &'a SymExpr,
+    subtrahend: &'a SymExpr,
+) -> Option<(&'a SymExpr, &'a SymExpr)> {
     // `(mm - lo) - lt(mm, lo)`.
     if let SymExprKind::BinOp(SymBinOp::Sub, mm, lo) = minuend.kind()
         && is_less_than_word(subtrahend, mm, lo)
@@ -366,7 +366,7 @@ fn is_inverse_shift(expr: &SymExpr, twos: &SymExpr) -> bool {
 }
 
 /// Returns `(n, d)` for `n / d`, also in the `ite(d == 0, 0, n / d)` form of the EVM `DIV`.
-fn word_division_operands(expr: &SymExpr) -> Option<(&SymExpr, &SymExpr)> {
+pub(super) fn word_division_operands(expr: &SymExpr) -> Option<(&SymExpr, &SymExpr)> {
     let division = match expr.kind() {
         SymExprKind::Ite(condition, zero, division) if zero.as_const() == Some(U256::ZERO) => {
             let (_, denominator) = division.udiv_operands()?;
@@ -375,4 +375,13 @@ fn word_division_operands(expr: &SymExpr) -> Option<(&SymExpr, &SymExpr)> {
         _ => expr,
     };
     division.udiv_operands()
+}
+
+/// Returns `n` for the rounded product `(n / t) * t`. The EVM `DIV` may still carry its guard
+/// selecting zero for `t == 0`.
+pub(super) fn rounded_down_dividend(product: &SymExpr) -> Option<&SymExpr> {
+    let SymExprKind::BinOp(SymBinOp::Mul, left, right) = product.kind() else { return None };
+    [(left, right), (right, left)].into_iter().find_map(|(quotient, factor)| {
+        word_division_operands(quotient).and_then(|(n, t)| (t == factor).then_some(n))
+    })
 }

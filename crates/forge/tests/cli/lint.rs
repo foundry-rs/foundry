@@ -2599,3 +2599,35 @@ warning[uninitialized-state]: state variable is read but never written
 "#]]);
     }
 }
+
+// A library reached through an absolute `src/` import becomes an include path, so lint must not
+// load a file from disk where it could match the library's own copy of a shared package.
+#[forgetest]
+fn lint_resolves_nested_library_absolute_imports(prj: _, cmd: _) {
+    for shared in ["lib/shared/src", "lib/dep/lib/shared/src"] {
+        prj.create_file(format!("{shared}/Value.sol"), "pragma solidity ^0.8.0; contract Value {}");
+        // Only imports, so the build writes no artifact for it.
+        prj.create_file(
+            format!("{shared}/Alias.sol"),
+            r#"pragma solidity ^0.8.0; import {Value as Alias} from "./Value.sol";"#,
+        );
+    }
+    prj.create_file("lib/dep/src/Base.sol", "pragma solidity ^0.8.0; contract Base {}");
+    prj.create_file(
+        "lib/dep/src/Dep.sol",
+        r#"pragma solidity ^0.8.0; import "src/Base.sol"; contract Dep is Base {}"#,
+    );
+    prj.add_source(
+        "UsesDep.sol",
+        r#"pragma solidity ^0.8.0; import {Alias} from "shared/Alias.sol"; import {Dep} from "dep/Dep.sol"; contract UsesDep is Dep {}"#,
+    );
+    prj.add_test(
+        "UsesDep.t.sol",
+        r#"pragma solidity ^0.8.0; import "../src/UsesDep.sol"; contract UsesDepTest { function test_dep() public {} }"#,
+    );
+
+    cmd.arg("build").assert_success();
+    cmd.forge_fuse().arg("lint").assert_success();
+    // Lint diagnostics during `forge test` don't fail the run, so check none were printed.
+    cmd.forge_fuse().arg("test").assert_success().stderr_eq(str![[""]]);
+}

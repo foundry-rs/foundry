@@ -33,10 +33,11 @@ const SPECIAL_ENV: &[(&str, &[&str])] = &[
 ];
 
 /// Environment variables read by providers other than the prefixed ones, and the keys they set.
-const OTHER_ENV: &[(&str, &str)] = &[("ETHERSCAN_API_KEY", "etherscan_api_key")];
+const OTHER_ENV: &[(&str, &str)] =
+    &[("ETHERSCAN_API_KEY", "etherscan_api_key"), ("FOUNDRY_CHAIN", "chain_id")];
 
 /// Legacy names that the providers rewrite to a key, rather than serde aliases.
-const OTHER_ALIASES: &[(&str, &str)] = &[("solc_version", "solc")];
+const OTHER_ALIASES: &[(&str, &str)] = &[("chain", "chain_id"), ("solc_version", "solc")];
 
 /// Deprecated keys that the providers warn about outside [`DEPRECATIONS`], and their replacements.
 const OTHER_DEPRECATIONS: &[(&str, &str)] = &[("labels", "tracing.labels")];

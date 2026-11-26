@@ -80,6 +80,7 @@ fn symbolic_create_respects_configured_runtime_code_limit(prj: _, cmd: _) {
         "SymbolicCreateCodeLimit.t.sol",
         r#"
 import "forge-std/Test.sol";
+import {VmSafe} from "forge-std/Vm.sol";
 
 contract SymbolicCreateCodeLimit is Test {
     function checkRuntimeCodeLimit() public {
@@ -109,6 +110,84 @@ contract SymbolicCreateCodeLimit is Test {
         vm.expectRevert();
         new OversizedRuntime{salt: bytes32(uint256(1))}();
     }
+
+    Deployer deployer = new Deployer();
+
+    function checkDeployCodeRuntimeCodeLimit() public {
+        string memory oversized = "SymbolicCreateCodeLimit.t.sol:OversizedRuntime";
+        uint64 nonce = vm.getNonce(address(this));
+        address predicted = vm.computeCreateAddress(address(this), nonce);
+        // Under isolation the create is its own transaction and reverts with no data.
+        try vm.deployCode(oversized) returns (address) {
+            assert(false);
+        } catch (bytes memory err) {
+            assert(err.length == 0);
+        }
+        assert(predicted.code.length == 0);
+        assert(vm.getNonce(address(this)) == nonce + 1);
+
+        // From a nested call, the cheatcode reverts with the runtime code.
+        (uint256 len, uint64 nonceDelta) = deployer.tryDeployCode(oversized);
+        assert(len == 24577);
+        assert(nonceDelta == 1);
+
+        // Forge records the cheatcode, not the created address, as the reverter. The constructor
+        // ran a frame deeper, so the bubbled cheatcode revert meets the expectation when the test
+        // call ends.
+        vm.expectRevert(address(vm));
+        vm.deployCode(oversized);
+    }
+
+    function checkDeployCodeInitcodeLimit() public {
+        string memory small = "SymbolicCreateCodeLimit.t.sol:Small";
+        uint64 nonce = vm.getNonce(address(this));
+        vm.prank(address(0xbeef));
+        try vm.deployCode(small, new bytes(49153 - type(Small).creationCode.length)) returns (address) {
+            assert(false);
+        } catch (bytes memory err) {
+            assert(keccak256(err) == keccak256(abi.encodeWithSignature(
+                "CheatcodeError(string)", "vm.deployCode: initcode size limit exceeded")));
+        }
+        // The cheatcode fails before it consumes the prank or increments the nonce.
+        assert(deployer.whoami() == address(0xbeef));
+        assert(vm.getNonce(address(this)) == nonce);
+
+        address created = vm.deployCode(small, new bytes(49152 - type(Small).creationCode.length));
+        assert(created.code.length != 0);
+
+        // The failed cheatcode call is the reverter for an assumption the deploying frame set.
+        try deployer.assumeNoRevertDeployCode(small, new bytes(49153 - type(Small).creationCode.length)) {
+            assert(false);
+        } catch (bytes memory err) {
+            assert(keccak256(err) == keccak256("FOUNDRY::ASSUME"));
+        }
+    }
+
+    function checkCreateInitcodeLimit() public {
+        assert(deployer.create(49152) != address(0));
+        assert(deployer.create2(49152) != address(0));
+        (bool ok, bytes memory data) = address(deployer).call(abi.encodeCall(Deployer.create, (49153)));
+        assert(!ok && data.length == 0);
+        (ok, data) = address(deployer).call(abi.encodeCall(Deployer.create2, (49153)));
+        assert(!ok && data.length == 0);
+    }
+
+    function checkNoInitcodeLimitBeforeShanghai() public {
+        assert(deployer.create(49153) != address(0));
+        assert(deployer.create2(49153) != address(0));
+        bytes memory args = new bytes(49153 - type(Small).creationCode.length);
+        assert(vm.deployCode("SymbolicCreateCodeLimit.t.sol:Small", args) != address(0));
+    }
+
+    function checkSymbolicInitcodeOverLimit(uint256 size) public {
+        vm.assume(size <= 49153);
+        deployer.create(size);
+    }
+
+    function checkSymbolicInitcodeWithinLimit(uint256 size) public {
+        vm.assume(size <= 49152);
+        deployer.create(size);
+    }
 }
 
 contract OversizedRuntime {
@@ -116,6 +195,44 @@ contract OversizedRuntime {
         assembly ("memory-safe") {
             return(0, 24577)
         }
+    }
+}
+
+contract Small {}
+
+contract Deployer {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function tryDeployCode(string memory what) external returns (uint256 len, uint64 nonceDelta) {
+        uint64 nonce = vm.getNonce(address(this));
+        try vm.deployCode(what) returns (address) {
+            revert("deployed");
+        } catch (bytes memory err) {
+            len = err.length;
+        }
+        nonceDelta = vm.getNonce(address(this)) - nonce;
+    }
+
+    function create(uint256 size) external returns (address created) {
+        assembly ("memory-safe") {
+            created := create(0, 0, size)
+        }
+    }
+
+    function create2(uint256 size) external returns (address created) {
+        assembly ("memory-safe") {
+            created := create2(0, 0, size, 0)
+        }
+    }
+
+    function whoami() external view returns (address) {
+        return msg.sender;
+    }
+
+    function assumeNoRevertDeployCode(string memory what, bytes memory args) external {
+        vm.assumeNoRevert(VmSafe.PotentialRevert(address(vm), false, abi.encodeWithSignature(
+            "CheatcodeError(string)", "vm.deployCode: initcode size limit exceeded")));
+        vm.deployCode(what, args);
     }
 }
 "#,
@@ -126,6 +243,50 @@ contract OversizedRuntime {
     cmd.forge_fuse();
     cmd.args(["test", "--symbolic", "--match-test", "checkExpectRevertRuntimeCodeLimit"])
         .assert_success();
+
+    cmd.forge_fuse();
+    cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkDeployCodeRuntimeCodeLimit|checkDeployCodeInitcodeLimit|checkCreateInitcodeLimit",
+    ])
+    .assert_success();
+
+    // A symbolic initcode size that may exceed the limit reports incomplete, also when the
+    // calldata bound equals the limit.
+    cmd.forge_fuse();
+    assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--symbolic-max-calldata-bytes",
+        "49152",
+        "--match-test",
+        "checkSymbolicInitcode",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicCreateCodeLimit.t.sol:SymbolicCreateCodeLimit
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic CREATE initcode size beyond the EIP-3860 limit] checkSymbolicInitcodeOverLimit(uint256) ([METRICS])
+[PASS] checkSymbolicInitcodeWithinLimit(uint256) ([METRICS])
+...
+"#]]);
+
+    // Before Shanghai there is no initcode size limit. Without MCOPY, ABI-encoding the
+    // `deployCode` args copies them word by word, which needs a larger depth.
+    cmd.forge_fuse();
+    cmd.args([
+        "test",
+        "--symbolic",
+        "--evm-version",
+        "london",
+        "--symbolic-max-depth",
+        "40000",
+        "--match-test",
+        "checkNoInitcodeLimitBeforeShanghai",
+    ])
+    .assert_success();
 
     prj.update_config(|config| config.code_size_limit = Some(24_575));
     cmd.forge_fuse();
@@ -189,6 +350,7 @@ fn symbolic_create_respects_eip3541_runtime_prefix(prj: _, cmd: _) {
         "SymbolicCreateEip3541.t.sol",
         r#"
 import "forge-std/Test.sol";
+import {VmSafe} from "forge-std/Vm.sol";
 
 contract SymbolicCreateEip3541 is Test {
     function checkRejectedPrefix() public {
@@ -209,6 +371,150 @@ contract SymbolicCreateEip3541 is Test {
     function checkRejectedPrefixPreservesMockProgress() public {
         checkMockProgress(address(0x1001), false);
         checkMockProgress(address(0x1002), true);
+    }
+
+    function checkRejectedPrefixKeepsConstructorExpectRevertError() public {
+        // The constructor's unmet `vm.expectRevert` error is the CREATE's revert data.
+        try new ExpectRevertThenReject() {
+            assert(false);
+        } catch (bytes memory err) {
+            assert(keccak256(err) == keccak256(abi.encodeWithSignature(
+                "CheatcodeError(string)", "call didn't revert at a lower depth than cheatcode call depth")));
+        }
+    }
+
+    uint256 marker;
+
+    function mark() external {
+        marker = 1;
+    }
+
+    function checkDeployCodeRejectedPrefix() public {
+        uint64 nonce = vm.getNonce(address(this));
+        try vm.deployCode("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this))) returns (address) {
+            assert(false);
+        } catch (bytes memory err) {
+            assert(err.length == 0);
+        }
+        // The rejected deployment rolls back the constructor but keeps the nonce increment.
+        assert(marker == 0);
+        assert(vm.getNonce(address(this)) == nonce + 1);
+
+        try new DeployCodeCaller().deployCode("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this))) returns (address) {
+            assert(false);
+        } catch (bytes memory err) {
+            assert(keccak256(err) == keccak256(hex"ef"));
+        }
+    }
+
+    DeployCodeCaller caller = new DeployCodeCaller();
+
+    function checkDeployCodeRejectedPrefixSettlesExpectRevert() public {
+        string memory what = "SymbolicCreateEip3541.t.sol:MarkThenReject";
+        // Like a native CREATE, the rejected deployment settles `vm.expectRevert`.
+        vm.expectRevert(address(vm));
+        assert(vm.deployCode(what, abi.encode(address(this))) == address(1));
+        try caller.deployCode(what, abi.encode(address(this))) returns (address) {
+            assert(false);
+        } catch (bytes memory err) {
+            assert(keccak256(err) == keccak256(hex"ef"));
+        }
+    }
+
+    function checkDeployCodeRejectedPrefixExpectRevertAny() public {
+        vm.expectRevert();
+        vm.deployCode("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this)));
+    }
+
+    function checkDeployCodeRejectedPrefixExpectRevertEmpty() public {
+        vm.expectRevert(bytes(""));
+        vm.deployCode("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this)));
+    }
+
+    function checkDeployCodeRejectedPrefixExpectRevertHaltReason() public {
+        // Like Forge, the reason matches the halt that rejected the runtime.
+        vm.expectRevert(bytes("EvmError: CreateContractStartingWithEF"));
+        address deployed =
+            vm.deployCode("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this)));
+        assert(deployed == address(1));
+    }
+
+    function checkDeployCodeRejectedPrefixExpectRevertInCaller() public {
+        // The rejected deployment settles the caller's expectation, so its call returns.
+        caller.expectRevertDeployCode("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this)));
+    }
+
+    function checkDeployCodeRejectedPrefixExpectRevertSettledInCaller() public {
+        // The rejected deployment settles the caller's expectation, so the caller returns.
+        caller.expectRevertCatchDeployCode("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this)));
+    }
+
+    function checkOverlappingExpectRevertOnDeployCode() public {
+        vm.expectRevert(bytes("other"));
+        caller.expectRevertDeployCode("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this)));
+    }
+
+    function checkAssumeNoRevertMissWithExpectRevert() public {
+        // The rejected deployment settles the expectation before the assumption sees a revert.
+        vm.assumeNoRevert(VmSafe.PotentialRevert(address(0x1234), false, ""));
+        vm.expectRevert();
+        vm.deployCode("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this)));
+    }
+
+    function checkAssumeNoRevertMissWithExpectRevertInCaller() public {
+        caller.assumeMissExpectRevertDeployCode("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this)));
+    }
+
+    function checkSymbolicMismatchInCaller(uint256 x) public {
+        (bool ok,) = address(caller).call(abi.encodeCall(
+            DeployCodeCaller.expectOtherRevertThenRevert,
+            ("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this)), x)));
+        assert(!ok);
+    }
+
+    function checkHaltAfterRejectedDeployCodeInCaller() public {
+        // The rejected deployment settles the caller's expectation, so the caller's halt fails it.
+        (bool ok,) = address(caller).call(abi.encodeCall(
+            DeployCodeCaller.expectRevertCatchDeployCodeThenHalt,
+            ("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this)))));
+        assert(!ok);
+    }
+
+    function checkMismatchedExpectRevertOnDeployCode() public {
+        vm.expectRevert(bytes("other"));
+        vm.deployCode("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this)));
+    }
+
+    function checkDeployCodeRejectedPrefixAssumeNoRevert() public {
+        try this.assumeNoRevertDeployCode() {
+            assert(false);
+        } catch (bytes memory err) {
+            assert(keccak256(err) == keccak256("FOUNDRY::ASSUME"));
+        }
+    }
+
+    function assumeNoRevertDeployCode() external {
+        // The failed cheatcode call is the reverter, not the caller that bubbles its revert.
+        vm.assumeNoRevert(VmSafe.PotentialRevert(address(vm), false, hex"ef"));
+        caller.deployCode("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this)));
+    }
+
+    function checkDeployCodeRejectedPrefixAssumeNoRevertInCaller() public {
+        try caller.assumeNoRevertDeployCode("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this))) {
+            assert(false);
+        } catch (bytes memory err) {
+            assert(keccak256(err) == keccak256("FOUNDRY::ASSUME"));
+        }
+    }
+
+    function checkDeployCodeRejectedPrefixExpectRevertMismatchInCaller() public {
+        // The caller's expectation fails at the rejected deployment, which the test can catch.
+        (bool ok, bytes memory err) = address(caller).call(abi.encodeCall(
+            DeployCodeCaller.expectOtherRevertDeployCode,
+            ("SymbolicCreateEip3541.t.sol:MarkThenReject", abi.encode(address(this)))));
+        assert(!ok);
+        assert(keccak256(err) == keccak256(abi.encodeWithSignature(
+            "CheatcodeError(string)", "Error != expected error: EvmError: CreateContractStartingWithEF != other")));
     }
 
     function checkRejectedPrefixExpectedCallsAndRevert() public {
@@ -245,8 +551,8 @@ contract SymbolicCreateEip3541 is Test {
         bytes memory callData = abi.encodeCall(IMockSequenceTarget.value, ());
         vm.mockCall(target, callData, abi.encode(uint256(1)));
         vm.expectCall(target, callData);
-        bytes memory rejectedRuntime = hex"ef";
-        vm.expectRevert(rejectedRuntime);
+        // Like Forge, a CREATE whose runtime is rejected fails with no data.
+        vm.expectRevert(bytes(""));
         if (useCreate2) {
             new ConsumeMockThenReject{salt: bytes32(uint256(2))}(IMockSequenceTarget(target));
         } else {
@@ -327,6 +633,79 @@ contract ConsumeMockThenReject {
         }
     }
 }
+
+contract ExpectRevertThenReject {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    constructor() {
+        vm.expectRevert();
+        assembly ("memory-safe") {
+            mstore8(0, 0xef)
+            return(0, 1)
+        }
+    }
+}
+
+contract MarkThenReject {
+    constructor(SymbolicCreateEip3541 test) {
+        test.mark();
+        assembly ("memory-safe") {
+            mstore8(0, 0xef)
+            return(0, 1)
+        }
+    }
+}
+
+contract DeployCodeCaller {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function deployCode(string memory what, bytes memory args) external returns (address) {
+        return vm.deployCode(what, args);
+    }
+
+    function expectRevertDeployCode(string memory what, bytes memory args) external {
+        vm.expectRevert(address(vm));
+        vm.deployCode(what, args);
+    }
+
+    function expectRevertCatchDeployCode(string memory what, bytes memory args) external {
+        vm.expectRevert();
+        try vm.deployCode(what, args) returns (address) {} catch {}
+    }
+
+    function expectRevertCatchDeployCodeThenHalt(string memory what, bytes memory args) external {
+        vm.expectRevert();
+        try vm.deployCode(what, args) returns (address) {} catch {}
+        assembly ("memory-safe") {
+            invalid()
+        }
+    }
+
+    function expectOtherRevertDeployCode(string memory what, bytes memory args) external {
+        vm.expectRevert(bytes("other"));
+        vm.deployCode(what, args);
+    }
+
+    function assumeMissExpectRevertDeployCode(string memory what, bytes memory args) external {
+        vm.assumeNoRevert(VmSafe.PotentialRevert(address(0x1234), false, ""));
+        vm.expectRevert();
+        vm.deployCode(what, args);
+    }
+
+    function expectOtherRevertThenRevert(string memory what, bytes memory args, uint256 x) external {
+        vm.expectRevert(bytes("other"));
+        try vm.deployCode(what, args) returns (address) {} catch {}
+        assembly ("memory-safe") {
+            mstore(0, x)
+            revert(0, 32)
+        }
+    }
+
+    function assumeNoRevertDeployCode(string memory what, bytes memory args) external {
+        vm.assumeNoRevert(VmSafe.PotentialRevert(address(vm), false, hex"ef"));
+        vm.deployCode(what, args);
+    }
+}
 "#,
     );
 
@@ -343,6 +722,29 @@ contract ConsumeMockThenReject {
     cmd.forge_fuse();
     cmd.args(["test", "--symbolic", "--match-test", "checkRejectedPrefixExpectedCallsAndRevert"])
         .assert_success();
+
+    cmd.forge_fuse();
+    cmd.args(["test", "--symbolic", "--match-test", "checkDeployCodeRejectedPrefix"])
+        .assert_success();
+
+    cmd.forge_fuse();
+    assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkMismatchedExpectRevertOnDeployCode|checkOverlappingExpectRevertOnDeployCode|checkSymbolicMismatchInCaller|checkAssumeNoRevertMiss|checkHaltAfterRejectedDeployCodeInCaller",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+[PASS] checkAssumeNoRevertMissWithExpectRevert() ([METRICS])
+[PASS] checkAssumeNoRevertMissWithExpectRevertInCaller() ([METRICS])
+[PASS] checkHaltAfterRejectedDeployCodeInCaller() ([METRICS])
+[FAIL: Error != expected error: EvmError: CreateContractStartingWithEF != other; counterexample: 		[SENDER] [SENDER] calldata=0xe668c5ba args=[]] checkMismatchedExpectRevertOnDeployCode() ([METRICS])
+[FAIL: Error != expected error: vm.expectRevert: you must call another function prior to expecting a second revert != other; counterexample: 		[SENDER] [SENDER] calldata=0x67563089 args=[]] checkOverlappingExpectRevertOnDeployCode() ([METRICS])
+[PASS] checkSymbolicMismatchInCaller(uint256) ([METRICS])
+...
+"#]]);
 
     cmd.forge_fuse();
     cmd.args(["test", "--symbolic", "--match-test", "checkAdjacentPrefixStillAllowed"])

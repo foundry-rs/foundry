@@ -212,11 +212,7 @@ fn ethereum_replay_skips_unknown_system_envelopes_before_conversion() {
     let transaction = |ty| {
         let unknown = AnyTxEnvelope::Unknown(UnknownTxEnvelope {
             hash: B256::ZERO,
-            inner: UnknownTypedTransaction {
-                ty: AnyTxType(ty),
-                fields: Default::default(),
-                memo: Default::default(),
-            },
+            inner: UnknownTypedTransaction::new(AnyTxType(ty), Default::default()),
         });
         AnyRpcTransaction::new(WithOtherFields::new(RpcTransaction {
             inner: Recovered::new_unchecked(unknown, Address::with_last_byte(0x42)),

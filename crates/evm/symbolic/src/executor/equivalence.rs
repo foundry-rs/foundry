@@ -644,7 +644,7 @@ impl SymbolicExecutor {
             Some(_) => calldata.model_to_args(&mut self.cx, &model)?,
             None => Vec::new(),
         };
-        let storage = state_b.world.replay_storage_assignments(&model)?;
+        let storage = state_b.world.replay_storage_assignments(&model, false)?;
         let word = |expr: &SymExpr| -> Result<U256, SymbolicError> {
             Ok(expr.eval_model_if_complete(&model)?.unwrap_or_default())
         };

@@ -218,9 +218,10 @@ impl From<&AccountInfo> for SnapshotAccount {
 impl From<SnapshotAccount> for AccountInfo {
     fn from(account: SnapshotAccount) -> Self {
         let code = account.code.filter(|code| !code.is_empty()).map(Bytecode::new_raw);
-        let mut info = Self::new(account.balance, account.nonce, account.code_hash, code);
-        info.extension = account.extension.into();
-        info
+        Self {
+            extension: account.extension.into(),
+            ..Self::new(account.balance, account.nonce, account.code_hash, code)
+        }
     }
 }
 
@@ -912,15 +913,19 @@ pub trait Db: MaybeFullDatabase + MaybeForkedDatabase + Send + Sync {
             // nonces to prevent collisions
             let nonce = std::cmp::max(old_account_nonce, account.nonce);
 
-            let mut info = AccountInfo::new(
-                account.balance,
-                nonce,
-                // set automatically from the code.
-                KECCAK256_EMPTY,
-                (!account.code.is_empty()).then(|| Bytecode::new_raw(account.code)),
+            self.insert_account(
+                addr,
+                AccountInfo {
+                    extension: account.extension.into(),
+                    ..AccountInfo::new(
+                        account.balance,
+                        nonce,
+                        // set automatically from the code.
+                        KECCAK256_EMPTY,
+                        (!account.code.is_empty()).then(|| Bytecode::new_raw(account.code)),
+                    )
+                },
             );
-            info.extension = account.extension.into();
-            self.insert_account(addr, info);
 
             for (k, v) in account.storage {
                 self.set_storage_at(addr, k, v)?;
@@ -1336,6 +1341,9 @@ pub struct SerializableState {
     /// Note: This is an Option for backwards compatibility.
     #[serde(default)]
     pub historical_states: Option<SerializableHistoricalStates>,
+    /// Local gas limits that transaction-hash fork replays executed with, by replayed block hash.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub fork_replayed_blocks: BTreeMap<B256, u64>,
 }
 
 impl SerializableState {

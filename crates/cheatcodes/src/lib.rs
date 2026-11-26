@@ -62,6 +62,7 @@ mod inspector;
 pub use inspector::CheatcodeAnalysis;
 
 mod json;
+pub use json::parse_json_as;
 
 #[cfg(feature = "monad")]
 mod monad;
@@ -80,7 +81,7 @@ mod tempo;
 mod test;
 pub use test::{
     expect::{ExpectedCallTracker, ExpectedCallType},
-    revert_handlers::{DUMMY_CALL_OUTPUT, DUMMY_CREATE_ADDRESS},
+    revert_handlers::{DUMMY_CALL_OUTPUT, DUMMY_CREATE_ADDRESS, expect_revert_mismatch},
 };
 
 mod toml;
