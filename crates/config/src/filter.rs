@@ -215,6 +215,25 @@ pub fn is_ignored_path(file: &Path, paths: &[PathBuf], base: &Path) -> bool {
     paths.iter().any(|path| file.starts_with(path) || joined.starts_with(path))
 }
 
+/// Expands ignore globs with a root path, keeping each expanded path and its canonical form.
+///
+/// Match raw input paths against the result with [`is_ignored_path`]. An entry then matches an
+/// input by its written path or by its resolved path, so a symlinked input is ignored by its
+/// project path or an enclosing directory, and inputs under a symlinked source directory, which are
+/// canonical, are ignored by the directory's project path. An entry naming a symlink also ignores
+/// its target when that target is itself an input, but an entry never ignores an input only because
+/// the input resolves to the same file.
+pub fn expand_ignore_globs(
+    root: &Path,
+    patterns: impl IntoIterator<Item = impl AsRef<str>>,
+) -> eyre::Result<Vec<PathBuf>> {
+    Ok(expand_globs(root, patterns)?
+        .into_iter()
+        .flat_map(|path| [dunce::canonicalize(&path).ok(), Some(path)])
+        .flatten()
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -296,5 +315,29 @@ mod tests {
 
         // Relative path that should not match an absolute pattern
         assert!(matcher.is_match_exclude(Path::new("projects/project/test/Contract.t.sol")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_expand_ignore_globs_symlinks() {
+        let root = tempdir().unwrap();
+        let root = dunce::canonicalize(root.path()).unwrap();
+        fs::create_dir_all(root.join("shared")).unwrap();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(root.join("test")).unwrap();
+        fs::write(root.join("shared/A.sol"), "").unwrap();
+        std::os::unix::fs::symlink("../shared/A.sol", root.join("src/A.sol")).unwrap();
+        std::os::unix::fs::symlink("../shared/A.sol", root.join("test/A.sol")).unwrap();
+
+        // An entry naming a symlink ignores that alias, but not another alias of its target.
+        let ignored = expand_ignore_globs(&root, ["test/A.sol"]).unwrap();
+        assert!(is_ignored_path(&root.join("test/A.sol"), &ignored, &root));
+        assert!(!is_ignored_path(&root.join("src/A.sol"), &ignored, &root));
+        // The entry's resolved path still ignores the target when it is an input.
+        assert!(is_ignored_path(&root.join("shared/A.sol"), &ignored, &root));
+
+        // An entry naming the target does not ignore its aliases.
+        let ignored = expand_ignore_globs(&root, ["shared/**"]).unwrap();
+        assert!(!is_ignored_path(&root.join("src/A.sol"), &ignored, &root));
     }
 }

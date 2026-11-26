@@ -5,6 +5,7 @@ use foundry_common::{
         inline_config::{InlineConfig, InlineConfigItem},
     },
     errors::convert_solar_errors,
+    fs::canonicalize_path,
     sh_warn,
 };
 use foundry_compilers::{ProjectPathsConfig, solc::SolcLanguage};
@@ -22,7 +23,7 @@ use solar::{
 };
 use solar_lint::{LintRegistry, LintRunContext, LintRunError, LintSource, LintSuite, run_lints};
 use std::{
-    collections::HashSet,
+    collections::HashMap,
     path::{Path, PathBuf},
     str::FromStr,
     sync::{Arc, LazyLock},
@@ -337,36 +338,48 @@ impl<'a> Linter for SolidityLinter<'a> {
 
             let gcx = compiler.gcx();
             let mut targets = Vec::with_capacity(input.len());
-            let mut seen_sources = HashSet::new();
+            let mut suite = self.to_suite();
+            let mut sources = HashMap::<_, SourceLintPolicy>::with_capacity(input.len());
             for path in input {
-                let path = self.path_config.root.join(path);
+                let joined = self.path_config.root.join(path);
+                let mut path = joined.clone();
+                // Sources are keyed by their canonical path, so look up symlinks by their target.
+                if gcx.get_ast_source(&path).is_none()
+                    && let Ok(canonical) = canonicalize_path(&path)
+                {
+                    path = canonical;
+                }
                 let Some((_, source)) = gcx.get_ast_source(&path) else {
-                    // Issue a warning rather than panicking when some input files use old
-                    // Solidity versions that Solar does not support.
-                    _ = sh_warn!("AST source not found for {}", path.display());
+                    // Some inputs, such as unsupported Solidity versions, have no parsed source.
+                    let shown = joined.strip_prefix(&self.path_config.root).unwrap_or(&joined);
+                    _ = sh_warn!("unable to lint {}: AST source not found", shown.display());
                     continue;
                 };
-                if seen_sources.insert(source.file.start_pos) {
-                    targets.push(path);
-                }
+                let active = suite.active_lints(Some(&joined));
+                sources
+                    .entry(source.file.start_pos)
+                    .and_modify(|policy| {
+                        // A test alias must not suppress lints for a selected production alias.
+                        for id in &active {
+                            if !policy.active.contains(id) {
+                                policy.active.push(id);
+                            }
+                        }
+                    })
+                    .or_insert_with(|| {
+                        let ast = source.ast.as_ref().expect("lint target must have an AST");
+                        let comments =
+                            Comments::new(&source.file, gcx.sess.source_map(), false, false, None);
+                        targets.push(path);
+                        SourceLintPolicy {
+                            file: source.file.clone(),
+                            inline: Arc::new(parse_inline_config(gcx.sess, &comments, ast)),
+                            active,
+                        }
+                    });
             }
 
-            let mut suite = self.to_suite();
-            let mut sources = targets
-                .iter()
-                .map(|path| {
-                    let (_, source) =
-                        gcx.get_ast_source(path).expect("lint target was validated above");
-                    let ast = source.ast.as_ref().expect("lint target AST was validated above");
-                    let comments =
-                        Comments::new(&source.file, gcx.sess.source_map(), false, false, None);
-                    SourceLintPolicy {
-                        file: source.file.clone(),
-                        inline: Arc::new(parse_inline_config(gcx.sess, &comments, ast)),
-                        active: suite.active_lints(Some(path)),
-                    }
-                })
-                .collect::<Vec<_>>();
+            let mut sources = sources.into_values().collect::<Vec<_>>();
             sources.sort_unstable_by_key(|source| source.file.start_pos);
             suite.run_active = Some(Arc::new(
                 suite
