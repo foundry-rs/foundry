@@ -9424,6 +9424,138 @@ contract SymbolicDowncastShare {
     }
 }
 
+// A protocol takes a share of a fee, `(amount * a / k) * b / k`, which stays at most the amount
+// once `a <= k` and `b <= k`, also when the share rounds up. A share factor above `k`, or a fee
+// above the amount, proves nothing. Chained products share their factors, so the search must not
+// walk them as a tree.
+#[forgetest_init]
+fn symbolic_proves_chained_share_bounded(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_chained_share_bounded");
+    prj.add_test(
+        "SymbolicChainedShare.t.sol",
+        r#"
+contract SymbolicChainedShare {
+    function checkProtocolCut(uint128 amount, uint16 feeBps, uint16 shareBps) public pure {
+        require(feeBps <= 10000 && shareBps <= 10000);
+        uint256 fee = uint256(amount) * feeBps / 10000;
+        assert(fee * shareBps / 10000 <= amount);
+    }
+
+    function checkProtocolCutRoundedUp(uint128 amount, uint16 feeBps, uint16 shareBps)
+        public
+        pure
+    {
+        require(feeBps <= 10000 && shareBps <= 10000);
+        uint256 fee = uint256(amount) * feeBps / 10000;
+        assert((fee * shareBps + 9999) / 10000 <= amount);
+    }
+
+    function checkProtocolCutRoundedPastWhole(uint128 amount, uint16 feeBps, uint16 shareBps)
+        public
+        pure
+    {
+        require(feeBps <= 10000 && shareBps <= 10000);
+        uint256 fee = uint256(amount) * feeBps / 10000;
+        assert((fee * shareBps + 10000) / 10000 <= amount);
+    }
+
+    function checkShareAboveWhole(uint128 amount, uint16 feeBps, uint16 shareBps) public pure {
+        require(feeBps <= 10000 && shareBps <= 10001);
+        uint256 fee = uint256(amount) * feeBps / 10000;
+        assert(fee * shareBps / 10000 <= amount);
+    }
+
+    function checkFeeAboveAmount(uint128 amount, uint16 feeBps, uint16 shareBps) public pure {
+        require(feeBps <= 10001 && shareBps <= 10000);
+        uint256 fee = uint256(amount) * feeBps / 10000;
+        assert(fee * shareBps / 10000 <= amount);
+    }
+
+    function checkSymbolicDenominator(uint64 amount, uint64 feeBps, uint64 shareBps, uint64 denom)
+        public
+        pure
+    {
+        require(denom > 0 && feeBps <= denom && shareBps <= denom);
+        uint256 fee = uint256(amount) * feeBps / denom;
+        assert(fee * shareBps / denom <= amount);
+    }
+
+    // Guards the search budget rather than the proof: every level shares both factors, so 30
+    // levels would take about 2^30 recursions if each one were not charged.
+    function checkSharedProducts(uint256 x, uint256 y) public pure {
+        require(x < 1e17 && y < 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        assert(x <= 1e18);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicChainedShare"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        for signature in [
+            "checkProtocolCut(uint128,uint16,uint16)",
+            "checkProtocolCutRoundedUp(uint128,uint16,uint16)",
+            "checkSymbolicDenominator(uint64,uint64,uint64,uint64)",
+            "checkSharedProducts(uint256,uint256)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        }
+
+        for signature in [
+            "checkShareAboveWhole(uint128,uint16,uint16)",
+            "checkFeeAboveAmount(uint128,uint16,uint16)",
+            "checkProtocolCutRoundedPastWhole(uint128,uint16,uint16)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "optimized={optimized}: {result}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "optimized={optimized}: {result}"
+            );
+        }
+    }
+}
+
 // Q96 and Q128 fixed-point math scales an amount with `(x * y) >> k`, which is at most `x` once
 // `y <= 2**k`, even when the product wraps. Dividing by `2**k` normalizes to the same shift. A
 // factor one above `2**k`, a strict comparison, or a bound on the other factor proves nothing.
