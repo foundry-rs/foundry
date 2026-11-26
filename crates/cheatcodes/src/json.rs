@@ -379,7 +379,7 @@ pub(super) fn parse_json_coerce_default<T: SolValue>(
 }
 
 /// Parses given [serde_json::Value] as a [DynSolValue].
-pub(super) fn parse_json_as(value: &Value, ty: &DynSolType) -> Result<DynSolValue> {
+pub fn parse_json_as(value: &Value, ty: &DynSolType) -> Result<DynSolValue> {
     let to_string = |v: &Value| {
         let mut s = v.to_string();
         s.retain(|c: char| c != '"');

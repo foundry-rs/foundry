@@ -24,7 +24,8 @@ use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
     Artifact, Project, ProjectBuilder, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
     artifacts::{
-        BytecodeObject, Contract, Error as SolcError, SecondarySourceLocation, Severity, Source,
+        BytecodeObject, Contract, Error as SolcError, Metadata as SolcMetadata,
+        SecondarySourceLocation, Severity, Source,
         output_selection::OutputSelection,
         remappings::{RelativeRemapping, Remapping},
     },
@@ -32,6 +33,7 @@ use foundry_compilers::{
         CompilationError, Compiler,
         solc::{Solc, SolcCompiler},
     },
+    error::SolcError as CompilerError,
     info::ContractInfo as CompilerContractInfo,
     multi::{MultiCompiler, MultiCompilerError, MultiCompilerSettings},
     project::Preprocessor,
@@ -303,12 +305,17 @@ impl ProjectCompiler {
         let preprocess = self.dynamic_test_linking;
         let abi_cache = self.abi_cache;
         let external_compilers = self.external_compilers.take();
-        let external_writes = self.external_writes && !project.no_artifacts;
+        let external_writes = self.external_writes && !project.no_artifacts && !project.no_compile;
         self.compile_with(|| {
-            let external = external_compilers
+            let mut external = external_compilers
                 .as_ref()
                 .map(|config| {
-                    ExternalCompilation::compile(config, &selected_paths, external_writes)
+                    ExternalCompilation::compile(
+                        config,
+                        &selected_paths,
+                        external_writes,
+                        project.no_compile,
+                    )
                 })
                 .transpose()?;
             let sources = if explicit_selection {
@@ -338,7 +345,24 @@ impl ProjectCompiler {
                 }
                 Ok(output)
             };
-            let mut output = compile(preprocess)?;
+            let output = compile(preprocess);
+            // Under `no_compile`, report stale external units together with stale built-in
+            // sources.
+            if let Some(external) = &mut external
+                && !external.stale.is_empty()
+            {
+                let mut stale = std::mem::take(&mut external.stale);
+                if let Err(err) = output {
+                    let Some(CompilerError::StaleSources(files)) = err.downcast_ref() else {
+                        return Err(err);
+                    };
+                    stale.extend(files.iter().cloned());
+                }
+                stale.sort();
+                stale.dedup();
+                return Err(CompilerError::StaleSources(stale).into());
+            }
+            let mut output = output?;
             // A retry can only help if DTL changed the compiler input.
             if preprocessor.rewrote_sources()
                 && let Some(reason) = dynamic_test_linking_failure(&output.output().errors)
@@ -413,6 +437,20 @@ impl ProjectCompiler {
                 // print the compiler output / warnings
                 sh_println!("{output}")?;
             }
+        }
+
+        if !quiet
+            && !output.has_compiler_errors()
+            && output
+                .artifact_ids()
+                .filter_map(|(_, artifact)| artifact.metadata.as_ref())
+                .any(metadata_has_absolute_paths)
+        {
+            sh_warn!(
+                "Solidity metadata contains absolute filesystem paths that may reveal information \
+                 about your local system when published. Review the metadata before sharing or \
+                 verifying these artifacts."
+            )?;
         }
 
         // Report compiler warnings before the policy failure.
@@ -924,7 +962,7 @@ pub fn compile_target_abi(
 pub fn etherscan_project(metadata: &Metadata, target_path: &Path) -> Result<Project> {
     let target_path = canonicalize_path(target_path)?;
     let sources_path = target_path.join(&metadata.contract_name);
-    metadata.source_tree().write_to(&target_path)?;
+    metadata.source_tree()?.write_to(&target_path)?;
 
     let mut settings = metadata.settings()?;
 
@@ -1334,6 +1372,29 @@ fn add_scoped_alias_diagnostics<C: Compiler<CompilerContract = Contract>>(
             }
         }
     }
+}
+
+/// Checks emitted source names and remappings, not internal absolute compiler paths.
+fn metadata_has_absolute_paths(metadata: &SolcMetadata) -> bool {
+    // Recognize Windows paths even when reading metadata produced on another platform.
+    let is_absolute = |path: &str| {
+        path.starts_with('/')
+            || path.starts_with(r"\\")
+            || matches!(path.as_bytes(), [drive, b':', b'/' | b'\\', ..] if drive.is_ascii_alphabetic())
+    };
+    metadata.language == "Solidity"
+        && (metadata.sources.inner.keys().any(|path| is_absolute(path))
+            || metadata.settings.remappings.iter().any(|remapping| {
+                // Recover a Windows context split at its drive colon. Virtual names alone aren't
+                // paths; the remaining context separator must also be present.
+                is_absolute(&remapping.path)
+                    || remapping.context.as_deref().is_some_and(|context| {
+                        is_absolute(context)
+                            || (matches!(context.as_bytes(), [drive] if drive.is_ascii_alphabetic())
+                                && remapping.name.starts_with(['/', '\\'])
+                                && remapping.name.contains(':'))
+                    })
+            }))
 }
 
 #[cfg(test)]

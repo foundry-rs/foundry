@@ -519,7 +519,7 @@ fn collect_enum_definitions<'ast>(
             ItemKind::Enum(enum_item) => {
                 let name = enum_item.name.to_string();
                 let key = owner.map_or_else(|| name.clone(), |owner| format!("{owner}.{name}"));
-                let variants = enum_item.variants.iter().map(ToString::to_string).collect();
+                let variants = enum_item.variants.iter().map(|v| v.name.to_string()).collect();
                 if definitions.get(&key).is_some_and(|existing| existing != &variants) {
                     definitions.remove(&key);
                     ambiguous.insert(key);
