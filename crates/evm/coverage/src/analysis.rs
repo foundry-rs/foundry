@@ -10,7 +10,7 @@ use solar::{
         map::{FxHashMap, FxHashSet},
     },
     interface::{RelativeBytePos, Span, sym},
-    sema::{Gcx, hir},
+    sema::{Gcx, builtins::Builtin, hir},
 };
 use std::{
     ops::{ControlFlow, Range},
@@ -790,18 +790,26 @@ impl<'gcx> hir::Visit<'gcx> for SourceVisitor<'gcx> {
 
     fn visit_expr(&mut self, expr: &'gcx hir::Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
         match &expr.kind {
-            hir::ExprKind::Member(_, member) => match self.gcx.resolved_expr(expr) {
-                // Type checking selected the function that the access names.
-                Some(hir::Res::Item(hir::ItemId::Function(id))) => {
-                    if let Some(key) = self.function_key(self.gcx.hir.function(id)) {
-                        *self.value_refs.entry(key).or_default() += 1;
+            hir::ExprKind::Member(base, member) => {
+                // `super` dispatches along the linearization of the most derived contract, which
+                // can run another function than the one type checking resolves in this contract.
+                let is_super = matches!(
+                    base.peel_parens().kind,
+                    hir::ExprKind::Ident([hir::Res::Builtin(Builtin::Super)])
+                );
+                match self.gcx.resolved_expr(expr) {
+                    // Type checking selected the function that the access names.
+                    Some(hir::Res::Item(hir::ItemId::Function(id))) if !is_super => {
+                        if let Some(key) = self.function_key(self.gcx.hir.function(id)) {
+                            *self.value_refs.entry(key).or_default() += 1;
+                        }
+                    }
+                    Some(_) if !is_super => {}
+                    _ => {
+                        *self.member_calls.entry(Arc::from(member.as_str())).or_default() += 1;
                     }
                 }
-                Some(_) => {}
-                None => {
-                    *self.member_calls.entry(Arc::from(member.as_str())).or_default() += 1;
-                }
-            },
+            }
             hir::ExprKind::Ident(res) if !self.callee_idents.contains(&expr.span) => {
                 for res in *res {
                     if let hir::Res::Item(hir::ItemId::Function(id)) = res

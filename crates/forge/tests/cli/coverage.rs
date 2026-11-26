@@ -3414,6 +3414,55 @@ BRDA:23,0,0,3
     assert_lcov(cmd.forge_fuse().args(optimized).arg("--use").arg(&solar), expected);
 }
 
+// `super` dispatches along the linearization of the most derived contract, so type checking cannot
+// say which function it runs: `Right` resolves `super.bump()` to `Root.bump`, but `Final.other()`
+// runs `Left.bump`. A dead arm that calls `Left.bump` must not borrow that run.
+#[forgetest]
+fn if_arm_with_super_call_in_derived_contract_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Super.sol",
+        r#"
+contract Root {
+    uint256 public total;
+    function bump() internal virtual { total += 10; }
+}
+contract Left is Root {
+    function bump() internal virtual override { total += 1; }
+    function neverCalled() internal { if (true) { bump(); } }
+}
+contract Right is Root {
+    function other() external { super.bump(); }
+}
+contract Final is Left, Right {
+    function bump() internal override(Left, Root) { total += 100; }
+}
+"#,
+    );
+    prj.add_test(
+        "Super.t.sol",
+        r#"
+import "../src/Super.sol";
+
+contract SuperTest {
+    function testOther() public {
+        Final f = new Final();
+        for (uint256 i = 0; i < 3; i++) f.other();
+    }
+}
+"#,
+    );
+
+    let optimized = ["coverage", "--no-isolate", "--keep-optimizer", "--optimize"];
+    let expected = str![[r#"
+...
+BRDA:10,0,0,-
+...
+"#]];
+    assert_lcov(cmd.args(optimized), expected.clone());
+    let solar = prj.ensure_foundry_bin("solar");
+    assert_lcov(cmd.forge_fuse().args(optimized).arg("--use").arg(&solar), expected);
+}
+
 // The run of an inlined function is the arm's only when nothing else enters it: a loop in the
 // function, a function with the same body, which the optimizer can merge, and a dead arm next to a
 // live function with the same body must not change the arm's count.
