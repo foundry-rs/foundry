@@ -12187,7 +12187,7 @@ async fn script_json_rpc_failure_codes_fork(prj: _, cmd: _) {
 {"success":true,"...":"{...}"}
 {"chain":31337,"...":"{...}"}
 {"status":"success","transactions":"[..]/broadcast/Failures.s.sol/31337/run-latest.json","sensitive":"[..]/cache/Failures.s.sol/31337/run-latest.json"}
-{"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"rpc.error","message":"Failed to send transaction after 4 attempts Err(server returned an error response: error code -32000: rejected)","details":{"code":-32000}}],"warnings":[]}
+{"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"rpc.error","message":"Failed to send transaction: server returned an error response: error code -32000: rejected","details":{"code":-32000}}],"warnings":[]}
 
 "#]]
         .is_jsonlines(),

@@ -343,6 +343,18 @@ where
     }
 }
 
+/// Returns whether resubmitting a transaction after `error` could succeed.
+///
+/// A JSON-RPC error response means the node validated the payload and rejected it, for example
+/// for a gas limit above the chain's cap, so the same payload fails again, unless Alloy classifies
+/// the error as transient, like a rate limit. Transport failures and other errors are retried.
+fn is_retryable_send_error(error: &eyre::Report) -> bool {
+    match error.downcast_ref::<TransportError>() {
+        Some(RpcError::ErrorResp(payload)) => payload.is_retry_err(),
+        _ => true,
+    }
+}
+
 fn is_definite_browser_non_submission(error: &eyre::Report) -> bool {
     let Some(alloy_signer::Error::Other(error)) = error.downcast_ref::<alloy_signer::Error>()
     else {
@@ -1401,7 +1413,10 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                     "submission outcome for delegated operation {index} is unknown; refusing to risk a duplicate transaction"
                                 );
                             }
-                            if res.is_err() && attempt <= 3 {
+                            if attempt <= 3
+                                && let Err(error) = &res
+                                && is_retryable_send_error(error)
+                            {
                                 // Try to resubmit the transaction
                                 let provider = provider.clone();
                                 let progress = seq_progress.inner.clone();
@@ -1420,15 +1435,16 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                             }
 
                             // Preserve the original error if any
-                            let tx_hash = res.wrap_err_with(|| {
-                                    if let Some(original_res) = original_res {
-                                        format!(
-                                            "Failed to send transaction after {attempt} attempts {original_res:?}"
-                                        )
-                                    } else {
-                                        "Failed to send transaction".to_string()
-                                    }
-                                })?;
+                            let tx_hash = res.map_err(|err| {
+                                let message = if let Some(original_res) = original_res {
+                                    format!(
+                                        "Failed to send transaction after {attempt} attempts {original_res:?}"
+                                    )
+                                } else {
+                                    format!("Failed to send transaction: {err}")
+                                };
+                                err.wrap_err(message)
+                            })?;
                             if let PreparedTransaction::Raw(_, expected) = kind
                                 && expected != tx_hash
                             {
