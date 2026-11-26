@@ -503,6 +503,7 @@ impl ScriptArgs {
                     "the debugger may show source files that differ from the compiled ones: {error:#}"
                 );
             }
+            config.request_ethdebug();
         }
 
         let script_config = ScriptConfig::new(

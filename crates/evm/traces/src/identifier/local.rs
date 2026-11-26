@@ -242,12 +242,14 @@ mod tests {
                     object: BytecodeObject::Bytecode(Bytes::copy_from_slice(creation)),
                     source_map: None,
                     link_references: Default::default(),
+                    ethdebug: None,
                 }),
                 deployed_bytecode: Some(CompactDeployedBytecode {
                     bytecode: Some(CompactBytecode {
                         object: BytecodeObject::Bytecode(Bytes::copy_from_slice(runtime)),
                         source_map: None,
                         link_references: Default::default(),
+                        ethdebug: None,
                     }),
                     immutable_references: Default::default(),
                 }),
