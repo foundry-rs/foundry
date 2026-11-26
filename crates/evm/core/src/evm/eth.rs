@@ -1,8 +1,9 @@
 //! Ethereum on evm2.
 
 use super::{
-    EvmEnv, FoundryEvmFactory, FoundryEvmNetwork, FoundryExecutionHooks, FoundryTxConversion,
-    TxPayload, eth_envelope_from_any_rpc, eth_tx, eth_tx_from_request, with_eip7702_delegations,
+    EvmEnv, FoundryDatabase, FoundryEvmFactory, FoundryEvmNetwork, FoundryExecutionHooks,
+    FoundryTxConversion, TxPayload, eth_envelope_from_any_rpc, eth_tx, eth_tx_from_request,
+    with_eip7702_delegations,
 };
 use crate::edgecov;
 use alloy_consensus::transaction::Recovered;
@@ -41,6 +42,9 @@ const BSC_TESTNET_OSAKA_TIMESTAMP: u64 = 1_774_319_400;
 pub struct EthEvmFactory {
     /// Whether Celo's transfer precompile is installed.
     celo: bool,
+    /// The active fork's source chain ID, which selects BSC's `P256VERIFY` over an execution
+    /// chain-ID override.
+    source_chain_id: Option<u64>,
 }
 
 /// Ethereum EVM network.
@@ -95,15 +99,26 @@ impl FoundryEvmFactory for EthEvmFactory {
         _ext: &(),
     ) -> Box<dyn PrecompileProvider<BaseEvmTypes>> {
         let inner = Precompiles::base(env.spec);
-        let p256 = bsc_p256(env.chain_id(), env.block.timestamp.saturating_to());
+        let p256 = bsc_p256(
+            self.source_chain_id.unwrap_or(env.chain_id()),
+            env.block.timestamp.saturating_to(),
+        );
         if !self.celo && p256.is_none() {
             return Box::new(inner);
         }
         Box::new(EthPrecompiles { inner, celo: self.celo, p256 })
     }
 
+    fn configure_for<D: FoundryDatabase + ?Sized>(
+        &self,
+        db: &D,
+        _env: &EvmEnv<BaseEvmTypes>,
+    ) -> Self {
+        Self { source_chain_id: db.active_fork_source_chain_id(), ..*self }
+    }
+
     fn with_networks(&self, networks: NetworkConfigs) -> Self {
-        Self { celo: networks.is_celo() }
+        Self { celo: networks.is_celo(), ..*self }
     }
 }
 
@@ -238,9 +253,11 @@ pub const fn bsc_p256(chain_id: u64, timestamp: u64) -> Option<Option<bool>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::B256;
     use alloy_sol_types::SolValue;
     use evm2::{
-        evm::{AccountInfo, InMemoryDB},
+        bytecode::Bytecode,
+        evm::{AccountInfo, DbResult, DynDatabase, EmptyDB, InMemoryDB},
         interpreter::{Host, InstrStop},
     };
 
@@ -268,6 +285,45 @@ mod tests {
         assert!(
             !ids(eth, SpecId::CANCUN, 1, BSC_MAINNET_HABER_TIMESTAMP).contains(&BSC_P256_ADDRESS)
         );
+    }
+
+    /// An empty fork database whose remote state belongs to BSC mainnet.
+    struct BscForkDb(EmptyDB);
+
+    impl DynDatabase for BscForkDb {
+        fn get_account(&mut self, address: &Address) -> DbResult<Option<AccountInfo>> {
+            self.0.get_account(address)
+        }
+
+        fn get_code_by_hash(&mut self, code_hash: &B256) -> DbResult<Bytecode> {
+            self.0.get_code_by_hash(code_hash)
+        }
+
+        fn get_storage(&mut self, address: &Address, key: &U256) -> DbResult<U256> {
+            self.0.get_storage(address, key)
+        }
+
+        fn get_block_hash(&mut self, number: &U256) -> DbResult<B256> {
+            self.0.get_block_hash(number)
+        }
+    }
+
+    impl FoundryDatabase for BscForkDb {
+        fn active_fork_source_chain_id(&self) -> Option<u64> {
+            Some(BSC_MAINNET_CHAIN_ID)
+        }
+    }
+
+    #[test]
+    fn bsc_fork_p256_follows_source_chain_over_chain_id_override() {
+        let block = evm2::env::BlockEnv::<BaseEvmTypes> {
+            timestamp: U256::from(BSC_MAINNET_HABER_TIMESTAMP),
+            ..Default::default()
+        };
+        let eth = EthEvmFactory::default();
+        let env = EvmEnv::new(SpecId::CANCUN, eth.version(SpecId::CANCUN, 1), block);
+        let evm = eth.create_evm(BscForkDb(EmptyDB::default()), env);
+        assert!(evm.precompiles().contains(&BSC_P256_ADDRESS));
     }
 
     #[test]
