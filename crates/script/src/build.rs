@@ -4,6 +4,7 @@ use crate::{
         BundledState, refused_after_revert, remaining_operation_indices,
         remaining_unsigned_transactions_for_recovery,
     },
+    coded,
     execute::LinkedState,
     multi_sequence::MultiChainSequence,
     progress::ScriptProgress,
@@ -231,7 +232,9 @@ impl<FEN: FoundryEvmNetwork> PreprocessedState<FEN> {
             !(args.no_compile && script_config.config.decode_external_storage),
             "`--no-compile` cannot be used with `decode_external_storage`"
         );
-        let mut project = script_config.config.project()?;
+        // Setting up the compiler, such as installing solc, fails here.
+        let mut project =
+            script_config.config.project().map_err(|err| coded(err.into(), "compiler.error"))?;
         eyre::ensure!(
             !args.no_compile || project.cached,
             "`--no-compile` needs the build cache, which `cache = false`, `--no-cache`, and \
@@ -272,7 +275,9 @@ impl<FEN: FoundryEvmNetwork> PreprocessedState<FEN> {
             compiler.target_files([target_path.clone()])
         };
         let output = compiler.compile(&project).map_err(|err| {
-            let Some(SolcError::StaleSources(files)) = err.downcast_ref() else { return err };
+            let Some(SolcError::StaleSources(files)) = err.downcast_ref() else {
+                return coded(err, "compiler.error");
+            };
             let files = files.iter().map(|file| file.strip_prefix(project.root()).unwrap_or(file));
             eyre::eyre!(
                 "compilation disabled by --no-compile; sources need compiling:\n{}",
@@ -472,7 +477,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
             match errors.len() {
                 0 => {}
                 1 => return Err(errors.remove(0)),
-                _ => eyre::bail!("{}", errors.iter().format("\n")),
+                _ => return Err(crate::joined(errors)),
             }
         }
         // Resume refuses new operations after a recorded revert. Saved attempts after it are still

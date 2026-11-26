@@ -30,6 +30,7 @@ use eyre::{ContextCompat, Result, WrapErr};
 use forge_script_sequence::{AdditionalContract, NestedValue};
 use forge_verify::{RetryArgs, VerifierArgs};
 use foundry_cli::{
+    json::{JsonEnvelope, JsonError, JsonMessage, print_json},
     opts::{BuildOpts, EvmArgs, GlobalArgs, TempoOpts, TracingArgs},
     utils::LoadConfig,
 };
@@ -37,7 +38,7 @@ use foundry_common::{
     ContractsByArtifact, FoundryTransactionBuilder, SELECTOR_LEN, TransactionMaybeSigned,
     abi::{encode_function_args, get_func},
     compile::ContractSizeLimits,
-    provider::ProviderBuilder,
+    provider::{ProviderBuilder, RpcFailure},
     shell,
     tempo::configurable_account::{detect_configurable_account, linked_account},
 };
@@ -51,7 +52,7 @@ use foundry_config::{
 };
 use foundry_debugger::ensure_dump_dir;
 use foundry_evm::{
-    backend::Backend,
+    backend::{Backend, rpc_failure_in},
     core::{
         Breakpoints,
         evm::{
@@ -517,9 +518,24 @@ impl ScriptArgs {
         Ok(PreprocessedState { args, script_config, script_wallets, browser_wallet })
     }
 
-    /// Executes the script
-    #[allow(clippy::large_stack_frames)]
+    /// Executes the script.
+    ///
+    /// With `--json`, a failure ends stdout with a failure envelope whose code tells a revert, an
+    /// RPC failure, a compiler failure, and any other failure apart.
     pub async fn run_script(self) -> Result<()> {
+        let result = Box::pin(self.execute_script()).await;
+        // The inner `forge script` of a wallet session reports its own failure.
+        if shell::is_json()
+            && let Err(err) = &result
+            && !err.is::<wallet_session::InnerScriptFailed>()
+        {
+            let _ = print_json_failure(err);
+        }
+        result
+    }
+
+    #[allow(clippy::large_stack_frames)]
+    async fn execute_script(self) -> Result<()> {
         trace!(target: "script", "executing script command");
 
         if self.tempo.sponsor_url.is_some() {
@@ -541,7 +557,8 @@ impl ScriptArgs {
             return self.run_wallet_session_wrapper();
         }
 
-        let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
+        let (mut config, evm_opts) =
+            self.load_config_and_evm_opts().map_err(|err| coded(err, "config.error"))?;
         self.install_missing_dependencies(&mut config)?;
         let (config, evm_opts) = self.resolved_evm_opts(config, evm_opts).await?;
 
@@ -1135,6 +1152,9 @@ pub struct ScriptResult<N: Network> {
     pub address: Option<Address>,
     #[serde(skip)]
     pub breakpoints: Breakpoints,
+    /// How the RPC request failed when a cheatcode error that failure caused is the revert data.
+    #[serde(skip)]
+    pub rpc_failure: Option<RpcFailure>,
 }
 
 impl<N: Network> Default for ScriptResult<N> {
@@ -1151,6 +1171,7 @@ impl<N: Network> Default for ScriptResult<N> {
             exit_reason: Default::default(),
             address: Default::default(),
             breakpoints: Default::default(),
+            rpc_failure: Default::default(),
         }
     }
 }
@@ -1507,6 +1528,76 @@ const fn script_trace_requirements(config: &Config, debug: bool) -> TraceRequire
         } else {
             InternalTraceMode::None
         })
+}
+
+/// Returns the error of a script call that failed, coded as an RPC failure when a cheatcode's
+/// failed RPC request caused the revert, and as `script.error` when the call halted.
+fn revert_error(
+    message: String,
+    data: &Bytes,
+    reason: &str,
+    exit_reason: Option<InstrStop>,
+    rpc_failure: Option<&RpcFailure>,
+) -> eyre::Report {
+    let (code, mut details) = match rpc_failure {
+        Some(rpc) => (rpc.kind(), serde_json::json!(rpc)),
+        None if exit_reason == Some(InstrStop::Revert) => ("script.revert", serde_json::json!({})),
+        None => return json_failure(JsonMessage::error("script.error", message)).into(),
+    };
+    details["data"] = data.to_string().into();
+    details["reason"] = reason.into();
+    json_failure(JsonMessage::error(code, message).with_details(details)).into()
+}
+
+/// Returns a failure that `--json` reports as `error`.
+fn json_failure(error: JsonMessage) -> JsonError {
+    JsonError { data: serde_json::Value::Null, errors: vec![error] }
+}
+
+/// Returns `err` coded as `code` for `--json`, keeping its causes and its text.
+fn coded(err: eyre::Report, code: &str) -> eyre::Report {
+    // The handler drops the repeated top message when it prints the causes.
+    let message = err.chain().next().unwrap().to_string();
+    err.wrap_err(json_failure(JsonMessage::error(code, message)))
+}
+
+/// Returns a new report with `message`, keeping the `--json` code of `cause`.
+fn flattened(message: String, cause: &(dyn std::error::Error + 'static)) -> eyre::Report {
+    match rpc_failure_in(cause) {
+        Some(rpc) => json_failure(
+            JsonMessage::error(rpc.kind(), message).with_details(serde_json::json!(rpc)),
+        )
+        .into(),
+        None => eyre::eyre!(message),
+    }
+}
+
+/// Joins the errors of several sequences into one with all their messages, keeping the `--json`
+/// code of the first that is not an RPC failure, since a revert does not call for a retry, or else
+/// of the first.
+fn joined(mut errors: Vec<eyre::Report>) -> eyre::Report {
+    let message = errors.iter().map(ToString::to_string).collect::<Vec<_>>().join("\n");
+    let is_rpc_failure = |err: &eyre::Report| match err.downcast_ref::<JsonError>() {
+        Some(json) => json.errors[0].code.starts_with("rpc."),
+        None => rpc_failure_in(err.as_ref()).is_some(),
+    };
+    let index = errors.iter().position(|err| !is_rpc_failure(err)).unwrap_or(0);
+    errors.swap_remove(index).wrap_err(message)
+}
+
+/// Prints the `--json` failure envelope of `err`, whose message is the text of the whole error.
+fn print_json_failure(err: &eyre::Report) -> Result<()> {
+    let message = err.to_string();
+    if let Some(json) = err.downcast_ref::<JsonError>() {
+        let mut errors = json.errors.clone();
+        errors[0].message = message;
+        return print_json(&JsonEnvelope::failure_with_data(&json.data, errors));
+    }
+    let error = match rpc_failure_in(err.as_ref()) {
+        Some(rpc) => JsonMessage::error(rpc.kind(), message).with_details(serde_json::json!(rpc)),
+        None => JsonMessage::error("script.error", message),
+    };
+    print_json(&JsonEnvelope::<()>::error(error))
 }
 
 /// Returns whether `value` has a JSON `null` where it would be parsed as `ty`.
@@ -3105,5 +3196,16 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(state.script_config.evm_opts.sender, key_address);
+    }
+
+    #[test]
+    fn joined_codes_a_revert_before_an_rpc_failure() {
+        let rpc = || eyre::Report::from(json_failure(JsonMessage::error("rpc.error", "receipt")));
+        let err = joined(vec![rpc(), eyre::eyre!("Transaction Failure: 0x01")]);
+        assert_eq!(err.to_string(), "receipt\nTransaction Failure: 0x01");
+        assert!(err.downcast_ref::<JsonError>().is_none());
+
+        let err = joined(vec![rpc(), rpc()]);
+        assert_eq!(err.downcast_ref::<JsonError>().unwrap().errors[0].code, "rpc.error");
     }
 }

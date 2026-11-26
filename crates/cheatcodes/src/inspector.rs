@@ -43,6 +43,7 @@ use foundry_common::{
         MappingSlots, PendingMappingHash, capture_hash as capture_mapping_hash,
         record_hash as record_mapping_hash, step as mapping_step,
     },
+    provider::RpcFailure,
 };
 use foundry_evm_core::{
     Breakpoints,
@@ -753,6 +754,10 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// `char -> (address, pc)`
     pub breakpoints: Breakpoints,
 
+    /// The revert data of each cheatcode error an RPC failure caused, and how it failed, oldest
+    /// first.
+    pub rpc_failures: Vec<(Bytes, RpcFailure)>,
+
     /// Ignored traces.
     pub ignored_traces: IgnoredTraces,
 
@@ -905,6 +910,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             gas_snapshots: Default::default(),
             pc: Default::default(),
             breakpoints: Default::default(),
+            rpc_failures: Default::default(),
             ignored_traces: Default::default(),
             storage_load_hooks: Default::default(),
             storage_store_hooks: Default::default(),
@@ -1345,6 +1351,16 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         }
     }
 
+    /// ABI-encodes a cheatcode error as revert data, recording the data when an RPC failure
+    /// caused the error.
+    fn revert_data(&mut self, err: Error) -> Bytes {
+        let data = Bytes::from(err.abi_encode());
+        if let Some(rpc) = err.rpc_failure() {
+            self.rpc_failures.push((data.clone(), rpc.clone()));
+        }
+        data
+    }
+
     /// Handles a call, accounting for whether the executor will isolate it as a transaction.
     ///
     /// If `isolate_call` is true, the executor owns the transaction nonce increment when the call
@@ -1383,7 +1399,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     return Some(message_result(
                         call,
                         InstrStop::Revert,
-                        Error::from(err).abi_encode().into(),
+                        self.revert_data(err.into()),
                     ));
                 }
             }
@@ -1399,7 +1415,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             let (stop, output) =
                 match self.apply_cheatcode(interp, call, backend, &mut gas, executor) {
                     Ok(retdata) => (InstrStop::Return, retdata.into()),
-                    Err(err) => (InstrStop::Revert, err.abi_encode().into()),
+                    Err(err) => (InstrStop::Revert, self.revert_data(err)),
                 };
             return Some(MessageResultExt { stop, gas, output, ..Default::default() });
         }
@@ -1413,7 +1429,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     let evm = interp.host();
                     let features = evm.version().features;
                     evm.state_mut().rollback(checkpoint, features);
-                    (InstrStop::Revert, err.abi_encode().into())
+                    (InstrStop::Revert, self.revert_data(err))
                 }
             };
             return Some(MessageResultExt { stop, gas, output, ..Default::default() });
@@ -1502,7 +1518,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                         return Some(message_result(
                             call,
                             InstrStop::Revert,
-                            Error::from(err).abi_encode().into(),
+                            self.revert_data(err.into()),
                         ));
                     }
                 }
@@ -1620,7 +1636,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                                 return Some(message_result(
                                     call,
                                     InstrStop::Revert,
-                                    err.abi_encode().into(),
+                                    self.revert_data(err),
                                 ));
                             }
                         }
@@ -3021,7 +3037,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                         !succeeded
                     }
                     Err(err) => {
-                        set_revert(outcome, err.abi_encode().into());
+                        set_revert(outcome, self.revert_data(err));
                         true
                     }
                 };
