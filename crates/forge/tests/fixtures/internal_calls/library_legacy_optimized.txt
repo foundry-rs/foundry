@@ -7,15 +7,25 @@ Ran 1 test for test/Library.t.sol:LibraryTest
 Traces:
   [..] LibraryTest::test_library_functions()
     ├─ [..] → new User@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
-    │   └─ ← [Return] 596 bytes of code
+    │   └─ ← [Return] 720 bytes of code
     ├─ [..] User::run()
     │   ├─ [..] Lib::28654891(00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005) [delegatecall]
     │   │   └─ ← [Stop]
+    │   ├─ [..] Lib::f(3) [delegatecall]
+    │   │   ├─ [..] Lib::f(int256)(3)
+    │   │   │   ├─ [..] Lib::f(int256)(2)
+    │   │   │   │   ├─ [..] Lib::f(int256)(1)
+    │   │   │   │   │   ├─ [..] Lib::f(int256)(0)
+    │   │   │   │   │   │   └─ ← 1
+    │   │   │   │   │   └─ ← 2
+    │   │   │   │   └─ ← 3
+    │   │   │   └─ ← 4
+    │   │   └─ ← [Return] 4
     │   ├─ [..] Lib::plain(7) [delegatecall]
     │   │   └─ ← [Return] 8
     │   ├─ [..] Lib::kind(1, 5) [delegatecall]
     │   │   └─ ← [Return] 6
-    │   └─ ← [Return] 19
+    │   └─ ← [Return] 23
     └─ ← [Stop]
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]

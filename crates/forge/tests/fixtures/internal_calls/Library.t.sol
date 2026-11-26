@@ -19,6 +19,14 @@ library Lib {
     function plain(uint256 x) public pure returns (uint256) {
         return x + 1;
     }
+
+    function f(uint256 x) public pure returns (uint256) {
+        return uint256(f(int256(x)));
+    }
+
+    function f(int256 x) public pure returns (int256) {
+        return x <= 0 ? int256(1) : f(x - 1) + 1;
+    }
 }
 
 contract User {
@@ -26,7 +34,7 @@ contract User {
 
     function run() external returns (uint256) {
         Lib.set(d, 5);
-        return Lib.kind(Lib.K.B, 5) + Lib.plain(7) + d.v;
+        return Lib.kind(Lib.K.B, 5) + Lib.plain(7) + Lib.f(uint256(3)) + d.v;
     }
 }
 

@@ -54,6 +54,9 @@ struct ResolvedType {
     /// The type that its stack words can be decoded as. Structs and function types are not.
     decodable: Option<DynSolType>,
     abi: AbiType,
+    /// Whether a library ABI spells the type other than `abi`, or leaves out the function: enums,
+    /// structs, contracts and user-defined value types by name, and storage pointers.
+    library_spelled: bool,
 }
 
 /// A function, modifier, public state variable getter, or Yul function.
@@ -93,8 +96,14 @@ pub struct FunctionInfo {
     pub declared_name: String,
     /// What the ABI spells for each parameter, or `None` if the parameters are not known.
     pub abi_types: Option<Vec<AbiType>>,
+    /// What the ABI of a library spells for each parameter: the same, except that the types that
+    /// a library ABI spells by name are not known.
+    pub library_abi_types: Option<Vec<AbiType>>,
     /// Whether the dispatcher or the call frame itself enters it.
     pub is_entry: bool,
+    /// Whether a library ABI spells a parameter other than the ABI types do, or leaves the
+    /// function out, so that its selector is no selector of the ABI.
+    pub library_spelled: bool,
     /// The names of the functions without an entry point that the compiler may have merged into
     /// this function, because they take and leave as many words and have the same code. A call
     /// to the entry can be a call to any of them.
@@ -114,11 +123,21 @@ impl FunctionInfo {
     /// Whether `signature`, as the ABI spells it, can be the signature of this function. The
     /// parameters that are not known match any type.
     pub fn matches_signature(&self, signature: &str) -> bool {
+        self.matches(signature, &self.abi_types)
+    }
+
+    /// Whether `signature`, as the ABI of a library spells it, can be the signature of this
+    /// function.
+    pub fn matches_library_signature(&self, signature: &str) -> bool {
+        self.matches(signature, &self.library_abi_types)
+    }
+
+    fn matches(&self, signature: &str, types: &Option<Vec<AbiType>>) -> bool {
         let Some((name, arguments)) = signature.split_once('(') else { return false };
         if name != self.declared_name {
             return false;
         }
-        let Some(types) = &self.abi_types else { return true };
+        let Some(types) = types else { return true };
         let Some(arguments) = arguments.strip_suffix(')') else { return false };
         // Split at the commas outside tuples.
         let mut depth = 0;
@@ -149,7 +168,9 @@ impl FunctionInfo {
             params: None,
             returns: None,
             abi_types: None,
+            library_abi_types: None,
             is_entry,
+            library_spelled: false,
             merged: Vec::new(),
         }
     }
@@ -194,6 +215,19 @@ impl SourceFunction {
             .as_ref()
             .filter(|_| !self.is_yul)
             .map(|params| params.iter().map(|param| param.ty.abi.clone()).collect());
+        let spelled_by_name = |param: &SourceParam| {
+            param.ty.library_spelled || param.storage == Some(Storage::Storage)
+        };
+        let library_abi_types =
+            self.params.as_ref().filter(|_| !self.is_yul).map(|params| {
+                params
+                    .iter()
+                    .map(|param| {
+                        if spelled_by_name(param) { AbiType::Unknown } else { param.ty.abi.clone() }
+                    })
+                    .collect()
+            });
+        let library_spelled = self.params.iter().flatten().any(spelled_by_name);
         let spelled = signature.as_ref().unwrap_or(&self.name);
         let name = match &self.contract {
             Some(contract) => format!("{contract}::{spelled}"),
@@ -205,7 +239,9 @@ impl SourceFunction {
             returns,
             declared_name: self.name.clone(),
             abi_types,
+            library_abi_types,
             is_entry: self.is_entry,
+            library_spelled,
             merged: Vec::new(),
         }
     }
@@ -252,12 +288,31 @@ pub fn resolve_types(
 }
 
 fn resolve_type<'gcx>(gcx: Gcx<'gcx>, ty: Ty<'gcx>) -> ResolvedType {
+    let library_spelled = library_spelled(ty);
     match dyn_type(gcx, ty, 0) {
         Some(dyn_type) => ResolvedType {
             abi: AbiType::Known(abi_name(&dyn_type)),
             decodable: Some(dyn_type).filter(|ty| !has_tuple_or_function(ty)),
+            library_spelled,
         },
-        None => ResolvedType { decodable: None, abi: AbiType::Unknown },
+        None => ResolvedType { decodable: None, abi: AbiType::Unknown, library_spelled },
+    }
+}
+
+/// Whether the ABI of a library spells the type by name, or leaves out a function that has it:
+/// enums, structs, contracts and user-defined value types, mappings, and storage pointers.
+fn library_spelled(ty: Ty<'_>) -> bool {
+    match ty.kind {
+        TyKind::Ref(inner, location) => {
+            matches!(location, DataLocation::Storage) || library_spelled(inner)
+        }
+        TyKind::Array(element, _) | TyKind::DynArray(element) => library_spelled(element),
+        TyKind::Enum(_)
+        | TyKind::Struct(_)
+        | TyKind::Contract(_)
+        | TyKind::Udvt(..)
+        | TyKind::Mapping(..) => true,
+        _ => false,
     }
 }
 
@@ -451,6 +506,7 @@ impl<'ast> Visit<'ast> for YulFunctions<'_> {
                 ty: ResolvedType {
                     decodable: Some(DynSolType::Uint(256)),
                     abi: AbiType::Known("uint256".to_string()),
+                    library_spelled: false,
                 },
                 storage: None,
                 slots: 1,
@@ -537,10 +593,10 @@ fn params(
                 DataLocation::Calldata => Storage::Calldata,
                 DataLocation::Storage | DataLocation::Transient => Storage::Storage,
             });
-            let ty = resolved
-                .map_or(ResolvedType { decodable: None, abi: AbiType::Unknown }, |resolved| {
-                    resolved[i].clone()
-                });
+            let ty = resolved.map_or(
+                ResolvedType { decodable: None, abi: AbiType::Unknown, library_spelled: false },
+                |resolved| resolved[i].clone(),
+            );
             SourceParam { slots: slots(&var.ty, storage), ty, storage }
         })
         .collect()

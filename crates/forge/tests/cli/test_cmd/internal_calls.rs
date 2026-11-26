@@ -251,13 +251,25 @@ fn matrix_via_ir_optimized(prj: _, cmd: _) {
 
 // The functions that a library runs for a delegatecall are entered by its dispatcher: library ABIs
 // spell enums, structs and contracts by qualified name, and leave out the functions with `storage`
-// parameters, so the selector of the call does not name them in the ABI.
+// parameters, so the selector of the call does not name them in the ABI. Another contract of the
+// name of the library does not make it a contract, and an overload with the same encoded argument
+// is still an internal call.
+#[track_caller]
+fn assert_library(
+    prj: &TestProject,
+    cmd: &mut TestCommand,
+    mode: (bool, bool),
+    expected: impl IntoData,
+) {
+    prj.add_test("Other.t.sol", "contract Lib { function other() external {} }");
+    assert_internal_calls(prj, cmd, LIBRARY, mode, expected);
+}
+
 #[forgetest]
 fn library_legacy(prj: _, cmd: _) {
-    assert_internal_calls(
+    assert_library(
         &prj,
         &mut cmd,
-        LIBRARY,
         (false, false),
         file!["../../fixtures/internal_calls/library_legacy.txt"],
     );
@@ -265,10 +277,9 @@ fn library_legacy(prj: _, cmd: _) {
 
 #[forgetest]
 fn library_legacy_optimized(prj: _, cmd: _) {
-    assert_internal_calls(
+    assert_library(
         &prj,
         &mut cmd,
-        LIBRARY,
         (false, true),
         file!["../../fixtures/internal_calls/library_legacy_optimized.txt"],
     );
@@ -276,10 +287,9 @@ fn library_legacy_optimized(prj: _, cmd: _) {
 
 #[forgetest]
 fn library_via_ir(prj: _, cmd: _) {
-    assert_internal_calls(
+    assert_library(
         &prj,
         &mut cmd,
-        LIBRARY,
         (true, false),
         file!["../../fixtures/internal_calls/library_via_ir.txt"],
     );
@@ -287,10 +297,9 @@ fn library_via_ir(prj: _, cmd: _) {
 
 #[forgetest]
 fn library_via_ir_optimized(prj: _, cmd: _) {
-    assert_internal_calls(
+    assert_library(
         &prj,
         &mut cmd,
-        LIBRARY,
         (true, true),
         file!["../../fixtures/internal_calls/library_via_ir_optimized.txt"],
     );

@@ -418,6 +418,8 @@ mod tests {
             name: name.into(),
             declared_name: name.into(),
             abi_types: None,
+            library_abi_types: None,
+            library_spelled: false,
             merged: Vec::new(),
             params,
             returns: uint(1),

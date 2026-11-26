@@ -254,8 +254,6 @@ pub struct ContractSources {
     pub artifacts_by_name: HashMap<String, Vec<ArtifactData>>,
     /// The bases of the contracts by name.
     pub bases: HashMap<String, Vec<String>>,
-    /// Whether the contracts of a name are libraries, if every contract of that name is.
-    pub libraries: HashMap<String, bool>,
     /// The functions of all sources by the hash of their body, which functions with the same code
     /// share.
     pub functions_by_body: HashMap<u64, Vec<BodyFunction>>,
@@ -362,10 +360,6 @@ impl ContractSources {
         }
 
         for source_data in files.values().filter_map(|variants| variants.first()) {
-            for (contract, is_library) in &source_data.contract_libraries {
-                let known = self.libraries.entry(contract.clone()).or_insert(*is_library);
-                *known &= *is_library;
-            }
             for (contract, bases) in &source_data.contract_bases {
                 let known = self.bases.entry(contract.clone()).or_default();
                 for base in bases {
@@ -437,9 +431,18 @@ impl ContractSources {
         }
     }
 
-    /// Whether `contract` is a library.
-    pub fn is_library(&self, contract: &str) -> bool {
-        self.libraries.get(contract).copied().unwrap_or(false)
+    /// Whether `contract`, the contract of `artifact`, is a library. The source of the artifact
+    /// tells: contracts of the same name in other sources are other contracts.
+    pub fn is_library(&self, artifact: &ArtifactData, contract: &str) -> bool {
+        self.sources_by_id
+            .get(&artifact.build_id)
+            .and_then(|sources| sources.get(&artifact.file_id))
+            .is_some_and(|source| {
+                source
+                    .contract_libraries
+                    .iter()
+                    .any(|(name, is_library)| name == contract && *is_library)
+            })
     }
 
     /// The contract and the contracts it inherits from.
@@ -461,10 +464,6 @@ impl ContractSources {
     /// Merges given contract sources.
     pub fn merge(&mut self, sources: Self) {
         self.sources_by_id.extend(sources.sources_by_id);
-        for (contract, is_library) in sources.libraries {
-            let known = self.libraries.entry(contract).or_insert(is_library);
-            *known &= is_library;
-        }
         for (contract, bases) in sources.bases {
             let known = self.bases.entry(contract).or_default();
             for base in bases {
