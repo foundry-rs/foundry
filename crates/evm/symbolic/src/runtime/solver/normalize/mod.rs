@@ -704,6 +704,7 @@ impl ConstraintContext {
             };
             context.order_facts.entry(small.clone()).or_default().push(large.clone());
         }
+        context.close_order_facts();
         // A bounded number of rounds closes ordinary order chains. Relational propagation keeps
         // strict comparisons weak (`a < b` propagates only `a <= upper(b)`), so inconsistent
         // cycles cannot tighten a bound one integer at a time across the uint256 domain.
@@ -718,6 +719,54 @@ impl ConstraintContext {
         }
         context.propagate_masked_upper_bounds();
         context
+    }
+
+    /// Adds `a <= c` for asserted `a <= b` and `b <= c`, strictly once either link is strict. Each
+    /// round at least doubles the closed chain length, so the literal fact count bounds the rounds
+    /// like `propagate_order_bounds`. The closure is partial by design once the facts reach
+    /// `MAX_LOCAL_ANALYSIS_NODES` pairs, as a missing fact only declines a rewrite.
+    fn close_order_facts(&mut self) {
+        let literal_count = self.order_facts.values().map(Vec::len).sum::<usize>();
+        if !(2..MAX_LOCAL_ANALYSIS_NODES).contains(&literal_count) {
+            return;
+        }
+        let mut pair_count = literal_count;
+        for _ in 0..literal_count {
+            let mut derived = Vec::new();
+            for (small, middles) in &self.order_facts {
+                for middle in middles {
+                    let strict_link =
+                        self.strict_order_facts.contains(&(small.clone(), middle.clone()));
+                    for large in self.asserted_upper_bounds(middle) {
+                        let strict = strict_link
+                            || self.strict_order_facts.contains(&(middle.clone(), large.clone()));
+                        let pair = (small.clone(), large.clone());
+                        if large != small
+                            && (!middles.contains(large)
+                                || (strict && !self.strict_order_facts.contains(&pair)))
+                        {
+                            derived.push((pair, strict));
+                        }
+                    }
+                }
+            }
+            if derived.is_empty() {
+                break;
+            }
+            for ((small, large), strict) in derived {
+                let larges = self.order_facts.entry(small.clone()).or_default();
+                if !larges.contains(&large) {
+                    if pair_count >= MAX_LOCAL_ANALYSIS_NODES {
+                        return;
+                    }
+                    larges.push(large.clone());
+                    pair_count += 1;
+                }
+                if strict {
+                    self.strict_order_facts.insert((small, large));
+                }
+            }
+        }
     }
 
     /// Transfers `x & low_mask <= k` to `x` once another bound proves `x` fits the mask, so the
