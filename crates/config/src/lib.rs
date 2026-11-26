@@ -891,16 +891,19 @@ impl Config {
         Self::from_provider(Self::figment_with_root(root.as_ref()))
     }
 
-    /// Loads the `Config` from the given root directory, allowing profile fallback.
+    /// Loads the configuration of the dependency at the given root directory, allowing profile
+    /// fallback.
     ///
-    /// Unlike [`load_with_root`](Self::load_with_root), if the selected profile (via
+    /// Environment variables other than `FOUNDRY_PROFILE`, including `FOUNDRY_CONFIG`, do not
+    /// apply; see [`FigmentProviders::Dependency`]. Unlike
+    /// [`load_with_root`](Self::load_with_root), if the selected profile (via
     /// `FOUNDRY_PROFILE`) does not exist in the config, this falls back to the default profile
-    /// instead of returning an error. This is useful for loading nested lib/dependency configs
-    /// that may not define all profiles the main project uses.
+    /// instead of returning an error, since dependencies may not define all profiles the main
+    /// project uses.
     #[track_caller]
-    pub fn load_with_root_and_fallback(root: impl AsRef<Path>) -> Result<Self, ExtractConfigError> {
-        let figment = Self::figment_with_root(root.as_ref());
-        Self::from_figment_fallback(Figment::from(figment))
+    pub fn load_dependency_with_root(root: impl AsRef<Path>) -> Result<Self, ExtractConfigError> {
+        let figment = Self::with_root(root.as_ref()).to_figment(FigmentProviders::Dependency);
+        Self::from_figment_fallback(figment)
     }
 
     /// Attempts to extract a `Config` from `provider`, returning the result.
@@ -1153,48 +1156,60 @@ impl Config {
                 figment,
                 TomlFileProvider::new(None, global_toml),
                 profile.clone(),
+                !providers.is_dependency(),
             );
         }
         // merge local foundry.toml file
         figment = Self::merge_toml_provider(
             figment,
-            TomlFileProvider::new(Some("FOUNDRY_CONFIG"), root.join(Self::FILE_NAME)),
+            TomlFileProvider::new(
+                (!providers.is_dependency()).then_some("FOUNDRY_CONFIG"),
+                root.join(Self::FILE_NAME),
+            ),
             profile.clone(),
+            !providers.is_dependency(),
         );
 
         // merge environment variables
-        figment = figment
-            .merge(
-                Env::prefixed("DAPP_")
-                    .ignore(&["REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
-                    .global()
-                    .legacy_labels(),
-            )
-            .merge(
-                Env::prefixed("DAPP_TEST_")
-                    .ignore(&["CACHE", "FUZZ_RUNS", "DEPTH", "FFI", "FS_PERMISSIONS"])
-                    .global()
-                    .legacy_labels(),
-            )
-            .merge(DappEnvCompatProvider)
-            .merge(EtherscanEnvProvider::default())
-            .merge(
-                Env::prefixed("FOUNDRY_")
-                    .ignore(&["PROFILE", "REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
-                    .map(|key| {
-                        let key = key.as_str();
-                        if Self::STANDALONE_SECTIONS.iter().any(|section| {
-                            key.starts_with(&format!("{}_", section.to_ascii_uppercase()))
-                        }) {
-                            key.replacen('_', ".", 1).into()
-                        } else {
-                            key.into()
-                        }
-                    })
-                    .global()
-                    .legacy_labels(),
-            )
-            .select(profile.clone());
+        if !providers.is_dependency() {
+            figment = figment
+                .merge(
+                    Env::prefixed("DAPP_")
+                        .ignore(&["REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
+                        .global()
+                        .legacy_labels(),
+                )
+                .merge(
+                    Env::prefixed("DAPP_TEST_")
+                        .ignore(&["CACHE", "FUZZ_RUNS", "DEPTH", "FFI", "FS_PERMISSIONS"])
+                        .global()
+                        .legacy_labels(),
+                )
+                .merge(DappEnvCompatProvider)
+                .merge(EtherscanEnvProvider::default())
+                .merge(
+                    Env::prefixed("FOUNDRY_")
+                        .ignore(&["PROFILE", "REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
+                        // `FOUNDRY_CHAIN` is an alias, so `FOUNDRY_CHAIN_ID` takes precedence.
+                        .filter(|key| key != "CHAIN" || Env::var("FOUNDRY_CHAIN_ID").is_none())
+                        .map(|key| {
+                            let key = key.as_str();
+                            if Self::STANDALONE_SECTIONS.iter().any(|section| {
+                                key.starts_with(&format!("{}_", section.to_ascii_uppercase()))
+                            }) {
+                                key.replacen('_', ".", 1).into()
+                            } else if key.eq_ignore_ascii_case("CHAIN") {
+                                // `chain` is an alias of `chain_id`, so both must not reach serde.
+                                "CHAIN_ID".into()
+                            } else {
+                                key.into()
+                            }
+                        })
+                        .global()
+                        .legacy_labels(),
+                )
+                .select(profile.clone());
+        }
 
         // only resolve remappings if all providers are requested
         if providers.is_all() {
@@ -1490,18 +1505,12 @@ impl Config {
 
         for res in &self.compilation_restrictions {
             for source in sources.keys().filter(|path| {
-                if res.paths.is_match(path) {
-                    true
-                } else if let Ok(path) = path.strip_prefix(&paths.root) {
-                    res.paths.is_match(path)
-                } else {
-                    false
-                }
+                res.paths.is_match(path)
+                    || path.strip_prefix(&paths.root).is_ok_and(|path| res.paths.is_match(path))
             }) {
                 let res: RestrictionsWithVersion<_> =
                     res.clone().try_into().map_err(SolcError::msg)?;
-                if map.contains_key(source) {
-                    let value = map.remove(source.as_path()).unwrap();
+                if let Some(value) = map.remove(source.as_path()) {
                     if let Some(merged) = value.clone().merge(res) {
                         map.insert(source.clone(), merged);
                     } else {
@@ -1567,9 +1576,7 @@ impl Config {
         // already chose that, so the notice is not a project warning, including under `deny`. A
         // Solar pin counts before its first install, since the compiler is resolved after
         // this.
-        let solar_codes = (matches!(self.solc, Some(SolcReq::Solar(_)))
-            || self.solc_version().is_some_and(|version| version.build.as_str().contains("solar")))
-        .then_some(2264);
+        let solar_codes = self.is_solar().then_some(2264);
 
         let mut builder = ProjectBuilder::<C>::default()
             .artifacts(self.configured_artifacts_handler())
@@ -1899,6 +1906,13 @@ impl Config {
         solc.extra_args.push(format!("--threads={}", rayon::current_num_threads()));
     }
 
+    /// Returns whether the configured compiler is Solar, either a Solar pin or an executable that
+    /// reports a Solar version.
+    pub fn is_solar(&self) -> bool {
+        matches!(self.solc, Some(SolcReq::Solar(_)))
+            || self.solc_version().is_some_and(|version| version.build.as_str().contains("solar"))
+    }
+
     /// Returns the solc version, if any.
     pub fn solc_version(&self) -> Option<Version> {
         self.solc.as_ref().and_then(|solc| solc.try_version().ok())
@@ -2012,11 +2026,7 @@ impl Config {
     /// ```
     pub fn get_rpc_url(&self) -> Option<Result<Cow<'_, str>, UnresolvedEnvVarError>> {
         let maybe_alias = self.eth_rpc_url.as_deref()?;
-        if let Some(alias) = self.get_rpc_url_with_alias(maybe_alias) {
-            Some(alias)
-        } else {
-            Some(Ok(Cow::Borrowed(self.eth_rpc_url.as_deref()?)))
-        }
+        Some(self.get_rpc_url_with_alias(maybe_alias).unwrap_or(Ok(Cow::Borrowed(maybe_alias))))
     }
 
     /// Resolves the given alias to a matching rpc url
@@ -2047,9 +2057,8 @@ impl Config {
         &self,
         maybe_alias: &str,
     ) -> Option<Result<Cow<'_, str>, UnresolvedEnvVarError>> {
-        let mut endpoints = self.rpc_endpoints.clone().resolved();
-        if let Some(endpoint) = endpoints.remove(maybe_alias) {
-            return Some(endpoint.url().map(Cow::Owned));
+        if let Some(endpoint) = self.rpc_endpoints.get(maybe_alias) {
+            return Some(endpoint.clone().resolve().url().map(Cow::Owned));
         }
 
         if let Some(mesc_url) = self.get_rpc_url_from_mesc(maybe_alias) {
@@ -2608,8 +2617,7 @@ impl Config {
                 .libs
                 .iter()
                 .map(|path| {
-                    let path =
-                        if let Ok(relative) = path.strip_prefix(root) { relative } else { path };
+                    let path = path.strip_prefix(root).unwrap_or(path);
                     toml_edit::Value::from(&*path.to_string_lossy())
                 })
                 .collect();
@@ -2639,8 +2647,7 @@ impl Config {
         let standalone_sections = Self::STANDALONE_SECTIONS
             .iter()
             .filter_map(|section| {
-                let section = section.to_string();
-                value_table.remove(&section).map(|value| (section, value))
+                value_table.remove(*section).map(|value| (section.to_string(), value))
             })
             .collect::<Vec<_>>();
         // wrap inner table in [profile.<profile>]
@@ -2775,10 +2782,7 @@ impl Config {
     pub fn find_config_file() -> Option<PathBuf> {
         fn find(path: &Path) -> Option<PathBuf> {
             if path.is_absolute() {
-                return match path.is_file() {
-                    true => Some(path.to_path_buf()),
-                    false => None,
-                };
+                return path.is_file().then(|| path.to_path_buf());
             }
             let cwd = std::env::current_dir().ok()?;
             let mut cwd = cwd.as_path();
@@ -2967,11 +2971,12 @@ impl Config {
 
     fn get_cached_block(block: fs::DirEntry) -> eyre::Result<Option<(String, u64)>> {
         let file_name = block.file_name();
-        let Some(metadata) = Self::ignore_not_found(fs::symlink_metadata(block.path()))? else {
+        let path = block.path();
+        let Some(metadata) = Self::ignore_not_found(fs::symlink_metadata(&path))? else {
             return Ok(None);
         };
         let size = if metadata.is_dir() {
-            let Some(cache_files) = Self::ignore_not_found(block.path().read_dir())? else {
+            let Some(cache_files) = Self::ignore_not_found(path.read_dir())? else {
                 return Ok(None);
             };
             let mut size = 0;
@@ -3034,11 +3039,12 @@ impl Config {
     }
 
     fn get_cached_entry_size(entry: fs::DirEntry) -> eyre::Result<Option<u64>> {
-        let Some(metadata) = Self::ignore_not_found(fs::symlink_metadata(entry.path()))? else {
+        let path = entry.path();
+        let Some(metadata) = Self::ignore_not_found(fs::symlink_metadata(&path))? else {
             return Ok(None);
         };
         if metadata.is_dir() {
-            let Some(entries) = Self::ignore_not_found(fs::read_dir(entry.path()))? else {
+            let Some(entries) = Self::ignore_not_found(fs::read_dir(&path))? else {
                 return Ok(None);
             };
             Ok(Some(Self::get_cached_dir_size(entries)?))
@@ -3056,10 +3062,14 @@ impl Config {
         }
     }
 
+    /// Merges `toml_provider` for `profile` into `figment`.
+    ///
+    /// If `solc_env` is set, `FOUNDRY_SOLC_VERSION` and `DAPP_SOLC_VERSION` override its `solc`.
     fn merge_toml_provider(
         mut figment: Figment,
         toml_provider: impl Provider,
         profile: Profile,
+        solc_env: bool,
     ) -> Figment {
         figment = figment.select(profile.clone());
 
@@ -3076,7 +3086,8 @@ impl Config {
         }
         // Apply key fixes before selecting profiles, while standalone sections and profile names
         // are still distinguishable.
-        let provider = BackwardsCompatTomlProvider(ForcedSnakeCaseData(toml_provider));
+        let provider =
+            BackwardsCompatTomlProvider { provider: ForcedSnakeCaseData(toml_provider), solc_env };
         let provider = &provider.strict_select(profiles);
         // Config files must not move the project root. Only profile merges drop `root`, since
         // standalone sections may use it as a key, e.g. an `[rpc_endpoints]` alias.
@@ -3161,6 +3172,12 @@ pub enum FigmentProviders {
     ///
     /// This will exclude more expensive providers such as remappings.
     Anvil,
+    /// Only include the providers that describe a dependency's own configuration.
+    ///
+    /// This reads the `foundry.toml` in the dependency's root and the global `foundry.toml`. It
+    /// excludes remappings and environment variables other than `FOUNDRY_PROFILE`, including
+    /// `FOUNDRY_CONFIG`, since those configure the top-level project.
+    Dependency,
     /// Don't include any providers.
     None,
 }
@@ -3179,6 +3196,11 @@ impl FigmentProviders {
     /// Returns true if this is the anvil preset.
     pub const fn is_anvil(&self) -> bool {
         matches!(self, Self::Anvil)
+    }
+
+    /// Returns true if this is the dependency preset.
+    pub const fn is_dependency(&self) -> bool {
+        matches!(self, Self::Dependency)
     }
 
     /// Returns true if no providers should be included.
@@ -3265,11 +3287,9 @@ pub(crate) mod from_opt_glob {
     where
         D: Deserializer<'de>,
     {
-        let s: Option<String> = Option::deserialize(deserializer)?;
-        if let Some(s) = s {
-            return Ok(Some(globset::Glob::new(&s).map_err(serde::de::Error::custom)?));
-        }
-        Ok(None)
+        Option::<String>::deserialize(deserializer)?
+            .map(|s| globset::Glob::new(&s).map_err(serde::de::Error::custom))
+            .transpose()
     }
 }
 
@@ -3290,6 +3310,7 @@ pub fn parse_with_profile<T: serde::de::DeserializeOwned>(
         Figment::new(),
         Toml::string(s).nested(),
         Config::DEFAULT_PROFILE,
+        true,
     );
     if figment.profiles().any(|p| p == Config::DEFAULT_PROFILE) {
         Ok(Some((Config::DEFAULT_PROFILE, figment.select(Config::DEFAULT_PROFILE).extract()?)))
@@ -3306,7 +3327,7 @@ impl Provider for Config {
     #[track_caller]
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
         let mut data = Serialized::defaults(self).data()?;
-        let root = Value::serialize(self.root.clone())?;
+        let root = Value::serialize(&self.root)?;
         let labels = Value::serialize(&self.labels)?;
         if let Some(entry) = data.get_mut(&Self::DEFAULT_PROFILE) {
             entry.insert("root".to_string(), root.clone());
@@ -3430,6 +3451,8 @@ impl Default for Config {
                 SolidityErrorCode::TransientStorageUsed,
                 SolidityErrorCode::TransferDeprecated,
                 SolidityErrorCode::NatspecMemorySafeAssemblyDeprecated,
+                SolidityErrorCode::ContractExceeds65536Bytes,
+                SolidityErrorCode::ContractInitCodeSizeExceeds131072Bytes,
             ],
             ignored_error_codes_from: vec![],
             ignored_file_paths: vec![],
@@ -3509,7 +3532,7 @@ impl Serialize for GasLimit {
         if self.0 == u64::MAX {
             serializer.serialize_str("max")
         } else if self.0 > i64::MAX as u64 {
-            serializer.serialize_str(&self.0.to_string())
+            serializer.collect_str(&self.0)
         } else {
             serializer.serialize_u64(self.0)
         }
@@ -3663,10 +3686,11 @@ impl BasicConfig {
             document.insert("rpc_endpoints".to_string(), toml::Value::Table(endpoints));
         }
 
-        let body = toml::to_string_pretty(&toml::Value::Table(document))?;
-        Ok(format!(
-            "{body}\n# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options\n"
-        ))
+        let mut body = toml::to_string_pretty(&toml::Value::Table(document))?;
+        body.push_str(
+            "\n# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options\n",
+        );
+        Ok(body)
     }
 }
 
@@ -3918,6 +3942,55 @@ mod tests {
             assert!(Config::load().unwrap().fork_state_by_number);
             jail.set_env("FOUNDRY_FORK_STATE_BY_NUMBER", "invalid");
             assert!(Config::load().is_err());
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_chain_alias() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file("foundry.toml", "[profile.default]\nchain = 1\n")?;
+            let config = Config::load().unwrap();
+            assert_eq!(config.chain, Some(Chain::mainnet()));
+            assert_eq!(config.warnings, vec![]);
+
+            jail.create_file(
+                "foundry.toml",
+                "[profile.default]\nchain_id = 1\n\n[profile.ci]\nchain = 5\n",
+            )?;
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+            assert_eq!(Config::load().unwrap().chain, Some(Chain::goerli()));
+
+            jail.set_env("FOUNDRY_CHAIN", "10");
+            assert_eq!(Config::load().unwrap().chain, Some(Chain::optimism_mainnet()));
+            jail.set_env("FOUNDRY_CHAIN_ID", "137");
+            assert_eq!(Config::load().unwrap().chain, Some(Chain::from_id(137)));
+
+            jail.clear_env();
+            jail.set_env("foundry_chain", "10");
+            assert_eq!(Config::load().unwrap().chain, Some(Chain::optimism_mainnet()));
+
+            jail.clear_env();
+            jail.create_file("base.toml", "[profile.default]\nchain = 1\n")?;
+            jail.create_file(
+                "foundry.toml",
+                "[profile.default]\nextends = { path = \"base.toml\", strategy = \"no-collision\" }\nchain-id = 10\n",
+            )?;
+            assert!(Config::load().unwrap_err().to_string().contains("Key collision"));
+
+            jail.create_file("base.toml", "[profile.default]\nchain_id = 1\n")?;
+            jail.create_file(
+                "foundry.toml",
+                "[profile.default]\nextends = { path = \"base.toml\", strategy = \"replace-arrays\" }\nchain = 5\n",
+            )?;
+            assert_eq!(Config::load().unwrap().chain, Some(Chain::goerli()));
+
+            jail.create_file("base.toml", "[profile.default]\nchain = 1\n")?;
+            jail.create_file(
+                "foundry.toml",
+                "[profile.default]\nextends = { path = \"base.toml\", strategy = \"replace-arrays\" }\nchain-id = 10\n",
+            )?;
+            assert_eq!(Config::load().unwrap().chain, Some(Chain::optimism_mainnet()));
             Ok(())
         });
     }
@@ -7395,11 +7468,13 @@ mod tests {
                 Figment::from(Config::default()),
                 Toml::string(global).nested(),
                 Config::DEFAULT_PROFILE,
+                true,
             );
             Config::merge_toml_provider(
                 figment,
                 Toml::string(local).nested(),
                 Config::DEFAULT_PROFILE,
+                true,
             )
         };
 
@@ -7955,8 +8030,8 @@ mod tests {
                 err,
                 "failed to extract foundry config:\n\
                  foundry config error: Key collision detected in profile 'default' when extending \
-                 'base.toml'. Conflicting keys: [\"tracing\"]. Use 'extends.strategy' or \
-                 'extends_strategy' to specify how to handle conflicts.\n"
+                 'base.toml'. Conflicting keys: [\"tracing\"]. Remove them from one file, or set \
+                 `strategy` in `extends` to \"extend-arrays\" (the default) or \"replace-arrays\".\n"
             );
 
             Ok(())
@@ -9842,8 +9917,8 @@ mod tests {
             // Set a profile that doesn't exist in the lib
             jail.set_env("FOUNDRY_PROFILE", "ci");
 
-            // load_with_root_and_fallback should succeed and fall back to default
-            let config = Config::load_with_root_and_fallback(&lib_path)
+            // load_dependency_with_root should succeed and fall back to default
+            let config = Config::load_dependency_with_root(&lib_path)
                 .expect("lib config should load with fallback");
             assert_eq!(config.profile, Config::DEFAULT_PROFILE);
             assert_eq!(config.src.as_os_str(), "contracts");
@@ -9874,8 +9949,8 @@ mod tests {
             // Set a profile that exists in the lib
             jail.set_env("FOUNDRY_PROFILE", "ci");
 
-            // load_with_root_and_fallback should use the ci profile
-            let config = Config::load_with_root_and_fallback(&lib_path)
+            // load_dependency_with_root should use the ci profile
+            let config = Config::load_dependency_with_root(&lib_path)
                 .expect("lib config should load with profile");
             assert_eq!(config.profile.as_str(), "ci");
             assert_eq!(config.fuzz.runs, 5000);

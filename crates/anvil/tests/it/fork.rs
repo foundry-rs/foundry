@@ -26,7 +26,10 @@ use alloy_rpc_types::{
     request::{TransactionInput, TransactionRequest},
     state::EvmOverrides,
     trace::{
-        geth::{CallConfig, GethDebugTracingOptions, GethTrace, TraceResult},
+        geth::{
+            CallConfig, GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace,
+            TraceResult,
+        },
         parity::{Action, TraceResultsWithTransactionHash, TraceType},
     },
 };
@@ -54,8 +57,9 @@ use foundry_evm_networks::{NetworkConfigs, arbitrum};
 use foundry_primitives::{FoundryNetwork, FoundryReceiptEnvelope};
 use foundry_test_utils::rpc::{
     self, next_http_rpc_endpoint, next_rpc_endpoint, spawn_rpc_proxy_canned_method,
-    spawn_rpc_proxy_internal_error_after, spawn_rpc_proxy_method_not_found_before,
-    spawn_rpc_proxy_rejecting_method_after, spawn_rpc_proxy_rejecting_method_when_enabled,
+    spawn_rpc_proxy_internal_error_after, spawn_rpc_proxy_mapping_method,
+    spawn_rpc_proxy_method_not_found_before, spawn_rpc_proxy_rejecting_method_after,
+    spawn_rpc_proxy_rejecting_method_when_enabled,
     spawn_rpc_proxy_retyping_first_block_transaction,
 };
 use futures::{
@@ -675,6 +679,10 @@ async fn test_fork_transaction_hash_replay_preserves_cancun_header_inputs() {
     origin_api.evm_set_next_block_timestamp(source_timestamp).unwrap();
     let coinbase = Address::random();
     origin_api.anvil_set_coinbase(coinbase).await.unwrap();
+    let gas_limit = 12_345_678u64;
+    origin_api.evm_set_block_gas_limit(U256::from(gas_limit)).unwrap();
+    let prevrandao = B256::repeat_byte(0x42);
+    origin_api.anvil_set_next_block_prevrandao(prevrandao).await.unwrap();
 
     let first = origin_provider
         .send_transaction(WithOtherFields::new(
@@ -727,6 +735,10 @@ async fn test_fork_transaction_hash_replay_preserves_cancun_header_inputs() {
     assert_eq!(replayed.header.timestamp, source.header.timestamp);
     assert_eq!(replayed.header.parent_beacon_block_root, source.header.parent_beacon_block_root);
     assert_eq!(replayed.header.beneficiary, source.header.beneficiary);
+    assert_eq!(source.header.gas_limit, gas_limit);
+    assert_eq!(source.header.mix_hash, Some(prevrandao));
+    assert_eq!(replayed.header.gas_limit, source.header.gas_limit);
+    assert_eq!(replayed.header.mix_hash, source.header.mix_hash);
     let fork_provider = fork_handle.http_provider();
     assert_eq!(fork_provider.get_balance(coinbase).await.unwrap(), coinbase_balance);
 
@@ -734,6 +746,12 @@ async fn test_fork_transaction_hash_replay_preserves_cancun_header_inputs() {
     let next = fork_api.block_by_number_full(BlockNumberOrTag::Number(2)).await.unwrap().unwrap();
     assert!(next.header.timestamp > source.header.timestamp);
     assert_eq!(next.header.beneficiary, Address::ZERO);
+    assert_ne!(next.header.gas_limit, gas_limit);
+    fork_api.anvil_rollback(Some(1)).await.unwrap();
+    fork_api.mine_one().await.unwrap();
+    let remined =
+        fork_api.block_by_number_full(BlockNumberOrTag::Number(2)).await.unwrap().unwrap();
+    assert_eq!(remined.header.gas_limit, next.header.gas_limit);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -996,6 +1014,143 @@ async fn test_fork_transaction_hash_replay_applies_source_beacon_root() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_scroll_fork_transaction_hash_replay_skips_beacon_root() {
+    // Scroll's l2geth applies EIP-2935 but never EIP-4788, and its headers carry no beacon root.
+    // Canonical Ethereum headers that lack the root must still fail the replay.
+    const HISTORY_BUFFER_LENGTH: u64 = 8191;
+    let timestamp = EthereumHardfork::Prague.mainnet_activation_timestamp().unwrap() + 100;
+    for chain in [NamedChain::Scroll, NamedChain::Mainnet] {
+        let (origin_api, origin) = spawn(
+            NodeConfig::test()
+                .with_chain_id(Some(chain as u64))
+                .with_hardfork(Some(EthereumHardfork::Prague.into()))
+                .with_genesis_timestamp(Some(timestamp - 100)),
+        )
+        .await;
+        origin_api.anvil_set_auto_mine(false).await.unwrap();
+        origin_api.evm_set_next_block_timestamp(timestamp).unwrap();
+        let sender = origin.dev_wallets().next().unwrap().address();
+        let provider = origin.http_provider();
+        // Stores whether `BEACON_ROOTS.get(block.timestamp)` succeeds in slot 0.
+        let reader = sender.create(0);
+        let deploy = provider
+            .send_transaction(WithOtherFields::new(
+                TransactionRequest::default().from(sender).with_deploy_code(bytes!(
+                    "602780600b6000396000f34260005260206000602060007300\
+                     0f3df6d732807ef1319fb7b8bb8522d0beac025afa60005500"
+                )),
+            ))
+            .await
+            .unwrap();
+        let deploy_hash = *deploy.tx_hash();
+        let target = provider
+            .send_transaction(WithOtherFields::new(
+                TransactionRequest::default().from(sender).to(reader).gas_limit(100_000),
+            ))
+            .await
+            .unwrap();
+        let target_hash = *target.tx_hash();
+        origin_api.mine_one().await.unwrap();
+        let genesis_hash = origin_api
+            .block_by_number(BlockNumberOrTag::Number(0))
+            .await
+            .unwrap()
+            .unwrap()
+            .header
+            .hash;
+        let mut fork_url = origin.http_endpoint();
+        for method in ["eth_getBlockByHash", "eth_getBlockByNumber"] {
+            fork_url = spawn_rpc_proxy_mapping_method(fork_url, method, |_, mut block| {
+                if let Some(block) = block.as_object_mut() {
+                    block.remove("parentBeaconBlockRoot");
+                }
+                block
+            })
+            .await;
+        }
+        let fork_url = spawn_rpc_proxy_rejecting_method_after(fork_url, "anvil_nodeInfo", 0).await;
+
+        let config = NodeConfig::test()
+            .with_eth_rpc_url(Some(fork_url))
+            .with_fork_transaction_hash(Some(target_hash))
+            .with_hardfork(Some(EthereumHardfork::Prague.into()))
+            .with_no_storage_caching(true)
+            .with_no_mining(true);
+        if chain == NamedChain::Mainnet {
+            let Err(error) = try_spawn(config).await else {
+                panic!("expected missing beacon root to fail the Ethereum replay")
+            };
+            assert!(format!("{error:?}").contains("missing parent beacon block root"), "{error:?}");
+            continue;
+        }
+
+        let (fork_api, fork) = spawn(config).await;
+        let replayed =
+            fork_api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
+        assert_eq!(
+            replayed
+                .transactions
+                .as_transactions()
+                .unwrap()
+                .iter()
+                .map(|tx| tx.tx_hash())
+                .collect::<Vec<_>>(),
+            [deploy_hash, target_hash]
+        );
+        // Neither the replay nor a later trace of it may call EIP-4788, so the lookup reverts.
+        assert_eq!(fork_api.storage_at(reader, U256::ZERO, None).await.unwrap(), B256::ZERO);
+        let trace = fork
+            .http_provider()
+            .debug_trace_transaction(
+                target_hash,
+                GethDebugTracingOptions::call_tracer(CallConfig::default()),
+            )
+            .await
+            .unwrap()
+            .try_into_call_frame()
+            .unwrap();
+        assert_eq!(trace.calls[0].error.as_deref(), Some("execution reverted"));
+        // The origin has the EIP-4788 contract, so a beacon-root call would store the timestamp.
+        let beacon_slot = U256::from(timestamp % HISTORY_BUFFER_LENGTH);
+        let stored_timestamp = fork_api
+            .storage_at(
+                alloy_eips::eip4788::BEACON_ROOTS_ADDRESS,
+                beacon_slot,
+                Some(BlockId::number(1)),
+            )
+            .await
+            .unwrap();
+        assert_eq!(stored_timestamp, B256::ZERO);
+        let stored_parent_hash = fork_api
+            .storage_at(
+                alloy_eips::eip2935::HISTORY_STORAGE_ADDRESS,
+                U256::ZERO,
+                Some(BlockId::number(1)),
+            )
+            .await
+            .unwrap();
+        assert_eq!(stored_parent_hash, genesis_hash);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_rollback_restores_ordinary_block_gas_limit() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+    api.mine_one().await.unwrap();
+    let first = api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
+
+    api.evm_set_block_gas_limit(U256::from(12_345_678u64)).unwrap();
+    api.mine_one().await.unwrap();
+    api.anvil_rollback(Some(1)).await.unwrap();
+    api.mine_one().await.unwrap();
+
+    let remined = api.block_by_number_full(BlockNumberOrTag::Number(2)).await.unwrap().unwrap();
+    assert_eq!(remined.header.gas_limit, first.header.gas_limit);
+    assert_ne!(remined.header.gas_limit, 12_345_678);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_fork_transaction_hash_replay_error_fails_startup() {
     let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
     let origin_provider = origin_handle.http_provider();
@@ -1012,7 +1167,7 @@ async fn test_fork_transaction_hash_replay_error_fails_startup() {
     let config = NodeConfig::test()
         .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
         .with_fork_transaction_hash(Some(transaction_hash))
-        .with_gas_limit(Some(20_000));
+        .with_base_fee(Some(1_000_000_000_000u64));
     let cache_path = config.block_cache_path(0).unwrap();
     match std::fs::remove_file(&cache_path) {
         Ok(()) => {}
@@ -4089,6 +4244,81 @@ async fn test_arbitrum_forks_accept_nitro_headers_without_blob_fields() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_scroll_forks_accept_l2geth_headers_without_blob_fields() {
+    // Scroll's l2geth omits Ethereum's EIP-4844 header fields and has no known hardfork schedule,
+    // so Anvil executes the fork with its default post-Cancun spec. Hide Anvil metadata so these
+    // deterministic local origins have the same observable shape as public RPCs.
+    for chain in [NamedChain::Scroll, NamedChain::ScrollSepolia] {
+        let target = Address::random();
+        let (origin_api, origin) = spawn(
+            NodeConfig::test()
+                .with_chain_id(Some(chain as u64))
+                .with_hardfork(Some(EthereumHardfork::Prague.into())),
+        )
+        .await;
+        origin_api.anvil_set_code(target, bytes!("600060005260206000f3")).await.unwrap();
+        let fork_url =
+            spawn_rpc_proxy_with_blob_header_fields(origin.http_endpoint(), None, None).await;
+        let fork_url = spawn_rpc_proxy_rejecting_method_after(fork_url, "anvil_nodeInfo", 0).await;
+
+        let (api, handle) = spawn(
+            NodeConfig::test()
+                .with_no_storage_caching(true)
+                .with_eth_rpc_url(Some(fork_url))
+                .with_fork_block_number(Some(0u64)),
+        )
+        .await;
+        let provider = handle.http_provider();
+
+        assert!(api.backend.spec_id() >= SpecId::CANCUN);
+        assert_eq!(
+            api.backend
+                .evm_env()
+                .read()
+                .block_env
+                .blob_excess_gas_and_price
+                .as_ref()
+                .map(|blob| blob.excess_blob_gas),
+            Some(0),
+            "{chain}"
+        );
+        let request = TransactionRequest { to: Some(TxKind::Call(target)), ..Default::default() };
+        assert_eq!(
+            provider.call(request.clone().into()).block(BlockId::latest()).await.unwrap(),
+            Bytes::from(vec![0; 32]),
+            "{chain}"
+        );
+        let trace = provider
+            .debug_trace_call(
+                request.clone().into(),
+                BlockId::latest(),
+                GethDebugTracingCallOptions::default(),
+            )
+            .await
+            .unwrap();
+        let GethTrace::Default(frame) = trace else { panic!("expected default trace") };
+        assert!(!frame.failed, "{chain}");
+        assert_eq!(frame.return_value, Bytes::from(vec![0; 32]), "{chain}");
+
+        // A header that reports blob usage but drops only `excessBlobGas` is not l2geth's shape,
+        // so it must not get the zero fallback.
+        let partial_url =
+            spawn_rpc_proxy_with_blob_header_fields(origin.http_endpoint(), Some(0x12_0000), None)
+                .await;
+        let partial_url =
+            spawn_rpc_proxy_rejecting_method_after(partial_url, "anvil_nodeInfo", 0).await;
+        api.anvil_reset(Some(Forking { json_rpc_url: Some(partial_url), block_number: Some(0) }))
+            .await
+            .unwrap();
+        assert!(api.backend.evm_env().read().block_env.blob_excess_gas_and_price.is_none());
+        let err = provider.call(request.into()).block(BlockId::latest()).await.unwrap_err();
+        let err = err.as_error_resp().unwrap();
+        assert_eq!(err.code, -32602, "{chain}");
+        assert_eq!(err.message, "Excess blob gas not set.", "{chain}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_polygon_fork_missing_blob_fields_is_chain_scoped_across_reset() {
     // Polygon's Bor headers omit the EIP-4844 fields even though Anvil executes the fork with a
     // post-Cancun spec. Local origins provide deterministic state while the proxies reproduce that
@@ -5821,5 +6051,49 @@ async fn test_fork_dump_keeps_fetched_state_after_rollback_and_revert() {
             U256::from(7),
             "revert: {revert}"
         );
+    }
+}
+
+// `debug_getRawHeader` and `debug_getRawBlock` must serve pre-fork blocks from the upstream.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_debug_get_raw_header_and_block_pre_fork() {
+    let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let origin = origin_handle.http_provider();
+    let from = origin_handle.dev_accounts().next().unwrap();
+    origin
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(from).to(Address::random()).value(U256::from(1)),
+        ))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    origin_api.mine_one().await.unwrap();
+
+    let (_fork_api, fork_handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+    let fork = fork_handle.http_provider();
+
+    // Block 2 is the fork block and block 1 predates it; neither is stored by the fork.
+    let fork_block = BlockId::number(2);
+    let latest = BlockId::latest();
+    let pre_fork_hash = origin.get_block(BlockId::number(1)).await.unwrap().unwrap().header.hash;
+    for method in ["debug_getRawHeader", "debug_getRawBlock"] {
+        for (origin_id, fork_id) in [
+            (fork_block, fork_block),
+            (fork_block, latest),
+            (BlockId::number(1), BlockId::number(1)),
+            (BlockId::number(1), BlockId::hash(pre_fork_hash)),
+        ] {
+            let expected: Bytes = origin.client().request(method, (origin_id,)).await.unwrap();
+            let raw: Bytes = fork.client().request(method, (fork_id,)).await.unwrap();
+            assert_eq!(raw, expected, "{method} {fork_id}");
+        }
+
+        // A block past the head is not found, as it is without a fork.
+        let err =
+            fork.client().request::<_, Bytes>(method, (BlockId::number(3),)).await.unwrap_err();
+        assert_eq!(err.as_error_resp().unwrap().code, -32001, "{method}");
     }
 }

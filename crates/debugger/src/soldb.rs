@@ -213,7 +213,7 @@ fn transaction_trace(
                         .frames
                         .iter()
                         .zip(&*nodes)
-                        .all(|(frame, node)| frame.depth == node.trace.depth),
+                        .all(|(frame, node)| frame.depth == usize::from(node.trace.depth)),
                 "the recorded steps do not match the call trace"
             );
             builder.visit_recorded(nodes, 0, None, &recording.frames, offset);
@@ -293,10 +293,9 @@ impl TraceBuilder {
                     if next_step < steps.len() {
                         let (done, rest) = steps.split_at_mut(next_step + 1);
                         let step = &mut done[next_step];
-                        if self.breakpoints.contains_key(&(address, step.pc))
-                            && !hits.contains(&step.pc)
-                        {
-                            hits.push(step.pc);
+                        let pc = step.pc as usize;
+                        if self.breakpoints.contains_key(&(address, pc)) && !hits.contains(&pc) {
+                            hits.push(pc);
                         }
                         self.push_step(step, rest.first(), depth);
                         // Free the converted snapshots now, not when the frame ends.
@@ -488,7 +487,7 @@ impl TraceBuilder {
         let storage = self.converter.storage(step.op.get(), stack, loaded, had_value);
         // The converter spells out the buffer of the first step and of every change, including
         // to an empty one; `None` keeps the previous step's.
-        let return_data = self.converter.return_data(&step.returndata);
+        let return_data = self.converter.return_data(step.returndata());
         self.steps.append(
             StepRecord {
                 pc: step.pc as u64,
@@ -954,28 +953,24 @@ mod tests {
     use super::*;
     use alloy_primitives::U256;
     use foundry_compilers::artifacts::sourcemap;
-    use foundry_evm_traces::CallKind;
+    use foundry_evm_traces::{CallKind, CallTraceStepExtra};
     use soldb_ethdebug::SourceMapEnvironment;
 
     /// A step as debug mode records it: the full stack, without pushes.
-    fn step(pc: usize, op: OpCode, stack: &[u64]) -> CallTraceStep {
+    fn step(pc: u32, op: OpCode, stack: &[u64]) -> CallTraceStep {
         CallTraceStep {
             pc,
             op,
             stack: Some(stack.iter().map(|word| U256::from(*word)).collect()),
             push_stack: None,
             memory: None,
-            returndata: Bytes::new(),
             gas_remaining: 0,
             gas_refund_counter: 0,
             gas_cost: 0,
-            state_gas_cost: None,
             state_gas_reservoir: None,
-            state_gas_spent: 0,
             storage_change: None,
             status: (op == OpCode::STOP).then_some(InstrStop::Stop),
-            immediate_bytes: None,
-            decoded: None,
+            extra: None,
         }
     }
 
@@ -1225,7 +1220,11 @@ mod tests {
         let store = step(0, OpCode::TSTORE, &[42, 7]);
         let load = step(1, OpCode::TLOAD, &[7]);
         let mut stop = step(2, OpCode::STOP, &[42]);
-        stop.returndata = Bytes::from_static(&[0xab, 0xcd]);
+        stop.extra = CallTraceStepExtra {
+            returndata: Bytes::from_static(&[0xab, 0xcd]),
+            ..Default::default()
+        }
+        .boxed();
         builder.push_step(&store, Some(&load), 1);
         builder.push_step(&load, Some(&stop), 1);
         builder.push_step(&stop, None, 1);

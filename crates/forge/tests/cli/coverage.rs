@@ -1672,6 +1672,218 @@ contract AContractTest is DSTest {
 "#]]);
 }
 
+// https://github.com/foundry-rs/foundry/issues/18629
+#[forgetest]
+fn codeless_if_arm_with_checked_condition_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Checks.sol",
+        r#"
+contract Checks {
+    enum Status { NONE, OPEN }
+
+    uint256 public r;
+
+    function round() external view returns (uint256) {
+        return r;
+    }
+
+    function index(uint256[] memory a) external pure returns (uint256 sum) {
+        for (uint256 i = 0; i < a.length; i++) {
+            if (a[i] == 0) continue;
+            sum += a[i];
+        }
+    }
+
+    function enumCheck(Status[] memory s) external pure returns (uint256 open) {
+        if (s[0] != Status.OPEN) return open;
+        open = 1;
+    }
+
+    function externalCall() external {
+        if (Checks(address(this)).round() == 0) return;
+        r = 1;
+    }
+
+    function indexThenRevert(uint256[] memory a) external pure {
+        if (a[0] == 0) return;
+        revert();
+    }
+
+    function breakThenRevert(uint256[] memory a, uint256 key) external pure returns (uint256) {
+        for (uint256 i; i < a.length; ++i) {
+            if (a[i] == 0) break;
+            if (a[i] == key) return i;
+        }
+        revert();
+    }
+
+    function breakInIfThenRevert(uint256[] memory a) external {
+        if (a.length == 3) {
+            for (uint256 i; i < a.length; ++i) {
+                if (a[i] == 0) break;
+                r += a[i];
+            }
+            revert();
+        }
+        r = this.round();
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Checks.t.sol",
+        r#"
+import "../src/Checks.sol";
+contract ChecksTest {
+    function testArms() public {
+        Checks checks = new Checks();
+        uint256[] memory a = new uint256[](3);
+        a[1] = 1;
+        checks.index(a);
+        Checks.Status[] memory s = new Checks.Status[](1);
+        checks.enumCheck(s);
+        s[0] = Checks.Status.OPEN;
+        checks.enumCheck(s);
+        checks.externalCall();
+        checks.indexThenRevert(a);
+        try checks.breakThenRevert(a, 1) {} catch {}
+        try checks.breakInIfThenRevert(a) {} catch {}
+    }
+}
+"#,
+    );
+    // The bounds, enum, and call checks in each condition jump around their failure with solc
+    // and to a shared panic block with solar, so the codeless arms count from the edge of the
+    // `if`'s own jump.
+    let solar = prj.ensure_foundry_bin("solar");
+    let report = str![[r#"
+TN:
+SF:src/Checks.sol
+DA:9,1
+FN:9,Checks.round
+FNDA:1,Checks.round
+DA:10,1
+DA:13,1
+FN:13,Checks.index
+FNDA:1,Checks.index
+DA:14,4
+DA:15,3
+BRDA:15,0,0,2
+DA:16,1
+DA:20,2
+FN:20,Checks.enumCheck
+FNDA:2,Checks.enumCheck
+DA:21,2
+BRDA:21,1,0,1
+DA:22,1
+DA:25,1
+FN:25,Checks.externalCall
+FNDA:1,Checks.externalCall
+DA:26,1
+BRDA:26,2,0,1
+DA:27,0
+DA:30,1
+FN:30,Checks.indexThenRevert
+FNDA:1,Checks.indexThenRevert
+DA:31,1
+BRDA:31,3,0,1
+DA:32,0
+DA:35,1
+FN:35,Checks.breakThenRevert
+FNDA:1,Checks.breakThenRevert
+DA:36,1
+DA:37,1
+BRDA:37,4,0,1
+DA:38,0
+BRDA:38,5,0,-
+DA:40,1
+DA:43,1
+FN:43,Checks.breakInIfThenRevert
+FNDA:1,Checks.breakInIfThenRevert
+DA:44,1
+BRDA:44,6,0,1
+DA:45,1
+DA:46,1
+BRDA:46,7,0,1
+DA:47,0
+DA:49,1
+DA:51,0
+FNF:7
+FNH:7
+LF:27
+LH:22
+BRF:8
+BRH:7
+end_of_record
+
+"#]];
+    assert_lcov(cmd.arg("coverage"), report);
+    assert_lcov(
+        cmd.forge_fuse().arg("coverage").arg("--use").arg(solar),
+        str![[r#"
+TN:
+SF:src/Checks.sol
+DA:9,1
+FN:9,Checks.round
+FNDA:1,Checks.round
+DA:10,1
+DA:13,1
+FN:13,Checks.index
+FNDA:1,Checks.index
+DA:14,4
+DA:15,3
+BRDA:15,0,0,2
+DA:16,1
+DA:20,2
+FN:20,Checks.enumCheck
+FNDA:2,Checks.enumCheck
+DA:21,2
+BRDA:21,1,0,1
+DA:22,0
+DA:25,1
+FN:25,Checks.externalCall
+FNDA:1,Checks.externalCall
+DA:26,1
+BRDA:26,2,0,1
+DA:27,0
+DA:30,1
+FN:30,Checks.indexThenRevert
+FNDA:1,Checks.indexThenRevert
+DA:31,1
+BRDA:31,3,0,1
+DA:32,0
+DA:35,1
+FN:35,Checks.breakThenRevert
+FNDA:1,Checks.breakThenRevert
+DA:36,1
+DA:37,1
+BRDA:37,4,0,1
+DA:38,0
+BRDA:38,5,0,-
+DA:40,1
+DA:43,1
+FN:43,Checks.breakInIfThenRevert
+FNDA:1,Checks.breakInIfThenRevert
+DA:44,1
+BRDA:44,6,0,1
+DA:45,1
+DA:46,1
+BRDA:46,7,0,1
+DA:47,0
+DA:49,0
+DA:51,0
+FNF:7
+FNH:7
+LF:27
+LH:20
+BRF:8
+BRH:7
+end_of_record
+
+"#]],
+    );
+}
+
 // https://github.com/foundry-rs/foundry/issues/8604
 #[forgetest]
 fn branch_with_calldata_reads(prj: _, cmd: _) {
@@ -2449,8 +2661,10 @@ BRDA:18,4,0,16
     let optimized = ["coverage", "--no-isolate", "--keep-optimizer", "--optimize"];
     assert_lcov(cmd.arg("coverage").arg("--no-isolate"), expected.clone());
     assert_lcov(cmd.forge_fuse().args(optimized), expected.clone());
+    // Optimized Solar elides the final enum comparison and its source mapping, which Solar
+    // treats as best-effort: https://github.com/paradigmxyz/solar/issues/2758
     let solar = prj.ensure_foundry_bin("solar");
-    assert_lcov(cmd.forge_fuse().args(optimized).arg("--use").arg(&solar), expected);
+    assert_lcov(cmd.forge_fuse().args(["coverage", "--no-isolate", "--use"]).arg(&solar), expected);
 }
 
 #[forgetest]
@@ -3041,6 +3255,61 @@ contract AContract {
 | Total             | 0.00% (0/5) | 0.00% (0/4)  | N/A (0/0)  | 0.00% (0/1) |
 ╰-------------------+-------------+--------------+------------+-------------╯
 
+"#]]);
+}
+
+// Solar compiles any enabled optimizer with `-Ogas` or `-Osize`, which folds away the always-true
+// `x == x` condition. `--ir-minimum` has no effect with Solar, so coverage stays unoptimized.
+#[forgetest]
+fn ir_minimum_ignored_with_solar(prj: _, cmd: _) {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    uint256 public y;
+
+    function f(uint256 x) public {
+        if (x == x) {
+            y = 2;
+        }
+    }
+}
+    "#,
+    );
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import "./AContract.sol";
+
+contract AContractTest is DSTest {
+    function test_f() public {
+        new AContract().f(1);
+    }
+}
+    "#,
+    );
+
+    let solar = prj.ensure_foundry_bin("solar");
+    cmd.args(["coverage", "--ir-minimum", "--optimize", "--use"])
+        .arg(&solar)
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+╭-------------------+---------------+---------------+---------------+---------------╮
+| File              | % Lines       | % Statements  | % Branches    | % Funcs       |
++===================================================================================+
+| src/AContract.sol | 100.00% (3/3) | 100.00% (2/2) | 100.00% (1/1) | 100.00% (1/1) |
+|-------------------+---------------+---------------+---------------+---------------|
+| Total             | 100.00% (3/3) | 100.00% (2/2) | 100.00% (1/1) | 100.00% (1/1) |
+╰-------------------+---------------+---------------+---------------+---------------╯
+
+"#]])
+        .stderr_eq(str![[r#"
+...
+Warning: `--ir-minimum` has no effect with Solar, so coverage runs unoptimized.
+...
 "#]]);
 }
 

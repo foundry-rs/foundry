@@ -123,6 +123,7 @@ const RESERVED_KEYS: &[&str] = &["extends"];
 /// Network flags are legacy aliases for canonical `network = "..."` values. They remain accepted
 /// when the corresponding network support is compiled, but are no longer serialized.
 const BACKWARD_COMPATIBLE_KEYS: &[&str] = &[
+    "chain",
     "solc_version",
     "tempo",
     "optimism",

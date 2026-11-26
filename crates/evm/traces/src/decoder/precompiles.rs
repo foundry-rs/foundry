@@ -512,11 +512,7 @@ pub(crate) fn is_known_precompile(
         None => TEMPO_PRECOMPILE_ADDRESSES.contains(&address),
     };
     let is_tempo_context = networks.map_or_else(
-        || {
-            chain_id
-                .map(|id| Chain::from_id(id).is_tempo())
-                .unwrap_or_else(|| tempo_hardfork.is_some())
-        },
+        || chain_id.map_or_else(|| tempo_hardfork.is_some(), |id| Chain::from_id(id).is_tempo()),
         |networks| networks.is_tempo(),
     );
     if is_tempo_context && (is_tempo_precompile || TEMPO_TIP20_TOKENS.contains(&address)) {

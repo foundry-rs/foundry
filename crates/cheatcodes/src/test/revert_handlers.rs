@@ -287,6 +287,7 @@ pub fn expect_revert_mismatch(
     partial_match: bool,
     reverter: Option<Address>,
     reverted_by: Option<Address>,
+    status: InstrStop,
     retdata: &Bytes,
     known_contracts: &Option<ContractsByArtifact>,
 ) -> Option<Error> {
@@ -311,15 +312,7 @@ pub fn expect_revert_mismatch(
     }
 
     let expected = Expected { reason, partial_match, reverter };
-    handle_revert(
-        false,
-        &expected,
-        InstrStop::Revert,
-        retdata,
-        known_contracts,
-        reverted_by.as_ref(),
-    )
-    .err()
+    handle_revert(false, &expected, status, retdata, known_contracts, reverted_by.as_ref()).err()
 }
 
 fn stringify(data: &[u8]) -> String {
