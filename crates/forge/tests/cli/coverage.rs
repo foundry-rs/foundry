@@ -3112,8 +3112,10 @@ BRDA:10,0,0,-
     assert_lcov(cmd.forge_fuse().args(optimized).arg("--use").arg(&solar), expected);
 }
 
-// The run of an inlined function is entered once per call only when the function always runs its
-// body. A modifier that runs `_` only sometimes makes the body run less often than the arm.
+// A modifier's condition holds a placeholder that runs the body of the function that applies it,
+// so the placeholder's arm counts the runs of the body and the implicit false branch the calls
+// that skip it. A call of that function counts the calls, not the runs of the body, which the
+// modifier gates.
 #[forgetest]
 fn if_arm_calling_function_with_conditional_modifier_lcov(prj: _, cmd: _) {
     prj.add_source(
@@ -3121,11 +3123,9 @@ fn if_arm_calling_function_with_conditional_modifier_lcov(prj: _, cmd: _) {
         r#"
 contract Gate {
     uint256 public total;
-    modifier gate(bool allowed) { while (allowed) { _; break; } }
+    modifier gate(bool allowed) { if (allowed) { _; } }
     function bump(bool allowed) internal gate(allowed) { total += 1; }
-    function run(bool allowed) external {
-        if (true) { bump(allowed); }
-    }
+    function run(bool allowed) external { if (true) { bump(allowed); } }
 }
 "#,
     );
@@ -3146,39 +3146,36 @@ contract GateTest {
     );
 
     let optimized = ["coverage", "--no-isolate", "--keep-optimizer", "--optimize"];
-    // The arm is entered three times. Solc legacy counts them from its jump. Where the arm has no
-    // jump, the body runs once for the three calls, so the arm is left without hits.
-    assert_lcov(
-        cmd.args(optimized),
-        str![[r#"
+    // Solc legacy counts the call from its jump and Solar from the modifier's code. Via-IR leaves
+    // the call without a count.
+    let counted = str![[r#"
 ...
-BRDA:9,0,0,3
+BRDA:6,0,0,1
+BRDA:6,0,1,2
 ...
-"#]],
-    );
+BRDA:8,1,0,3
+BRDA:8,1,1,0
+...
+"#]];
+    assert_lcov(cmd.args(optimized), counted.clone());
     prj.update_config(|config| config.via_ir = true);
     assert_lcov(
         cmd.forge_fuse().args(optimized),
         str![[r#"
 ...
-BRDA:9,0,0,-
+BRDA:6,0,0,1
+BRDA:6,0,1,2
+...
+BRDA:8,1,0,-
+BRDA:8,1,1,-
 ...
 "#]],
     );
     prj.update_config(|config| config.via_ir = false);
     let solar = prj.ensure_foundry_bin("solar");
-    assert_lcov(
-        cmd.forge_fuse().args(optimized).arg("--use").arg(&solar),
-        str![[r#"
-...
-BRDA:9,0,0,-
-...
-"#]],
-    );
+    assert_lcov(cmd.forge_fuse().args(optimized).arg("--use").arg(&solar), counted);
 }
 
-// An operator that a `using` directive binds to a function runs it from every use of the operator,
-// so a dead arm that calls the function by name must not take the hits of those uses.
 #[forgetest]
 fn if_arm_calling_operator_function_lcov(prj: _, cmd: _) {
     prj.add_source(
@@ -5387,6 +5384,110 @@ BRDA:19,2,1,2
     prj.update_config(|config| config.via_ir = false);
     let solar = prj.ensure_foundry_bin("solar");
     assert_lcov(cmd.forge_fuse().args(modes).arg("--use").arg(&solar), expected);
+}
+
+// A modifier's placeholder arm counts the runs of the body of the function that applies the
+// modifier, but only when the code says which side of the condition runs it. Bodies that equal
+// another's and a loop that the body starts with must not change a count, and a modifier or a call
+// that nothing runs reports no hits.
+#[forgetest]
+fn modifier_placeholder_arm_counts_only_runs_of_its_body_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Modifiers.sol",
+        r#"
+contract Equal {
+    uint256 t;
+    modifier m(bool a) { if (a) { _; } }
+    modifier n(bool a) { if (!a) { _; } }
+    function f(bool a) external m(a) { t += 1; }
+    function g(bool a) external n(a) { t += 1; }
+}
+
+contract Loop {
+    uint256 t;
+    modifier m(bool a) { if (a) { _; } }
+    function f(bool a, uint256 n) external m(a) { while (n > 0) { n--; t++; } }
+}
+
+contract Dead {
+    uint256 t;
+    modifier m(bool a) { if (a) { _; } }
+    function bump(bool a) internal m(a) { t += 1; }
+    function never(bool a) internal { if (true) { bump(a); } }
+    function live() external { t += 1; }
+}
+
+contract Called {
+    uint256 t;
+    modifier m(bool a) { if (a) { _; } }
+    function bump(bool a) internal m(a) { t += 1; }
+    function never(bool a) internal { if (true) { bump(a); } }
+    function run(bool a) external { bump(a); }
+}
+"#,
+    );
+    prj.add_test(
+        "Modifiers.t.sol",
+        r#"
+import "../src/Modifiers.sol";
+
+contract ModifiersTest {
+    function testRun() public {
+        Equal equal = new Equal();
+        equal.f(true);
+        equal.f(false);
+        equal.g(true);
+        equal.g(false);
+        equal.g(false);
+        equal.g(false);
+        Loop loop = new Loop();
+        loop.f(true, 3);
+        loop.f(false, 3);
+        loop.f(false, 3);
+        Dead dead = new Dead();
+        dead.live();
+        Called called = new Called();
+        called.run(true);
+        called.run(false);
+    }
+}
+"#,
+    );
+
+    // The modifier of `Equal.f` runs the body once and skips it once, and the modifier of
+    // `Equal.g` skips it three times and runs it once. The modifier of `Loop` runs a body that
+    // starts with a loop once and skips it twice. The modifier of `Dead` and the calls in the
+    // `never` functions never run, and `Called` runs its modifier twice.
+    let expected = str![[r#"
+...
+BRDA:6,0,0,1
+BRDA:6,0,1,1
+...
+BRDA:7,1,0,3
+BRDA:7,1,1,1
+...
+BRDA:14,2,0,1
+BRDA:14,2,1,2
+...
+BRDA:20,3,0,-
+BRDA:20,3,1,-
+...
+BRDA:22,4,0,-
+BRDA:22,4,1,-
+...
+BRDA:28,5,0,1
+BRDA:28,5,1,1
+...
+BRDA:30,6,0,-
+BRDA:30,6,1,-
+...
+"#]];
+    assert_lcov(cmd.arg("coverage"), expected.clone());
+    prj.update_config(|config| config.via_ir = true);
+    assert_lcov(cmd.forge_fuse().arg("coverage"), expected.clone());
+    prj.update_config(|config| config.via_ir = false);
+    let solar = prj.ensure_foundry_bin("solar");
+    assert_lcov(cmd.forge_fuse().arg("coverage").arg("--use").arg(&solar), expected);
 }
 
 // A body that starts with a loop runs its head once per iteration, so the implicit false branch
