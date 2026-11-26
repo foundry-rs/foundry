@@ -17,10 +17,7 @@ use eyre::Result;
 use foundry_common::{sh_eprintln, sh_warn};
 use foundry_config::FuzzConfig;
 use foundry_evm_core::{
-    Breakpoints,
-    constants::MAGIC_ASSUME,
-    decode::{RevertDecoder, SkipReason},
-    evm::FoundryEvmNetwork,
+    Breakpoints, constants::MAGIC_ASSUME, decode::RevertDecoder, evm::FoundryEvmNetwork,
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::{
@@ -812,6 +809,8 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             let failed_worker = &mut workers[failed_worker_idx];
 
             let counterexample = failed_worker.counterexample.take();
+            // Only classify magic skip payloads minted by the skip cheatcode.
+            let skip_reason = counterexample.as_ref().and_then(|(_, call)| call.skip_reason());
             shown_case =
                 counterexample.as_ref().map(|(tx, _)| (tx.clone(), failed_worker.failure_run));
             if let Some((_, call)) = &counterexample {
@@ -849,6 +848,10 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                 }
                 None => {}
             }
+            if let Some(reason) = skip_reason {
+                result.skipped = true;
+                result.reason = reason.0;
+            }
         } else {
             let last_run_worker = &workers[last_run_worker_idx];
             result.success = true;
@@ -881,13 +884,6 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         // The cases are in worker order.
         if let Some(&(gas, stipend)) = result.gas_by_case.first() {
             result.first_case = FuzzCase { gas, stipend };
-        }
-
-        if let Some(reason) = &result.reason
-            && let Some(reason) = SkipReason::decode_self(reason)
-        {
-            result.skipped = true;
-            result.reason = reason.0;
         }
 
         (result, shown_case, campaign_failure)
@@ -1191,12 +1187,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                         }
                         worker.failure_run = fuzz_run;
 
-                        // Only classify magic skip payloads minted by the skip cheatcode.
-                        let reason = outcome
-                            .1
-                            .skip_reason()
-                            .map(|reason| reason.to_string())
-                            .or_else(|| rd.maybe_decode(&outcome.1.result, status));
+                        let reason = rd.maybe_decode(&outcome.1.result, status);
                         if self.config.show_logs {
                             worker.logs.extend(outcome.1.logs.clone());
                         } else {

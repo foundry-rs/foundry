@@ -31,13 +31,6 @@ impl SkipReason {
             Self((!reason.is_empty()).then_some(reason))
         })
     }
-
-    /// Decodes a skip reason from a string that was obtained by formatting `Self`.
-    ///
-    /// This is a hack to support re-decoding a skip reason in proptest.
-    pub fn decode_self(s: &str) -> Option<Self> {
-        s.strip_prefix("skipped").map(|rest| Self(rest.strip_prefix(": ").map(ToString::to_string)))
-    }
 }
 
 impl fmt::Display for SkipReason {
@@ -291,15 +284,6 @@ mod tests {
             "756688fe00000000000000000000000000000000000000000000000000000000"
         );
         assert_eq!(decoder.decode(data, None), "ValidationFailed(0x756688fe)");
-    }
-
-    #[test]
-    fn maybe_decode_magic_skip_is_not_skip_marker() {
-        let decoder = RevertDecoder::new();
-        let reason = decoder.maybe_decode(crate::constants::MAGIC_SKIP, None).unwrap();
-
-        assert_eq!(reason, "FOUNDRY::SKIP");
-        assert!(SkipReason::decode_self(&reason).is_none());
     }
 
     #[test]
