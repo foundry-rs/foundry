@@ -1135,6 +1135,25 @@ fn curl_call(cmd: _) {
     assert!(output.contains("curl -X POST"));
     assert!(output.contains("eth_call"));
     assert!(output.contains(rpc));
+
+    // State and block overrides are forwarded as the third and fourth `eth_call` params.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            to,
+            "--rpc-url",
+            rpc,
+            "--override-state",
+            &format!("{to}:0x0:0x1234"),
+            "--block.number",
+            "1234",
+            "--curl",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+curl -X POST -H 'Content-Type: application/json' --data-raw '{"jsonrpc":"2.0","method":"eth_call","params":[{"to":"0xdead000000000000000000000000000000000000","data":"0x"},"latest",{"0xdead000000000000000000000000000000000000":{"state":{"0x0000000000000000000000000000000000000000000000000000000000000000":"0x0000000000000000000000000000000000000000000000000000000000001234"}}},{"number":"0x4d2"}],"id":1}' 'https://eth.example.com'
+
+"#]]);
 }
 
 #[casttest]
