@@ -9138,14 +9138,18 @@ contract SymbolicWeightedAverage {
 }
 
 // OpenZeppelin's `VestingWallet` (MIT) vests `total * (t - start) / duration` once
-// `start <= t < start + duration`, so the elapsed time stays at most the duration.
+// `start <= t < start + duration`, so the elapsed time stays at most the duration. A stream with an
+// end time bounds `t - start` by `end - start` the same way.
 #[forgetest_init]
 fn symbolic_proves_vesting_schedule_bounded(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_vesting_schedule_bounded");
     prj.add_test(
         "SymbolicVestingSchedule.t.sol",
         r#"
+import {Vm} from "forge-std/Vm.sol";
+
 contract SymbolicVestingSchedule {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
     uint64 private _start;
     uint64 private _duration;
 
@@ -9206,6 +9210,58 @@ contract SymbolicVestingSchedule {
             assert(uint256(t) - s <= type(uint64).max);
         }
     }
+
+    // A Sablier- or LlamaPay-style stream unlocks `deposit * (t - start) / (end - start)` by `end`.
+    function checkStreamedBelowDeposit(uint128 deposit, uint40 start, uint40 end, uint40 t)
+        public
+        pure
+    {
+        if (end <= start || t < start || t > end) return;
+        assert(uint256(deposit) * (t - start) / (end - start) <= deposit);
+    }
+
+    function checkStreamedPastEnd(uint128 deposit, uint40 start, uint40 end, uint40 t)
+        public
+        pure
+    {
+        if (end <= start || t < start) return;
+        assert(uint256(deposit) * (t - start) / (end - start) <= deposit);
+    }
+
+    function checkStreamedBeforeStart(uint128 deposit, uint40 start, uint40 end, uint40 t)
+        public
+        pure
+    {
+        if (end <= start || t > end) return;
+        unchecked {
+            assert(uint256(deposit) * (uint256(t) - start) / (end - start) <= deposit);
+        }
+    }
+
+    function checkStreamedOtherStart(
+        uint128 deposit,
+        uint40 start,
+        uint40 other,
+        uint40 end,
+        uint40 t
+    ) public pure {
+        if (end <= other || t < start || t > end) return;
+        assert(uint256(deposit) * (t - start) / (end - other) <= deposit);
+    }
+
+    // An empty stream, `start == end`, releases nothing, as EVM `div` by zero is zero. Solidity
+    // comparisons reach the solver as `<` or its negation; `vm.assertLe` adds a plain `<=`, which
+    // must not count as strict.
+    function checkEmptyStreamReleased(uint128 deposit, uint40 start, uint40 end) public pure {
+        if (end < start) return;
+        vm.assertLe(start, end);
+        uint256 duration = end - start;
+        uint256 streamed;
+        assembly {
+            streamed := div(mul(deposit, duration), duration)
+        }
+        assert(streamed == deposit);
+    }
 }
 "#,
     );
@@ -9222,15 +9278,26 @@ contract SymbolicVestingSchedule {
         for signature in [
             "checkVestedBelowAllocation(uint64,uint64,uint128,uint64)",
             "checkVestedBelowWideAllocation(uint64,uint64,uint256,uint64)",
+            "checkStreamedBelowDeposit(uint128,uint40,uint40,uint40)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
         }
+        let result =
+            json_test_result(&output, "checkStreamedBelowDeposit(uint128,uint40,uint40,uint40)");
+        assert_eq!(
+            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+            "optimized={optimized}: {result}"
+        );
 
         for signature in [
             "checkVestedPastLongerEnd(uint64,uint32,uint128,uint64)",
             "checkElapsedBeforeStart(uint256,uint256,uint64,uint256)",
             "checkElapsedAgainstOrder(uint64,uint64)",
+            "checkStreamedPastEnd(uint128,uint40,uint40,uint40)",
+            "checkStreamedBeforeStart(uint128,uint40,uint40,uint40)",
+            "checkStreamedOtherStart(uint128,uint40,uint40,uint40,uint40)",
+            "checkEmptyStreamReleased(uint128,uint40,uint40)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(
