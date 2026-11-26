@@ -12207,6 +12207,24 @@ async fn script_json_rpc_failure_codes_fork(prj: _, cmd: _) {
             .is_jsonlines(),
         );
 
+    // The endpoint answers with receipts that do not parse.
+    let malformed =
+        spawn_rpc_proxy_mapping_method(anvil.clone(), "eth_getTransactionReceipt", |_, receipt| {
+            if receipt.is_null() { receipt } else { "not a receipt".into() }
+        })
+        .await;
+    script("BroadcastsTwice", &["--fork-url", &malformed, "--broadcast", "--start-fresh"])
+        .stdout_eq(
+            str![[r#"
+{"success":true,"...":"{...}"}
+{"chain":31337,"...":"{...}"}
+{"status":"success","transactions":"[..]/broadcast/Failures.s.sol/31337/run-latest.json","sensitive":"[..]/cache/Failures.s.sol/31337/run-latest.json"}
+{"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"rpc.error","message":"{...}","details":{}}],"warnings":[]}
+
+"#]]
+            .is_jsonlines(),
+        );
+
     // One transaction reverted on chain and the other's receipt failed. Sending the transactions
     // again would not help, so the failure is not coded as an RPC failure.
     let reverted = Arc::new(std::sync::Mutex::new(None::<Value>));

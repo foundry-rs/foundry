@@ -614,8 +614,14 @@ pub fn rpc_failure(error: &(dyn std::error::Error + 'static)) -> Option<RpcFailu
     }
     let code = json_rpc_error_code(error);
     let status = error.as_transport_err().and_then(|error| error.as_http_error()).map(|e| e.status);
-    let answered =
-        code.is_some() || matches!(error, TransportError::ErrorResp(_) | TransportError::NullResp);
+    // A response that does not parse is still an answer.
+    let answered = code.is_some()
+        || matches!(
+            error,
+            TransportError::ErrorResp(_)
+                | TransportError::NullResp
+                | TransportError::DeserError { .. }
+        );
     Some(RpcFailure { answered, code, status })
 }
 
@@ -761,6 +767,12 @@ mod tests {
             (failure.kind(), failure.code, failure.status),
             ("rpc.error", Some(-32005), Some(429))
         );
+        // The endpoint answered with a body that does not parse.
+        let error: TransportError = TransportError::DeserError {
+            err: serde_json::from_str::<u64>("x").unwrap_err(),
+            text: "<html>".into(),
+        };
+        assert_eq!(rpc_failure(&error).unwrap().kind(), "rpc.error");
     }
 
     #[test]
