@@ -26,6 +26,10 @@ library Lib {
         d.v = x;
     }
 
+    function invoke(D storage d, function(uint256) external returns (uint256) cb, uint256 x) public {
+        d.v = cb(x);
+    }
+
     function plain(uint256 x) public pure returns (uint256) {
         return x + 1;
     }
@@ -72,8 +76,13 @@ contract User {
     Lib.D d;
     Store.Outer o;
 
+    function cb(uint256 x) external pure returns (uint256) {
+        return x + 1;
+    }
+
     function run() external returns (uint256) {
         Lib.set(d, 5);
+        Lib.invoke(d, this.cb, 3);
         o.inner.v = 2;
         o.inner.next[0].v = 1;
         Store.h(o);

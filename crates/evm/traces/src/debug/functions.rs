@@ -280,8 +280,9 @@ fn resolve_type<'gcx>(gcx: Gcx<'gcx>, ty: Ty<'gcx>) -> ResolvedType {
 }
 
 /// The name that the signature of a library function spells for a type: enums, structs and
-/// contracts by their qualified name, user-defined value types as their underlying type, and
-/// storage pointers with `storage`. `depth` stops what contains itself.
+/// contracts by their qualified name, user-defined value types as their underlying type,
+/// external function types as `function`, and storage pointers with `storage`. `depth` stops what
+/// contains itself.
 fn library_name<'gcx>(gcx: Gcx<'gcx>, ty: Ty<'gcx>, depth: usize) -> Option<String> {
     if depth > 8 {
         return None;
@@ -306,6 +307,7 @@ fn library_name<'gcx>(gcx: Gcx<'gcx>, ty: Ty<'gcx>, depth: usize) -> Option<Stri
             library_name(gcx, key, depth + 1)?,
             library_name(gcx, value, depth + 1)?
         ),
+        TyKind::Fn(function) if function.is_external() => "function".to_string(),
         _ => return None,
     })
 }
@@ -798,6 +800,7 @@ library L {
     function c(S memory s) public pure {}
     function d(S[] memory s, K[2] memory k) public pure {}
     function e(S storage s, Signed x) public {}
+    function f(S storage s, function(uint256) external returns (uint256) cb, uint256 x) public {}
 }
 ";
         let resolved = compiler(source, true).enter(|compiler| {
@@ -819,5 +822,6 @@ library L {
         assert_eq!(signature("c"), ["L.S"]);
         assert_eq!(signature("d"), ["L.S[]", "L.K[2]"]);
         assert_eq!(signature("e"), ["L.S storage", "int256"]);
+        assert_eq!(signature("f"), ["L.S storage", "function", "uint256"]);
     }
 }
