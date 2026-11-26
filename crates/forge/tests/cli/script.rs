@@ -11875,6 +11875,381 @@ contract SimpleScript {
     );
 }
 
+const JSON_FAILURE_SCRIPT: &str = r#"
+interface Vm {
+    function createSelectFork(string calldata url) external returns (uint256);
+    function envString(string calldata name) external view returns (string memory);
+    function getRawBlockHeader(uint256 blockNumber) external view returns (bytes memory);
+    function rpc(string calldata method, string calldata params) external returns (bytes memory);
+    function startBroadcast(uint256 privateKey) external;
+    function transact(bytes32 txHash) external;
+}
+
+abstract contract Base {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+}
+
+contract Reverts is Base {
+    function run() external pure {
+        revert("insufficient balance");
+    }
+}
+
+contract Succeeds is Base {
+    function run() external {}
+}
+
+contract RevertsInConstructor is Base {
+    error BadConfig(uint256 code);
+
+    constructor() {
+        revert BadConfig(7);
+    }
+
+    function run() external {}
+}
+
+contract Halts is Base {
+    function run() external pure {
+        assembly { invalid() }
+    }
+}
+
+contract CatchesForkFailure is Base {
+    function run() external {
+        try vm.createSelectFork(vm.envString("FORK_URL")) {} catch {
+            revert("gave up");
+        }
+    }
+}
+
+contract CreatesFork is Base {
+    function run() external {
+        vm.createSelectFork(vm.envString("FORK_URL"));
+    }
+}
+
+contract TransactsUnknown is Base {
+    function run() external {
+        vm.transact(bytes32(uint256(1)));
+    }
+}
+
+contract ReadsMissingHeader is Base {
+    function run() external view {
+        vm.getRawBlockHeader(999999);
+    }
+}
+
+contract ReadsForkStorage is Base {
+    function run() external view returns (bytes memory out) {
+        (, out) = address(0xc0De1).staticcall("");
+    }
+}
+
+contract CallsRpc is Base {
+    function run() external {
+        vm.rpc("eth_blockNumber", "[]");
+    }
+}
+
+contract RethrowsFirstRpcFailure is Base {
+    function run() external {
+        bytes memory first;
+        try vm.rpc("eth_blockNumber", "[]") {} catch (bytes memory err) {
+            first = err;
+        }
+        try vm.createSelectFork(vm.envString("FORK_URL")) {} catch {}
+        assembly { revert(add(first, 32), mload(first)) }
+    }
+}
+
+contract Broadcasts is Base {
+    function run() external {
+        vm.startBroadcast(0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80);
+        payable(address(0xdead)).transfer(1);
+    }
+}
+
+contract BroadcastsTwice is Base {
+    function run() external {
+        vm.startBroadcast(0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80);
+        payable(address(0xdead)).transfer(1);
+        payable(address(0xbeef)).transfer(1);
+    }
+}
+"#;
+
+// With `--json`, a failure ends stdout with an envelope whose code tells reverts and config
+// failures apart, while stderr is unchanged.
+#[forgetest]
+async fn script_json_failure_codes(prj: _, cmd: _) {
+    prj.add_script("Failures.s.sol", JSON_FAILURE_SCRIPT);
+
+    cmd.args(["script", "Reverts", "--json"]).assert_failure().stdout_eq(
+        str![[r#"
+{"success":false,"...":"{...}"}
+{"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"script.revert","message":"script failed: insufficient balance","details":{"data":"0x08c379a000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000014696e73756666696369656e742062616c616e6365000000000000000000000000","reason":"insufficient balance"}}],"warnings":[]}
+
+"#]]
+        .is_jsonlines(),
+    );
+
+    cmd.forge_fuse().args(["script", "Halts", "--json"]).assert_failure().stdout_eq(
+        str![[r#"
+{"success":false,"...":"{...}"}
+{"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"script.error","message":"script failed: EvmError: InvalidFEOpcode"}],"warnings":[]}
+
+"#]]
+        .is_jsonlines(),
+    );
+
+    // A constructor revert is decoded with the script's ABI.
+    cmd.forge_fuse().args(["script", "RevertsInConstructor", "--json"]).assert_failure().stdout_eq(
+        str![[r#"
+{"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"script.revert","message":"Failed to deploy script:\nexecution reverted: custom error 0x0dad7c22: 0000000000000000000000000000000000000000000000000000000000000007 ([GAS])","details":{"data":"0x0dad7c220000000000000000000000000000000000000000000000000000000000000007","reason":"BadConfig(7)"}}],"warnings":[]}
+
+"#]]
+        .is_jsonlines(),
+    );
+
+    // Setting up the compiler fails.
+    cmd.forge_fuse()
+        .args(["script", "Succeeds", "--use", "0.8.999", "--offline", "--json"])
+        .assert_failure()
+        .stdout_eq(
+            str![[r#"
+{"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"compiler.error","message":"can't install missing solc 0.8.999 in offline mode"}],"warnings":[]}
+
+"#]]
+            .is_jsonlines(),
+        );
+
+    // `cast wallet session` fails before it runs the inner `forge script`, so the outer one
+    // reports the failure.
+    prj.ensure_foundry_bin("cast");
+    cmd.forge_fuse()
+        .args(["script", "Succeeds", "--broadcast", "--session", "--json"])
+        .assert_failure()
+        .stdout_eq(
+            str![[r#"
+{"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"script.error","message":"forge script wallet session exited with code 1"}],"warnings":[]}
+
+"#]]
+            .is_jsonlines(),
+        );
+
+    fs::write(
+        prj.root().join("foundry.toml"),
+        "[profile.default]\neth_rpc_url = \"mainnet\"\n[rpc_endpoints]\nmainnet = \"https://x/${MISSING_RPC_KEY}\"\n",
+    )
+    .unwrap();
+    cmd.forge_fuse()
+        .args(["script", "Succeeds", "--json"])
+        .assert_failure()
+        .stdout_eq(
+            str![[r#"
+{"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"config.error","message":"environment variable `MISSING_RPC_KEY` not found; environment variable not found"}],"warnings":[]}
+
+"#]]
+            .is_jsonlines(),
+        )
+        .stderr_eq(str![[r#"
+Error: environment variable `MISSING_RPC_KEY` not found
+
+Context:
+- environment variable not found
+
+"#]]);
+    cmd.forge_fuse()
+        .args(["script", "Succeeds", "--broadcast", "--session", "--json"])
+        .assert_failure()
+        .stdout_eq(
+            str![[r#"
+{"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"config.error","message":"environment variable `MISSING_RPC_KEY` not found; environment variable not found"}],"warnings":[]}
+
+"#]]
+            .is_jsonlines(),
+        );
+}
+
+// With `--json`, an RPC failure is coded `rpc.error` when the endpoint answered with an error and
+// `rpc.transport` when it did not answer, including inside cheatcodes and when broadcasting.
+#[forgetest]
+async fn script_json_rpc_failure_codes_fork(prj: _, cmd: _) {
+    prj.add_script("Failures.s.sol", JSON_FAILURE_SCRIPT);
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let anvil = handle.http_endpoint();
+
+    // A port that refuses connections.
+    let closed = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        format!("http://{}", listener.local_addr().unwrap())
+    };
+    // An endpoint that answers `method` with a JSON-RPC error and forwards the rest to anvil.
+    let failing = async |method, message| {
+        rpc::spawn_rpc_proxy_method_error(anvil.clone(), method, -32000, message).await
+    };
+    // The fork cheatcode in `CatchesForkFailure` connects to `FORK_URL`.
+    let mut script = |target: &str, args: &[&str]| {
+        cmd.forge_fuse().args(["script", target, "--json"]).args(args);
+        cmd.env("FORK_URL", &closed);
+        cmd.assert_failure()
+    };
+
+    script("Succeeds", &["--fork-url", &closed]).stdout_eq(
+        str![[r#"
+{"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"rpc.transport","message":"{...}","details":{}}],"warnings":[]}
+
+"#]]
+        .is_jsonlines(),
+    );
+
+    script("CreatesFork", &[]).stdout_eq(
+        str![[r#"
+{"success":false,"...":"{...}"}
+{"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"rpc.transport","message":"{...}","details":{"data":"{...}","reason":"{...}"}}],"warnings":[]}
+
+"#]]
+        .is_jsonlines(),
+    );
+
+    // The endpoint has no block at the fork's start yet.
+    script("Succeeds", &["--fork-url", &anvil, "--fork-block-number", "999999", "--skip-simulation"])
+        .stdout_eq(
+            str![[r#"
+{"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"rpc.error","message":"{...}","details":{}}],"warnings":[]}
+
+"#]]
+            .is_jsonlines(),
+        );
+
+    // The endpoint answers that it has no such transaction.
+    script("TransactsUnknown", &["--fork-url", &anvil]).stdout_eq(
+        str![[r#"
+{"success":false,"...":"{...}"}
+{"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"rpc.error","message":"{...}","details":{"data":"{...}","reason":"{...}"}}],"warnings":[]}
+
+"#]]
+        .is_jsonlines(),
+    );
+
+    // The endpoint answers that it has no such block header.
+    script("ReadsMissingHeader", &["--fork-url", &anvil]).stdout_eq(
+        str![[r#"
+{"success":false,"...":"{...}"}
+{"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"rpc.error","message":"script failed: vm.getRawBlockHeader: block 999999 not found","details":{"data":"{...}","reason":"vm.getRawBlockHeader: block 999999 not found"}}],"warnings":[]}
+
+"#]]
+        .is_jsonlines(),
+    );
+
+    // Execution reads storage the endpoint fails to return. The retry layer retries this error and
+    // then wraps it, so the code comes from the innermost error.
+    api.anvil_set_code(
+        address!("0x00000000000000000000000000000000000c0de1"),
+        bytes!("60005460005260206000f3"),
+    )
+    .await
+    .unwrap();
+    let storage_error = failing("eth_getStorageAt", "header not found").await;
+    script("ReadsForkStorage", &["--fork-url", &storage_error]).stdout_eq(
+        str![[r#"
+{"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"rpc.error","message":"{...}","details":{"code":-32000}}],"warnings":[]}
+
+"#]]
+        .is_jsonlines(),
+    );
+
+    let block_number_error = failing("eth_blockNumber", "rejected").await;
+    script("CallsRpc", &["--fork-url", &block_number_error]).stdout_eq(
+        str![[r#"
+{"success":false,"...":"{...}"}
+{"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"rpc.error","message":"{...}","details":{"code":-32000,"data":"{...}","reason":"{...}"}}],"warnings":[]}
+
+"#]]
+        .is_jsonlines(),
+    );
+
+    // A script that catches an RPC failure and rethrows it after another one reports the first.
+    script("RethrowsFirstRpcFailure", &["--fork-url", &block_number_error]).stdout_eq(
+        str![[r#"
+{"success":false,"...":"{...}"}
+{"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"rpc.error","message":"{...}","details":{"code":-32000,"data":"{...}","reason":"{...}"}}],"warnings":[]}
+
+"#]]
+        .is_jsonlines(),
+    );
+
+    let send_error = failing("eth_sendRawTransaction", "rejected").await;
+    script("Broadcasts", &["--fork-url", &send_error, "--broadcast"]).stdout_eq(
+        str![[r#"
+{"success":true,"...":"{...}"}
+{"chain":31337,"...":"{...}"}
+{"status":"success","transactions":"[..]/broadcast/Failures.s.sol/31337/run-latest.json","sensitive":"[..]/cache/Failures.s.sol/31337/run-latest.json"}
+{"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"rpc.error","message":"Failed to send transaction after 4 attempts Err(server returned an error response: error code -32000: rejected)","details":{"code":-32000}}],"warnings":[]}
+
+"#]]
+        .is_jsonlines(),
+    );
+
+    // The endpoint fails to return the receipt of a transaction it still knows.
+    let receipt_error = failing("eth_getTransactionReceipt", "receipt unavailable").await;
+    script("Broadcasts", &["--fork-url", &receipt_error, "--broadcast", "--start-fresh"])
+        .stdout_eq(
+            str![[r#"
+{"success":true,"...":"{...}"}
+{"chain":31337,"...":"{...}"}
+{"status":"success","transactions":"[..]/broadcast/Failures.s.sol/31337/run-latest.json","sensitive":"[..]/cache/Failures.s.sol/31337/run-latest.json"}
+{"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"rpc.error","message":"{...}","details":{"code":-32000}}],"warnings":[]}
+
+"#]]
+            .is_jsonlines(),
+        );
+
+    // One transaction reverted on chain and the other's receipt failed. Sending the transactions
+    // again would not help, so the failure is not coded as an RPC failure.
+    let reverted = Arc::new(std::sync::Mutex::new(None::<Value>));
+    let mixed = spawn_rpc_proxy_mapping_method(
+        anvil.clone(),
+        "eth_getTransactionReceipt",
+        move |params, mut receipt| {
+            if receipt.is_null() {
+                return receipt;
+            }
+            let mut reverted = reverted.lock().unwrap();
+            if *reverted.get_or_insert_with(|| params[0].clone()) == params[0] {
+                receipt["status"] = "0x0".into();
+                receipt
+            } else {
+                "not a receipt".into()
+            }
+        },
+    )
+    .await;
+    script("BroadcastsTwice", &["--fork-url", &mixed, "--broadcast", "--start-fresh"]).stdout_eq(
+        str![[r#"
+{"success":true,"...":"{...}"}
+{"chain":31337,"...":"{...}"}
+{"chain":"anvil-hardhat","status":"failed","...":"{...}"}
+{"status":"success","transactions":"[..]/broadcast/Failures.s.sol/31337/run-latest.json","sensitive":"[..]/cache/Failures.s.sol/31337/run-latest.json"}
+{"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"script.error","message":"{...}"}],"warnings":[]}
+
+"#]]
+        .is_jsonlines(),
+    );
+
+    // A script that catches the failure and reverts on its own reports its revert.
+    script("CatchesForkFailure", &[]).stdout_eq(
+        str![[r#"
+{"success":false,"...":"{...}"}
+{"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"script.revert","message":"script failed: gave up","details":{"data":"0x08c379a0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000076761766520757000000000000000000000000000000000000000000000000000","reason":"gave up"}}],"warnings":[]}
+
+"#]]
+        .is_jsonlines(),
+    );
+}
+
 // `--no-compile` runs a script from cached artifacts, and fails instead of compiling when a source
 // changed.
 #[forgetest]
@@ -12060,4 +12435,30 @@ If you wish to simulate on-chain transactions pass a RPC URL.
 
 "#
     ]]);
+}
+
+// Tests that the default-sender script contract receives `initial_balance` during construction.
+#[forgetest]
+fn script_default_sender_initial_balance(prj: _, cmd: _) {
+    let script = prj.add_source(
+        "Foo",
+        r#"
+contract Demo {
+    constructor() {
+        require(address(this).balance == 0xFFFFFFFFFFFFFFFFFFFFFFFF, "wrong balance");
+    }
+
+    function run() external {}
+}
+"#,
+    );
+
+    cmd.arg("script").arg(script).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+[GAS]
+
+"#]]);
 }

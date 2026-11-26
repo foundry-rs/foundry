@@ -182,15 +182,22 @@ pub fn print_result(
 }
 
 fn is_partial_match(
-    mut local_bytecode: &[u8],
-    mut bytecode: &[u8],
+    local_bytecode: &[u8],
+    bytecode: &[u8],
     constructor_args: &[u8],
     is_runtime: bool,
 ) -> bool {
-    // 1. Check length of constructor args
-    if constructor_args.is_empty() || is_runtime {
+    if is_runtime {
         // Assume metadata is at the end of the bytecode
         return try_extract_and_compare_bytecode(local_bytecode, bytecode);
+    }
+
+    // A legitimate creation match has the same length: Solidity init code embeds the runtime
+    // size and the offset it reads constructor args from, and Vyper's footer length depends only
+    // on the code and the compiler version. A longer onchain metadata region could otherwise
+    // hide words the constructor decodes in front of the supplied args.
+    if local_bytecode.len() != bytecode.len() {
+        return false;
     }
 
     // The constructor args are part of what is being verified: the onchain creation code must
@@ -200,18 +207,9 @@ fn is_partial_match(
         return false;
     }
 
-    // If not runtime, extract constructor args from the end of the bytecode.
-    // The args come from the caller, so neither buffer is known to be that long.
-    let (Some(bytecode_head), Some(local_head)) = (
-        bytecode.len().checked_sub(constructor_args.len()).map(|n| &bytecode[..n]),
-        local_bytecode.len().checked_sub(constructor_args.len()).map(|n| &local_bytecode[..n]),
-    ) else {
-        return false;
-    };
-    bytecode = bytecode_head;
-    local_bytecode = local_head;
-
-    try_extract_and_compare_bytecode(local_bytecode, bytecode)
+    // Both buffers are at least as long as the args after the checks above.
+    let code_len = bytecode.len() - constructor_args.len();
+    try_extract_and_compare_bytecode(&local_bytecode[..code_len], &bytecode[..code_len])
 }
 
 fn try_extract_and_compare_bytecode(mut local_bytecode: &[u8], mut bytecode: &[u8]) -> bool {
@@ -919,5 +917,63 @@ contract Broken {
 
         // Matching onchain args must not allow stripping past the local buffer.
         assert_eq!(match_bytecodes(&local, &args, &args, false, BytecodeHash::Ipfs), None);
+    }
+
+    /// Onchain creation code must not declare a longer metadata region than the local code,
+    /// which would hide words its constructor reads as arguments.
+    #[test]
+    fn creation_metadata_region_must_not_hide_constructor_args() {
+        // Copies the word at 0x45, right after the metadata below, into storage slot 0.
+        let init = alloy_primitives::hex!("602060456000396000516000555f5ff3");
+        let metadata = alloy_primitives::hex!(
+            "a2646970667358221220"
+            "1111111111111111111111111111111111111111111111111111111111111111"
+            "64736f6c634300081e0033"
+        );
+        assert_eq!(init.len() + metadata.len(), 0x45);
+        let owner = [0xa1u8; 32];
+        // Its last two bytes declare a metadata region that starts at the real metadata.
+        let hidden = U256::from(metadata.len() + 30).to_be_bytes::<32>();
+
+        let local = [init.as_slice(), &metadata, &owner].concat();
+        let onchain = [init.as_slice(), &metadata, &hidden, &owner].concat();
+        assert_eq!(match_bytecodes(&local, &onchain, &owner, false, BytecodeHash::Ipfs), None);
+
+        let local = [init.as_slice(), &metadata].concat();
+        let onchain = [init.as_slice(), &metadata, &hidden].concat();
+        assert_eq!(match_bytecodes(&local, &onchain, &[], false, BytecodeHash::Ipfs), None);
+
+        // Metadata that differs only in its hash still matches partially.
+        let mut other = metadata;
+        other[10] = 0x22;
+        let local = [init.as_slice(), &metadata, &owner].concat();
+        let onchain = [init.as_slice(), &other, &owner].concat();
+        assert_eq!(
+            match_bytecodes(&local, &onchain, &owner, false, BytecodeHash::Ipfs),
+            Some(VerificationType::Partial)
+        );
+    }
+
+    /// Runtime code has no arguments after its metadata, so metadata of a different length
+    /// still matches partially.
+    #[test]
+    fn runtime_metadata_of_different_length_matches_partially() {
+        let code = alloy_primitives::hex!("6080604052348015600e575f5ffd5b50");
+        let ipfs = alloy_primitives::hex!(
+            "a2646970667358221220"
+            "1111111111111111111111111111111111111111111111111111111111111111"
+            "64736f6c634300081e0033"
+        );
+        let bzzr1 = alloy_primitives::hex!(
+            "a265627a7a72315820"
+            "2222222222222222222222222222222222222222222222222222222222222222"
+            "64736f6c63430005100032"
+        );
+        let local = [code.as_slice(), &ipfs].concat();
+        let onchain = [code.as_slice(), &bzzr1].concat();
+        assert_eq!(
+            match_bytecodes(&local, &onchain, &[], true, BytecodeHash::Ipfs),
+            Some(VerificationType::Partial)
+        );
     }
 }

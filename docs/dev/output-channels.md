@@ -167,7 +167,23 @@ Each row's status is one of:
 | ------------- | --------------------------------------------- | --------------------- | ------ |
 | `anvil`       | Banner, accounts, RPC URL on stderr           | n/a                   | todo   |
 | `chisel`      | REPL output                                   | n/a                   | todo   |
-| `forge script`| Simulation/broadcast result                   | JSON                  | todo   |
+| `forge script`| Simulation/broadcast result                   | JSON Lines; a failure ends with a failure envelope | todo   |
+
+When `forge script --json` fails, its last stdout line is a `JsonEnvelope` with
+`success: false` and one error, whose `code` is:
+
+| Code             | Failure                                                         | `details`                                             |
+| ---------------- | --------------------------------------------------------------- | ----------------------------------------------------- |
+| `script.revert`  | the script's constructor, `setUp`, or `run` reverted            | `data` (raw revert data), `reason` (decoded)          |
+| `rpc.error`      | an RPC endpoint answered with an error, or without a block that must exist | `code` (JSON-RPC code) and `status` (HTTP), when known |
+| `rpc.transport`  | an RPC request got no answer: connection failure, timeout, or an HTTP error without a JSON-RPC error | `status` (HTTP), when known |
+| `compiler.error` | the compiler could not be set up, or compilation failed         | none                                                  |
+| `config.error`   | the configuration could not be loaded                           | none                                                  |
+| `script.error`   | any other failure, such as an invalid opcode or out-of-gas halt  | none                                                  |
+
+The `rpc.*` codes also apply when a cheatcode, such as `vm.createSelectFork`,
+made the failed request and the failure caused the revert; they then also
+include the revert's `data` and `reason`.
 
 Commands not listed here have not been classified yet — please open an issue or
 PR before relying on their stdout format.

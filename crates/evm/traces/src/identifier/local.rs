@@ -159,15 +159,7 @@ impl<'a> LocalTraceIdentifier<'a> {
     /// Returns the index of the artifact with the given code length, or the index of the first
     /// artifact with a greater code length if the exact code length is not found.
     fn find_index(&self, len: usize) -> usize {
-        let (Ok(mut idx) | Err(mut idx)) =
-            self.ordered_ids.binary_search_by_key(&len, |(_, _, probe)| *probe);
-
-        // In case of multiple artifacts with the same code length, we need to find the first one.
-        while idx > 0 && self.ordered_ids[idx - 1].2 == len {
-            idx -= 1;
-        }
-
-        idx
+        self.ordered_ids.partition_point(|(_, _, probe)| *probe < len)
     }
 }
 
