@@ -289,6 +289,31 @@ impl<'gcx> SourceVisitor<'gcx> {
     fn resolve_function_calls(&mut self, hir_source_id: hir::SourceId) {
         self.function_call_scopes = self.function_calls.iter().cloned().collect();
         let _ = hir::Visit::visit_nested_source(self, hir_source_id);
+        // A function that a `using` directive binds to an operator runs from every use of the
+        // operator, which is not a call that the walk sees.
+        let hir = &self.gcx.hir;
+        let operator_functions = hir
+            .source(hir_source_id)
+            .usings
+            .iter()
+            .chain(
+                hir.contract_ids()
+                    .map(|id| hir.contract(id))
+                    .filter(|contract| contract.source == hir_source_id)
+                    .flat_map(|contract| contract.usings),
+            )
+            .flat_map(|using| using.entries)
+            .filter(|entry| entry.operator.is_some())
+            .filter_map(|entry| match entry.kind {
+                hir::UsingEntryKind::Functions(ids) => Some(ids),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|&id| self.function_key(hir.function(id)))
+            .collect::<Vec<_>>();
+        for key in operator_functions {
+            *self.value_refs.entry(key).or_default() += 1;
+        }
         self.callees.sort_unstable_by_key(|(range, _)| range.start);
         let callees = std::mem::take(&mut self.callees);
         let callees_in = |arm: &SourceLocation| {
@@ -454,11 +479,13 @@ impl<'gcx> SourceVisitor<'gcx> {
             .filter_map(|function| {
                 let &source_id = self.hir_source_ids.get(&function.source)?;
                 let contract = function.contract.map(|id| self.gcx.hir.contract(id).name.as_str());
-                // A function that can be called from outside also runs from there.
+                // A function that can be called from outside also runs from there, and one with
+                // modifiers runs its body less often than it is called.
                 let calls = if matches!(
                     function.visibility,
                     ast::Visibility::Internal | ast::Visibility::Private
-                ) {
+                ) && function.modifiers.is_empty()
+                {
                     1
                 } else {
                     2
