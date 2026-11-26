@@ -64,14 +64,15 @@ impl DebugTraceIdentifier {
         // the same name in other sources are others.
         let is_library = sources.is_library(artifact, contract_name);
         let calldata_selector = node.trace.data.first_chunk::<4>();
-        let is_dispatched = |function: &FunctionInfo| {
-            artifact.selectors.is_empty()
-                || match (&function.library_signature, is_library) {
-                    (Some(signature), true) => calldata_selector
-                        .is_some_and(|selector| keccak256(signature)[..4] == selector[..]),
-                    _ => selected.is_some_and(|selected| function.matches_signature(selected)),
+        let is_dispatched =
+            |function: &FunctionInfo| match (&function.library_signature, is_library) {
+                (Some(signature), true) => calldata_selector
+                    .is_some_and(|selector| keccak256(signature)[..4] == selector[..]),
+                _ => {
+                    artifact.selectors.is_empty()
+                        || selected.is_some_and(|selected| function.matches_signature(selected))
                 }
-        };
+            };
         let resolve = |pc: u32, entries: &[FunctionEntry]| {
             resolve_entry(sources, artifact, contract_name, is_create, pc, entries)
         };

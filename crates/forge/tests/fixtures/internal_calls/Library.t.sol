@@ -48,11 +48,35 @@ library Lib {
     }
 }
 
+// Every public function takes a storage reference, so the JSON ABI is empty.
+library Store {
+    struct Inner {
+        uint256 v;
+        mapping(uint256 => Inner) next;
+    }
+
+    struct Outer {
+        Inner inner;
+    }
+
+    function h(Outer storage o) public view returns (uint256) {
+        return h(o.inner);
+    }
+
+    function h(Inner storage i) public view returns (uint256) {
+        return i.v == 0 ? 1 : h(i.next[i.v - 1]) + 1;
+    }
+}
+
 contract User {
     Lib.D d;
+    Store.Outer o;
 
     function run() external returns (uint256) {
         Lib.set(d, 5);
+        o.inner.v = 2;
+        o.inner.next[0].v = 1;
+        Store.h(o);
         return Lib.kind(Lib.K.B, 5) + Lib.plain(7) + Lib.f(uint256(3)) + Lib.g(Lib.S(3)) + d.v;
     }
 }
