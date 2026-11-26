@@ -534,7 +534,12 @@ impl Generator {
                 }
             }
             self.out.push(Setting {
-                env: env_vars(&path, section.is_some(), children.is_some()),
+                // Deprecated keys may not load from the environment; readers should use the replacement.
+                env: if deprecated.is_some() {
+                    Vec::new()
+                } else {
+                    env_vars(&path, section.is_some(), children.is_some())
+                },
                 key,
                 section,
                 ty,

@@ -615,13 +615,8 @@
       "type": "boolean",
       "table": false,
       "default": null,
-      "env": [
-        "FOUNDRY_DENY_WARNINGS",
-        "DAPP_DENY_WARNINGS",
-        "DAPP_TEST_DENY_WARNINGS"
-      ],
       "deprecated": "deny = \"warnings\"",
-      "description": "Whether to fail on warnings.\n\n`deny_warnings = true` is read as `deny = \"warnings\"` and `false` as `deny = \"never\"`,\nunless `deny` is also set in the same profile, in which case `deny` wins. The\n`--deny-warnings` flag is deprecated in the same way in favor of `--deny warnings`."
+      "description": "Whether to fail on warnings.\n\n`deny_warnings = true` is read as `deny = \"warnings\"` and `false` as `deny = \"never\"`,\nunless `deny` is also set in the same profile, in which case `deny` wins. The\n`--deny-warnings` flag is deprecated in the same way in favor of `--deny warnings`. In the\nenvironment, use `FOUNDRY_DENY=warnings`."
     },
     {
       "key": "match_test",

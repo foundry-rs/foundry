@@ -893,7 +893,8 @@ pub struct Config {
     ///
     /// `deny_warnings = true` is read as `deny = "warnings"` and `false` as `deny = "never"`,
     /// unless `deny` is also set in the same profile, in which case `deny` wins. The
-    /// `--deny-warnings` flag is deprecated in the same way in favor of `--deny warnings`.
+    /// `--deny-warnings` flag is deprecated in the same way in favor of `--deny warnings`. In the
+    /// environment, use `FOUNDRY_DENY=warnings`.
     #[serde(default, skip_serializing)]
     pub deny_warnings: bool,
     /// Only run test functions whose signature matches this regular expression.
