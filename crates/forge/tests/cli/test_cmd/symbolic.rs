@@ -9234,7 +9234,7 @@ contract SymbolicVestingSchedule {
     {
         if (end <= start || t > end) return;
         unchecked {
-            assert(uint256(deposit) * (t - start) / (end - start) <= deposit);
+            assert(uint256(deposit) * (uint256(t) - start) / (end - start) <= deposit);
         }
     }
 
