@@ -5887,18 +5887,13 @@ impl<N: Network> Backend<N> {
 
         {
             let mut env = self.evm_env.write();
-            env.block_env = BlockEnv {
-                number: self.evm_block_number(num),
-                timestamp: U256::from(block.header.timestamp()),
-                difficulty: block.header.difficulty(),
-                // ensures prevrandao is set
-                prevrandao: Some(block.header.mix_hash().unwrap_or_default()),
-                // Keep previous `beneficiary` and `basefee` value
-                gas_limit: replayed_gas_limit.unwrap_or_else(|| block.header.gas_limit()),
-                beneficiary: env.block_env.beneficiary,
-                basefee: env.block_env.basefee,
-                ..Default::default()
-            };
+            let mut block_env = self.block_env_from_header(&block.header);
+            // Keep the configured `beneficiary`.
+            block_env.beneficiary = env.block_env.beneficiary;
+            if let Some(gas_limit) = replayed_gas_limit {
+                block_env.gas_limit = gas_limit;
+            }
+            env.block_env = block_env;
         }
         self.fees.restore(fees);
         Ok(true)

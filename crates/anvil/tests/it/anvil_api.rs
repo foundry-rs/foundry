@@ -885,15 +885,31 @@ async fn test_revert_restores_next_block_timestamp() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_revert_restores_next_block_base_fee() {
-    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    // Snapshot above genesis so the discarded head's base fee differs from the snapshot block's.
+    api.mine_one().await.unwrap();
     let base_fee = api.base_fee().unwrap();
     let state_snapshot = api.evm_snapshot().await.unwrap();
+    let snapshot_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
     api.mine_one().await.unwrap();
     let first_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
     assert_ne!(api.base_fee().unwrap(), base_fee);
     api.evm_revert(state_snapshot).await.unwrap();
     assert_eq!(api.base_fee().unwrap(), base_fee);
+
+    // Latest execution sees the restored block's base fee, not the discarded head's.
+    let basefee_call = WithOtherFields::new(
+        TransactionRequest::default()
+            .from(handle.dev_accounts().next().unwrap())
+            .with_deploy_code(Bytes::from_static(&[0x48, 0x5f, 0x52, 0x60, 0x20, 0x5f, 0xf3]))
+            .gas_price(10_000_000_000),
+    );
+    let basefee = api.call(basefee_call, None, Default::default()).await.unwrap();
+    assert_eq!(
+        U256::from_be_slice(&basefee),
+        U256::from(snapshot_block.header.base_fee_per_gas.unwrap())
+    );
 
     api.mine_one().await.unwrap();
     let remined_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
