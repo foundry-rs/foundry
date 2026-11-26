@@ -90,6 +90,7 @@ mpp.workspace = true
 foundry-wallets = { workspace = true, features = ["browser", "tempo"] }
 alloy-signer-local = { workspace = true, features = ["mnemonic-all-languages"] }
 base64.workspace = true
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
 sha2 = "0.11"
 
 [build-dependencies]

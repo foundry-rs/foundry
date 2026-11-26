@@ -4,6 +4,7 @@
 //! where the chosen [`Eip1559FeeEstimatePreset`] selects the reward percentile
 //! used for the priority fee and the multiplier applied to the base fee.
 
+use super::BlockNotFound;
 use alloy_consensus::BlockHeader;
 use alloy_eips::BlockNumberOrTag;
 use alloy_network::{BlockResponse, Network};
@@ -78,7 +79,7 @@ where
             .get_block_by_number(BlockNumberOrTag::Latest)
             .await
             .wrap_err("Failed to fetch latest block for EIP-1559 base fee")?
-            .ok_or_else(|| eyre::eyre!("Latest block not found"))?
+            .ok_or_else(|| BlockNotFound("Latest block not found".into()))?
             .header()
             .as_ref()
             .base_fee_per_gas()

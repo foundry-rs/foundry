@@ -15,7 +15,7 @@ use crate::eth::{
 use alloy_consensus::{Signed, TxLegacy};
 use alloy_eips::{Decodable2718, Encodable2718};
 use alloy_network::Network;
-use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256, address, b256, hex, uint};
+use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256, address, b256, hex};
 use anvil_core::eth::transaction::PendingTransaction;
 use base_common_consensus::Predeploys;
 use base_common_genesis::RollupConfig;
@@ -23,6 +23,7 @@ use base_consensus_upgrades::Jovian;
 use base_evm2::{BaseSpecId, BaseUpgrade, L1BlockInfo};
 use base_protocol::{BaseTimeUpdateTx, L1BlockInfoJovian, L1BlockInfoTx};
 use evm2::bytecode::Bytecode;
+use foundry_common::{EIP1967_ADMIN_SLOT, EIP1967_IMPLEMENTATION_SLOT};
 use foundry_evm_core::backend::DatabaseError;
 use foundry_evm_hardforks::FoundryHardfork;
 use foundry_primitives::FoundryTxEnvelope;
@@ -31,14 +32,6 @@ use std::sync::Arc;
 /// The `BaseTime` predeploy's implementation code address.
 const BASE_TIME_IMPLEMENTATION_ADDRESS: Address =
     address!("0xc0D3C0d3C0d3C0D3c0d3C0d3c0D3C0d3c0d30030");
-
-/// The EIP-1967 proxy implementation slot.
-const PROXY_IMPLEMENTATION_SLOT: U256 =
-    uint!(0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc_U256);
-
-/// The EIP-1967 proxy admin slot.
-const PROXY_ADMIN_SLOT: U256 =
-    uint!(0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103_U256);
 
 /// The slot of `BaseTime` holding the packed millisecond component.
 const BASE_TIME_MILLIS_PART_SLOT: U256 = U256::ZERO;
@@ -53,7 +46,7 @@ const CREATE_2_DEPLOYER_ADDRESS: Address = address!("0x13b0D85CcB8bf860b6b79AF30
 const CREATE_2_DEPLOYER_CODE_HASH: B256 =
     b256!("0xb0550b5b431e30d38000efb7107aaa0ade03d48a7198a140edda9d27134468b2");
 
-/// The EIP-8130 nonce manager system account, which Zenith makes non-empty with a code stub.
+/// The EIP-8130 nonce manager system account, which Everest makes non-empty with a code stub.
 const EIP8130_NONCE_MANAGER_ADDRESS: Address =
     address!("0x813000000000000000000000000000000000aa01");
 
@@ -260,13 +253,13 @@ pub(super) fn ensure_base_time_predeploy(
     }
     let proxy_admin = U256::from_be_slice(Predeploys::PROXY_ADMIN.as_slice());
     if reset_admin || missing_code {
-        db.set_storage_at(Predeploys::BASE_TIME, PROXY_ADMIN_SLOT.into(), proxy_admin.into())?;
+        db.set_storage_at(Predeploys::BASE_TIME, EIP1967_ADMIN_SLOT, proxy_admin.into())?;
     }
 
-    if !db.storage_ref(Predeploys::BASE_TIME, PROXY_IMPLEMENTATION_SLOT)?.is_zero() {
+    if !db.storage_ref(Predeploys::BASE_TIME, EIP1967_IMPLEMENTATION_SLOT.into())?.is_zero() {
         return Ok(());
     }
-    let admin = db.storage_ref(Predeploys::BASE_TIME, PROXY_ADMIN_SLOT)?;
+    let admin = db.storage_ref(Predeploys::BASE_TIME, EIP1967_ADMIN_SLOT.into())?;
     if admin != proxy_admin {
         return Err(db_err(format!(
             "BaseTime activation requires the canonical proxy admin, found {admin:#x}"
@@ -278,7 +271,7 @@ pub(super) fn ensure_base_time_predeploy(
     db.insert_account(BASE_TIME_IMPLEMENTATION_ADDRESS, info);
     db.set_storage_at(
         Predeploys::BASE_TIME,
-        PROXY_IMPLEMENTATION_SLOT.into(),
+        EIP1967_IMPLEMENTATION_SLOT,
         U256::from_be_slice(BASE_TIME_IMPLEMENTATION_ADDRESS.as_slice()).into(),
     )
 }
@@ -292,8 +285,8 @@ pub(super) fn ensure_create2_deployer(db: &mut dyn Db) -> Result<(), DatabaseErr
     Ok(())
 }
 
-/// Plants Zenith's code stub on code-less EIP-8130 system accounts so state clearing keeps them.
-pub(super) fn ensure_eip8130_system_accounts(db: &mut dyn Db) -> Result<(), DatabaseError> {
+/// Plants Everest's code stub on code-less EIP-8130 system accounts so state clearing keeps them.
+pub(super) fn ensure_base_tx_system_accounts(db: &mut dyn Db) -> Result<(), DatabaseError> {
     let mut info = db.basic_ref(EIP8130_NONCE_MANAGER_ADDRESS)?.unwrap_or_default();
     if !info.is_empty_code_hash() {
         return Ok(());

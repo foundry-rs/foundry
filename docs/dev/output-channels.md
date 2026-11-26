@@ -105,7 +105,10 @@ Each row's status is one of:
 | `cast logs`            | Pretty-printed logs                                  | JSON array                                                     | migrated |
 | `cast run`             | Trace / decoded output                               | JSON                                                           | migrated |
 | `cast trace`           | Trace                                                | JSON trace                                                     | migrated |
-| `cast wallet new`      | One record per wallet: `address` (keystore) or `address\tprivate_key` (no keystore); omitted when stdout is a tty, where the stderr prose already shows the values | JSON array of `{ address, public_key, path }` (keystore) or `{ address, public_key, private_key }` (no keystore) | migrated |
+| `cast wallet new`      | One record per wallet: `address` (keystore) or `address\tprivate_key` (no keystore); a Tempo configurable account appends its owner key, as `account\towner` or `account\tprivate_key\towner`; omitted when stdout is a tty, where the stderr prose already shows the values | JSON array of `{ address, public_key, path }` (keystore) or `{ address, public_key, private_key }` (no keystore), plus `owner` for a configurable account, whose `address` is the account | migrated |
+| `cast wallet owners`   | Account, version, threshold, salt, commitment and owners | JSON configuration | migrated |
+| `cast wallet assemble` | Signed raw transaction                               | JSON string                                                    | migrated |
+| `cast mktx --raw-unsigned --tempo.digest` | `unsigned_tx\tdigest`              | JSON `{ unsigned_tx, digest, account, version }`               | migrated |
 | `cast wallet sign`     | Signature                                            | JSON                                                           | migrated |
 | `cast wallet sign-auth`| Signed authorization RLP                             | JSON                                                           | migrated |
 | `cast erc20 balance`   | Balance (decimal)                                    | JSON string                                                    | migrated |
@@ -164,7 +167,28 @@ Each row's status is one of:
 | ------------- | --------------------------------------------- | --------------------- | ------ |
 | `anvil`       | Banner, accounts, RPC URL on stderr           | n/a                   | todo   |
 | `chisel`      | REPL output                                   | n/a                   | todo   |
-| `forge script`| Simulation/broadcast result                   | JSON                  | todo   |
+| `forge script`| Simulation/broadcast result                   | JSON Lines; a failure ends with a failure envelope | todo   |
+
+When `forge script --json` fails, its last stdout line is a `JsonEnvelope` with
+`success: false` and one error, whose `code` is:
+
+| Code             | Failure                                                         | `details`                                             |
+| ---------------- | --------------------------------------------------------------- | ----------------------------------------------------- |
+| `script.revert`  | the script's constructor, `setUp`, or `run` reverted            | `data` (raw revert data), `reason` (decoded)          |
+| `rpc.error`      | an RPC endpoint answered with an error, with a response that does not parse, or without a block that must exist | `code` (JSON-RPC code) and `status` (HTTP), when known |
+| `rpc.transport`  | an RPC request got no answer: connection failure, timeout, or an HTTP error without a JSON-RPC error | `status` (HTTP), when known |
+| `compiler.error` | the compiler could not be set up, or compilation failed         | none                                                  |
+| `compiler.stale` | `--no-compile` found sources that need compiling                | `files` (paths, relative to the project root when inside it) |
+| `config.error`   | the configuration could not be loaded                           | none                                                  |
+| `script.error`   | any other failure, such as an invalid opcode or out-of-gas halt  | none                                                  |
+
+The `rpc.*` codes also apply when a cheatcode, such as `vm.createSelectFork`,
+made the failed request and the failure caused the revert; they then also
+include the revert's `data` and `reason`.
+
+With `--broadcast`, an `rpc.*` failure can happen after some transactions were
+sent. Running the script again then refuses until you continue with `--resume`;
+`--start-fresh` sends them again.
 
 Commands not listed here have not been classified yet — please open an issue or
 PR before relying on their stdout format.

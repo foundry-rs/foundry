@@ -141,6 +141,8 @@ pub(super) struct State<'sess, 'ast> {
     emit_or_revert: bool,
     // Whether inside a variable initialization expression, or not.
     var_init: bool,
+    // Whether assignments belong to a certified inline body or a normalized sizing probe.
+    inline_assignments: bool,
 }
 
 impl std::ops::Deref for State<'_, '_> {
@@ -238,6 +240,7 @@ impl<'sess> State<'sess, '_> {
             return_bin_expr: false,
             emit_or_revert: false,
             var_init: false,
+            inline_assignments: false,
             block_depth: 0,
             call_stack: CallStack::default(),
         }
@@ -366,7 +369,7 @@ impl<'sess> State<'sess, '_> {
     fn print_span(&mut self, span: Span) {
         match self.snippet(span) {
             Some(s) => self.s.word(if matches!(self.config.style, IndentStyle::Tab) {
-                snippet_with_tabs(s.to_owned(), self.config.tab_width)
+                snippet_with_tabs(s, self.config.tab_width)
             } else {
                 s.to_owned()
             }),
@@ -582,6 +585,10 @@ impl<'sess> State<'sess, '_> {
 
             for line in snip.lines() {
                 let line = line.trim();
+                // A blank line must not consume or reset the separator owed by the previous line.
+                if line.is_empty() {
+                    continue;
+                }
 
                 if prev_needs_space {
                     size += 1;
@@ -678,15 +685,6 @@ impl<'sess> State<'sess, '_> {
             return None;
         }
         Some(cmnt)
-    }
-
-    fn cmnt_config(&self) -> CommentConfig {
-        Default::default()
-    }
-
-    const fn print_docs(&mut self, docs: &'_ ast::DocComments<'_>) {
-        // Intentionally no-op. Handled with `self.comments`.
-        let _ = docs;
     }
 
     /// Prints comments that are before the given position.
@@ -907,10 +905,10 @@ impl<'sess> State<'sess, '_> {
     }
 
     /// Merges consecutive line comments to avoid orphan words.
-    fn merge_comment_lines(&self, lines: &[String], prefix: &str) -> Vec<String> {
+    fn merge_comment_lines<'a>(&self, lines: &'a [String], prefix: &str) -> Vec<Cow<'a, str>> {
         // Do not apply smart merging to block comments
-        if lines.is_empty() || lines.len() < 2 || !prefix.starts_with("//") {
-            return lines.to_vec();
+        if lines.len() < 2 || !prefix.starts_with("//") {
+            return lines.iter().map(|line| Cow::Borrowed(line.as_str())).collect();
         }
 
         let mut result = Vec::new();
@@ -921,7 +919,7 @@ impl<'sess> State<'sess, '_> {
 
             // Keep empty lines, and non-prefixed lines, untouched
             if current_line.trim().is_empty() || !current_line.starts_with(prefix) {
-                result.push(current_line.clone());
+                result.push(Cow::Borrowed(current_line.as_str()));
                 i += 1;
                 continue;
             }
@@ -936,7 +934,7 @@ impl<'sess> State<'sess, '_> {
                     // Keep each NatSpec tag on its own doc-comment line. Merging a wrapped
                     // `@dev`/`@param` line with the following tag changes the tag boundary.
                     if next_content.starts_with('@') {
-                        result.push(current_line.clone());
+                        result.push(Cow::Borrowed(current_line.as_str()));
                         i += 1;
                         continue;
                     }
@@ -945,8 +943,7 @@ impl<'sess> State<'sess, '_> {
                     if estimate_line_width(current_line, self.config.tab_width) > self.space_left()
                     {
                         // Merge the lines and let the wrapper handle breaking if needed
-                        let merged_line = format!("{current_line} {next_content}");
-                        result.push(merged_line);
+                        result.push(Cow::Owned(format!("{current_line} {next_content}")));
 
                         // Skip both lines since they are merged
                         i += 2;
@@ -956,7 +953,7 @@ impl<'sess> State<'sess, '_> {
             }
 
             // No merge possible, keep the line as-is
-            result.push(current_line.clone());
+            result.push(Cow::Borrowed(current_line.as_str()));
             i += 1;
         }
 
@@ -1208,7 +1205,7 @@ impl<'sess> State<'sess, '_> {
     }
 
     fn has_comment_between(&self, start_pos: BytePos, end_pos: BytePos) -> bool {
-        self.comments.iter().filter(|c| c.pos() > start_pos && c.pos() < end_pos).any(|_| true)
+        self.has_comment_before_with(end_pos, |c| c.pos() > start_pos)
     }
 
     fn has_breakable_comment_between(&self, start_pos: BytePos, end_pos: BytePos) -> bool {
@@ -1444,7 +1441,7 @@ impl CommentConfig {
     }
 }
 
-fn snippet_with_tabs(s: String, tab_width: usize) -> String {
+fn snippet_with_tabs(s: &str, tab_width: usize) -> String {
     let mut formatted = String::with_capacity(s.len());
     for line in s.split_inclusive('\n') {
         let (line, has_newline) =

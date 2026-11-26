@@ -1,15 +1,26 @@
 //! Contains various tests for checking the `forge create` subcommand
 
-use crate::constants::*;
-use alloy_primitives::hex;
+use crate::{
+    constants::*,
+    utils::{tempo_linked_keystore, tempo_two_of_three_account},
+};
+use alloy_consensus::Transaction;
+use alloy_network::ReceiptResponse;
+use alloy_primitives::{U256, hex};
+use alloy_provider::Provider;
+use alloy_signer_local::PrivateKeySigner;
 use anvil::{NodeConfig, spawn};
-use foundry_compilers::artifacts::BytecodeHash;
+use foundry_common::tempo::ALPHA_USD_ADDRESS;
+use foundry_compilers::artifacts::{BytecodeHash, remappings::Remapping};
+use foundry_evm::hardfork::TempoHardfork;
 use foundry_test_utils::{
-    forgetest, rpc::spawn_rpc_proxy_mapping_method, snapbox::IntoData, str, util::OutputExt,
+    assert_data_eq, forgetest, rpc::spawn_rpc_proxy_mapping_method, snapbox::IntoData, str,
+    util::OutputExt,
 };
 use serde_json::Value;
 use std::{
     fs,
+    str::FromStr,
     sync::atomic::{AtomicUsize, Ordering},
     time::Duration,
 };
@@ -451,6 +462,20 @@ async fn create_rejects_tempo_access_key_before_broadcast(prj: _, cmd: _) {
     assert!(stderr.contains("Tempo access-key transactions cannot use CREATE"), "{stderr}");
 }
 
+// Tempo rejects keychain transactions whose first call is a CREATE, so a configurable access key
+// cannot deploy.
+#[forgetest]
+async fn create_rejects_configurable_access_key(cmd: _) {
+    cmd.args(["create", "src/Counter.sol:Counter", "--rpc-url", "http://127.0.0.1:1"])
+        .args(["--tempo.configurable-access-key", "0x1111111111111111111111111111111111111111"])
+        .args(["--from", "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", "--broadcast"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: --tempo.configurable-access-key cannot deploy: Tempo access keys cannot sign CREATE
+
+"#]]);
+}
+
 // tests that we can deploy the template contract
 #[forgetest_init]
 async fn can_create_using_unlocked(prj: _, cmd: _) {
@@ -730,6 +755,147 @@ contract RevertingContract {
     .assert_failure()
     .stderr_eq(str![[r#"
 Error: deployment transaction failed (receipt status 0): [..]
+
+"#]]);
+}
+
+/// `forge create` deploys from a 2-of-3 Tempo configurable account, signed by two local owners:
+/// the first deployment registers the account with `--tempo.config`, and a later one detects it
+/// from the chain. The estimate models both approvals, and one owner alone fails clearly. A
+/// keystore that `cast wallet new` linked to a configurable account deploys from the account.
+#[forgetest_init]
+async fn create_from_tempo_configurable_account(prj: _, cmd: _) {
+    prj.initialize_default_contracts();
+    prj.update_config(|config| config.bytecode_hash = BytecodeHash::None);
+
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let (account, config, keys) = tempo_two_of_three_account();
+    api.anvil_deal_tip20(account, ALPHA_USD_ADDRESS, U256::from(1_000_000_000_000u64))
+        .await
+        .unwrap();
+    let contract = format!("./src/{TEMPLATE_CONTRACT}.sol:{TEMPLATE_CONTRACT}");
+    let (account_arg, fee_token) = (account.to_string(), ALPHA_USD_ADDRESS.to_string());
+    let owner = |key: &str| format!("private-key://{key}");
+
+    let mut deploy = |args: &[&str]| {
+        cmd.forge_fuse()
+            .args(["create", &contract, "--broadcast", "--rpc-url", &rpc])
+            .args(["--from", &account_arg, "--tempo.fee-token", &fee_token])
+            .args(args);
+        cmd.assert_success().get_output().stdout_lossy()
+    };
+    for args in [
+        vec![
+            "--private-key",
+            &keys[0],
+            "--tempo.owner",
+            &owner(&keys[2]),
+            "--tempo.config",
+            &config,
+        ],
+        vec!["--private-key", &keys[1], "--tempo.owner", &owner(&keys[0])],
+    ] {
+        let stdout = deploy(&args);
+        let block = provider.get_block_number().await.unwrap();
+        let receipt = provider.get_block_receipts(block.into()).await.unwrap().unwrap();
+        let receipt = receipt.last().unwrap();
+        assert!(receipt.status());
+        assert_eq!(receipt.from(), account);
+        let deployed = receipt.contract_address().expect("a deployment");
+        assert_data_eq!(
+            stdout,
+            format!("...\nDeployer: {account}\nDeployed to: {deployed}\nTransaction hash: [..]\n")
+        );
+        assert!(!provider.get_code_at(deployed).await.unwrap().is_empty());
+        let tx = provider.get_transaction_by_hash(receipt.transaction_hash()).await.unwrap();
+        assert_eq!(tx.unwrap().gas_limit(), receipt.gas_used());
+    }
+
+    cmd.forge_fuse().args(["create", &contract, "--broadcast", "--rpc-url", &rpc]).args([
+        "--from",
+        &account_arg,
+        "--tempo.fee-token",
+        &fee_token,
+        "--private-key",
+        &keys[0],
+    ]);
+    let [low, mid, high] = [&keys[0], &keys[1], &keys[2]]
+        .map(|key| PrivateKeySigner::from_str(key).unwrap().address());
+    cmd.assert_failure().stderr_eq(format!(
+        "Error: {account} is a Tempo configurable account that needs owner weight 2, but the local \
+         owner keys {low} reach weight 1. Its owners are {low} (weight 1), {mid} (weight 1), \
+         {high} (weight 1). forge create needs the owner keys locally: pass the other owners with \
+         --tempo.owner, or keep them in the Tempo Accounts store.\n"
+    ));
+
+    // With a keystore that `cast wallet new` linked to a configurable account, `forge create`
+    // deploys from the account, and `--eoa` deploys from the key.
+    let (keystore, account, owner) = tempo_linked_keystore(prj.root());
+    for address in [account, owner] {
+        api.anvil_deal_tip20(address, ALPHA_USD_ADDRESS, U256::from(1_000_000_000_000u64))
+            .await
+            .unwrap();
+    }
+    for (extra, deployer) in [(&[][..], account), (&["--eoa"][..], owner)] {
+        cmd.forge_fuse()
+            .args(["create", &contract, "--broadcast", "--rpc-url", &rpc])
+            .args(["--keystore", keystore.to_str().unwrap(), "--password", "keystorepassword"])
+            .args(["--tempo.fee-token", &fee_token])
+            .args(extra);
+        let stdout = cmd.assert_success().get_output().stdout_lossy();
+        let block = provider.get_block_number().await.unwrap();
+        let receipt = provider.get_block_receipts(block.into()).await.unwrap().unwrap();
+        let receipt = receipt.last().unwrap();
+        assert_eq!(receipt.from(), deployer);
+        let deployed = receipt.contract_address().expect("a deployment");
+        assert_data_eq!(
+            stdout,
+            format!("...\nDeployer: {deployer}\nDeployed to: {deployed}\nTransaction hash: [..]\n")
+        );
+    }
+}
+
+#[forgetest]
+async fn create_json_warns_about_absolute_metadata_paths(prj: _, cmd: _) {
+    prj.add_source("Root.sol", "contract Root {}\n");
+    let external = tempfile::tempdir().unwrap();
+    prj.update_config(|config| {
+        config.remappings.push(
+            Remapping {
+                context: None,
+                name: "unused/".into(),
+                path: external.path().display().to_string(),
+            }
+            .into(),
+        );
+    });
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+    cmd.args(["create", "src/Root.sol:Root", "--json", "--rpc-url"])
+        .arg(handle.http_endpoint())
+        .args(["--private-key", &pk])
+        .assert_json_stdout_with_status(true, str![[r#"
+{
+  "contract": "Root",
+  "transaction": {
+    "from": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+    "to": null,
+    "maxFeePerGas": "0x77359401",
+    "maxPriorityFeePerGas": "0x1",
+    "gas": "[..]",
+    "input": "[..]",
+    "nonce": "0x0",
+    "chainId": "0x7a69"
+  },
+  "abi": []
+}
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Solidity metadata contains absolute filesystem paths that may reveal information about your local system when published. Review the metadata before sharing or verifying these artifacts.
 
 "#]]);
 }

@@ -440,7 +440,6 @@ pub struct TransactionsIterator<T> {
     /// Independent transactions keyed by their effective tip at `base_fee`, then arrival order.
     independent: BTreeMap<(u128, Reverse<u64>), PoolTransactionRef<T>>,
     base_fee: u64,
-    _invalid: HashSet<TxHash>,
 }
 
 impl<T> TransactionsIterator<T> {
@@ -541,7 +540,6 @@ impl<T> ReadyTransactions<T> {
             independent: Default::default(),
             base_fee,
             awaiting: Default::default(),
-            _invalid: Default::default(),
         };
         for tx_ref in &self.independent_transactions {
             iter.insert_independent(tx_ref.clone());

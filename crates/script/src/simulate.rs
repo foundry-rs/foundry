@@ -153,7 +153,9 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
         let decoders = self.build_rpc_decoders().await?;
         let transactions =
             self.transaction_metadata(|rpc| decoders.get(rpc).expect("invalid rpc url"))?;
-        sh_println!("\nSKIPPING ON CHAIN SIMULATION.")?;
+        if !shell::is_json() {
+            sh_println!("\nSKIPPING ON CHAIN SIMULATION.")?;
+        }
         Ok(self.into_filled(transactions))
     }
 
@@ -273,6 +275,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                     .with_execution_result(
                         &result,
                         self.args.gas_estimate_multiplier,
+                        self.execution_artifacts.rpc_data.chain_ids.get(&rpc).copied(),
                         &self.build_data,
                     )?
                     .build();
@@ -877,6 +880,7 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
             commit,
             recovery_generation: None,
             reverted: vec![],
+            awaiting_owners: vec![],
         };
         Ok(sequence)
     }

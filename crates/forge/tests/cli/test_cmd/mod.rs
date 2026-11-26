@@ -11,6 +11,7 @@ use foundry_evm_networks::NetworkConfigs;
 use foundry_test_utils::{
     TestCommand,
     rpc::{self, next_etherscan_api_key, rpc_endpoints},
+    snapbox::IntoData,
     str,
     util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION},
 };
@@ -23,9 +24,13 @@ use std::fs;
 #[cfg(feature = "base")]
 mod base;
 mod brutalize;
+mod cheatcode_access;
+mod cheatcode_libraries;
 mod core;
+mod discovery;
 mod exact_fork;
 mod fork_bal;
+mod fork_prefetch;
 mod fork_state_by_number;
 mod fuzz;
 mod halts;
@@ -560,6 +565,7 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 // Proxy storage written by both the proxy's own code and its implementations decodes each slot
 // with the layout of the code that wrote it last, even for proxies created during the recording.
 // Libraries write with their caller's layout under both the legacy and the IR pipeline.
+// The EIP-1967 slots, which no layout covers, are labeled too.
 #[forgetest_init]
 fn state_diff_decodes_proxy_storage_by_writer(prj: _, cmd: _) {
     prj.add_test(
@@ -640,6 +646,15 @@ contract ERC1967Proxy {
             returndatacopy(0, 0, returndatasize())
             if iszero(success) { revert(0, returndatasize()) }
             return(0, returndatasize())
+        }
+    }
+}
+
+contract AdminBeaconProxy {
+    constructor(address admin, address beacon) {
+        assembly {
+            sstore(0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103, admin)
+            sstore(0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50, beacon)
         }
     }
 }
@@ -756,6 +771,12 @@ contract StateDiffProxyTest is Test {
         LegacyImplementation(address(proxy)).setValue(3);
         console.log(vm.getStateDiff());
     }
+
+    function test_adminAndBeaconSlots() public {
+        vm.startStateDiffRecording();
+        new AdminBeaconProxy(address(0xA11CE), address(0xBEAC0));
+        console.log(vm.getStateDiff());
+    }
 }
 "#,
     );
@@ -767,7 +788,23 @@ contract StateDiffProxyTest is Test {
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
-Ran 4 tests for test/StateDiffProxy.t.sol:StateDiffProxyTest
+Ran 5 tests for test/StateDiffProxy.t.sol:StateDiffProxyTest
+[PASS] test_adminAndBeaconSlots() ([GAS])
+Logs:
+  0x4e59b44847b379578588920cA78FbF26c0B4956C
+  - nonce diff: 1 → 0
+  
+  0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  contract: test/StateDiffProxy.t.sol:AdminBeaconProxy
+  - nonce diff: 0 → 1
+  - state diff:
+  @ 0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50 (eip1967.proxy.beacon, address): 0x0000000000000000000000000000000000000000 → 0x00000000000000000000000000000000000bEaC0
+  @ 0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103 (eip1967.proxy.admin, address): 0x0000000000000000000000000000000000000000 → 0x00000000000000000000000000000000000A11cE
+  
+  0xC48F49274b2cf8e87D173C4ebC18e9a51a496c4C
+  - nonce diff: 0 → 1
+  
+
 [PASS] test_createdProxy() ([GAS])
 Logs:
   0x2e234DAe75C793f67A35089C9d99245E1C58470b
@@ -777,12 +814,12 @@ Logs:
   @ 0x0000000000000000000000000000000000000000000000000000000000000000 (owner, address): 0x0000000000000000000000000000000000000000 → 0x000000000000000000000000000000000000bEEF
   @ 0x0000000000000000000000000000000000000000000000000000000000000002 (stats, (uint256,)): 0x0000000000000000000000000000000000000000000000000000000000000000 → 0x0000000000000000000000000000000000000000000000000000000000000005
       minted (uint256): 0 → 5
-  @ 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc: 0x0000000000000000000000000000000000000000000000000000000000000000 → 0x0000000000000000000000005615deb798bb3e4dfa0139dfa1b3d433cc23b72f
+  @ 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc (eip1967.proxy.implementation, address): 0x0000000000000000000000000000000000000000 → 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
   
   0x4e59b44847b379578588920cA78FbF26c0B4956C
   - nonce diff: 1 → 0
   
-  0xc586CA1be2c06C15B0774B69a73Ab24952B1dF46
+  0xC48F49274b2cf8e87D173C4ebC18e9a51a496c4C
   contract: test/StateDiffProxy.t.sol:MintLib
   - nonce diff: 0 → 1
   
@@ -792,7 +829,7 @@ Logs:
   0x4e59b44847b379578588920cA78FbF26c0B4956C
   - nonce diff: 1 → 0
   
-  0xc586CA1be2c06C15B0774B69a73Ab24952B1dF46
+  0xC48F49274b2cf8e87D173C4ebC18e9a51a496c4C
   - nonce diff: 0 → 1
   
   0xF62849F9A0B5Bf2913b396098F7c7019b51A820a
@@ -813,7 +850,7 @@ Logs:
   0x4e59b44847b379578588920cA78FbF26c0B4956C
   - nonce diff: 1 → 0
   
-  0xc586CA1be2c06C15B0774B69a73Ab24952B1dF46
+  0xC48F49274b2cf8e87D173C4ebC18e9a51a496c4C
   - nonce diff: 0 → 1
   
 
@@ -822,7 +859,7 @@ Logs:
   0x4e59b44847b379578588920cA78FbF26c0B4956C
   - nonce diff: 1 → 0
   
-  0xc586CA1be2c06C15B0774B69a73Ab24952B1dF46
+  0xC48F49274b2cf8e87D173C4ebC18e9a51a496c4C
   - nonce diff: 0 → 1
   
   0xF62849F9A0B5Bf2913b396098F7c7019b51A820a
@@ -830,12 +867,12 @@ Logs:
   - state diff:
   @ 0x0000000000000000000000000000000000000000000000000000000000000001 (value, uint256): 0 → 7
   @ 0x0000000000000000000000000000000000000000000000000000000000000003 (extra, uint256): 0 → 9
-  @ 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc: 0x0000000000000000000000005615deb798bb3e4dfa0139dfa1b3d433cc23b72f → 0x0000000000000000000000002e234dae75c793f67a35089c9d99245e1c58470b
+  @ 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc (eip1967.proxy.implementation, address): 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f → 0x2e234DAe75C793f67A35089C9d99245E1C58470b
   
 
-Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 5 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test suite [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)
+Ran 1 test suite [ELAPSED]: 5 tests passed, 0 failed, 0 skipped (5 total tests)
 
 "#]]);
 
@@ -865,12 +902,12 @@ Logs:
   @ 0x0000000000000000000000000000000000000000000000000000000000000000 (owner, address): 0x0000000000000000000000000000000000000000 → 0x000000000000000000000000000000000000bEEF
   @ 0x0000000000000000000000000000000000000000000000000000000000000002 (stats, (uint256,)): 0x0000000000000000000000000000000000000000000000000000000000000000 → 0x0000000000000000000000000000000000000000000000000000000000000005
       minted (uint256): 0 → 5
-  @ 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc: 0x0000000000000000000000000000000000000000000000000000000000000000 → 0x0000000000000000000000005615deb798bb3e4dfa0139dfa1b3d433cc23b72f
+  @ 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc (eip1967.proxy.implementation, address): 0x0000000000000000000000000000000000000000 → 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
   
   0x4e59b44847b379578588920cA78FbF26c0B4956C
   - nonce diff: 1 → 0
   
-  0xe02a92Ef2BAD4e4763e2545e18f3b15b2d39B049
+  0xfB717444DA32274846B7af71Ff58f4D3Bb9f38dd
   contract: test/StateDiffProxy.t.sol:MintLib
   - nonce diff: 0 → 1
   
@@ -878,6 +915,180 @@ Logs:
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+}
+
+// Dynamic array elements are labeled at their own slots, whether the array sits at a slot the
+// layout knows or at a computed one, and elements packed several to a slot share one label.
+#[forgetest_init]
+fn state_diff_labels_dynamic_array_elements(prj: _, cmd: _) {
+    prj.add_test(
+        "StateDiffDynamicArray.t.sol",
+        r#"
+import {Test, console} from "forge-std/Test.sol";
+
+contract DynamicArrays {
+    struct Item {
+        uint256 a;
+        address b;
+    }
+
+    struct Holder {
+        uint256 count;
+        address[] list;
+    }
+
+    struct Pair {
+        uint256 a;
+        uint256 b;
+    }
+
+    uint256[] public nums;
+    uint128[] public packed;
+    bool[] public flags;
+    Item[] public items;
+    Holder internal holder;
+    mapping(address => uint256[]) public byOwner;
+    uint256[][] public nested;
+    Item[][] internal grid;
+    // An element spanning several slots without an ABI type is not labeled as a whole.
+    Pair[2][] internal pairs;
+
+    function push(address owner) public {
+        nums.push(7);
+        nums.push(9);
+        packed.push(5);
+        packed.push(6);
+        flags.push(true);
+        items.push(Item(1, address(0x1234)));
+        holder.count = 1;
+        holder.list.push(address(0x1234));
+        byOwner[owner].push(42);
+        nested.push();
+        nested[0].push(5);
+        grid.push();
+        grid[0].push(Item(3, address(0x9abc)));
+        pairs.push();
+        pairs[0][0].a = 1;
+    }
+}
+
+contract PackedFlags {
+    bool[] public flags;
+
+    function push() public {
+        flags.push(true);
+    }
+}
+
+// OpenZeppelin's `EnumerableSet.AddressSet`, kept in an ERC-7201 namespace.
+contract NamespacedSet {
+    struct Set {
+        bytes32[] _values;
+        mapping(bytes32 => uint256) _positions;
+    }
+
+    struct AddressSet {
+        Set _inner;
+    }
+
+    /// @custom:storage-location erc7201:example.storage.Registry
+    struct RegistryStorage {
+        AddressSet set;
+    }
+
+    function _registry() internal pure returns (RegistryStorage storage $) {
+        bytes32 slot = keccak256(abi.encode(uint256(keccak256("example.storage.Registry")) - 1))
+            & ~bytes32(uint256(0xff));
+        assembly {
+            $.slot := slot
+        }
+    }
+
+    function add(address value) public {
+        Set storage inner = _registry().set._inner;
+        inner._values.push(bytes32(uint256(uint160(value))));
+        inner._positions[bytes32(uint256(uint160(value)))] = inner._values.length;
+    }
+}
+
+contract StateDiffDynamicArrayTest is Test {
+    function test_dynamicArrays() public {
+        DynamicArrays arrays = new DynamicArrays();
+        NamespacedSet set = new NamespacedSet();
+
+        vm.startStateDiffRecording();
+        // Keys passed at runtime, since solc folds the hashes of constant keys.
+        arrays.push(address(0xAA));
+        set.add(address(0x1234));
+        console.log(vm.getStateDiff());
+    }
+
+    function test_packedArrayJson() public {
+        PackedFlags flags = new PackedFlags();
+
+        vm.startStateDiffRecording();
+        flags.push();
+        console.log(vm.getStateDiffJson());
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "-vv", "--mc", "StateDiffDynamicArrayTest", "--extra-output", "storageLayout"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 2 tests for test/StateDiffDynamicArray.t.sol:StateDiffDynamicArrayTest
+[PASS] test_dynamicArrays() ([GAS])
+Logs:
+  0x2e234DAe75C793f67A35089C9d99245E1C58470b
+  contract: test/StateDiffDynamicArray.t.sol:NamespacedSet
+  - state diff:
+  @ 0x1bc5dea3fd74b23c7b599ce4170b61140394f82a0bfca71d7bd6b3e85e8d499f (example.storage.Registry.set._inner._positions[0x0000000000000000000000000000000000000000000000000000000000001234], uint256): 0 → 1
+  @ 0x9059e8fd9c5070bf26463002743d587936571e76c7911ed0ac60ce4e404c5200 (example.storage.Registry.set._inner._values, bytes32[]): 0 → 1
+  @ 0xae6cff763a4cb355f07f5b0c1bce1427ea6d7a53d2f7e76d57b4d613203b0cf6 (example.storage.Registry.set._inner._values[0], bytes32): 0x0000000000000000000000000000000000000000000000000000000000000000 → 0x0000000000000000000000000000000000000000000000000000000000001234
+  
+  0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  contract: test/StateDiffDynamicArray.t.sol:DynamicArrays
+  - state diff:
+  @ 0x0000000000000000000000000000000000000000000000000000000000000000 (nums, uint256[]): 0 → 2
+  @ 0x0000000000000000000000000000000000000000000000000000000000000001 (packed, uint128[]): 0 → 2
+  @ 0x0000000000000000000000000000000000000000000000000000000000000002 (flags, bool[]): 0 → 1
+  @ 0x0000000000000000000000000000000000000000000000000000000000000003 (items, DynamicArrays.Item[]): 0 → 1
+  @ 0x0000000000000000000000000000000000000000000000000000000000000004 (holder.count, uint256): 0 → 1
+  @ 0x0000000000000000000000000000000000000000000000000000000000000005 (holder.list, address[]): 0 → 1
+  @ 0x0000000000000000000000000000000000000000000000000000000000000007 (nested, uint256[][]): 0 → 1
+  @ 0x0000000000000000000000000000000000000000000000000000000000000008 (grid, DynamicArrays.Item[][]): 0 → 1
+  @ 0x0000000000000000000000000000000000000000000000000000000000000009 (pairs, DynamicArrays.Pair[2][]): 0 → 1
+  @ 0x036b6384b5eca791c62761152d0c79bb0604c104a5fb6f4eb0703f3154bb3db0 (holder.list[0], address): 0x0000000000000000000000000000000000000000 → 0x0000000000000000000000000000000000001234
+  @ 0x2497362b1265b72a2d08ffe21ad6eae809e05da456ede5913d1c8c28d6751f15 (byOwner[0x00000000000000000000000000000000000000AA], uint256[]): 0 → 1
+  @ 0x290decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e563 (nums[0], uint256): 0 → 7
+  @ 0x290decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e564 (nums[1], uint256): 0 → 9
+  @ 0x405787fa12a823e0f2b7631cc41b3ba8828b3321ca811111fa75cd3aa3bb5ace (flags[0..31], bool[32]): [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false] → [true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false]
+  @ 0x607bca8f7c1c56da874da29cd62c3769b9880d38a258a91fc6dd1cfb6b4d1a8e (nested[0][0], uint256): 0 → 5
+  @ 0x6e1540171b6c0c960b71a7020d9f60077f6af931a8bbf590da0223dacf75c7af: 0x0000000000000000000000000000000000000000000000000000000000000000 → 0x0000000000000000000000000000000000000000000000000000000000000001
+  @ 0x9c973ba2c6604c7aed8b01a10af981baaad177814235fed50ee801a71cbd5eb7 (byOwner[0x00000000000000000000000000000000000000AA][0], uint256): 0 → 42
+  @ 0xa66cc928b5edb82af9bd49922954155ab7b0942694bea4ce44661d9a8736c688 (nested[0], uint256[]): 0 → 1
+  @ 0xa7c46294ffa3fad92dc8422b2e38b688ccf1b86172f5beaf864af9368d2844e5 (grid[0][0].a, uint256): 0 → 3
+  @ 0xa7c46294ffa3fad92dc8422b2e38b688ccf1b86172f5beaf864af9368d2844e6 (grid[0][0].b, address): 0x0000000000000000000000000000000000000000 → 0x0000000000000000000000000000000000009ABc
+  @ 0xb10e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf6 (packed[0..1], uint128[2]): [0, 0] → [5, 6]
+  @ 0xc2575a0e9e593c00f959f8c92f12db2869c3395a3b0502d05e2516446f71f85b (items[0].a, uint256): 0 → 1
+  @ 0xc2575a0e9e593c00f959f8c92f12db2869c3395a3b0502d05e2516446f71f85c (items[0].b, address): 0x0000000000000000000000000000000000000000 → 0x0000000000000000000000000000000000001234
+  @ 0xf3f7a9fe364faab93b216da50a3214154f22a0a2b415b23a84c8169e8b636ee3 (grid[0], DynamicArrays.Item[]): 0 → 1
+  
+
+[PASS] test_packedArrayJson() ([GAS])
+Logs:
+  {"0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f":{"label":null,"contract":"test/StateDiffDynamicArray.t.sol:PackedFlags","balanceDiff":null,"nonceDiff":null,"stateDiff":{"0x0000000000000000000000000000000000000000000000000000000000000000":{"previousValue":"0x0000000000000000000000000000000000000000000000000000000000000000","newValue":"0x0000000000000000000000000000000000000000000000000000000000000001","label":"flags","type":"bool[]","offset":0,"slot":"0","decoded":{"previousValue":"0","newValue":"1"}},"0x290decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e563":{"previousValue":"0x0000000000000000000000000000000000000000000000000000000000000000","newValue":"0x0000000000000000000000000000000000000000000000000000000000000001","label":"flags[0..31]","type":"bool[32]","offset":0,"slot":"18569430475105882587588266137607568536673111973893317399460219858819262702947","decoded":{"previousValue":"[false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false]","newValue":"[true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false]"}}}}}
+
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
 "#]]);
 }
@@ -911,7 +1122,7 @@ contract LibraryWriter {
     function set() external { WriterLib.set(stats); }
 
     function switchContextAndSet() external returns (string memory) {
-        vm.chainId(2);
+        vm.chainId(vm.envUint("STATE_DIFF_CHAIN_ID") + 1);
         vm.etch(address(0x2000), type(Caller).runtimeCode);
         WriterLib.set(stats);
         return vm.getStateDiffJson();
@@ -983,7 +1194,7 @@ contract LibraryWriterTest is Test {
     function test_parentContextChanged() public {
         vm.etch(address(0x1000), type(Proxy).runtimeCode);
         vm.etch(address(0x2000), type(LibraryWriter).runtimeCode);
-        vm.chainId(1);
+        vm.chainId(vm.envUint("STATE_DIFF_CHAIN_ID"));
         vm.startStateDiffRecording();
         vm.startStateDiffRecording();
         assertRaw(LibraryWriter(address(0x1000)).switchContextAndSet());
@@ -992,11 +1203,11 @@ contract LibraryWriterTest is Test {
     function checkPriorContext(bool replaceCode) internal {
         vm.etch(address(0x1000), type(Proxy).runtimeCode);
         vm.etch(address(0x2000), type(Caller).runtimeCode);
-        vm.chainId(1);
+        vm.chainId(vm.envUint("STATE_DIFF_CHAIN_ID"));
         vm.startStateDiffRecording();
         vm.startStateDiffRecording();
         Caller(address(0x1000)).set();
-        vm.chainId(2);
+        vm.chainId(vm.envUint("STATE_DIFF_CHAIN_ID") + 1);
         if (replaceCode) vm.etch(address(0x2000), type(WriterLib).runtimeCode);
         string memory diff = vm.getStateDiffJson();
         assertEq(vm.parseJsonString(diff, string.concat(SLOT, ".label")), "actual");
@@ -1009,17 +1220,19 @@ contract LibraryWriterTest is Test {
 "#,
     );
 
-    let solc = foundry_compilers::compilers::solc::Solc::find_svm_installed_version(
-        &SOLC_VERSION.parse().unwrap(),
-    )
-    .unwrap()
-    .unwrap();
-    prj.update_config(|config| config.solc = Some(foundry_config::SolcReq::Local(solc.solc)));
     cmd.args(["build", "--extra-output", "storageLayout"]).assert_success();
 
-    // Resolve external layouts without network access or modifying the user's cache.
-    let home = tempfile::tempdir().unwrap();
-    let cache = home.path().join(".foundry/cache/etherscan/mainnet/storage_layouts");
+    // Windows resolves the home directory through the known-folder API, not HOME or USERPROFILE.
+    // Seed a disposable, unique chain cache at the canonical location on every platform.
+    let chain_id = (1u64 << 32) + u64::from(rand::random::<u32>());
+    let chain_cache = foundry_config::Config::foundry_etherscan_chain_cache_dir(chain_id).unwrap();
+    std::fs::create_dir_all(chain_cache.parent().unwrap()).unwrap();
+    let chain_cache = tempfile::Builder::new()
+        .prefix(chain_cache.file_name().unwrap().to_str().unwrap())
+        .rand_bytes(0)
+        .tempdir_in(chain_cache.parent().unwrap())
+        .unwrap();
+    let cache = chain_cache.path().join("storage_layouts");
     std::fs::create_dir_all(&cache).unwrap();
     for (address, contract) in [(0x1000, "Proxy"), (0x2000, "Caller")] {
         let artifact = foundry_common::fs::read_json_file::<ConfigurableContractArtifact>(
@@ -1027,7 +1240,7 @@ contract LibraryWriterTest is Test {
         )
         .unwrap();
         let layout = serde_json::json!({
-            "version": 3,
+            "version": 4,
             "contractName": contract,
             "storageLayout": artifact.storage_layout.unwrap(),
         });
@@ -1037,13 +1250,13 @@ contract LibraryWriterTest is Test {
 
     for via_ir in [false, true] {
         cmd.forge_fuse();
-        cmd.env("HOME", home.path());
-        cmd.env("USERPROFILE", home.path());
+        cmd.env("STATE_DIFF_CHAIN_ID", chain_id.to_string());
         cmd.args([
             "test",
             "--mc",
             "LibraryWriterTest|PrefixWriterTest",
             "--decode-external-storage",
+            "--offline",
             "--extra-output",
             "storageLayout",
         ]);
@@ -8713,4 +8926,621 @@ contract ForkRollSenderTest is Test {
 [PASS] test_rollKeepsSenderBalance() ([GAS])
 ...
 "#]]);
+}
+
+// Slots that an account created in an earlier transaction, or by an isolated call that switched
+// forks, never wrote read as zero on a fork rather than as the fork's storage at its address.
+#[forgetest]
+async fn fork_created_account_unwritten_storage(prj: _, cmd: _) {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    // The test contract and the contracts it creates: at nonce 1 in `setUp`, and at nonce 2, or 3
+    // when the switching call is an isolated transaction.
+    let test = address!("0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496");
+    for account in [test, test.create(1), test.create(2), test.create(3)] {
+        api.anvil_set_storage_at(account, U256::from(100), B256::with_last_byte(1)).await.unwrap();
+    }
+    api.anvil_mine(Some(U256::ONE), None).await.unwrap();
+
+    prj.add_test(
+        "CreatedStorage.t.sol",
+        &r#"
+interface Vm {
+    function createFork(string calldata url) external returns (uint256);
+    function selectFork(uint256 forkId) external;
+    function makePersistent(address account) external;
+}
+
+contract Store {
+    uint256 public written = 1;
+
+    function get() external view returns (uint256 value) {
+        assembly {
+            value := sload(100)
+        }
+    }
+}
+
+contract CreatedStorageForkTest is Store {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    Store created;
+    uint256 fork;
+
+    function setUp() public {
+        created = new Store();
+        vm.makePersistent(address(created));
+        fork = vm.createFork("<url>");
+    }
+
+    function selectAndCreate() external returns (Store) {
+        vm.selectFork(fork);
+        return new Store();
+    }
+
+    function poke() external {}
+
+    function testForkCreatedInEarlierTransaction() public {
+        vm.selectFork(fork);
+        require(created.get() == 0, "created in setUp");
+        require(created.written() == 1, "written in setUp");
+        require(this.get() == 0, "test contract");
+    }
+
+    function testForkCreatedInSwitchingCall() public {
+        Store store = this.selectAndCreate();
+        require(store.get() == 0, "created in a switching call");
+        require(store.written() == 1, "written in a switching call");
+        this.poke();
+        require(store.written() == 1, "written after a later call");
+    }
+}
+"#
+        .replace("<url>", &handle.http_endpoint()),
+    );
+
+    let output = str![[r#"
+...
+Ran 2 tests for test/CreatedStorage.t.sol:CreatedStorageForkTest
+[PASS] testForkCreatedInEarlierTransaction() ([GAS])
+[PASS] testForkCreatedInSwitchingCall() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]];
+    cmd.args(["test"]).assert_success().stdout_eq(output.clone());
+    cmd.forge_fuse().args(["test", "--no-isolate"]).assert_success().stdout_eq(output);
+}
+
+// A creation that `vm.transact` replays on the active fork discards the storage at its address
+// only until the call that replayed it reverts.
+#[forgetest]
+async fn fork_transact_reverted_creation_keeps_storage(prj: _, cmd: _) {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_accounts().next().unwrap();
+    // The fork holds storage at the address the creation writes to, with a slot for each replay
+    // to read only after the creation.
+    let created = from.create(0);
+    api.anvil_set_balance(created, U256::ONE).await.unwrap();
+    api.anvil_set_storage_at(created, U256::from(1), B256::with_last_byte(5)).await.unwrap();
+    api.anvil_set_storage_at(created, U256::from(2), B256::with_last_byte(6)).await.unwrap();
+    api.anvil_set_storage_at(created, U256::from(3), B256::with_last_byte(8)).await.unwrap();
+    api.anvil_mine(Some(U256::ONE), None).await.unwrap();
+    // Init code that stores 1 at slot 1 and deploys an empty contract.
+    let tx_hash: B256 = provider
+        .raw_request(
+            "eth_sendTransaction".into(),
+            (serde_json::json!({ "from": from, "data": "0x600160015500" }),),
+        )
+        .await
+        .unwrap();
+    api.anvil_mine(Some(U256::ONE), None).await.unwrap();
+    let receipt = provider.get_transaction_receipt(tx_hash).await.unwrap().unwrap();
+    assert_eq!(receipt.contract_address, Some(created));
+
+    prj.add_test(
+        "TransactCreation.t.sol",
+        &r#"
+interface Vm {
+    function createSelectFork(string calldata url, bytes32 txHash) external returns (uint256);
+    function transact(bytes32 txHash) external;
+    function store(address target, bytes32 slot, bytes32 value) external;
+    function load(address target, bytes32 slot) external view returns (bytes32);
+    function etch(address target, bytes calldata code) external;
+}
+
+contract TransactCreationForkTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant CREATED = <created>;
+
+    function replayAndRevert(bytes32 unloaded) external {
+        vm.transact(<tx>);
+        require(vm.load(CREATED, bytes32(0)) == 0, "replayed creation");
+        require(vm.load(CREATED, bytes32(uint256(1))) == bytes32(uint256(1)), "replayed write");
+        require(vm.load(CREATED, unloaded) == 0, "replayed unloaded slot");
+        revert("rolled back");
+    }
+
+    function testForkTransactRevertedCreation() public {
+        vm.createSelectFork("<url>", <tx>);
+        vm.store(CREATED, bytes32(0), bytes32(uint256(7)));
+        try this.replayAndRevert(bytes32(uint256(2))) {} catch Error(string memory reason) {
+            require(keccak256(bytes(reason)) == keccak256("rolled back"), reason);
+        }
+        require(CREATED.code.length == 0, "rolled back creation");
+        require(vm.load(CREATED, bytes32(0)) == bytes32(uint256(7)), "seeded");
+        require(vm.load(CREATED, bytes32(uint256(1))) == bytes32(uint256(5)), "fork storage");
+        require(vm.load(CREATED, bytes32(uint256(2))) == bytes32(uint256(6)), "slot read in replay");
+        // Clearing that slot costs a clean slot's SSTORE, so its original is its fork value.
+        vm.etch(CREATED, hex"5a5f6002555a90035f5260205ff3");
+        (, bytes memory used) = CREATED.call("");
+        require(abi.decode(used, (uint256)) >= 2900, "original of slot read in replay");
+        vm.etch(CREATED, "");
+        // A slot loaded before another replay keeps its value after the replay reverts.
+        vm.store(CREATED, bytes32(uint256(2)), 0);
+        try this.replayAndRevert(bytes32(uint256(3))) {} catch Error(string memory reason) {
+            require(keccak256(bytes(reason)) == keccak256("rolled back"), reason);
+        }
+        require(vm.load(CREATED, bytes32(uint256(2))) == 0, "slot stored before replay");
+    }
+}
+"#
+        .replace("<url>", &handle.http_endpoint())
+        .replace("<tx>", &tx_hash.to_string())
+        .replace("<created>", &created.to_checksum(None)),
+    );
+
+    let output = str![[r#"
+...
+[PASS] testForkTransactRevertedCreation() ([GAS])
+...
+"#]];
+    cmd.args(["test"]).assert_success().stdout_eq(output.clone());
+    cmd.forge_fuse().args(["test", "--no-isolate"]).assert_success().stdout_eq(output);
+}
+
+// An account created on one fork does not make the account at its address on another fork a
+// created one, whose storage a later call or a roll of that fork would discard, even once it is
+// persistent or carried back to the first fork.
+#[forgetest]
+async fn fork_created_account_other_fork(prj: _, cmd: _) {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    // The account has code and storage on the latest block but not on the first one. State
+    // changes apply to the latest block, so they follow a second one.
+    let deployer = address!("0x1000000000000000000000000000000000000001");
+    let created = deployer.create(0);
+    api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
+    api.anvil_set_code(created, Bytes::from_static(&[0x00])).await.unwrap();
+    api.anvil_set_storage_at(created, U256::ZERO, B256::with_last_byte(7)).await.unwrap();
+    api.anvil_mine(Some(U256::ONE), None).await.unwrap();
+
+    prj.add_test(
+        "OtherForkCreation.t.sol",
+        &r#"
+interface Vm {
+    function createSelectFork(string calldata url, uint256 blockNumber) external returns (uint256);
+    function createSelectFork(string calldata url) external returns (uint256);
+    function prank(address sender) external;
+    function rollFork(uint256 blockNumber) external;
+    function makePersistent(address account) external;
+    function selectFork(uint256 forkId) external;
+    function load(address target, bytes32 slot) external view returns (bytes32);
+}
+
+contract Empty {}
+
+contract OtherForkCreationForkTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant DEPLOYER = <deployer>;
+    address constant CREATED = <created>;
+
+    function createOnFirstBlock() internal returns (uint256 forkId) {
+        forkId = vm.createSelectFork("<url>", 1);
+        vm.prank(DEPLOYER);
+        require(address(new Empty()) == CREATED, "created address");
+    }
+
+    function selectLatest() external {
+        vm.createSelectFork("<url>");
+    }
+
+    function poke() external {}
+
+    function testForkCreatedOnOtherForkKeepsStorage() public {
+        createOnFirstBlock();
+        vm.createSelectFork("<url>");
+        require(vm.load(CREATED, bytes32(0)) == bytes32(uint256(7)), "before call");
+        this.poke();
+        require(vm.load(CREATED, bytes32(0)) == bytes32(uint256(7)), "after call");
+    }
+
+    function testForkCreatedOnOtherForkKeepsStorageAcrossRoll() public {
+        createOnFirstBlock();
+        this.selectLatest();
+        vm.rollFork(block.number);
+        require(vm.load(CREATED, bytes32(0)) == bytes32(uint256(7)), "after roll");
+    }
+
+    function testForkCreatedOnOtherForkKeepsStorageWhenPersistent() public {
+        createOnFirstBlock();
+        vm.createSelectFork("<url>");
+        vm.makePersistent(CREATED);
+        this.poke();
+        require(vm.load(CREATED, bytes32(0)) == bytes32(uint256(7)), "after call");
+    }
+
+    function testForkCreatedOnOtherForkKeepsStorageWhenCarriedBack() public {
+        uint256 first = createOnFirstBlock();
+        vm.createSelectFork("<url>");
+        require(vm.load(CREATED, bytes32(0)) == bytes32(uint256(7)), "before carry");
+        vm.makePersistent(CREATED);
+        vm.selectFork(first);
+        require(vm.load(CREATED, bytes32(0)) == bytes32(uint256(7)), "carried back");
+        this.poke();
+        require(vm.load(CREATED, bytes32(0)) == bytes32(uint256(7)), "after call");
+    }
+}
+"#
+        .replace("<url>", &handle.http_endpoint())
+        .replace("<deployer>", &deployer.to_checksum(None))
+        .replace("<created>", &created.to_checksum(None)),
+    );
+
+    let output = str![[r#"
+...
+[PASS] testForkCreatedOnOtherForkKeepsStorage() ([GAS])
+[PASS] testForkCreatedOnOtherForkKeepsStorageAcrossRoll() ([GAS])
+[PASS] testForkCreatedOnOtherForkKeepsStorageWhenCarriedBack() ([GAS])
+[PASS] testForkCreatedOnOtherForkKeepsStorageWhenPersistent() ([GAS])
+...
+"#]];
+    cmd.args(["test"]).assert_success().stdout_eq(output.clone());
+    cmd.forge_fuse().args(["test", "--no-isolate"]).assert_success().stdout_eq(output);
+}
+
+// An account the running transaction created on a fork stays created after a frame that selected
+// that fork reverts, so that EIP-6780 SELFDESTRUCT in a later isolated call still deletes it.
+// Without isolation the running state itself loses the mark with the revert, so only isolated
+// calls are checked.
+#[forgetest]
+async fn fork_created_account_reverted_switch(prj: _, cmd: _) {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    prj.add_test(
+        "RevertedSwitch.t.sol",
+        &r#"
+interface Vm {
+    function createSelectFork(string calldata url) external returns (uint256);
+    function selectFork(uint256 forkId) external;
+    function deal(address account, uint256 balance) external;
+}
+
+contract Bomb {
+    function boom() external {
+        selfdestruct(payable(address(this)));
+    }
+}
+
+contract RevertedSwitchForkTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function selectAndRevert(uint256 forkId) external {
+        vm.selectFork(forkId);
+        revert();
+    }
+
+    function testForkCreatedAccountSelfDestructsAfterRevertedSwitch() public {
+        uint256 first = vm.createSelectFork("<url>");
+        Bomb bomb = new Bomb();
+        vm.deal(address(bomb), 42);
+        vm.createSelectFork("<url>");
+        (bool ok,) = address(this).delegatecall(abi.encodeCall(this.selectAndRevert, (first)));
+        require(!ok, "reverted");
+        bomb.boom();
+        require(address(bomb).balance == 0, "destroyed");
+    }
+}
+"#
+        .replace("<url>", &handle.http_endpoint()),
+    );
+
+    cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS] testForkCreatedAccountSelfDestructsAfterRevertedSwitch() ([GAS])
+...
+"#]]);
+}
+
+// An account counts as created, which EIP-6780 SELFDESTRUCT deletes, only while the account the
+// running transaction holds on a fork is the one it created there, however isolated calls switch
+// forks, restore snapshots or carry persistent accounts around it.
+#[forgetest]
+async fn fork_created_account_lifecycle(prj: _, cmd: _) {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    // The account self-destructs to itself with 42 wei and has storage on the latest block, and
+    // does not exist on the first one. State changes apply to the latest block, so they follow a
+    // second one.
+    let deployer = address!("0x1000000000000000000000000000000000000001");
+    let created = deployer.create(0);
+    api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
+    api.anvil_set_code(created, Bytes::from_static(&[0x30, 0xff])).await.unwrap();
+    api.anvil_set_balance(created, U256::from(42)).await.unwrap();
+    api.anvil_set_storage_at(created, U256::ZERO, B256::with_last_byte(7)).await.unwrap();
+    api.anvil_mine(Some(U256::ONE), None).await.unwrap();
+
+    prj.add_test(
+        "CreatedLifecycle.t.sol",
+        &r#"
+interface Vm {
+    function createFork(string calldata url, uint256 blockNumber) external returns (uint256);
+    function createFork(string calldata url) external returns (uint256);
+    function createSelectFork(string calldata url, uint256 blockNumber) external returns (uint256);
+    function createSelectFork(string calldata url) external returns (uint256);
+    function selectFork(uint256 forkId) external;
+    function rollFork(uint256 blockNumber) external;
+    function makePersistent(address account) external;
+    function revokePersistent(address account) external;
+    function prank(address sender) external;
+    function deal(address account, uint256 balance) external;
+    function snapshotState() external returns (uint256);
+    function revertToState(uint256 snapshotId) external returns (bool);
+    function load(address target, bytes32 slot) external view returns (bytes32);
+}
+
+contract Bomb {
+    fallback() external payable {
+        selfdestruct(payable(address(this)));
+    }
+}
+
+contract CreatedLifecycleForkTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant DEPLOYER = <deployer>;
+    address constant CREATED = <created>;
+
+    function deploy() internal {
+        vm.prank(DEPLOYER);
+        require(address(new Bomb()) == CREATED, "created address");
+    }
+
+    function boom() internal {
+        (bool ok,) = CREATED.call("");
+        require(ok, "boom");
+    }
+
+    function select(uint256 forkId) external {
+        vm.selectFork(forkId);
+    }
+
+    function carryBack(uint256 first, uint256 second) external {
+        vm.selectFork(second);
+        require(CREATED.balance == 42, "before carry");
+        vm.makePersistent(CREATED);
+        vm.selectFork(first);
+    }
+
+    function restore(uint256 snapshotId) external {
+        require(vm.revertToState(snapshotId), "restored");
+    }
+
+    function deployAndLeave(uint256 forkId) external {
+        deploy();
+        vm.deal(CREATED, 42);
+        vm.selectFork(forkId);
+    }
+
+    function testForkCarriedBackAccountIsNotCreated() public {
+        uint256 first = vm.createSelectFork("<url>", 1);
+        deploy();
+        uint256 second = vm.createFork("<url>");
+        this.carryBack(first, second);
+        require(CREATED.code.length == 2 && CREATED.balance == 42, "carried back");
+        boom();
+        require(CREATED.balance == 42, "kept balance");
+    }
+
+    function testForkRevokedCarriedBackAccountIsNotCreated() public {
+        uint256 first = vm.createSelectFork("<url>", 1);
+        deploy();
+        uint256 second = vm.createSelectFork("<url>");
+        require(CREATED.balance == 42, "before carry");
+        vm.makePersistent(CREATED);
+        vm.selectFork(first);
+        require(CREATED.code.length == 2 && CREATED.balance == 42, "carried back");
+        vm.revokePersistent(CREATED);
+        vm.selectFork(second);
+        this.select(first);
+        boom();
+        require(CREATED.balance == 42, "kept balance");
+    }
+
+    function testForkSnapshotBeforeCreationKeepsStorage() public {
+        vm.createSelectFork("<url>");
+        uint256 snapshotId = vm.snapshotState();
+        vm.rollFork(1);
+        deploy();
+        this.restore(snapshotId);
+        vm.rollFork(3);
+        require(vm.load(CREATED, bytes32(0)) == bytes32(uint256(7)), "after roll");
+    }
+
+    function testForkCreatedOnLeftForkIsCreated() public {
+        uint256 first = vm.createSelectFork("<url>", 1);
+        uint256 second = vm.createFork("<url>", 1);
+        this.deployAndLeave(second);
+        vm.selectFork(first);
+        require(CREATED.code.length > 0 && CREATED.balance == 42, "deployed");
+        boom();
+        require(CREATED.balance == 0, "destroyed");
+    }
+}
+"#
+        .replace("<url>", &handle.http_endpoint())
+        .replace("<deployer>", &deployer.to_checksum(None))
+        .replace("<created>", &created.to_checksum(None)),
+    );
+
+    let output = str![[r#"
+...
+[PASS] testForkCarriedBackAccountIsNotCreated() ([GAS])
+[PASS] testForkCreatedOnLeftForkIsCreated() ([GAS])
+[PASS] testForkRevokedCarriedBackAccountIsNotCreated() ([GAS])
+[PASS] testForkSnapshotBeforeCreationKeepsStorage() ([GAS])
+...
+"#]];
+    cmd.args(["test"]).assert_success().stdout_eq(output.clone());
+    cmd.forge_fuse().args(["test", "--no-isolate"]).assert_success().stdout_eq(output);
+}
+
+// An account the previous transaction created on a fork is not created in the next one, even when
+// the next one creates an account at its address on another fork or restores a snapshot the
+// previous one took.
+#[forgetest]
+async fn fork_created_account_previous_transaction(prj: _, cmd: _) {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.anvil_mine(Some(U256::ONE), None).await.unwrap();
+    let deployer = address!("0x1000000000000000000000000000000000000001");
+    prj.add_test(
+        "PreviousCreation.t.sol",
+        &r#"
+interface Vm {
+    function createSelectFork(string calldata url, uint256 blockNumber) external returns (uint256);
+    function selectFork(uint256 forkId) external;
+    function prank(address sender) external;
+    function deal(address account, uint256 balance) external;
+    function snapshotState() external returns (uint256);
+    function revertToState(uint256 snapshotId) external returns (bool);
+    function rollFork(uint256 blockNumber) external;
+}
+
+contract Bomb {
+    fallback() external payable {
+        selfdestruct(payable(address(this)));
+    }
+}
+
+contract PreviousCreationForkTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant DEPLOYER = <deployer>;
+    address constant CREATED = <created>;
+    uint256 first;
+    uint256 onFirst;
+    uint256 onSecond;
+    uint256 switchedBack;
+
+    function deploy() internal {
+        vm.prank(DEPLOYER);
+        require(address(new Bomb()) == CREATED, "created address");
+    }
+
+    function setUp() public {
+        first = vm.createSelectFork("<url>", 1);
+        deploy();
+        vm.deal(CREATED, 42);
+        onFirst = vm.snapshotState();
+        uint256 second = vm.createSelectFork("<url>", 1);
+        onSecond = vm.snapshotState();
+        vm.selectFork(first);
+        switchedBack = vm.snapshotState();
+        vm.selectFork(second);
+    }
+
+    function boom() internal {
+        (bool ok,) = CREATED.call("");
+        require(ok, "boom");
+        require(CREATED.balance == 42, "kept balance");
+    }
+
+    function testForkCreatedInSetUpIsNotCreated() public {
+        deploy();
+        vm.selectFork(first);
+        boom();
+    }
+
+    function testForkCreatedInSetUpIsNotCreatedAfterRevert() public {
+        require(vm.revertToState(onFirst), "reverted");
+        boom();
+    }
+
+    function testForkCreatedInSetUpIsNotCreatedAfterRevertAndSwitch() public {
+        require(vm.revertToState(onSecond), "reverted");
+        vm.selectFork(first);
+        boom();
+    }
+
+    function testForkCreatedInSetUpIsNotCreatedAfterSwitchBackRevertAndRoll() public {
+        require(vm.revertToState(switchedBack), "reverted");
+        vm.rollFork(block.number);
+        boom();
+    }
+}
+"#
+        .replace("<url>", &handle.http_endpoint())
+        .replace("<deployer>", &deployer.to_checksum(None))
+        .replace("<created>", &deployer.create(0).to_checksum(None)),
+    );
+
+    let output = str![[r#"
+...
+[PASS] testForkCreatedInSetUpIsNotCreated() ([GAS])
+[PASS] testForkCreatedInSetUpIsNotCreatedAfterRevert() ([GAS])
+[PASS] testForkCreatedInSetUpIsNotCreatedAfterRevertAndSwitch() ([GAS])
+[PASS] testForkCreatedInSetUpIsNotCreatedAfterSwitchBackRevertAndRoll() ([GAS])
+...
+"#]];
+    cmd.args(["test"]).assert_success().stdout_eq(output.clone());
+    cmd.forge_fuse().args(["test", "--no-isolate"]).assert_success().stdout_eq(output);
+}
+
+// Raw trace data in JSON output applies the same cheatcode redaction as decoded traces.
+#[forgetest]
+fn test_json_redacts_raw_cheatcode_secrets(prj: _, cmd: _) {
+    prj.add_test(
+        "Secret.t.sol",
+        r#"
+interface Vm {
+    function deriveKey(string calldata mnemonic, uint32 index) external pure returns (uint256);
+    function addr(uint256 privateKey) external pure returns (address);
+}
+
+contract SecretTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testSecret() public pure {
+        uint256 pk =
+            vm.deriveKey("test test test test test test test test test test test junk", 0);
+        require(vm.addr(pk) == 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266);
+    }
+}
+   "#,
+    );
+
+    let output: serde_json::Value = serde_json::from_slice(
+        &cmd.args(["test", "-vvv", "--json"]).assert_success().get_output().stdout,
+    )
+    .unwrap();
+    let traces = output["test/Secret.t.sol:SecretTest"]["test_results"]["testSecret()"]["traces"]
+        .as_array()
+        .unwrap();
+    let execution = traces.iter().find(|trace| trace[0] == "Execution").unwrap();
+    let vm_calls = execution[1]["arena"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|node| &node["trace"])
+        .filter(|trace| trace["address"] == "0x7109709ecfa91a80626ff3989d68f67f5b1dd12d")
+        .map(|trace| serde_json::json!({ "data": trace["data"], "output": trace["output"] }))
+        .collect::<Vec<_>>();
+    assert_data_eq!(
+        serde_json::to_string(&vm_calls).unwrap().is_json(),
+        str![[r#"
+[
+  { "data": "0x6229498b", "output": "0x" },
+  {
+    "data": "0xffa18649",
+    "output": "0x000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266"
+  }
+]
+"#]]
+        .is_json(),
+    );
 }

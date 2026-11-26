@@ -486,7 +486,7 @@ note[function-init-state]: state variable initializer depends on a non-pure func
   [FILE]:5:5
   │
 5 │     address bob = makeAddr("bob");
-  │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   │
   ╰ help: https://getfoundry.sh/forge/linting/function-init-state
 
@@ -1827,7 +1827,10 @@ contract Broken {
 {
   "$message_type": "diagnostic",
   "message": "unresolved symbol `missing`",
-  "code": null,
+  "code": {
+    "code": "7576",
+    "explanation": null
+  },
   "level": "error",
   "spans": [
     {
@@ -1853,7 +1856,7 @@ contract Broken {
     }
   ],
   "children": [],
-  "rendered": "error: unresolved symbol `missing`\n  ╭▸ src/Broken.sol:6:25\n  │\n6 │         uint256 value = missing;\n  ╰╴                        ━━━━━━━\n\n"
+  "rendered": "error[7576]: unresolved symbol `missing`\n  ╭▸ src/Broken.sol:6:25\n  │\n6 │         uint256 value = missing;\n  ╰╴                        ━━━━━━━\n\n"
 }
 "#]])
         .stderr_eq("");
@@ -2591,11 +2594,90 @@ warning[uninitialized-state]: state variable is read but never written
   [FILE]:5:5
   │
 5 │     uint256 public reported;
-  │     ━━━━━━━━━━━━━━━━━━━━━━━━
+  │     ━━━━━━━━━━━━━━━━━━━━━━━
   │
   ╰ help: https://getfoundry.sh/forge/linting/uninitialized-state
 
 
 "#]]);
     }
+}
+
+// A library reached through an absolute `src/` import becomes an include path, so lint must not
+// load a file from disk where it could match the library's own copy of a shared package.
+#[forgetest]
+fn lint_resolves_nested_library_absolute_imports(prj: _, cmd: _) {
+    for shared in ["lib/shared/src", "lib/dep/lib/shared/src"] {
+        prj.create_file(format!("{shared}/Value.sol"), "pragma solidity ^0.8.0; contract Value {}");
+        // Only imports, so the build writes no artifact for it.
+        prj.create_file(
+            format!("{shared}/Alias.sol"),
+            r#"pragma solidity ^0.8.0; import {Value as Alias} from "./Value.sol";"#,
+        );
+    }
+    prj.create_file("lib/dep/src/Base.sol", "pragma solidity ^0.8.0; contract Base {}");
+    prj.create_file(
+        "lib/dep/src/Dep.sol",
+        r#"pragma solidity ^0.8.0; import "src/Base.sol"; contract Dep is Base {}"#,
+    );
+    prj.add_source(
+        "UsesDep.sol",
+        r#"pragma solidity ^0.8.0; import {Alias} from "shared/Alias.sol"; import {Dep} from "dep/Dep.sol"; contract UsesDep is Dep {}"#,
+    );
+    prj.add_test(
+        "UsesDep.t.sol",
+        r#"pragma solidity ^0.8.0; import "../src/UsesDep.sol"; contract UsesDepTest { function test_dep() public {} }"#,
+    );
+
+    cmd.arg("build").assert_success();
+    cmd.forge_fuse().arg("lint").assert_success();
+    // Lint diagnostics during `forge test` don't fail the run, so check none were printed.
+    cmd.forge_fuse().arg("test").assert_success().stderr_eq(str![[""]]);
+}
+
+// Symlinked sources are loaded under their canonical path and must still be linted.
+#[cfg(unix)]
+#[forgetest]
+fn lint_symlinked_source(prj: _, cmd: _) {
+    prj.create_file(
+        "hidden/Entry.sol",
+        "pragma solidity ^0.8.0; contract Entry { function f() public { uint256 BAD_CASE = 1; } }",
+    );
+    std::os::unix::fs::symlink(
+        prj.root().join("hidden/Entry.sol"),
+        prj.root().join("src/Entry.sol"),
+    )
+    .unwrap();
+
+    cmd.args(["lint", "--only-lint", "mixed-case-variable"])
+        .assert_success()
+        .stderr_eq(str![[r#"
+note[mixed-case-variable]: mutable variable name is not `mixedCase`
+  [FILE]:1:72
+  │
+1 │ pragma solidity ^0.8.0; contract Entry { function f() public { uint256 BAD_CASE = 1; } }
+  │                                                                        ━━━━━━━━ help: consider using: `badCase`
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/mixed-case-variable
+
+
+"#]]);
+
+    // A test alias listed first must not hide the source's lints.
+    std::os::unix::fs::symlink(prj.root().join("src/Entry.sol"), prj.root().join("test/Alias.sol"))
+        .unwrap();
+    cmd.forge_fuse()
+        .args(["lint", "test/Alias.sol", "src/Entry.sol", "--only-lint", "mixed-case-variable"])
+        .assert_success()
+        .stderr_eq(str![[r#"
+note[mixed-case-variable]: mutable variable name is not `mixedCase`
+  [FILE]:1:72
+  │
+1 │ pragma solidity ^0.8.0; contract Entry { function f() public { uint256 BAD_CASE = 1; } }
+  │                                                                        ━━━━━━━━ help: consider using: `badCase`
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/mixed-case-variable
+
+
+"#]]);
 }

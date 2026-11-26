@@ -5,7 +5,10 @@ use foundry_compilers::{
     ProjectCompileOutput, artifacts::sourcemap::SourceMap, buildinfo::SourceEdit,
 };
 use foundry_evm_core::ic::IcPcMap;
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::OnceLock,
+};
 
 /// Source path, content on disk, and preprocessor edits of a build source.
 pub type BuildSource = (PathBuf, String, Vec<SourceEdit>);
@@ -27,8 +30,8 @@ pub struct PcSourceMapper<'a> {
     source_data: SourceData,
     /// Source files i.e source path, content, and preprocessor edits (indexed by source_id).
     sources: &'a [BuildSource],
-    /// Cached line offset mappings for each source file.
-    line_offsets: Vec<Vec<usize>>,
+    /// Line offset mappings for each source file, computed on first use.
+    line_offsets: Vec<OnceLock<Vec<usize>>>,
 }
 
 impl<'a> PcSourceMapper<'a> {
@@ -37,9 +40,7 @@ impl<'a> PcSourceMapper<'a> {
         // Build instruction counter to program counter mapping
         let ic_pc_map = IcPcMap::new(source_data.bytecode.as_ref());
 
-        // Pre-calculate line offsets for each source file
-        let line_offsets =
-            sources.iter().map(|(_, content, _)| compute_line_offsets(content)).collect();
+        let line_offsets = sources.iter().map(|_| OnceLock::new()).collect();
 
         Self { ic_pc_map, source_data, sources, line_offsets }
     }
@@ -53,15 +54,10 @@ impl<'a> PcSourceMapper<'a> {
         let element = self.source_data.source_map.get(ic)?;
 
         // Get the source file index - returns None if index is -1
-        let source_idx_opt = element.index();
-
-        let source_idx = source_idx_opt? as usize;
-        if source_idx >= self.sources.len() {
-            return None;
-        }
+        let source_idx = element.index()? as usize;
 
         // Get the source file info
-        let (file_path, content, edits) = &self.sources[source_idx];
+        let (file_path, content, edits) = self.sources.get(source_idx)?;
 
         // Convert byte offset to line and column. Offsets refer to the compiled source, which
         // differs from the file on disk when it was preprocessed.
@@ -72,7 +68,8 @@ impl<'a> PcSourceMapper<'a> {
             return None;
         }
 
-        let line_offsets = self.line_offsets.get(source_idx)?;
+        let line_offsets =
+            self.line_offsets.get(source_idx)?.get_or_init(|| compute_line_offsets(content));
         let (line, column) = offset_to_line_column(line_offsets, offset);
 
         trace!(
@@ -148,8 +145,7 @@ pub fn load_build_sources(
     for (source_id, source_path) in &build_ctx.source_id_to_path {
         let idx = *source_id as usize;
 
-        let full_path =
-            if source_path.is_absolute() { source_path.clone() } else { root.join(source_path) };
+        let full_path = root.join(source_path);
         let mut source_content = foundry_common::fs::read_to_string(&full_path).unwrap_or_default();
 
         // Normalize line endings for windows

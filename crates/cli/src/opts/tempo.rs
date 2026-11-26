@@ -12,6 +12,7 @@ use std::{num::NonZeroU64, path::PathBuf, str::FromStr, sync::Arc};
 
 use crate::utils::{now, parse_fee_token_address};
 
+mod configurable_account;
 mod session;
 pub use session::TEMPO_SESSION_ID_ENV;
 
@@ -176,6 +177,60 @@ pub struct TempoOpts {
     /// Requires `--tempo.expiring-nonce`.
     #[arg(long = "tempo.valid-after")]
     pub valid_after: Option<u64>,
+
+    /// Send as this Tempo configurable account (T14), failing unless it is one.
+    ///
+    /// Not needed for a sender named with `--from` or `--sender`: a configurable account sender
+    /// is detected from the chain, and the local owner keys (the wallet options, `--tempo.owner`,
+    /// and owner keys in the Tempo Accounts store) sign its `0x05` signature, as many as reach the
+    /// threshold.
+    #[arg(
+        long = "tempo.configurable-account",
+        id = "tempo_configurable_account",
+        value_name = "ADDRESS"
+    )]
+    pub configurable_account: Option<Address>,
+
+    /// The configuration of the configurable account sender, or of
+    /// `--tempo.configurable-access-key`, instead of rebuilding it from the chain.
+    ///
+    /// JSON, inline or in a file, with `salt`, `version`, `threshold` and `owners` (each an
+    /// `owner` and a `weight`), as `cast wallet owners --json` prints it. It is checked against
+    /// the account's configuration commitment. An account that has not sent its first transaction
+    /// yet has none onchain, so it needs this unless it is the 1-of-1 account of a local key.
+    #[arg(long = "tempo.config", id = "tempo_config", value_name = "CONFIG")]
+    pub configurable_account_config: Option<String>,
+
+    /// An owner key of the configurable account sender, or of `--tempo.configurable-access-key`,
+    /// in addition to the wallet options.
+    ///
+    /// Repeat for several owners. Takes the forms of `--tempo.sponsor-signer`: `env://VAR`,
+    /// `keystore://PATH`, `account://NAME`, `ledger://`, `trezor://`, `aws://`, `gcp://`,
+    /// `turnkey://`, or `private-key://KEY`.
+    #[arg(long = "tempo.owner", id = "tempo_owner", value_name = "SIGNER")]
+    pub owners: Vec<String>,
+
+    /// Sign with this Tempo configurable account as an access key of the sender `--from` (T14,
+    /// TIP-1111).
+    ///
+    /// The sender must have authorized the account with key type `configurable`. Its local owner
+    /// keys, found as for `--tempo.configurable-account`, approve the transaction inside a
+    /// keychain signature for the sender.
+    #[arg(
+        long = "tempo.configurable-access-key",
+        id = "tempo_configurable_access_key",
+        value_name = "ADDRESS",
+        conflicts_with_all = ["tempo_configurable_account", "tempo_eoa", "key_id"]
+    )]
+    pub configurable_access_key: Option<Address>,
+
+    /// Send from the key itself instead of the Tempo configurable account linked to its keystore.
+    ///
+    /// On a Tempo chain where T14 is active, a keystore that `cast wallet new` created for a
+    /// configurable account sends from that account unless `--from`, `--sender` or this flag
+    /// names the key.
+    #[arg(long, id = "tempo_eoa", conflicts_with = "tempo_configurable_account")]
+    pub eoa: bool,
 }
 
 impl TempoOpts {
@@ -194,6 +249,7 @@ impl TempoOpts {
             || self.expiring_nonce
             || self.valid_before.is_some()
             || self.valid_after.is_some()
+            || self.has_configurable_account_options()
     }
 
     /// Returns the absolute `valid_before` unix timestamp derived from `--tempo.expires`, if set.

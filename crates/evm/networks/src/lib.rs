@@ -26,15 +26,15 @@ use foundry_evm_hardforks::{
 use serde::{Deserialize, Serialize, ser::SerializeStruct};
 use std::collections::BTreeMap;
 use tempo_contracts::precompiles::{
-    ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, CURRENT_COMMITTEE_ADDRESS,
-    NONCE_PRECOMPILE_ADDRESS, RECEIVE_POLICY_GUARD_ADDRESS, SIGNATURE_VERIFIER_ADDRESS,
-    STABLECOIN_DEX_ADDRESS, STORAGE_CREDITS_ADDRESS, TIP_FEE_MANAGER_ADDRESS,
-    TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS, TIP403_REGISTRY_ADDRESS,
-    VALIDATOR_CONFIG_ADDRESS, VALIDATOR_CONFIG_V2_ADDRESS,
+    ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, CONFIGURABLE_ACCOUNT_ADDRESS,
+    CURRENT_COMMITTEE_ADDRESS, NONCE_PRECOMPILE_ADDRESS, RECEIVE_POLICY_GUARD_ADDRESS,
+    SIGNATURE_VERIFIER_ADDRESS, STABLECOIN_DEX_ADDRESS, STORAGE_CREDITS_ADDRESS,
+    TIP_FEE_MANAGER_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS,
+    TIP403_REGISTRY_ADDRESS, VALIDATOR_CONFIG_ADDRESS, VALIDATOR_CONFIG_V2_ADDRESS,
 };
 
 #[cfg(feature = "base")]
-use base_common_eip8130::NonceManagerSlots;
+use base_common_base_tx::NonceManagerSlots;
 #[cfg(feature = "base")]
 use base_evm2::precompiles::{
     ACTIVATION_REGISTRY_ADDRESS, B20_FACTORY_ADDRESS, POLICY_REGISTRY_ADDRESS, TX_CONTEXT_ADDRESS,
@@ -73,6 +73,7 @@ pub const TEMPO_PRECOMPILES: &[(&str, Address)] = &[
     ("ReceivePolicyGuard", RECEIVE_POLICY_GUARD_ADDRESS),
     ("StorageCredits", STORAGE_CREDITS_ADDRESS),
     ("CurrentCommittee", CURRENT_COMMITTEE_ADDRESS),
+    ("ConfigurableAccount", CONFIGURABLE_ACCOUNT_ADDRESS),
 ];
 
 #[cfg(feature = "monad")]
@@ -104,8 +105,8 @@ const BASE_PRECOMPILES: &[(&str, Address)] = &[
 /// from every function and are code-less on chain, so stubbing them would diverge — a contract
 /// guarding calls with an `isContract` probe would pass locally and revert on Base.
 ///
-/// The nonce manager separately receives a stub at Zenith from Base's own
-/// `ensure_eip8130_system_accounts` transition, for EIP-161 state clearing rather than for
+/// The nonce manager separately receives a stub at Everest from Base's own
+/// `ensure_base_tx_system_accounts` transition, for EIP-161 state clearing rather than for
 /// `extcodesize`. That transition owns it; this list must not.
 #[cfg(feature = "base")]
 pub const BASE_CODE_SENTINEL_ADDRESSES: &[Address] =
@@ -963,6 +964,8 @@ pub fn is_tempo_precompile_active_at(address: Address, hardfork: TempoHardfork) 
         hardfork.is_t6()
     } else if address == STORAGE_CREDITS_ADDRESS {
         hardfork.is_t7()
+    } else if address == CONFIGURABLE_ACCOUNT_ADDRESS {
+        hardfork.is_t14()
     } else if address == ADDRESS_REGISTRY_ADDRESS || address == SIGNATURE_VERIFIER_ADDRESS {
         hardfork.is_t3()
     } else {
@@ -1671,6 +1674,21 @@ mod tests {
         let cfg = NetworkConfigs { network: Some(NetworkVariant::Tempo), ..Default::default() };
         assert!(!cfg.precompiles(Some(TempoHardfork::T7.into())).contains_key("CurrentCommittee"));
         assert!(cfg.precompiles(Some(TempoHardfork::T8.into())).contains_key("CurrentCommittee"));
+    }
+
+    #[test]
+    fn configurable_account_precompile_activates_at_t14() {
+        assert!(!is_tempo_precompile_active_at(CONFIGURABLE_ACCOUNT_ADDRESS, TempoHardfork::T13));
+        assert!(is_tempo_precompile_active_at(CONFIGURABLE_ACCOUNT_ADDRESS, TempoHardfork::T14));
+
+        let cfg = NetworkConfigs { network: Some(NetworkVariant::Tempo), ..Default::default() };
+        assert!(
+            !cfg.precompiles(Some(TempoHardfork::T13.into())).contains_key("ConfigurableAccount")
+        );
+        assert_eq!(
+            cfg.precompiles(Some(TempoHardfork::T14.into())).get("ConfigurableAccount"),
+            Some(&CONFIGURABLE_ACCOUNT_ADDRESS)
+        );
     }
 
     // --- resolved() / active_network_name ---

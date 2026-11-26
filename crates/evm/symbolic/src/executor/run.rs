@@ -536,7 +536,7 @@ impl SymbolicExecutor {
                         {
                             let input = match candidate {
                                 Some(input) => input,
-                                None => self.materialize_root_input(input.function, &state)?,
+                                None => self.materialize_root_input(input.function, &state)?.0,
                             };
                             success_input = Some((state.depth, input));
                         }
@@ -553,11 +553,47 @@ impl SymbolicExecutor {
                             constraint_count = state.constraints.len(),
                             "materializing counterexample from solver model"
                         );
-                        let SymbolicConcreteInput { args, calldata } =
+                        let (SymbolicConcreteInput { args, calldata }, model) =
                             self.materialize_root_input(input.function, &state)?;
+                        let svm_returns = state
+                            .svm_returns
+                            .iter()
+                            .map(|ret| ret.bytes.eval_model(&mut self.cx, &model).map(Bytes::from))
+                            .collect::<Result<_, _>>()?;
+                        // Conflicting assignments replay without storage, leaving replay to
+                        // reject the counterexample if it depends on them. Storage the test
+                        // itself made arbitrary was concrete when the call started, so replay
+                        // does not set it either.
+                        let generic =
+                            matches!(self.config.storage_layout, SymbolicStorageLayout::Generic);
+                        let executor = &input.executor;
+                        let storage = state
+                            .world
+                            .replay_storage_assignments(&model, true)
+                            .inspect_err(|err| debug!(%err, "skipping symbolic storage replay"))
+                            .unwrap_or_default()
+                            .into_iter()
+                            .filter(|assignment| {
+                                generic
+                                    || executor
+                                        .arbitrary_storage_targets
+                                        .iter()
+                                        .map(|(target, _)| target)
+                                        .chain(
+                                            executor
+                                                .arbitrary_storage_copies
+                                                .iter()
+                                                .map(|(target, _)| target),
+                                        )
+                                        .any(|target| *target == assignment.address)
+                            })
+                            .collect();
                         return Ok(SymbolicRunResult::Counterexample {
                             args,
                             calldata,
+                            svm_returns,
+                            memory_halt_pc: state.memory_halt_pc,
+                            storage,
                             stats: self.stats_with_paths(*completed_paths + 1),
                         });
                     }
@@ -610,7 +646,7 @@ impl SymbolicExecutor {
             return Ok(None);
         }
 
-        let input = self.materialize_root_input(function, state)?;
+        let (input, _) = self.materialize_root_input(function, state)?;
         candidates.push(input.clone());
         Ok(Some(input))
     }
@@ -639,12 +675,12 @@ impl SymbolicExecutor {
         )
     }
 
-    /// Materializes the root call input for `state` from a solver model.
+    /// Materializes the root call input for `state` from a solver model, and returns the model.
     fn materialize_root_input(
         &mut self,
         function: &Function,
         state: &PathState,
-    ) -> Result<SymbolicConcreteInput, SymbolicError> {
+    ) -> Result<(SymbolicConcreteInput, SymbolicModel), SymbolicError> {
         let calldata = state
             .root_calldata
             .as_ref()
@@ -652,7 +688,7 @@ impl SymbolicExecutor {
         let model = self.witness_model(state)?;
         let args = calldata.model_to_args(&mut self.cx, &model)?;
         let calldata_bytes = Bytes::from(function.abi_encode_input(&args)?);
-        Ok(SymbolicConcreteInput { args, calldata: calldata_bytes })
+        Ok((SymbolicConcreteInput { args, calldata: calldata_bytes }, model))
     }
 
     pub(super) fn run_invariant_inner(
@@ -737,7 +773,6 @@ impl SymbolicExecutor {
                                 sequence.state.clone(),
                                 target.address,
                                 sender,
-                                &target.function,
                                 calldata,
                                 constraints,
                             )?;

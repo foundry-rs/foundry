@@ -79,7 +79,7 @@ impl<T: SignerRecoverable + TxHashRef + Encodable> MaybeImpersonatedTransaction<
             let mut buffer = Vec::new();
             self.transaction.encode(&mut buffer);
             buffer.extend_from_slice(sender.as_ref());
-            return B256::from_slice(alloy_primitives::utils::keccak256(&buffer).as_slice());
+            return alloy_primitives::utils::keccak256(&buffer);
         }
         *self.transaction.tx_hash()
     }

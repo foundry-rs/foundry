@@ -1,7 +1,11 @@
 use super::*;
 use alloy_sol_types::{Revert, SolError};
-use evm2::interpreter::gas::CALL_STIPEND;
-use foundry_evm::{core::backend::GLOBAL_FAIL_SLOT, inspectors::cheatcodes::ExpectedCallType};
+use evm2::interpreter::{InstrStop, gas::CALL_STIPEND};
+use foundry_common::contracts::ContractsByArtifact;
+use foundry_evm::{
+    core::backend::GLOBAL_FAIL_SLOT,
+    inspectors::cheatcodes::{Error, ExpectedCallType, expect_revert_mismatch},
+};
 use std::collections::BTreeSet;
 
 const MAX_BOUND_ANALYSIS_VISITS: usize = 256;
@@ -28,6 +32,9 @@ pub(crate) struct PathState {
     /// Conditions a counterexample model meets when it can, so that replay reproduces it.
     pub(crate) witness_preferences: Vec<SymBoolExpr>,
     pub(crate) next_symbol: usize,
+    /// Return data of each `svm.*` helper call on this path, in call order. Like Forge's mocked
+    /// call queue, which replay uses to answer these calls, it survives reverts.
+    pub(crate) svm_returns: Vec<SymReturnData>,
     pub(crate) recorded_logs: Option<Vec<SymbolicLog>>,
     /// Bumped by `recordLogs` and `getRecordedLogs*` so open frame checkpoints know the buffer
     /// was reset.
@@ -43,6 +50,10 @@ pub(crate) struct PathState {
     /// Backward jumps taken per destination and return addresses on the stack.
     pub(crate) loop_jumps: HashMap<(usize, Vec<usize>), u32>,
     pub(crate) expected_revert: Option<ExpectedRevert>,
+    /// Whether a calling frame has a pending `vm.expectRevert`, which Forge tracks globally, so
+    /// this frame cannot set another. Storage hook callbacks start without it, as Forge sets the
+    /// pending expectation aside while they run.
+    pub(crate) outer_expected_revert: bool,
     /// Account of the first call, or reverting CREATE, that failed in or below this frame since
     /// it was entered or since its last `vm.expectRevert`, which Forge reports as the reverter.
     pub(crate) first_failed_callee: Option<Address>,
@@ -51,6 +62,8 @@ pub(crate) struct PathState {
     pub(crate) first_reverted_callee: Option<Address>,
     /// Assertion cheatcodes set this even when their revert is caught by the handler.
     pub(crate) assertion_failed: bool,
+    /// Pc of the memory access beyond `memory_limit` or the host word that halted this path.
+    pub(crate) memory_halt_pc: Option<usize>,
     pub(crate) assume_no_revert_next_call: Option<AssumeNoRevert>,
     pub(crate) expected_emit: Option<ExpectedEmit>,
     pub(crate) expected_calls: Vec<ExpectedCall>,
@@ -121,6 +134,7 @@ impl PathState {
             constraints: Vec::new(),
             witness_preferences: Vec::new(),
             next_symbol: 0,
+            svm_returns: Vec::new(),
             recorded_logs: None,
             recorded_logs_generation: 0,
             access_record: None,
@@ -132,9 +146,11 @@ impl PathState {
             needs_feasibility_check: false,
             loop_jumps: HashMap::default(),
             expected_revert: None,
+            outer_expected_revert: false,
             first_failed_callee: None,
             first_reverted_callee: None,
             assertion_failed: false,
+            memory_halt_pc: None,
             assume_no_revert_next_call: None,
             expected_emit: None,
             expected_calls: Vec::new(),
@@ -306,6 +322,7 @@ impl PathState {
         // semantics unless the callee sets its own prank.
         child.prank = SymbolicPrank::default();
         child.loop_jumps.clear();
+        child.outer_expected_revert = self.outer_expected_revert || self.expected_revert.is_some();
         child.expected_revert = None;
         child.first_failed_callee = None;
         child.first_reverted_callee = None;
@@ -327,6 +344,7 @@ impl PathState {
     pub(crate) fn storage_hook_child(&self, frame: CallFrame) -> Self {
         let mut child = self.child(frame);
         child.storage_hook_active = true;
+        child.outer_expected_revert = false;
         child.recorded_logs = None;
         child.access_record = None;
         child.expected_emit = None;
@@ -465,6 +483,7 @@ impl PathState {
         self.constraints = std::mem::take(&mut check.constraints);
         self.witness_preferences = std::mem::take(&mut check.witness_preferences);
         self.next_symbol = self.next_symbol.max(check.next_symbol);
+        self.svm_returns = std::mem::take(&mut check.svm_returns);
         self.world.merge_replay_metadata_from(&check.world);
         self.storage_load_hooks = std::mem::take(&mut check.storage_load_hooks);
         self.storage_store_hooks = std::mem::take(&mut check.storage_store_hooks);
@@ -475,6 +494,7 @@ impl PathState {
         self.constraints = std::mem::take(&mut child.constraints);
         self.witness_preferences = std::mem::take(&mut child.witness_preferences);
         self.next_symbol = child.next_symbol;
+        self.svm_returns = std::mem::take(&mut child.svm_returns);
         self.inherit_branch_target_progress(child);
         self.storage_load_hooks = std::mem::take(&mut child.storage_load_hooks);
         self.storage_store_hooks = std::mem::take(&mut child.storage_store_hooks);
@@ -585,6 +605,7 @@ impl PathState {
                 | SymExprKind::Keccak { .. }
                 | SymExprKind::Hash { .. } => None,
                 SymExprKind::Not(_) => None,
+                SymExprKind::TernOp(SymTernOp::MulDiv, _, _, _) => None,
                 SymExprKind::TernOp(_, _, _, modulus) => match modulus.as_const() {
                     Some(modulus) if modulus.is_zero() => Some(0),
                     Some(modulus) => usize::try_from(modulus - U256::ONE).ok(),
@@ -682,7 +703,8 @@ impl PathState {
                     | SymBinOp::SRem
                     | SymBinOp::Or
                     | SymBinOp::Xor
-                    | SymBinOp::Sar => None,
+                    | SymBinOp::Sar
+                    | SymBinOp::MulHigh => None,
                 },
             }
         });
@@ -950,7 +972,7 @@ impl PathState {
         cx: &mut SymCx,
         executor: &ExecutorView<'_>,
         address: Address,
-    ) -> SymExpr {
+    ) -> Result<SymExpr, SymbolicError> {
         self.world.balance_word_for_address(cx, executor, address)
     }
 
@@ -1072,7 +1094,14 @@ impl PathState {
         value
     }
 
-    pub(crate) fn prank_for_next_call(&mut self) -> (Address, SymExpr, Option<(Address, SymExpr)>) {
+    /// Takes the caller, its word, and the origin for the next call or CREATE, which a prank
+    /// may set. A pranked word names its account only now, once the path fixed what it may.
+    pub(crate) fn prank_for_next_call(
+        &mut self,
+        cx: &mut SymCx,
+        executor: &ExecutorView<'_>,
+    ) -> (Address, SymExpr, Option<(Address, SymExpr)>) {
+        self.resolve_prank_addresses(cx, executor);
         // Any root call ends an unused single-call prank at this depth, even when it was set by
         // another handler in the same invariant sequence.
         if self.call_depth == 0 {
@@ -1097,9 +1126,26 @@ impl PathState {
         }
     }
 
+    /// Returns Forge's error for a `vm.prank` or `vm.startPrank` (`persistent`) that would replace
+    /// an active prank. Like Forge, root frames share one prank slot, so a prank parked for another
+    /// root frame also blocks an overwrite.
+    pub(crate) fn prank_overwrite_error(&self, persistent: bool) -> Option<&'static str> {
+        let parked = self.root_pranks.values().filter(|_| self.call_depth == 0);
+        std::iter::once(&self.prank)
+            .chain(parked)
+            .find_map(|prank| prank.overwrite_error(persistent))
+    }
+
     /// Resolves the pranked caller and origin accounts from their words again, so a word the
-    /// path fixed after the prank, such as a guarded address a call forked, names its account.
-    pub(crate) fn resolve_prank_addresses(&mut self, cx: &mut SymCx) {
+    /// path fixed after the prank, such as one the pranked call forked, names its account.
+    ///
+    /// A word the path leaves free names no known account, but it may still name a precompile
+    /// nothing touched yet, which a call to it decides. Its alias is guarded for those, so the
+    /// state the pranked call writes to its representative account, such as the nonce an
+    /// isolated call bumps, does not make that call report incomplete. On a branch where the
+    /// word names a precompile, reads through the word still see that state; reads through the
+    /// precompile's own address do not.
+    fn resolve_prank_addresses(&mut self, cx: &mut SymCx, executor: &ExecutorView<'_>) {
         let mut prank = std::mem::take(&mut self.prank);
         for (address, word) in [
             &mut prank.next_caller,
@@ -1111,6 +1157,20 @@ impl PathState {
         .flatten()
         {
             *address = self.address_or_symbolic_slot(cx, word.clone());
+            // An alias that already holds state, such as a dealt balance, may hold it for a
+            // precompile, so a guard would hide that state from reads through its address.
+            if self.constrained_word(cx, word).is_none() && !self.world.alias_holds_state(word) {
+                let precompiles = active_precompile_addresses(executor.spec_id)
+                    .into_iter()
+                    .filter(|precompile| {
+                        let eq = SymBoolExpr::eq_word_const(cx, word, address_word(*precompile));
+                        !self.constraints.contains(&eq.not(cx))
+                    })
+                    .collect::<Vec<_>>();
+                if !precompiles.is_empty() {
+                    self.world.guard_symbolic_address(word, &precompiles);
+                }
+            }
         }
         self.prank = prank;
     }
@@ -1197,11 +1257,11 @@ impl PathState {
         executor: &ExecutorView<'_>,
         address: Address,
         value: SymExpr,
-    ) {
-        let previous = self.world.balance_word_for_address(cx, executor, address);
-        let delta = SymExpr::binop(cx, SymBinOp::Sub, value.clone(), previous);
-        self.world.set_balance_word(address, value);
-        self.persistent_writes.push(PersistentWrite::Balance(address, delta));
+    ) -> Result<(), SymbolicError> {
+        let previous = self.world.balance_word_for_address(cx, executor, address)?;
+        self.world.set_balance_word(address, value.clone());
+        self.persistent_writes.push(PersistentWrite::Balance { address, balance: value, previous });
+        Ok(())
     }
 
     /// Returns the concrete accounts that a cheatcode write through the free address word
@@ -1217,6 +1277,8 @@ impl PathState {
         if self.constrained_word(cx, word).is_some() {
             return Vec::new();
         }
+        // A precompile nothing touched yet is left out: guarding a word for every precompile
+        // would make each later cheatcode or pranked call that takes it fork over all of them.
         let candidates = self.world.concrete_alias_candidates(executor);
         self.world.guard_symbolic_address(word, &candidates);
         candidates
@@ -1246,8 +1308,8 @@ impl PathState {
     /// world.
     ///
     /// Forge's cheatcodes write balances and nonces outside the journal, so a revert only undoes
-    /// the journaled changes made on top of them: balances keep the write's wrapping delta, and
-    /// nonces keep its delta, saturated at the nonce bounds, unless the revert undoes the
+    /// the journaled changes made on top of them: each account keeps the sum of its writes'
+    /// balance and nonce deltas, saturated once at the bounds, unless the revert undoes the
     /// account's creation, which resets the nonce. A failed frame that restored a snapshot
     /// returns to the state from just before the first restore made since it started, so later
     /// writes are dropped.
@@ -1257,15 +1319,18 @@ impl PathState {
         executor: &ExecutorView<'_>,
         start: usize,
     ) -> Result<(), SymbolicError> {
+        // Kept in the order the accounts were first written, so the built expressions do not
+        // depend on hash order.
+        let mut balance_writes = Vec::<(Address, Vec<(SymExpr, SymExpr)>)>::new();
         let mut nonce_deltas = HashMap::<Address, i128>::default();
         let mut created = HashSet::<Address>::default();
         for write in self.persistent_writes.split_off(start) {
             match write {
-                PersistentWrite::Balance(address, delta) => {
-                    let balance = self.world.balance_word_for_address(cx, executor, address);
-                    let balance = SymExpr::binop(cx, SymBinOp::Add, balance, delta.clone());
-                    self.world.set_balance_word(address, balance);
-                    self.persistent_writes.push(PersistentWrite::Balance(address, delta));
+                PersistentWrite::Balance { address, balance, previous } => {
+                    match balance_writes.iter_mut().find(|(account, _)| *account == address) {
+                        Some((_, writes)) => writes.push((balance, previous)),
+                        None => balance_writes.push((address, vec![(balance, previous)])),
+                    }
                 }
                 PersistentWrite::Nonce(address, delta) => {
                     *nonce_deltas.entry(address).or_default() += delta;
@@ -1276,8 +1341,34 @@ impl PathState {
                 PersistentWrite::Restore => break,
             }
         }
-        // Each account's nonce writes are recorded again as one net change, so an enclosing
-        // replay keeps this replay's saturation.
+        // Each account's balance and nonce writes are recorded again as one net change, so an
+        // enclosing replay keeps this replay's saturation.
+        for (address, writes) in balance_writes {
+            let reverted = self.world.balance_word_for_address(cx, executor, address)?;
+            // The exact sum of the balance and the deltas, as `high * 2^256 + low` with a signed
+            // `high`.
+            let mut low = reverted.clone();
+            let mut high = SymExpr::zero(cx);
+            for (balance, previous) in writes {
+                let added = SymExpr::binop(cx, SymBinOp::Add, low.clone(), balance);
+                let carry = SymBoolExpr::cmp(cx, SymCmpOp::Ult, added.clone(), low);
+                let carry = SymExpr::bool_word(cx, carry);
+                let borrow = SymBoolExpr::cmp(cx, SymCmpOp::Ult, added.clone(), previous.clone());
+                let borrow = SymExpr::bool_word(cx, borrow);
+                high = SymExpr::binop(cx, SymBinOp::Add, high, carry);
+                high = SymExpr::binop(cx, SymBinOp::Sub, high, borrow);
+                low = SymExpr::binop(cx, SymBinOp::Sub, added, previous);
+            }
+            let zero = SymExpr::zero(cx);
+            let max = SymExpr::constant(cx, U256::MAX);
+            let in_range = SymBoolExpr::eq(cx, high.clone(), zero.clone());
+            let saturated = SymExpr::ite(cx, in_range, low, max);
+            let negative = SymBoolExpr::cmp(cx, SymCmpOp::Slt, high, zero.clone());
+            let balance = SymExpr::ite(cx, negative, zero, saturated);
+            if balance != reverted {
+                self.set_persistent_balance(cx, executor, address, balance)?;
+            }
+        }
         for (address, delta) in nonce_deltas {
             let previous = self.world.nonce(executor, address)?;
             let nonce = if created.contains(&address) {
@@ -1401,12 +1492,15 @@ pub(crate) struct ExpectedRevert {
     reverter: Option<SymExpr>,
     count: u64,
     remaining: u64,
+    /// Whether a frame ran below the frame that set the expectation without consuming it, which
+    /// passes Forge's `max_depth > depth` check when that frame reverts.
+    deeper_frame_ran: bool,
 }
 
 impl ExpectedRevert {
     pub(crate) fn new(data: ExpectedRevertData, reverter: Option<SymExpr>, count: u64) -> Self {
         let count = count.max(1);
-        Self { data, reverter, count, remaining: count }
+        Self { data, reverter, count, remaining: count, deeper_frame_ran: false }
     }
 
     pub(crate) const fn has_reverter(&self) -> bool {
@@ -1497,6 +1591,44 @@ impl ExpectedRevert {
             }
         }
         Some(SymBoolExpr::and(cx, conditions))
+    }
+
+    /// Returns the error Forge reverts with when a frame ending with `status` and `retdata`, first
+    /// failing in `reverted_by`, does not meet this expectation, `Some(None)` when it does, or
+    /// `None` when the expectation is symbolic.
+    pub(crate) fn mismatch_error(
+        &self,
+        reverted_by: Option<Address>,
+        status: InstrStop,
+        retdata: &Bytes,
+        known_contracts: &Option<ContractsByArtifact>,
+    ) -> Option<Option<Error>> {
+        let (reason, partial_match) = match &self.data {
+            ExpectedRevertData::Any => (None, false),
+            ExpectedRevertData::Prefix(data) => (Some(data.as_concrete_slice()?), true),
+            ExpectedRevertData::Exact(data) => (Some(data.as_concrete_slice()?), false),
+        };
+        let reverter = match &self.reverter {
+            Some(reverter) => Some(word_to_address(reverter.as_const()?)),
+            None => None,
+        };
+        Some(expect_revert_mismatch(
+            reason,
+            partial_match,
+            reverter,
+            reverted_by,
+            status,
+            retdata,
+            known_contracts,
+        ))
+    }
+
+    pub(crate) const fn mark_deeper_frame_ran(&mut self) {
+        self.deeper_frame_ran = true;
+    }
+
+    pub(crate) const fn deeper_frame_ran(&self) -> bool {
+        self.deeper_frame_ran
     }
 }
 
@@ -1764,6 +1896,22 @@ impl FunctionMock {
 
     pub(crate) const fn target(&self) -> Address {
         self.target
+    }
+
+    /// The condition for this mock to match a call whose code address is `code_address`, with
+    /// `calldata` matching its data in full or as the selector.
+    pub(crate) fn code_match_condition(
+        &self,
+        cx: &mut SymCx,
+        code_address: &SymExpr,
+        calldata: &SymBytes,
+    ) -> Option<SymBoolExpr> {
+        if self.data.len() != calldata.len() && self.data.len() != 4 {
+            return None;
+        }
+        let data_condition = calldata.prefix_condition(cx, &self.data)?;
+        let callee_condition = SymBoolExpr::eq(cx, self.callee.clone(), code_address.clone());
+        Some(SymBoolExpr::and(cx, vec![callee_condition, data_condition]))
     }
 
     pub(crate) fn match_condition(
@@ -2356,34 +2504,42 @@ impl SymbolicWorld {
             .collect()
     }
 
+    /// Returns the storage values of `model` at the slots replay applies. With `reject_aliases`,
+    /// symbolic keys that resolve to one slot but need different values are an error; otherwise
+    /// the first value wins.
     pub(crate) fn replay_storage_assignments(
         &self,
         model: &SymbolicModel,
+        reject_aliases: bool,
     ) -> Result<Vec<SymbolicStorageAssignment>, SymbolicError> {
         let mut assignments = std::collections::BTreeMap::<(Address, U256), U256>::new();
+        let mut assign = |address, slot, value, reject_conflict: bool| match assignments
+            .entry((address, slot))
+        {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(value);
+                Ok(())
+            }
+            std::collections::btree_map::Entry::Occupied(entry)
+                if *entry.get() == value || !reject_conflict =>
+            {
+                Ok(())
+            }
+            std::collections::btree_map::Entry::Occupied(_) => Err(SymbolicError::Solver(
+                "conflicting symbolic storage replay assignments".to_string(),
+            )),
+        };
         for (symbol, slots) in &self.replay_storage_slots {
             let Some(value) = model.get(symbol).copied() else { continue };
             for slot in slots {
-                match assignments.entry((slot.address, slot.slot)) {
-                    std::collections::btree_map::Entry::Vacant(entry) => {
-                        entry.insert(value);
-                    }
-                    std::collections::btree_map::Entry::Occupied(entry)
-                        if *entry.get() == value => {}
-                    std::collections::btree_map::Entry::Occupied(_) => {
-                        return Err(SymbolicError::Solver(
-                            "conflicting symbolic storage replay assignments".to_string(),
-                        ));
-                    }
-                }
+                assign(slot.address, slot.slot, value, true)?;
             }
         }
-        // Replay validates aliases between symbolic keys that take the same concrete value.
         for (symbol, reads) in &self.replay_symbolic_storage_keys {
             let Some(value) = model.get(symbol).copied() else { continue };
             for (address, key) in reads {
                 if let Some(slot) = key.eval_model_if_complete(model)? {
-                    assignments.entry((*address, slot)).or_insert(value);
+                    assign(*address, slot, value, reject_aliases)?;
                 }
             }
         }
@@ -2436,6 +2592,75 @@ impl SymbolicWorld {
             .entry(alias)
             .or_default()
             .extend(candidates);
+    }
+
+    /// Returns the accounts in `candidates` that the alias of the address word `expr` is not
+    /// guarded against, when its representative account holds state, such as one of
+    /// `persistent_accounts`. A branch that fixes the word to one of them would not see that
+    /// state.
+    pub(crate) fn unguarded_alias_candidates(
+        &self,
+        expr: &SymExpr,
+        candidates: &[Address],
+        persistent_accounts: &HashSet<Address>,
+    ) -> Vec<Address> {
+        let Some((alias, representative)) = self.alias_entry(expr) else { return Vec::new() };
+        if !self.representative_holds_state(representative)
+            && !persistent_accounts.contains(&representative)
+        {
+            return Vec::new();
+        }
+        let guarded = self.guarded_symbolic_addresses.get(alias);
+        candidates
+            .iter()
+            .copied()
+            .filter(|candidate| guarded.is_none_or(|guarded| !guarded.contains(candidate)))
+            .collect()
+    }
+
+    /// Returns whether the address word `expr` has an alias whose representative account holds
+    /// state the world wrote, such as a balance, nonce, code, or storage.
+    pub(crate) fn alias_holds_state(&self, expr: &SymExpr) -> bool {
+        self.alias_entry(expr)
+            .is_some_and(|(_, representative)| self.representative_holds_state(representative))
+    }
+
+    /// Returns the aliased address words whose representative account holds state and is not
+    /// guarded against `address`, so the state may belong to `address`.
+    pub(crate) fn stateful_aliases_unguarded_against(
+        &self,
+        address: Address,
+    ) -> impl Iterator<Item = &SymExpr> {
+        self.symbolic_address_aliases
+            .iter()
+            .filter(move |(alias, representative)| {
+                self.representative_holds_state(**representative)
+                    && self
+                        .guarded_symbolic_addresses
+                        .get(*alias)
+                        .is_none_or(|guarded| !guarded.contains(&address))
+            })
+            .map(|(alias, _)| alias)
+    }
+
+    /// Returns whether the address word `expr` has an alias, guarded or not.
+    pub(crate) fn has_alias(&self, expr: &SymExpr) -> bool {
+        self.alias_entry(expr).is_some()
+    }
+
+    /// Returns whether the address word `expr` has an alias whose representative account has
+    /// code, such as a contract created at a symbolic address.
+    pub(crate) fn alias_has_code(&self, expr: &SymExpr) -> bool {
+        self.alias_entry(expr)
+            .is_some_and(|(_, representative)| self.written_code.contains(&representative))
+    }
+
+    fn representative_holds_state(&self, representative: Address) -> bool {
+        self.balances.contains_key(&representative)
+            || self.nonces.contains_key(&representative)
+            || self.written_code.contains(&representative)
+            || self.storage.iter().any(|write| write.address == representative)
+            || self.arbitrary_storage_accounts.contains_key(&representative)
     }
 
     /// Returns whether a guarded cheatcode write went through any address word.
@@ -2662,8 +2887,10 @@ impl SymbolicWorld {
                 self.record_replay_storage_slot(symbol, source, slot);
                 self.record_replay_storage_slot(symbol, address, slot);
             }
-        } else if self.arbitrary_storage_all && copied_source.is_none() {
-            // Generic storage replays reads at symbolic keys too.
+        } else if copied_source.is_none()
+            && (self.arbitrary_storage_all || overwrite_arbitrary_storage == Some(true))
+        {
+            // Storage that ignores setUp values replays reads at symbolic keys too.
             self.record_replay_symbolic_storage_key(symbol, address, key);
         }
         let value = SymExpr::get_var(cx, symbol);
@@ -2724,14 +2951,16 @@ impl SymbolicWorld {
         }
     }
 
-    pub(crate) fn backend_balance(&self, executor: &ExecutorView<'_>, address: Address) -> U256 {
+    pub(crate) fn backend_balance(
+        &self,
+        executor: &ExecutorView<'_>,
+        address: Address,
+    ) -> Result<U256, SymbolicError> {
         executor
             .backend
             .basic(address)
-            .ok()
-            .flatten()
-            .map(|account| account.balance)
-            .unwrap_or_default()
+            .map_err(|err| SymbolicError::Backend(err.to_string()))
+            .map(|account| account.map(|account| account.balance).unwrap_or_default())
     }
 
     pub(crate) fn balance_word_for_address(
@@ -2739,17 +2968,17 @@ impl SymbolicWorld {
         cx: &mut SymCx,
         executor: &ExecutorView<'_>,
         address: Address,
-    ) -> SymExpr {
+    ) -> Result<SymExpr, SymbolicError> {
         if self.destroyed_accounts.contains(&address) {
-            return SymExpr::zero(cx);
+            return Ok(SymExpr::zero(cx));
         }
         if let Some(balance) = self.balances.get(&address) {
-            return balance.clone();
+            return Ok(balance.clone());
         }
         if self.symbolic_accounts && !self.created_accounts.contains(&address) {
-            return SymExpr::var(cx, &format!("balance_{address:?}"));
+            return Ok(SymExpr::var(cx, &format!("balance_{address:?}")));
         }
-        SymExpr::constant(cx, self.backend_balance(executor, address))
+        Ok(SymExpr::constant(cx, self.backend_balance(executor, address)?))
     }
 
     pub(crate) fn balance_word(
@@ -2763,7 +2992,7 @@ impl SymbolicWorld {
             executor,
             address_expr,
             |world, address| world.balances.contains_key(&address),
-            |world, cx, address| Ok(world.balance_word_for_address(cx, executor, address)),
+            |world, cx, address| world.balance_word_for_address(cx, executor, address),
         )
     }
 
@@ -2787,12 +3016,12 @@ impl SymbolicWorld {
         to: Address,
         value: SymExpr,
         saturate: bool,
-    ) {
+    ) -> Result<(), SymbolicError> {
         if from == to || value.as_const().is_some_and(|value| value.is_zero()) {
-            return;
+            return Ok(());
         }
-        let from_balance = self.balance_word_for_address(cx, executor, from);
-        let to_balance = self.balance_word_for_address(cx, executor, to);
+        let from_balance = self.balance_word_for_address(cx, executor, from)?;
+        let to_balance = self.balance_word_for_address(cx, executor, to)?;
         let from_balance = SymExpr::binop(cx, SymBinOp::Sub, from_balance, value.clone());
         let to_balance = if saturate {
             SymMemory::saturating_add_word(cx, to_balance, value)
@@ -2801,6 +3030,7 @@ impl SymbolicWorld {
         };
         self.set_balance_word(from, from_balance);
         self.set_balance_word(to, to_balance);
+        Ok(())
     }
 
     pub(crate) fn nonce(
@@ -2888,9 +3118,9 @@ impl SymbolicWorld {
         address: Address,
         beneficiary: Address,
     ) -> Result<(), SymbolicError> {
-        let balance = self.balance_word_for_address(cx, executor, address);
+        let balance = self.balance_word_for_address(cx, executor, address)?;
         if beneficiary != address && !balance.as_const().is_some_and(|value| value.is_zero()) {
-            let beneficiary_balance = self.balance_word_for_address(cx, executor, beneficiary);
+            let beneficiary_balance = self.balance_word_for_address(cx, executor, beneficiary)?;
             let beneficiary_balance =
                 SymMemory::saturating_add_word(cx, beneficiary_balance, balance);
             self.set_balance_word(beneficiary, beneficiary_balance);
@@ -2909,10 +3139,10 @@ impl SymbolicWorld {
         executor: &ExecutorView<'_>,
         address: Address,
         beneficiary: Address,
-    ) {
-        let balance = self.balance_word_for_address(cx, executor, address);
+    ) -> Result<(), SymbolicError> {
+        let balance = self.balance_word_for_address(cx, executor, address)?;
         if beneficiary != address && !balance.as_const().is_some_and(|value| value.is_zero()) {
-            let beneficiary_balance = self.balance_word_for_address(cx, executor, beneficiary);
+            let beneficiary_balance = self.balance_word_for_address(cx, executor, beneficiary)?;
             // Symbolic balances are treated as possibly non-zero, matching transfer's
             // account-existence approximation.
             let beneficiary_balance =
@@ -2921,6 +3151,7 @@ impl SymbolicWorld {
             let zero = SymExpr::zero(cx);
             Arc::make_mut(&mut self.state).balances.insert(address, zero);
         }
+        Ok(())
     }
 
     pub(crate) fn extcode(
@@ -2991,7 +3222,7 @@ impl SymbolicWorld {
             return Ok(hash);
         }
         // EIP-161: without code or a nonce, the account exists only while it has a balance.
-        let balance = self.balance_word_for_address(cx, executor, address);
+        let balance = self.balance_word_for_address(cx, executor, address)?;
         let empty = SymBoolExpr::eq_word_const(cx, &balance, U256::ZERO);
         let zero = SymExpr::zero(cx);
         Ok(SymExpr::ite(cx, empty, zero, hash))
@@ -3163,6 +3394,19 @@ impl SymbolicWorld {
         self.candidate_addresses(executor, |_, _| false)
     }
 
+    /// Returns the concrete accounts the run knows and the precompiles active on the current
+    /// hardfork, which exist before anything touches them, in address order.
+    pub(crate) fn concrete_alias_candidates_with_precompiles(
+        &self,
+        executor: &ExecutorView<'_>,
+    ) -> Vec<Address> {
+        let mut addresses = self.concrete_alias_candidates(executor);
+        addresses.extend(active_precompile_addresses(executor.spec_id));
+        addresses.sort_unstable();
+        addresses.dedup();
+        addresses
+    }
+
     /// Returns the accounts a symbolic address may alias, in address order.
     ///
     /// Includes accounts that exist only in the backend, such as contracts deployed in `setUp`,
@@ -3326,8 +3570,8 @@ impl SymbolicBlock {
 /// [`PathState::replay_persistent_writes`].
 #[derive(Clone, Debug)]
 pub(crate) enum PersistentWrite {
-    /// Adds a wrapping delta to an account's balance.
-    Balance(Address, SymExpr),
+    /// Adds `balance - previous` to an account's balance, saturating at its bounds.
+    Balance { address: Address, balance: SymExpr, previous: SymExpr },
     /// Adds a delta to an account's nonce.
     Nonce(Address, i128),
     /// Marks an account created, so a revert that undoes the creation resets its nonce.

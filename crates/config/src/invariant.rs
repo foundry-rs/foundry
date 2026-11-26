@@ -142,7 +142,8 @@ pub struct InvariantConfig {
     /// The fuzz dictionary configuration
     #[serde(flatten)]
     pub dictionary: FuzzDictionaryConfig,
-    /// The maximum number of attempts to shrink the sequence
+    /// The maximum number of attempts to shrink the sequence, also used to minimize the argument
+    /// values of stateless fuzz counterexamples.
     pub shrink_run_limit: u32,
     /// The maximum number of rejects via `vm.assume` which can be encountered during a single
     /// invariant run.
@@ -164,7 +165,8 @@ pub struct InvariantConfig {
     pub failure_persist_dir: Option<PathBuf>,
     /// Whether to collect and display fuzzed selectors metrics.
     pub show_metrics: bool,
-    /// Optional campaign-global timeout (in seconds) for each invariant test.
+    /// Optional campaign-global timeout (in seconds) for each invariant test. Shrinking the
+    /// failures of a timed test stops at most `timeout` seconds after the campaign deadline.
     pub timeout: Option<u32>,
     /// Display counterexample as solidity calls.
     pub show_solidity: bool,

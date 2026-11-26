@@ -7,11 +7,11 @@ use crate::{
 use alloy_consensus::{Transaction as _, Typed2718, transaction::SignerRecoverable};
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{
-    Address, B256, Bytes, U256, hex, keccak256,
+    Address, B256, Bytes, U256, b256, hex, keccak256,
     map::{AddressMap, AddressSet, B256Map, HashMap},
 };
 use alloy_rlp::Decodable;
-use alloy_sol_types::SolValue;
+use alloy_sol_types::{SolCall, SolValue};
 use evm2::{
     EvmFeatures, SpecId,
     bytecode::Bytecode,
@@ -20,16 +20,17 @@ use evm2::{
     registry::HandlerError,
 };
 use foundry_common::{
-    TransactionMaybeSigned,
+    EIP1967_IMPLEMENTATION_SLOT, TransactionMaybeSigned,
     fs::{read_json_file, write_json_file},
     slot_identifier::{
         ENCODING_BYTES, ENCODING_DYN_ARRAY, ENCODING_INPLACE, ENCODING_MAPPING, SlotIdentifier,
-        SlotInfo,
+        SlotInfo, identify_eip1967_slot,
     },
     tempo::{TIP20_MAX_LOGO_URI_BYTES, Tip20LogoUriValidationError, validate_tip20_logo_uri},
 };
+use foundry_compilers::artifacts::{Storage, StorageLayout, StorageType};
 use foundry_evm_core::{
-    backend::{RevertStateSnapshotAction, transaction_error},
+    backend::{GLOBAL_FAIL_SLOT, RevertStateSnapshotAction, transaction_error},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
     eip2935::{
         HISTORY_SERVE_WINDOW, HISTORY_STORAGE_ADDRESS, HISTORY_STORAGE_CODE, forward_fill_start,
@@ -37,18 +38,18 @@ use foundry_evm_core::{
     },
     evm::{
         EvmEnvFor, EvmFactoryFor, ExecutionPhase, FoundryEvmFactory, FoundryEvmNetwork,
-        FoundryExecutionHooks, FoundryTxConversion, PersistentWrite, TxEnvelopeFor, TxPayload,
-        TypesFor, evm_env,
+        FoundryExecutionHooks, FoundryTxConversion, PersistentWrite, Replay, TxEnvelopeFor,
+        TxPayload, TypesFor, evm_env,
     },
 };
 use foundry_evm_traces::TraceRequirements;
 use itertools::Itertools;
-use rand::Rng;
 use std::{
     collections::{BTreeMap, btree_map::Entry},
     fmt::Display,
-    path::Path,
+    path::{Component, Path},
     str::FromStr,
+    sync::Arc,
 };
 
 mod record_debug_step;
@@ -141,7 +142,7 @@ struct SlotStateDiff {
     /// Current storage value.
     new_value: B256,
     /// Storage layout metadata (variable name, type, offset).
-    /// Only present when contract has storage layout output.
+    /// Only present when contract has storage layout output, or for the EIP-1967 proxy slots.
     /// This includes decoded values when available.
     #[serde(skip_serializing_if = "Option::is_none", flatten)]
     slot_info: Option<SlotInfo>,
@@ -223,7 +224,7 @@ impl Display for AccountStateDiffs {
                             f,
                             "@ {slot} ({}, {}): {} → {}",
                             slot_info.label,
-                            slot_info.slot_type.dyn_sol_type,
+                            slot_info.slot_type,
                             slot_changes.previous_value,
                             slot_changes.new_value
                         )?;
@@ -233,7 +234,7 @@ impl Display for AccountStateDiffs {
                                 f,
                                 "    {} ({}): {} → {}",
                                 member.label,
-                                member.slot_type.dyn_sol_type,
+                                member.slot_type,
                                 format_token_raw(&decoded.previous_value),
                                 format_token_raw(&decoded.new_value)
                             )?;
@@ -246,7 +247,7 @@ impl Display for AccountStateDiffs {
                                 f,
                                 "@ {slot} ({}, {}): {} → {}",
                                 slot_info.label,
-                                slot_info.slot_type.dyn_sol_type,
+                                slot_info.slot_type,
                                 format_token_raw(&decoded.previous_value),
                                 format_token_raw(&decoded.new_value)
                             )?;
@@ -256,7 +257,7 @@ impl Display for AccountStateDiffs {
                                 f,
                                 "@ {slot} ({}, {}): {} → {}",
                                 slot_info.label,
-                                slot_info.slot_type.dyn_sol_type,
+                                slot_info.slot_type,
                                 slot_changes.previous_value,
                                 slot_changes.new_value
                             )?;
@@ -335,11 +336,9 @@ impl Cheatcode for loadCall {
 
         ccx.evm.state_mut().account(&target)?.warm();
         let (is_cold, mut value) = {
-            let mut slot = ccx
-                .evm
-                .state_mut()
-                .storage_slot(&target, slot.into())
-                .map_err(|e| fmt_err!("failed to load storage slot: {e}"))?;
+            let mut slot = ccx.evm.state_mut().storage_slot(&target, slot.into()).map_err(|e| {
+                fmt_err!("failed to load storage slot: {e}").with_rpc_failure_of(&e)
+            })?;
             (slot.warm(), slot.current())
         };
 
@@ -353,7 +352,7 @@ impl Cheatcode for loadCall {
                 let rand_value = ccx
                     .state
                     .cached_arbitrary_storage_value(target, slot.into())
-                    .unwrap_or_else(|| ccx.state.core.rng().random());
+                    .unwrap_or_else(|| ccx.state.draw_arbitrary_storage_value(target, slot.into()));
                 ccx.state.core.arbitrary_storage.as_mut().unwrap().save(
                     ccx.evm.state_mut(),
                     target,
@@ -365,7 +364,7 @@ impl Cheatcode for loadCall {
                 // If storage slot is untouched and load from a target that copies storage from
                 // a source address with arbitrary storage, then copy existing arbitrary value.
                 // If no arbitrary value generated yet, then the random one is saved and set.
-                let rand_value = ccx.state.core.rng().random();
+                let rand_value = ccx.state.draw_arbitrary_storage_value(target, slot.into());
                 value = ccx.state.core.arbitrary_storage.as_mut().unwrap().copy(
                     ccx.evm.state_mut(),
                     target,
@@ -407,7 +406,8 @@ impl Cheatcode for loadAllocsCall {
         // Then, load the allocs into the database.
         TypesFor::<FEN>::sync_transaction(ccx.evm);
         let (evm, db) = ccx.evm_db_mut();
-        db.load_allocs(&allocs, evm).map_err(|e| fmt_err!("failed to load allocs: {e}"))?;
+        db.load_allocs(&allocs, evm)
+            .map_err(|e| fmt_err!("failed to load allocs: {e}").with_rpc_failure_of(&e))?;
         TypesFor::<FEN>::refresh_transaction(ccx.evm);
         Ok(Default::default())
     }
@@ -846,7 +846,8 @@ impl Cheatcode for dealCall {
             old_balance
         };
         // The balance survives reverts of the enclosing calls.
-        let write = PersistentWrite::Balance(address, new_balance.wrapping_sub(old_balance));
+        let write =
+            PersistentWrite::balance(address, old_balance, new_balance).with_replay(Replay::Set);
         ccx.state.record_persistent(ccx.caller_depth(), ccx.evm.state(), [write]);
         TypesFor::<FEN>::refresh_transaction(ccx.evm);
         Ok(Default::default())
@@ -923,9 +924,18 @@ impl Cheatcode for storeCall {
         let state = ccx.evm.state_mut();
         touch_account(state, target)?;
         warm_storage_slot(state, &target, slot.into())
-            .map_err(|e| fmt_err!("failed to store storage slot: {e}"))?
+            .map_err(|e| fmt_err!("failed to store storage slot: {e}").with_rpc_failure_of(&e))?
             .set(value.into());
         ccx.state.mark_arbitrary_storage_slot_explicit(target, slot.into());
+        // A `fail()` fails the call where it is made, like an assertion.
+        if target == CHEATCODE_ADDRESS && slot == B256::from(GLOBAL_FAIL_SLOT) && !value.is_zero() {
+            if let Some(trace) = &mut ccx.state.failure_trace {
+                trace.record_assertion(Self::SELECTOR, "", None);
+            }
+            if let Some(provenance) = &mut ccx.state.failure_provenance {
+                provenance.pending_assertion = Some(keccak256(Self::SELECTOR));
+            }
+        }
         Ok(Default::default())
     }
 }
@@ -1254,23 +1264,8 @@ impl Cheatcode for getStorageSlotsCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { target, variableName } = self;
 
-        let storage_layout = get_contract_data(ccx, *target, true)
-            .and_then(|(_, data)| data.storage_layout.as_ref().map(|layout| layout.clone()))
-            .ok_or_else(|| fmt_err!("Storage layout not available for contract at {target}. Try compiling contracts with `--extra-output storageLayout`"))?;
-
-        trace!(storage = ?storage_layout.storage, "fetched storage");
-
-        let variable_name_lower = variableName.to_lowercase();
-        let storage = storage_layout
-            .storage
-            .iter()
-            .find(|s| s.label.to_lowercase() == variable_name_lower)
-            .ok_or_else(|| fmt_err!("variable '{variableName}' not found in storage layout"))?;
-
-        let storage_type = storage_layout
-            .types
-            .get(&storage.storage_type)
-            .ok_or_else(|| fmt_err!("storage type not found for variable {variableName}"))?;
+        let storage_layout = contract_storage_layout(ccx, *target)?;
+        let (storage, storage_type) = find_storage_variable(&storage_layout, variableName)?;
 
         if storage_type.encoding == ENCODING_MAPPING || storage_type.encoding == ENCODING_DYN_ARRAY
         {
@@ -1332,6 +1327,30 @@ impl Cheatcode for getStorageSlotsCall {
         }
 
         Ok(slots.abi_encode())
+    }
+}
+
+impl Cheatcode for getStorageSlotCall {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { target, variableName } = self;
+
+        let storage_layout = contract_storage_layout(ccx, *target)?;
+        let (storage, storage_type) = find_storage_variable(&storage_layout, variableName)?;
+
+        let slot = U256::from_str(&storage.slot).map_err(|_| {
+            fmt_err!("invalid slot {} format for variable {variableName}", storage.slot)
+        })?;
+        let offset = U256::try_from(storage.offset).map_err(|_| {
+            fmt_err!("invalid offset {} for variable {variableName}", storage.offset)
+        })?;
+        let number_of_bytes = U256::from_str(&storage_type.number_of_bytes).map_err(|_| {
+            fmt_err!(
+                "invalid number_of_bytes {} for variable {variableName}",
+                storage_type.number_of_bytes
+            )
+        })?;
+
+        Ok((slot, offset, number_of_bytes).abi_encode_params())
     }
 }
 
@@ -1499,6 +1518,7 @@ impl Cheatcode for executeTransactionCall {
         }
         let default_version = EvmFactoryFor::<FEN>::default().version(env.spec, env.chain_id());
         env.version.tx_gas_limit_cap = default_version.tx_gas_limit_cap;
+        env.version.tx_total_gas_cap = default_version.tx_total_gas_cap;
         env.version.max_initcode_size = match ccx.state.core.config.evm_opts.env.code_size_limit {
             Some(code_size_limit) => code_size_limit.saturating_mul(2),
             None => default_version.max_initcode_size,
@@ -1519,7 +1539,9 @@ impl Cheatcode for executeTransactionCall {
             Some(env),
         );
         ccx.state.tx_warm_addresses = previous;
-        let res = res.map_err(|e| fmt_err!("transaction execution failed: {e}"))?;
+        let res = res.map_err(|e| {
+            fmt_err!("transaction execution failed: {e}").with_rpc_failure_of(e.as_ref())
+        })?;
 
         // Return output bytes.
         if !res.status {
@@ -1669,6 +1691,7 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
     snapshot_id: U256,
 ) -> Result {
+    let fork_id = ccx.active_fork_id();
     let (evm, db) = ccx.evm_db_mut();
     if let Some(replaced) = db.revert_state(
         snapshot_id,
@@ -1676,7 +1699,13 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
         RevertStateSnapshotAction::RevertKeep,
         ExecutionPhase::InFlight,
     ) {
-        ccx.state.restore_persistent_writes(snapshot_id, replaced, false);
+        let switched = ccx.active_fork_id() != fork_id;
+        ccx.state.restore_persistent_writes(snapshot_id, replaced, false, switched);
+        // A restore can make a different path look like the recorded one, so its identity is
+        // unknown.
+        if let Some(trace) = &mut ccx.state.failure_trace {
+            trace.unidentified = true;
+        }
         // `RevertKeep` keeps the backend snapshot alive for further
         // reverts, so keep our matching env-overrides copy too.
         ccx.state.env_overrides.restore_snapshot(snapshot_id, false);
@@ -1697,6 +1726,7 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
     snapshot_id: U256,
 ) -> Result {
+    let fork_id = ccx.active_fork_id();
     let (evm, db) = ccx.evm_db_mut();
     if let Some(replaced) = db.revert_state(
         snapshot_id,
@@ -1704,7 +1734,11 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
         RevertStateSnapshotAction::RevertRemove,
         ExecutionPhase::InFlight,
     ) {
-        ccx.state.restore_persistent_writes(snapshot_id, replaced, true);
+        let switched = ccx.active_fork_id() != fork_id;
+        ccx.state.restore_persistent_writes(snapshot_id, replaced, true, switched);
+        if let Some(trace) = &mut ccx.state.failure_trace {
+            trace.unidentified = true;
+        }
         ccx.state.env_overrides.restore_snapshot(snapshot_id, true);
         if let Some(fork_block_number) =
             ccx.state.fork_block_number_override_snapshots.remove(&snapshot_id)
@@ -1725,7 +1759,7 @@ fn inner_value_snapshot<FEN: FoundryEvmNetwork>(
     name: Option<String>,
     value: String,
 ) -> Result {
-    let (group, name) = derive_snapshot_name(ccx, group, name);
+    let (group, name) = derive_snapshot_name(ccx, group, name)?;
 
     ccx.state.gas_snapshots.entry(group).or_default().insert(name, value);
 
@@ -1738,7 +1772,7 @@ fn inner_last_gas_snapshot<FEN: FoundryEvmNetwork>(
     name: Option<String>,
     value: u64,
 ) -> Result {
-    let (group, name) = derive_snapshot_name(ccx, group, name);
+    let (group, name) = derive_snapshot_name(ccx, group, name)?;
 
     ccx.state.gas_snapshots.entry(group).or_default().insert(name, value.to_string());
 
@@ -1755,7 +1789,7 @@ fn inner_start_gas_snapshot<FEN: FoundryEvmNetwork>(
         bail!("gas snapshot was already started with group: {group} and name: {name}");
     }
 
-    let (group, name) = derive_snapshot_name(ccx, group, name);
+    let (group, name) = derive_snapshot_name(ccx, group, name)?;
 
     ccx.state.gas_metering.gas_records.push(GasRecord {
         group: group.clone(),
@@ -1827,12 +1861,29 @@ fn derive_snapshot_name<FEN: FoundryEvmNetwork>(
     ccx: &CheatsCtxt<'_, '_, FEN>,
     group: Option<String>,
     name: Option<String>,
-) -> (String, String) {
-    let group = group.unwrap_or_else(|| {
-        ccx.state.core.config.running_artifact.clone().expect("expected running contract").name
-    });
+) -> Result<(String, String)> {
+    let group = match group {
+        Some(group) => {
+            ensure!(
+                is_valid_snapshot_group(&group),
+                "invalid snapshot group name `{group}`: expected a relative path without empty, `.` or `..` components"
+            );
+            group
+        }
+        None => {
+            ccx.state.core.config.running_artifact.clone().expect("expected running contract").name
+        }
+    };
     let name = name.unwrap_or_else(|| "default".to_string());
-    (group, name)
+    Ok((group, name))
+}
+
+/// Returns whether `group` is a relative path without empty or dot components.
+fn is_valid_snapshot_group(group: &str) -> bool {
+    // Check the original components because `Path::components` normalizes dots and separators.
+    group.split(std::path::is_separator).all(|component| {
+        matches!(Path::new(component).components().next(), Some(Component::Normal(name)) if name == component)
+    })
 }
 
 /// Reads the current caller information and returns the current [CallerMode], `msg.sender` and
@@ -1904,7 +1955,7 @@ fn set_persistent_nonce<FEN: FoundryEvmNetwork>(
     account.warm();
     let previous = account.nonce();
     account.set_nonce(nonce);
-    let write = PersistentWrite::nonce(&account, previous);
+    let write = PersistentWrite::nonce(&account, previous).with_replay(Replay::Set);
     drop(account);
     ccx.state.record_persistent(ccx.caller_depth(), ccx.evm.state(), [write]);
     Ok(Default::default())
@@ -1934,7 +1985,9 @@ fn set_eip2935_blockhash(
     }
     state
         .storage_slot(&HISTORY_STORAGE_ADDRESS, history_storage_slot(block_number))
-        .map_err(|e| fmt_err!("failed to store EIP-2935 history slot: {e}"))?
+        .map_err(|e| {
+            fmt_err!("failed to store EIP-2935 history slot: {e}").with_rpc_failure_of(&e)
+        })?
         .set(history_storage_value(block_hash));
     Ok(())
 }
@@ -1964,7 +2017,9 @@ fn clear_eip2935_history_storage(state: &mut State<'_>, features: EvmFeatures) -
             Ok(mut slot) => slot.set(U256::ZERO),
             Err(e) => {
                 state.rollback(checkpoint, features);
-                return Err(fmt_err!("failed to clear EIP-2935 history slot: {e}"));
+                return Err(
+                    fmt_err!("failed to clear EIP-2935 history slot: {e}").with_rpc_failure_of(&e)
+                );
             }
         }
     }
@@ -2007,13 +2062,15 @@ fn store_solidity_string(
 
     if bytes.len() <= 31 {
         warm_storage_slot(state, &target, base_slot)
-            .map_err(|e| fmt_err!("failed to store TIP-20 logo URI: {e}"))?
+            .map_err(|e| fmt_err!("failed to store TIP-20 logo URI: {e}").with_rpc_failure_of(&e))?
             .set(encode_short_string(bytes));
         return Ok(Default::default());
     }
 
     warm_storage_slot(state, &target, base_slot)
-        .map_err(|e| fmt_err!("failed to store TIP-20 logo URI length: {e}"))?
+        .map_err(|e| {
+            fmt_err!("failed to store TIP-20 logo URI length: {e}").with_rpc_failure_of(&e)
+        })?
         .set(U256::from(bytes.len() * 2 + 1));
 
     let slot_start = solidity_dynamic_data_slot(base_slot);
@@ -2021,7 +2078,9 @@ fn store_solidity_string(
         let mut chunk_bytes = [0u8; 32];
         chunk_bytes[..chunk.len()].copy_from_slice(chunk);
         warm_storage_slot(state, &target, slot_start + U256::from(index))
-            .map_err(|e| fmt_err!("failed to store TIP-20 logo URI data: {e}"))?
+            .map_err(|e| {
+                fmt_err!("failed to store TIP-20 logo URI data: {e}").with_rpc_failure_of(&e)
+            })?
             .set(U256::from_be_bytes(chunk_bytes));
     }
 
@@ -2035,7 +2094,9 @@ fn cleanup_long_string_tail(
     new_len: usize,
 ) -> Result<()> {
     let previous = warm_storage_slot(state, &target, base_slot)
-        .map_err(|e| fmt_err!("failed to load previous TIP-20 logo URI: {e}"))?
+        .map_err(|e| {
+            fmt_err!("failed to load previous TIP-20 logo URI: {e}").with_rpc_failure_of(&e)
+        })?
         .current();
     if !is_long_string(previous) {
         return Ok(());
@@ -2053,7 +2114,10 @@ fn cleanup_long_string_tail(
     let slot_start = solidity_dynamic_data_slot(base_slot);
     for index in new_chunks..previous_chunks {
         warm_storage_slot(state, &target, slot_start + U256::from(index))
-            .map_err(|e| fmt_err!("failed to clear previous TIP-20 logo URI data: {e}"))?
+            .map_err(|e| {
+                fmt_err!("failed to clear previous TIP-20 logo URI data: {e}")
+                    .with_rpc_failure_of(&e)
+            })?
             .set(U256::ZERO);
     }
 
@@ -2474,6 +2538,10 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
                                     },
                                 )
                             });
+                            // Proxies write the EIP-1967 slots from assembly constants, which no
+                            // layout covers.
+                            let slot_info =
+                                slot_info.or_else(|| identify_eip1967_slot(&storage_access.slot));
 
                             slot_state_diff.insert(SlotStateDiff {
                                 previous_value: storage_access.previousValue,
@@ -2504,12 +2572,9 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
     state_diffs
 }
 
-/// EIP-1967 implementation storage slot
-const EIP1967_IMPL_SLOT: &str = "360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
-
 /// EIP-1822 UUPS implementation storage slot: keccak256("PROXIABLE")
-const EIP1822_PROXIABLE_SLOT: &str =
-    "c5f16f0fcc639fa48a6947836d9850f504798523bf8c9a3a87d5876cf622bcf7";
+const EIP1822_PROXIABLE_SLOT: B256 =
+    b256!("0xc5f16f0fcc639fa48a6947836d9850f504798523bf8c9a3a87d5876cf622bcf7");
 
 /// Helper function to get the contract data from the deployed code at an address.
 fn get_contract_data<'a, FEN: FoundryEvmNetwork>(
@@ -2537,16 +2602,16 @@ fn get_contract_data<'a, FEN: FoundryEvmNetwork>(
     }
 
     // Fall back to known proxy artifacts when exact matching is impossible.
-    let hex_str = hex::encode(&code_bytes);
+    let contains_slot = |slot: B256| code_bytes.windows(32).any(|word| word == slot.as_slice());
     let find_by_suffix =
         |suffix: &str| artifacts.iter().find(|(a, _)| a.identifier().ends_with(suffix));
     if detect_proxy
-        && hex_str.contains(EIP1967_IMPL_SLOT)
+        && contains_slot(EIP1967_IMPLEMENTATION_SLOT)
         && let Some(result) = find_by_suffix(":TransparentUpgradeableProxy")
     {
         return Some(result);
     } else if detect_proxy
-        && hex_str.contains(EIP1822_PROXIABLE_SLOT)
+        && contains_slot(EIP1822_PROXIABLE_SLOT)
         && let Some(result) = find_by_suffix(":UUPSUpgradeable")
     {
         return Some(result);
@@ -2556,11 +2621,49 @@ fn get_contract_data<'a, FEN: FoundryEvmNetwork>(
     artifacts.find_by_deployed_code(&code_bytes)
 }
 
+/// Returns the storage layout of the contract at `target`.
+fn contract_storage_layout<FEN: FoundryEvmNetwork>(
+    ccx: &mut CheatsCtxt<'_, '_, FEN>,
+    target: Address,
+) -> Result<Arc<StorageLayout>> {
+    let storage_layout = get_contract_data(ccx, target, true)
+        .and_then(|(_, data)| data.storage_layout.clone())
+        .ok_or_else(|| fmt_err!("Storage layout not available for contract at {target}. Try compiling contracts with `--extra-output storageLayout`"))?;
+
+    trace!(storage = ?storage_layout.storage, "fetched storage");
+
+    Ok(storage_layout)
+}
+
+/// Finds a variable by its label in `storage_layout`, returning its storage entry and type.
+///
+/// An exact match takes precedence, since Solidity names are case-sensitive; otherwise the label
+/// is matched case-insensitively.
+fn find_storage_variable<'a>(
+    storage_layout: &'a StorageLayout,
+    variable_name: &str,
+) -> Result<(&'a Storage, &'a StorageType)> {
+    let storage = storage_layout
+        .storage
+        .iter()
+        .find(|s| s.label == variable_name)
+        .or_else(|| {
+            let variable_name_lower = variable_name.to_lowercase();
+            storage_layout.storage.iter().find(|s| s.label.to_lowercase() == variable_name_lower)
+        })
+        .ok_or_else(|| fmt_err!("variable '{variable_name}' not found in storage layout"))?;
+
+    let storage_type = storage_layout
+        .types
+        .get(&storage.storage_type)
+        .ok_or_else(|| fmt_err!("storage type not found for variable {variable_name}"))?;
+
+    Ok((storage, storage_type))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_compilers::artifacts::StorageLayout;
-    use std::sync::Arc;
 
     #[test]
     fn state_diff_preserves_raw_values_with_partial_decoding() {
@@ -2598,5 +2701,45 @@ mod tests {
             "- state diff:\n\
 @ 0x0000000000000000000000000000000000000000000000000000000000000000 (data, (bool,)): 0x0000000000000000000000000000000000000000000000000000000000000000 → 0x0000000000000000000000000000000000000000000000000000000000000001\n    paused (bool): false → false\n"
         );
+    }
+
+    #[test]
+    fn validates_snapshot_groups() {
+        for group in [
+            "Group",
+            "a.b",
+            "group with spaces",
+            "..hidden",
+            "core/someContract",
+            "periphery/someContract.v1",
+        ] {
+            assert!(is_valid_snapshot_group(group), "expected `{group}` to be valid");
+        }
+        for group in [
+            "",
+            ".",
+            "..",
+            "../settings",
+            "./a",
+            "/tmp/settings",
+            "a/",
+            "a/.",
+            "a/./b",
+            "a/../b",
+            "a//b",
+        ] {
+            assert!(!is_valid_snapshot_group(group), "expected `{group}` to be invalid");
+        }
+
+        #[cfg(unix)]
+        assert!(is_valid_snapshot_group(r"core\someContract"));
+
+        #[cfg(windows)]
+        {
+            assert!(is_valid_snapshot_group(r"core\someContract"));
+            for group in [r"C:\settings", r"C:settings", r"\settings", r"core\..\settings", "a:b"] {
+                assert!(!is_valid_snapshot_group(group), "expected `{group}` to be invalid");
+            }
+        }
     }
 }

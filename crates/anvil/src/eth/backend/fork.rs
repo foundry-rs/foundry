@@ -8,7 +8,7 @@ use crate::eth::{
     error::BlockchainError,
 };
 use alloy_chains::NamedChain;
-use alloy_consensus::{BlockHeader, TrieAccount};
+use alloy_consensus::{BlockHeader, TrieAccount, constants::EMPTY_ROOT_HASH};
 use alloy_eips::{eip2930::AccessListResult, eip7840::BlobParams};
 use alloy_network::{
     AnyNetwork, AnyRpcBlock, BlockResponse, Network, TransactionResponse,
@@ -41,7 +41,10 @@ use alloy_rpc_types_eth::{AccountInfo, Bundle, EthCallResponse, StateContext};
 use alloy_rpc_types_mev::{EthCallBundle, EthCallBundleResponse};
 use alloy_serde::WithOtherFields;
 use alloy_transport::TransportError;
-use foundry_common::provider::{RetryProvider, is_rpc_method_not_found};
+use foundry_common::{
+    provider::{RetryProvider, is_rpc_method_not_found},
+    tempo::configurable_account::config_from_logs,
+};
 use foundry_evm_core::{
     backend::account_fetch_policy_for_source,
     fork::{cache_bal, validate_bal},
@@ -55,6 +58,7 @@ use parking_lot::{
     lock_api::{RwLockReadGuard, RwLockWriteGuard},
 };
 use std::{num::NonZeroU64, sync::Arc, time::Duration};
+use tempo_primitives::transaction::ConfigurableAccountConfig;
 use tokio::sync::RwLock as AsyncRwLock;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -266,6 +270,20 @@ impl<N: Network> ClientFork<N> {
         block_id: BlockId,
     ) -> Result<Option<Bytes>, TransportError> {
         self.provider().raw_request("eth_getBlockAccessListRaw".into(), (block_id,)).await
+    }
+
+    /// Sends `debug_getRawHeader`.
+    pub async fn raw_header(&self, block_number: u64) -> Result<Option<Bytes>, TransportError> {
+        self.provider()
+            .raw_request("debug_getRawHeader".into(), (BlockId::number(block_number),))
+            .await
+    }
+
+    /// Sends `debug_getRawBlock`.
+    pub async fn raw_block(&self, block_number: u64) -> Result<Option<Bytes>, TransportError> {
+        self.provider()
+            .raw_request("debug_getRawBlock".into(), (BlockId::number(block_number),))
+            .await
     }
 
     pub async fn storage_at(
@@ -796,9 +814,117 @@ impl<N: Network> ClientFork<N> {
         storage.hashes.insert(block_number, hash);
         storage.blocks.insert(hash, block.clone());
     }
+
+    /// Returns the configuration of the Tempo configurable account `account` that `commitment`
+    /// names, from the latest configuration event of `account` at or before the fork block.
+    pub async fn configurable_account_config(
+        &self,
+        account: Address,
+        commitment: B256,
+    ) -> eyre::Result<ConfigurableAccountConfig> {
+        let key = (account, commitment);
+        if let Some(config) = self.storage_read().configurable_account_configs.get(&key).cloned() {
+            return Ok(config);
+        }
+
+        let config =
+            config_from_logs(&*self.provider(), account, commitment, self.block_number()).await?;
+
+        self.storage_write().configurable_account_configs.insert(key, config.clone());
+        Ok(config)
+    }
 }
 
 impl ClientFork {
+    /// Returns canonical upstream block traces, bypassing caches keyed only by block number.
+    pub(crate) async fn trace_block_by_hash(
+        &self,
+        hash: B256,
+    ) -> Result<Vec<Trace>, BlockchainError> {
+        let (provider, fork_number, fork_hash) = {
+            let config = self.config.read();
+            (config.provider.clone(), config.block_number, config.block_hash)
+        };
+        let block =
+            provider.get_block_by_hash(hash).await?.ok_or(BlockchainError::BlockNotFound)?;
+        let number = block.header().number();
+        if number > fork_number || (number == fork_number && hash != fork_hash) {
+            return Err(BlockchainError::BlockNotFound);
+        }
+        // Like the local path, a pruned body is unavailable rather than an empty block.
+        if block.transactions().is_empty() && block.header().transactions_root() != EMPTY_ROOT_HASH
+        {
+            return Err(BlockchainError::DataUnavailable);
+        }
+        if number > self.canonical_fork_anchor(&provider, fork_number, fork_hash).await? {
+            return Err(BlockchainError::BlockNotFound);
+        }
+        let canonical = provider
+            .get_block_by_number(number.into())
+            .await?
+            .ok_or(BlockchainError::BlockNotFound)?;
+        if canonical.header().hash() != hash {
+            return Err(BlockchainError::BlockNotFound);
+        }
+        let traces = provider.trace_block(number.into()).await?;
+        // A reorg between resolution and tracing must never return a replacement block's traces.
+        if traces
+            .iter()
+            .any(|trace| trace.block_hash != Some(hash) || trace.block_number != Some(number))
+        {
+            return Err(BlockchainError::BlockNotFound);
+        }
+        // In particular, a replacement empty block must not look like an empty selected block.
+        let traced_transactions =
+            traces.iter().filter_map(|trace| trace.transaction_hash).collect::<HashSet<_>>();
+        if block.transactions().hashes().any(|tx| !traced_transactions.contains(&tx)) {
+            return Err(BlockchainError::DataUnavailable);
+        }
+        // Recheck both identities after tracing, without using cached headers.
+        if number > self.canonical_fork_anchor(&provider, fork_number, fork_hash).await? {
+            return Err(BlockchainError::BlockNotFound);
+        }
+        let canonical = provider
+            .get_block_by_number(number.into())
+            .await?
+            .ok_or(BlockchainError::BlockNotFound)?;
+        if canonical.header().hash() != hash {
+            return Err(BlockchainError::BlockNotFound);
+        }
+        Ok(traces)
+    }
+
+    /// Returns the newest block number at which the upstream chain still matches the fork's chain.
+    ///
+    /// A reorg that replaced only the fork root keeps its parent canonical, so the blocks below the
+    /// root stay available. A deeper reorg can't be checked without the root's ancestors, so it
+    /// fails. The root header is cached on first use, so a later reorg that drops it upstream can
+    /// still be checked.
+    async fn canonical_fork_anchor(
+        &self,
+        provider: &RetryProvider<AnyNetwork>,
+        fork_number: u64,
+        fork_hash: B256,
+    ) -> Result<u64, BlockchainError> {
+        let root = self.root_header().await?.ok_or(BlockchainError::BlockNotFound)?;
+        let tip = provider
+            .get_block_by_number(fork_number.into())
+            .await?
+            .ok_or(BlockchainError::BlockNotFound)?;
+        if tip.header().hash() == fork_hash {
+            return Ok(fork_number);
+        }
+        let parent_number = fork_number.checked_sub(1).ok_or(BlockchainError::BlockNotFound)?;
+        let parent = provider
+            .get_block_by_number(parent_number.into())
+            .await?
+            .ok_or(BlockchainError::BlockNotFound)?;
+        if parent.header().hash() != root.parent_hash() {
+            return Err(BlockchainError::BlockNotFound);
+        }
+        Ok(parent_number)
+    }
+
     pub async fn transaction_receipt(
         &self,
         hash: B256,
@@ -1095,6 +1221,7 @@ pub struct ForkedStorage<N: Network = AnyNetwork> {
     pub block_traces: HashMap<u64, Vec<Trace>>,
     pub block_receipts: HashMap<u64, Vec<FoundryTxReceipt>>,
     pub code_at: HashMap<(Address, u64), Bytes>,
+    pub configurable_account_configs: HashMap<(Address, B256), ConfigurableAccountConfig>,
 }
 
 impl<N: Network> Default for ForkedStorage<N> {
@@ -1112,6 +1239,7 @@ impl<N: Network> Default for ForkedStorage<N> {
             block_traces: Default::default(),
             block_receipts: Default::default(),
             code_at: Default::default(),
+            configurable_account_configs: Default::default(),
         }
     }
 }

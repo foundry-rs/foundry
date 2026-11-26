@@ -1,10 +1,15 @@
 use super::symbolic_helpers::{
-    assert_symbolic, assert_symbolic_witness, json_test_result, z3_available,
+    assert_symbolic, assert_symbolic_witness, json_test_result, read_artifact_ref, z3_available,
 };
+use alloy_primitives::{U256, address};
+use anvil::{NodeConfig, spawn};
 use foundry_common::sh_eprintln;
-use foundry_test_utils::{forgetest_init, snapbox::IntoData, str, util::OutputExt};
+use foundry_test_utils::{forgetest_init, rpc, snapbox::IntoData, str, util::OutputExt};
 
 use crate::skip_unless_z3;
+
+#[cfg(unix)]
+use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
 
 #[forgetest_init]
 fn symbolic_cheatcodes_accept_symbolic_address_targets(prj: _, cmd: _) {
@@ -22,7 +27,8 @@ import "forge-std/Test.sol";
 
 contract SymbolicAddressCheatcodes is Test {
     function checkSymbolicDealStoreLoadAndNonce(address who, bytes32 value) public {
-        vm.assume(who != address(0));
+        // Not address(0) or a precompile, where `vm.etch` and `vm.store` revert.
+        vm.assume(uint160(who) > 0x100);
         vm.assume(who != address(this));
         vm.assume(who != address(vm));
         // `who` may be a known account, such as the sender or a system contract.
@@ -43,7 +49,8 @@ contract SymbolicAddressCheatcodes is Test {
     }
 
     function checkSymbolicEtch(address who) public {
-        vm.assume(who != address(0));
+        // Not address(0) or a precompile, where `vm.etch` and `vm.store` revert.
+        vm.assume(uint160(who) > 0x100);
         vm.assume(who != address(this));
         vm.assume(who != address(vm));
 
@@ -52,7 +59,8 @@ contract SymbolicAddressCheatcodes is Test {
     }
 
     function checkSymbolicResetDelegatedNonce(address who, address delegate) public {
-        vm.assume(who != address(0));
+        // Not address(0) or a precompile, where `vm.etch` and `vm.store` revert.
+        vm.assume(uint160(who) > 0x100);
         vm.assume(who != address(this));
         vm.assume(who != address(vm));
 
@@ -70,7 +78,8 @@ contract SymbolicAddressCheatcodes is Test {
     function checkSymbolicResetNonceCodePrefix(address who, address delegate, bytes3 prefix)
         public
     {
-        vm.assume(who != address(0));
+        // Not address(0) or a precompile, where `vm.etch` and `vm.store` revert.
+        vm.assume(uint160(who) > 0x100);
         vm.assume(who != address(this));
         vm.assume(who != address(vm));
 
@@ -84,7 +93,8 @@ contract SymbolicAddressCheatcodes is Test {
     function checkSymbolicResetNonceDelegationPrefix(address who, address delegate, bytes3 prefix)
         public
     {
-        vm.assume(who != address(0));
+        // Not address(0) or a precompile, where `vm.etch` and `vm.store` revert.
+        vm.assume(uint160(who) > 0x100);
         vm.assume(who != address(this));
         vm.assume(who != address(vm));
 
@@ -199,8 +209,9 @@ contract SymbolicPrankSender is Test {
         vm.stopPrank();
     }
 
-    // A symbolic creator can alias this funded contract, so the CREATE is not modeled.
-    function checkSymbolicPrankCreateIsIncomplete(address who) public {
+    // A symbolic creator may name this funded contract, where the CREATE succeeds. A creator
+    // that names no known account still reports incomplete.
+    function checkSymbolicPrankCreate(address who) public {
         vm.prank(who);
         try new CreatedBySender{value: 1}() {
             assert(false);
@@ -328,7 +339,7 @@ Ran 14 tests for test/SymbolicPrankSender.t.sol:SymbolicPrankSender
 [FAIL: vm.prank: cannot overwrite a prank until it is applied at least once; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkPrankRejectsUnusedPrankOverwrite() ([METRICS])
 [PASS] checkStartPrankCreate2(address) ([METRICS])
 [PASS] checkSymbolicPrank(address) ([METRICS])
-[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic CREATE prank] checkSymbolicPrankCreateIsIncomplete(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicPrankCreate(address) ([METRICS])
 [PASS] checkSymbolicPrankOrigin(address,address) ([METRICS])
 [PASS] checkSymbolicStartPrank(address) ([METRICS])
 [PASS] checkSymbolicStartPrankOrigin(address,address) ([METRICS])
@@ -401,6 +412,45 @@ Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
     .stdout_lossy();
 
     assert!(!stdout.contains("symbolic BALANCE target"), "{stdout}");
+}
+
+// A balance the fork backend fails to read makes the run incomplete instead of reading zero.
+#[forgetest_init]
+async fn symbolic_fork_balance_read_error_is_incomplete(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_fork_balance_read_error_is_incomplete");
+
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let account = address!("0x000000000000000000000000000000000000bEEF");
+    api.anvil_set_balance(account, U256::from(10).pow(U256::from(18))).await.unwrap();
+    let endpoint = rpc::spawn_rpc_proxy_failing_account(handle.http_endpoint(), account).await;
+
+    prj.add_test(
+        "SymbolicForkBalance.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicForkBalance is Test {
+    function checkForkBalance() public view {
+        assertEq(address(0xBEEF).balance, 0);
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--fork-url",
+        &endpoint,
+        "--match-contract",
+        "SymbolicForkBalance",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+[FAIL: incomplete symbolic execution (Error): backend error: failed to get account for 0x000000000000000000000000000000000000bEEF: server returned an error response: error code -32000: account unavailable] checkForkBalance() (block: 0) ([METRICS])
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -1424,6 +1474,23 @@ contract SymbolicEnvCryptoConsole is Test {
         assertTrue(ok);
     }
 
+    // Like Forge, array elements are trimmed, an empty first element gives an empty array, and
+    // values go through its lenient parser.
+    function checkEnvParsing() public view {
+        string[] memory spaced = vm.envString("FOUNDRY_SYMBOLIC_ENV_SPACED_STRINGS", ",");
+        assertEq(spaced.length, 2);
+        assertEq(spaced[1], "beta");
+        assertEq(vm.envUint("FOUNDRY_SYMBOLIC_ENV_SPACED_UINTS", ",")[1], 2);
+        assertEq(vm.envString("FOUNDRY_SYMBOLIC_ENV_EMPTY", ",").length, 0);
+        assertEq(vm.envString("FOUNDRY_SYMBOLIC_ENV_LEADING_EMPTY", ",").length, 0);
+        assertEq(vm.envUint("FOUNDRY_SYMBOLIC_ENV_UINTS", "").length, 0);
+        assertEq(vm.envOr("FOUNDRY_SYMBOLIC_ENV_EMPTY", ",", new uint256[](2)).length, 0);
+        assertTrue(vm.envBool("FOUNDRY_SYMBOLIC_ENV_MIXED_BOOL"));
+        assertTrue(vm.envOr("FOUNDRY_SYMBOLIC_ENV_MIXED_BOOL", false));
+        assertEq(vm.envString("FOUNDRY_SYMBOLIC_ENV_QUOTED"), "hello");
+        assertEq(vm.envOr("FOUNDRY_SYMBOLIC_ENV_QUOTED", string("default")), "hello");
+    }
+
     function checkKeyUtilities() public {
         address keyAddress = vm.addr(1);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(1, keccak256("foundry-symbolic"));
@@ -1505,6 +1572,11 @@ contract SymbolicEnvCryptoConsole is Test {
     cmd.env("FOUNDRY_SYMBOLIC_ENV_UINTS", "1,2,3");
     cmd.env("FOUNDRY_SYMBOLIC_ENV_STRINGS", "alpha,beta");
     cmd.env("FOUNDRY_SYMBOLIC_ENV_BYTES_ARRAY", "12,cafe");
+    cmd.env("FOUNDRY_SYMBOLIC_ENV_SPACED_STRINGS", "alpha, beta");
+    cmd.env("FOUNDRY_SYMBOLIC_ENV_SPACED_UINTS", "1, 2");
+    cmd.env("FOUNDRY_SYMBOLIC_ENV_LEADING_EMPTY", " ,alpha");
+    cmd.env("FOUNDRY_SYMBOLIC_ENV_MIXED_BOOL", "tRuE");
+    cmd.env("FOUNDRY_SYMBOLIC_ENV_QUOTED", "\"hello\"");
 
     let stdout = assert_symbolic_witness(cmd.args([
         "test",
@@ -1515,20 +1587,81 @@ contract SymbolicEnvCryptoConsole is Test {
     .success()
     .stdout_eq(str![[r#"
 ...
-Ran 6 tests for test/SymbolicEnvCryptoConsole.t.sol:SymbolicEnvCryptoConsole
+Ran 7 tests for test/SymbolicEnvCryptoConsole.t.sol:SymbolicEnvCryptoConsole
 [PASS] checkBase64Utilities() ([METRICS])
 [PASS] checkEnvCryptoConsole(uint256) ([METRICS])
+[PASS] checkEnvParsing() ([METRICS])
 [PASS] checkFoundryVersion() ([METRICS])
 [PASS] checkKeyUtilities() ([METRICS])
 [PASS] checkParseToStringUtilities() ([METRICS])
 [PASS] checkStringUtilities() ([METRICS])
-Suite result: ok. 6 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 7 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]])
     .get_output()
     .stdout_lossy();
 
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
+}
+
+// Like Forge, `envOr` only falls back to its default when the variable is not set, so a value
+// that is not valid unicode is not replaced by the default.
+#[cfg(unix)]
+#[forgetest_init]
+fn symbolic_vm_env_or_rejects_non_unicode(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_vm_env_or_rejects_non_unicode");
+
+    prj.add_test(
+        "SymbolicEnvNonUnicode.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicEnvNonUnicode is Test {
+    string constant KEY = "FOUNDRY_SYMBOLIC_ENV_NON_UNICODE";
+
+    function checkEnvExists() public view {
+        assertFalse(vm.envExists(KEY));
+    }
+
+    function checkEnvOrBool() public view {
+        vm.envOr(KEY, true);
+    }
+
+    function checkEnvOrUint() public view {
+        vm.envOr(KEY, uint256(7));
+    }
+
+    function checkEnvOrString() public view {
+        vm.envOr(KEY, string("default"));
+    }
+
+    function checkEnvOrBytes() public view {
+        vm.envOr(KEY, bytes("default"));
+    }
+
+    function checkEnvOrArray() public view {
+        vm.envOr(KEY, ",", new uint256[](0));
+    }
+}
+"#,
+    );
+
+    cmd.env("FOUNDRY_SYMBOLIC_ENV_NON_UNICODE", OsStr::from_bytes(b"\xff"));
+
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicEnvNonUnicode"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 6 tests for test/SymbolicEnvNonUnicode.t.sol:SymbolicEnvNonUnicode
+[PASS] checkEnvExists() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic env var not unicode] checkEnvOrArray() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic env var not unicode] checkEnvOrBool() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic env var not unicode] checkEnvOrBytes() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic env var not unicode] checkEnvOrString() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic env var not unicode] checkEnvOrUint() ([METRICS])
+Suite result: FAILED. 1 passed; 5 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -2980,6 +3113,8 @@ contract SymbolicFreeAddressWrites is Test {
     }
 
     function checkWritesStayOnOnePath(address a, address b, uint256 x) public {
+        // `vm.store` reverts on a precompile.
+        vm.assume(uint160(b) > 0x100);
         vm.deal(a, x);
         vm.store(b, bytes32(uint256(1000)), bytes32(x));
         // A slot hashed from a guarded address needs no decision.
@@ -2988,8 +3123,27 @@ contract SymbolicFreeAddressWrites is Test {
         assert(uint256(vm.load(b, bytes32(uint256(1000)))) == x);
     }
 
-    // Each test below fails concretely for `a == address(vault)`.
+    // State written through a free address still reads back after `vm.isPersistent` takes it.
+    function checkNonceReadsBackAfterIsPersistent(address a) public {
+        vm.setNonceUnsafe(a, 5);
+        vm.isPersistent(a);
+        assert(vm.getNonce(a) == 5);
+    }
+
+    function checkStorageReadsBackAfterIsPersistent(address a) public {
+        // `vm.etch` reverts on a precompile.
+        vm.assume(uint160(a) > 0x100 && a != address(this) && a != address(vm));
+        // Stores 7 at slot 0.
+        vm.etch(a, hex"6007600055");
+        vm.isPersistent(a);
+        (bool ok,) = a.call("");
+        assert(ok && uint256(vm.load(a, 0)) == 7);
+    }
+
+    // Each test below fails concretely for `a == address(vault)`. The ones that store through
+    // `a` rule out the precompiles, where `vm.store` reverts.
     function checkStoreMayTargetSetUpContract(address a) public {
+        vm.assume(uint160(a) > 0x100);
         vm.store(a, 0, bytes32(uint256(7)));
         assert(vault.total() != 7);
     }
@@ -3001,6 +3155,7 @@ contract SymbolicFreeAddressWrites is Test {
     }
 
     function checkLaterStoreShowsThrough(address a) public {
+        vm.assume(uint160(a) > 0x100);
         vm.store(a, 0, bytes32(uint256(1)));
         vault.set(2);
         assert(uint256(vm.load(a, 0)) == 1);
@@ -3012,6 +3167,7 @@ contract SymbolicFreeAddressWrites is Test {
     }
 
     function checkStoreKeepsNonce(address a) public {
+        vm.assume(uint160(a) > 0x100);
         vm.store(a, bytes32(uint256(9)), bytes32(uint256(1)));
         assert(vm.getNonce(a) == 0);
     }
@@ -3072,6 +3228,53 @@ contract SymbolicFreeAddressWrites is Test {
         (bool ok,) = address(vault).call{value: 5}("");
         assert(!ok || a != address(vault) || address(vault).balance == 10);
     }
+
+    // Like Forge, persistence survives a state revert.
+    function checkIsPersistentAfterRevertToState(address a) public {
+        uint256 id = vm.snapshotState();
+        vm.makePersistent(a);
+        vm.revertToState(id);
+        assert(vm.isPersistent(a));
+    }
+
+    // After the revert, another address is persistent only where it was before or names `a`.
+    function checkOtherWordIsPersistentAfterRevertToState(address a, address b) public {
+        bool persistent = vm.isPersistent(b);
+        uint256 id = vm.snapshotState();
+        vm.makePersistent(a);
+        vm.revertToState(id);
+        assert(!vm.isPersistent(b) || persistent || b == a);
+    }
+
+    // The address may name a persistent account, such as the sender.
+    function checkIsPersistentSeesKnownAccounts(address a) public {
+        assert(!vm.isPersistent(a));
+    }
+
+    // `vm.isPersistent` only reads the address, so later reads through it still see the
+    // account it may name.
+    function checkLoadAfterIsPersistent(address a) public {
+        vault.set(7);
+        vm.isPersistent(a);
+        uint256 value = uint256(vm.load(a, 0));
+        assert(a != address(vault) || value != 7);
+    }
+
+    function checkNonceAfterIsPersistent(address a) public {
+        vm.isPersistent(a);
+        uint256 nonce = vm.getNonce(a);
+        assert(a != address(vault) || nonce != 1);
+    }
+
+    function checkCodeAfterIsPersistent(address a) public {
+        vm.isPersistent(a);
+        bytes1 first;
+        assembly {
+            extcodecopy(a, 0, 0, 1)
+            first := mload(0)
+        }
+        assert(a != address(vault) || first != 0x60);
+    }
 }
 "#,
     );
@@ -3106,19 +3309,400 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 11 tests for test/SymbolicFreeAddressWrites.t.sol:SymbolicFreeAddressWrites
+Ran 19 tests for test/SymbolicFreeAddressWrites.t.sol:SymbolicFreeAddressWrites
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkCodeAfterIsPersistent(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealKeepsCode(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDerivedArgumentDecidesAddress(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDirtyWordKeepsGuard(uint256) ([METRICS])
+[PASS] checkIsPersistentAfterRevertToState(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkIsPersistentSeesKnownAccounts(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkLaterDealShowsThrough(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkLaterStoreShowsThrough(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkLoadAfterIsPersistent(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkNonceAfterIsPersistent(address) ([METRICS])
+[PASS] checkNonceReadsBackAfterIsPersistent(address) ([METRICS])
+[PASS] checkOtherWordIsPersistentAfterRevertToState(address,address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankAfterDeal(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankBeforeDeal(address) ([METRICS])
+[PASS] checkStorageReadsBackAfterIsPersistent(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkStoreKeepsNonce(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkStoreMayTargetSetUpContract(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkSymbolicOffsetPrank(address,uint8) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkSymbolicSizeSetNonce(address,uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 11 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 4 passed; 15 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+// A free pranked sender or origin may name a known account, so calls and code reads through it
+// must not run against an empty account.
+#[forgetest_init]
+fn symbolic_pranked_address_may_name_known_account(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_pranked_address_may_name_known_account");
+
+    prj.add_test(
+        "SymbolicPrankedAddress.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract WETH {
+    mapping(address => uint256) public balanceOf;
+
+    function deposit() public payable {
+        balanceOf[msg.sender] += msg.value;
+    }
+
+    function transfer(address to, uint256 amount) external {
+        balanceOf[msg.sender] -= amount;
+        balanceOf[to] += amount;
+    }
+
+    function withdraw(uint256 amount) external {
+        balanceOf[msg.sender] -= amount;
+        (bool ok,) = msg.sender.call{value: amount}("");
+        require(ok);
+    }
+
+    function senderCodeSize() external view returns (uint256) {
+        return msg.sender.code.length;
+    }
+
+    function originCodeSize() external view returns (uint256) {
+        return tx.origin.code.length;
+    }
+
+    receive() external payable {
+        deposit();
+    }
+}
+
+contract SymbolicPrankedAddress is Test {
+    WETH weth;
+
+    function setUp() public {
+        weth = new WETH();
+    }
+
+    // Fails for `who == address(weth)`, whose `receive` deposits the withdrawn ether again.
+    function checkWithdrawToPrankedSender(address who) public {
+        weth.deposit{value: 1}();
+        weth.transfer(who, 1);
+        uint256 balanceBefore = weth.balanceOf(who);
+        vm.prank(who);
+        weth.withdraw(1);
+        assert(weth.balanceOf(who) == balanceBefore - 1);
+    }
+
+    function checkWithdrawToOtherSender(address who) public {
+        vm.assume(who != address(weth));
+        checkWithdrawToPrankedSender(who);
+    }
+
+    function checkPrankedSenderCode(address who) public {
+        vm.prank(who);
+        assert(weth.senderCodeSize() == 0);
+    }
+
+    function checkPrankedOriginCode(address who) public {
+        vm.startPrank(address(this), who);
+        assert(weth.originCodeSize() == 0);
+        vm.stopPrank();
+    }
+
+    // A cheatcode that took the address before the prank does not decide it.
+    function checkWithdrawAfterMakePersistent(address who) public {
+        vm.makePersistent(who);
+        checkWithdrawToPrankedSender(who);
+    }
+
+    // The persistence `vm.makePersistent` wrote through the address stays once the prank forks it.
+    function checkPersistentOncePranked(address who) public {
+        vm.makePersistent(who);
+        vm.prank(who);
+        assert(!vm.isPersistent(who) || who != address(weth));
+    }
+
+    // The address may name the contract deployed after `vm.makePersistent`, which the earlier
+    // fork did not cover. The prank is never applied, so it decides nothing, and the persistence
+    // written through the address shows on that contract.
+    function checkPersistentBeforeDeployment(address who) public {
+        vm.makePersistent(who);
+        WETH later = new WETH();
+        vm.prank(who);
+        assert(!vm.isPersistent(who) || who != address(later));
+    }
+
+    function checkDealtBalanceBeforeDeployment(address who) public {
+        vm.deal(who, 5);
+        WETH later = new WETH();
+        vm.prank(who);
+        later.deposit();
+        assert(who.balance != 5 || who != address(later));
+    }
+
+    // An alias a read-only cheatcode gave the address does not hide the account it is fixed to.
+    function checkPrankedSenderCodeAfterIsPersistent(address who) public {
+        vm.isPersistent(who);
+        vm.assume(who == address(weth));
+        vm.prank(who);
+        assert(weth.senderCodeSize() == 0);
+    }
+
+    function checkPrankedSenderCodeAfterResetNonce(address who) public {
+        vm.resetNonce(who);
+        vm.prank(who);
+        assert(weth.senderCodeSize() == 0);
+    }
+
+    // The balance `vm.deal` wrote through the address stays once the path fixes it.
+    function checkDealtBalanceOnceFixed(address who) public {
+        vm.deal(who, 5);
+        vm.assume(who == address(0xB0B));
+        assert(who.balance != 5);
+    }
+
+    // A call to the fixed address runs the code `vm.etch` wrote through it, not the empty account.
+    function checkPrankedCallRunsEtchedCode(address who) public {
+        // `vm.etch` reverts on a precompile.
+        vm.assume(who > address(0x100));
+        vm.etch(who, hex"602a60005260206000f3"); // Returns 42.
+        vm.deal(who, 5);
+        if (who != address(0xB0B)) return;
+
+        vm.prank(who);
+        (bool ok, bytes memory data) = who.staticcall("");
+        assert(!ok || data.length == 0);
+    }
+
+    // A read through a word the path fixes still sees the balance `vm.deal` wrote through another
+    // word that may name the same account.
+    function checkDealtBalanceThroughOtherWord(address writer, uint256 raw) public {
+        vm.deal(writer, 5);
+        if (raw != 0xB0B) return;
+        assert(address(uint160(raw)).balance != 5);
+    }
+
+    // `BALANCE` ignores the high bits of the word.
+    function checkDealtBalanceThroughOtherDirtyWord(address writer, uint256 raw) public {
+        vm.deal(writer, 5);
+        if (raw != ((1 << 200) | 0xB0B)) return;
+        uint256 dealt;
+        assembly {
+            dealt := balance(raw)
+        }
+        assert(dealt != 5);
+    }
+
+    function checkEtchedCodeThroughOtherWord(address writer, uint256 raw) public {
+        // `vm.etch` reverts on a precompile.
+        vm.assume(uint160(writer) > 0x100);
+        vm.etch(writer, hex"00");
+        if (raw != 0xB0B) return;
+        assert(address(uint160(raw)).code.length == 0);
+    }
+
+    // `vm.isPersistent` gives `raw` no alias, so the read still sees the balance `writer` may
+    // hold for the account the path fixes `raw` to.
+    function checkDealtBalanceThroughOtherWordAfterIsPersistent(address writer, uint256 raw)
+        public
+    {
+        vm.isPersistent(address(uint160(raw)));
+        vm.deal(writer, 5);
+        if (raw != 0xB0B) return;
+        assert(address(uint160(raw)).balance != 5);
+    }
+}
+
+contract SymbolicPrankedMany is Test {
+    WETH weth;
+
+    function setUp() public {
+        for (uint256 i = 0; i < 36; i++) {
+            weth = new WETH();
+        }
+    }
+
+    // A prank the cheatcode rejects does not fork the sender, even over more than 32 accounts.
+    function checkRejectedPrankDoesNotFork(address who) public {
+        vm.prank(address(weth));
+        (bool ok,) = address(vm).call(abi.encodeWithSignature("prank(address)", who));
+        assert(!ok);
+    }
+
+    // Only the low 160 bits of the sender count.
+    function checkDirtySenderDoesNotFork(uint96 tag) public {
+        (bool ok,) = address(vm).call(
+            abi.encodeWithSignature("prank(address)", (uint256(tag) << 160) | uint160(address(weth)))
+        );
+        assert(ok);
+        assert(weth.senderCodeSize() > 0);
+    }
+
+    // A prank whose input stops at the selector fails to decode, so its sender does not fork.
+    function checkShortPrankInputDoesNotFork(address who) public {
+        bytes memory payload = abi.encodeWithSignature("prank(address)", who);
+        address target = address(vm);
+        bool ok;
+        assembly {
+            ok := call(gas(), target, 0, add(payload, 32), 4, 0, 0)
+        }
+        assert(!ok);
+    }
+
+    function sender() public view returns (address) {
+        return msg.sender;
+    }
+
+    // A sender the path fixes only through two bounds does not fork over the known accounts.
+    function checkBoundedSenderDoesNotFork(address who) public {
+        address bob = address(0xB0B);
+        vm.assume(who >= bob);
+        vm.assume(who <= bob);
+        vm.prank(who);
+        assert(this.sender() == bob);
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicPrankedAddress"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 16 tests for test/SymbolicPrankedAddress.t.sol:SymbolicPrankedAddress
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic address whose representative account holds state from before the run knew an account it may name] checkDealtBalanceBeforeDeployment(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealtBalanceOnceFixed(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealtBalanceThroughOtherDirtyWord(address,uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealtBalanceThroughOtherWord(address,uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealtBalanceThroughOtherWordAfterIsPersistent(address,uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkEtchedCodeThroughOtherWord(address,uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPersistentBeforeDeployment(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPersistentOncePranked(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedCallRunsEtchedCode(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedOriginCode(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedSenderCode(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedSenderCodeAfterIsPersistent(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedSenderCodeAfterResetNonce(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkWithdrawAfterMakePersistent(address) ([METRICS])
+[PASS] checkWithdrawToOtherSender(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkWithdrawToPrankedSender(address) ([METRICS])
+Suite result: FAILED. 1 passed; 15 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    assert_symbolic(cmd.forge_fuse().args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicPrankedMany",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 4 tests for test/SymbolicPrankedAddress.t.sol:SymbolicPrankedMany
+[PASS] checkBoundedSenderDoesNotFork(address) ([METRICS])
+[PASS] checkDirtySenderDoesNotFork(uint96) ([METRICS])
+[PASS] checkRejectedPrankDoesNotFork(address) ([METRICS])
+[PASS] checkShortPrankInputDoesNotFork(address) ([METRICS])
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+// A free address may name a precompile nothing touched yet, or an account the run learns after
+// `vm.prank` takes the address but before the pranked call.
+#[forgetest_init]
+fn symbolic_free_address_may_name_precompile_or_later_account(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_free_address_may_name_precompile_or_later_account");
+
+    prj.add_test(
+        "SymbolicLaterCandidates.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Callee {
+    uint256 calls;
+
+    function callSender() external view returns (bytes memory out) {
+        (, out) = msg.sender.staticcall(hex"0102");
+    }
+
+    function callSenderAndCount() external returns (bytes memory out) {
+        calls++;
+        (, out) = msg.sender.call(hex"0102");
+    }
+
+    function senderCodeSize() external view returns (uint256) {
+        return msg.sender.code.length;
+    }
+}
+
+contract SymbolicLaterCandidates is Test {
+    Callee callee;
+
+    function setUp() public {
+        callee = new Callee();
+    }
+
+    // Fails for `who == address(4)`, where the identity precompile echoes the input.
+    function checkPrankedPrecompileSender(address who) public {
+        vm.prank(who);
+        assert(keccak256(callee.callSender()) != keccak256(hex"0102"));
+    }
+
+    // The isolated pranked call bumps the sender's nonce before the callee calls the sender.
+    function checkPrankedPrecompileSenderCall(address who) public {
+        vm.prank(who);
+        assert(keccak256(callee.callSenderAndCount()) != keccak256(hex"0102"));
+    }
+
+    // A dealt address may still be the identity precompile. Its balance belongs to the
+    // precompile on that branch, which the run does not model, so this reports incomplete.
+    function checkDealtAddressCallsPrecompile(address who) public {
+        vm.deal(who, 1);
+        (, bytes memory out) = who.staticcall(hex"0102");
+        assert(keccak256(out) != keccak256(hex"0102"));
+    }
+
+    // Fails for `who == raw == 4`: the balance dealt through `who` stays visible through `raw`
+    // after a pranked call takes `who`.
+    function checkDealtPrankedBalanceThroughOtherWord(address who, uint256 raw) public {
+        vm.deal(who, 5);
+        vm.prank(who);
+        callee.senderCodeSize();
+        if (raw != 4) return;
+        assert(address(uint160(raw)).balance != 5);
+    }
+
+    // Fails for `who == address(0xB0B)`, which has code once the pranked call runs.
+    function checkPrankedSenderEtchedAfterPrank(address who) public {
+        vm.prank(who);
+        vm.etch(address(0xB0B), hex"00000000000000");
+        assert(callee.senderCodeSize() != 7);
+    }
+
+    function checkEtchFreeAddress(address who) public {
+        vm.etch(who, hex"00");
+    }
+
+    function checkStoreFreeAddress(address who) public {
+        vm.store(who, 0, bytes32(uint256(1)));
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args(["test", "--symbolic"])).failure().stdout_eq(str![[r#"
+...
+Ran 7 tests for test/SymbolicLaterCandidates.t.sol:SymbolicLaterCandidates
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic address whose representative account holds state from before the run knew an account it may name] checkDealtAddressCallsPrecompile(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealtPrankedBalanceThroughOtherWord(address,uint256) ([METRICS])
+[FAIL: vm.etch: cannot use precompile [..] as an argument; counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkEtchFreeAddress(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedPrecompileSender(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedPrecompileSenderCall(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedSenderEtchedAfterPrank(address) ([METRICS])
+[FAIL: vm.store: cannot use precompile [..] as an argument; counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkStoreFreeAddress(address) ([METRICS])
+Suite result: FAILED. 0 passed; 7 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
@@ -3463,6 +4047,36 @@ contract CheatHelper {
         VM.setNonce(address(killable), 10);
         revert();
     }
+
+    function sendDealZeroAndRevert(address payable to, uint256 amount) public {
+        send(to, amount);
+        VM.deal(to, 0);
+        revert();
+    }
+
+    function sendDealZeroDealAndRevert(address payable to) external {
+        send(to, 10);
+        VM.deal(to, 0);
+        VM.deal(to, 100);
+        revert();
+    }
+
+    function dealAfterSaturatedChildAndRevert(address payable to) external {
+        try this.sendDealZeroAndRevert(to, 10) {} catch {}
+        VM.deal(to, 5);
+        revert();
+    }
+
+    function sendDealSelfMaxAndRevert(address payable to) external {
+        send(to, 10);
+        VM.deal(address(this), type(uint256).max);
+        revert();
+    }
+
+    function send(address to, uint256 amount) internal {
+        (bool ok,) = to.call{value: amount}("");
+        require(ok);
+    }
 }
 
 contract Forwarder {
@@ -3557,6 +4171,48 @@ contract SymbolicCheatWritesSurviveRevert is Test {
         assertEq(vm.getNonce(address(0x2005)), 7);
     }
 
+    function checkReplayedBalanceSaturates() public {
+        address payable to = payable(address(0x2006));
+        vm.deal(address(helper), 1000);
+        // The revert takes back the 10 wei the write already removed, leaving no balance.
+        (bool ok,) = address(helper).call(abi.encodeCall(CheatHelper.sendDealZeroAndRevert, (to, 10)));
+        assertFalse(ok);
+        assertEq(to.balance, 0);
+        // The changes add up before saturating.
+        vm.deal(to, 50);
+        (ok,) = address(helper).call(abi.encodeCall(CheatHelper.sendDealZeroDealAndRevert, (to)));
+        assertFalse(ok);
+        assertEq(to.balance, 90);
+        // An enclosing revert keeps the saturated balance.
+        vm.deal(to, 50);
+        (ok,) = address(helper).call(abi.encodeCall(CheatHelper.dealAfterSaturatedChildAndRevert, (to)));
+        assertFalse(ok);
+        assertEq(to.balance, 5);
+        // A change above the maximum balance saturates there.
+        CheatHelper funded = new CheatHelper();
+        vm.deal(address(funded), 10);
+        (ok,) = address(funded).call(abi.encodeCall(CheatHelper.sendDealSelfMaxAndRevert, (to)));
+        assertFalse(ok);
+        assertEq(address(funded).balance, type(uint256).max);
+    }
+
+    function checkReplayedSymbolicBalanceSaturates(uint256 amount) public {
+        address payable to = payable(address(0x2007));
+        vm.deal(address(helper), amount);
+        (bool ok,) = address(helper).call(abi.encodeCall(CheatHelper.sendDealZeroAndRevert, (to, amount)));
+        assertFalse(ok);
+        assertEq(to.balance, 0);
+    }
+
+    // Like Forge, the replay saturates at zero instead of wrapping below it.
+    function checkReplayedBalanceDoesNotWrap() public {
+        address payable to = payable(address(0x2008));
+        vm.deal(address(helper), 10);
+        (bool ok,) = address(helper).call(abi.encodeCall(CheatHelper.sendDealZeroAndRevert, (to, 10)));
+        assertFalse(ok);
+        assertEq(to.balance, type(uint256).max - 9);
+    }
+
     function checkRolledBackDealFails(uint256 amount) public {
         vm.assume(amount != 0);
         (bool ok,) = address(helper).call(abi.encodeCall(CheatHelper.writeAndRevert, (amount)));
@@ -3576,14 +4232,17 @@ contract SymbolicCheatWritesSurviveRevert is Test {
     .failure()
     .stdout_eq(str![[r#"
 ...
-Ran 6 tests for test/SymbolicCheatWritesSurviveRevert.t.sol:SymbolicCheatWritesSurviveRevert
+Ran 9 tests for test/SymbolicCheatWritesSurviveRevert.t.sol:SymbolicCheatWritesSurviveRevert
+[FAIL: assertion failed: 0 != [..]; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkReplayedBalanceDoesNotWrap() ([METRICS])
+[PASS] checkReplayedBalanceSaturates() ([METRICS])
+[PASS] checkReplayedSymbolicBalanceSaturates(uint256) ([METRICS])
 [FAIL: assertion failed: [..] != 0; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkRolledBackDealFails(uint256) ([METRICS])
 [PASS] checkSymbolicTargetWriteSurvivesRevert(address) ([METRICS])
 [PASS] checkWritesBeforeSnapshotRestoreSurvive() ([METRICS])
 [PASS] checkWritesSurviveAsDeltas() ([METRICS])
 [PASS] checkWritesSurviveFailedFrames() ([METRICS])
 [PASS] checkWritesSurviveNestedRevert(uint256) ([METRICS])
-Suite result: FAILED. 5 passed; 1 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 7 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
@@ -3804,6 +4463,8 @@ fn symbolic_svm_creator_breadth(prj: _, cmd: _) {
     prj.add_test(
         "SymbolicSvmCreators.t.sol",
         r#"
+import "forge-std/Test.sol";
+
 interface Svm {
     function createUint8(string calldata name) external returns (uint8);
     function createInt16(string calldata name) external returns (int16);
@@ -3812,6 +4473,8 @@ interface Svm {
     function createBytes(uint256 len, string calldata name) external returns (bytes memory);
     function createString(string calldata name) external returns (string memory);
     function createString(uint256 len, string calldata name) external returns (string memory);
+    function createUint256(string calldata name) external returns (uint256);
+    function createBytes32(string calldata name) external returns (bytes32);
 }
 
 contract SymbolicSvmCreators {
@@ -3833,6 +4496,66 @@ contract SymbolicSvmCreators {
         assert(bytes(text).length == 2);
         assert(bytes(sizedText).length == 3);
         assert(fixedBytes == fixedBytes);
+    }
+
+    function checkSvmReplayFindsValues() public {
+        uint256 value = Svm(SVM_ADDRESS).createUint256("value");
+        bytes memory data = Svm(SVM_ADDRESS).createBytes(2, "data");
+        assert(!(value == 0x1234 && data[0] == 0x41 && data[1] == 0x42));
+    }
+
+    function checkSvmReplayRejectsHashCandidate() public {
+        bytes32 preimage = Svm(SVM_ADDRESS).createBytes32("preimage");
+        assert(sha256(abi.encode(preimage)) != bytes32(uint256(0xbeef)));
+    }
+
+    function checkSvmReplayRejectsDivergentHelperCall(bytes32 preimage) public {
+        assert(sha256(abi.encode(preimage)) != bytes32(uint256(0xbeef)));
+        Svm(SVM_ADDRESS).createUint256("value");
+    }
+
+    function checkSvmReplayRejectsDivergentSnapshot(bytes32 preimage) public {
+        assert(sha256(abi.encode(preimage)) != bytes32(uint256(0xbeef)));
+        Vm(SVM_ADDRESS).snapshotState();
+    }
+
+    function checkSvmReplayKeepsRevertedCalls() public {
+        try this.createThenRevert() {} catch {}
+        assert(Svm(SVM_ADDRESS).createUint256("value") != 7);
+    }
+
+    function checkSvmReplayClearedMocks(uint256 x) public {
+        Vm(address(uint160(uint256(keccak256("hevm cheat code"))))).clearMockedCalls();
+        assert(x != 5);
+    }
+
+    function createThenRevert() external {
+        Svm(SVM_ADDRESS).createUint256("reverted");
+        revert();
+    }
+}
+
+contract SymbolicSvmHandler {
+    uint256 public value;
+
+    function setValue() external {
+        value = Svm(0xF3993A62377BCd56AE39D773740A5390411E8BC9).createUint256("value");
+    }
+}
+
+contract SymbolicSvmInvariant is Test {
+    SymbolicSvmHandler handler;
+
+    function setUp() public {
+        handler = new SymbolicSvmHandler();
+        targetContract(address(handler));
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 1
+    /// forge-config: default.invariant.runs = 0
+    /// forge-config: default.invariant.fail-on-revert = true
+    function invariant_svmValue() public view {
+        assert(handler.value() != 0x1234);
     }
 }
 "#,
@@ -3856,6 +4579,83 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
     .stdout_lossy();
 
     assert!(!stdout.contains("symbolic Halmos compatibility cheatcode"), "{stdout}");
+
+    // Replay answers the `svm` calls with the solver model, so only a real failure confirms.
+    assert_symbolic_witness(cmd.forge_fuse().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkSvmReplay",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 6 tests for test/SymbolicSvmCreators.t.sol:SymbolicSvmCreators
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSvmReplayClearedMocks(uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSvmReplayFindsValues() ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSvmReplayKeepsRevertedCalls() ([METRICS])
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay: ran out of `svm` values] checkSvmReplayRejectsDivergentHelperCall(bytes32) ([METRICS])
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay: ran out of `svm` values] checkSvmReplayRejectsDivergentSnapshot(bytes32) ([METRICS])
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkSvmReplayRejectsHashCandidate() ([METRICS])
+Suite result: FAILED. 0 passed; 6 failed; 0 skipped; [ELAPSED]
+...
+"#]].unordered());
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--symbolic",
+            "--emit-regression",
+            "--json",
+            "--match-test",
+            "checkSvmReplayFindsValues",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let symbolic = &json_test_result(&output, "checkSvmReplayFindsValues()")["symbolic"];
+    let svm_returns = serde_json::json!([
+        "0x0000000000000000000000000000000000000000000000000000000000001234",
+        "0x000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000024142000000000000000000000000000000000000000000000000000000000000",
+    ]);
+    assert_eq!(symbolic["counterexample"]["svm_returns"], svm_returns);
+    assert_eq!(read_artifact_ref(&symbolic["artifact"])["calls"][0]["svm_returns"], svm_returns);
+
+    let artifact = symbolic["artifact"]["path"].as_str().unwrap();
+    cmd.forge_fuse()
+        .args(["test", "--replay-symbolic-artifact", artifact])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: panic: assertion failed (0x01); counterexample: 		sender=0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38 addr=0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496 calldata=0x9bdeff27 args=[]] checkSvmReplayFindsValues() ([GAS])
+...
+"#]]);
+    cmd.forge_fuse()
+        .args(["test", "--match-test", "test_regression_checkSvmReplayFindsValues_symbolic"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: panic: assertion failed (0x01)] test_regression_checkSvmReplayFindsValues_symbolic() ([GAS])
+...
+"#]]);
+
+    // Invariant replay does not answer `svm` calls, so the handler revert must not confirm.
+    let output = cmd
+        .forge_fuse()
+        .args(["test", "--symbolic", "--json", "--match-test", "invariant_svmValue"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_svmValue()");
+    assert_eq!(result["counterexample"], serde_json::Value::Null);
+    assert_eq!(result["symbolic"]["status"], "incomplete");
+    assert_eq!(
+        result["symbolic"]["incomplete"]["reason"],
+        "unsupported symbolic execution feature: symbolic invariant replay of svm values"
+    );
 }
 #[forgetest_init]
 fn symbolic_vm_expect_revert_double_registration_is_rejected(prj: _, cmd: _) {
@@ -3902,6 +4702,135 @@ contract DoubleExpectRevert is Test {
 Ran 1 test for test/DoubleExpectRevert.t.sol:DoubleExpectRevert
 [FAIL: call didn't revert at a lower depth than cheatcode call depth; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkDoubleExpectRevert(uint256) ([METRICS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+// Like Forge, a pending `vm.expectRevert` stays pending during the next call, so frames below it
+// cannot set another, while storage hook callbacks run with it set aside.
+#[forgetest_init]
+fn symbolic_vm_expect_revert_nested_registration_is_rejected(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_vm_expect_revert_nested_registration_is_rejected");
+
+    prj.add_test(
+        "NestedExpectRevert.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface StorageHookVm {
+    function registerSstoreHook(address target, bytes4 callback) external;
+}
+
+contract NestedReverter {
+    function fail() external pure {
+        revert("x");
+    }
+}
+
+contract NestedCreated {}
+
+contract NestedHookedStore {
+    uint256 value;
+
+    function store() external {
+        value = 1;
+        revert("zzz");
+    }
+}
+
+contract NestedExpectRevert is Test {
+    NestedReverter reverter;
+    NestedHookedStore hooked;
+
+    function setUp() public {
+        reverter = new NestedReverter();
+        hooked = new NestedHookedStore();
+    }
+
+    function expectThenRevert() external {
+        vm.expectRevert(bytes("x"));
+        reverter.fail();
+        revert("zzz");
+    }
+
+    function expectThenReturn() external {
+        vm.expectRevert(bytes("x"));
+        reverter.fail();
+    }
+
+    function expectPartialThenReturn() external {
+        vm.expectPartialRevert(bytes4(0x08c379a0));
+        reverter.fail();
+    }
+
+    function callExpectThenReturn() external {
+        this.expectThenReturn();
+    }
+
+    function catchExpectRevert() external {
+        try vm.expectRevert(bytes("x")) {} catch {}
+    }
+
+    function onStore(address, bytes32, bytes32, bytes32) external {
+        vm.expectRevert(bytes("x"));
+    }
+
+    function checkNestedExpectRevertMismatch() public {
+        vm.expectRevert(bytes("zzz"));
+        this.expectThenRevert();
+    }
+
+    function checkNestedExpectRevertTwoLevels() public {
+        vm.expectRevert(
+            bytes("vm.expectRevert: you must call another function prior to expecting a second revert")
+        );
+        this.callExpectThenReturn();
+    }
+
+    function checkNestedExpectPartialRevert() public {
+        vm.expectRevert(
+            bytes(
+                "vm.expectPartialRevert: you must call another function prior to expecting a second revert"
+            )
+        );
+        this.expectPartialThenReturn();
+    }
+
+    /// forge-config: default.allow_internal_expect_revert = true
+    function checkNestedExpectRevertCaughtInternal() public {
+        vm.expectRevert(bytes("x"));
+        this.catchExpectRevert();
+        reverter.fail();
+    }
+
+    /// forge-config: default.allow_internal_expect_revert = true
+    function checkNestedExpectRevertCreateInternal() public {
+        vm.expectRevert(bytes("x"));
+        new NestedCreated();
+        reverter.fail();
+    }
+
+    function checkNestedExpectRevertInStorageHook() public {
+        StorageHookVm(address(vm)).registerSstoreHook(address(hooked), this.onStore.selector);
+        vm.expectRevert(bytes("zzz"));
+        hooked.store();
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkNested"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 6 tests for test/NestedExpectRevert.t.sol:NestedExpectRevert
+[PASS] checkNestedExpectPartialRevert() ([METRICS])
+[PASS] checkNestedExpectRevertCaughtInternal() ([METRICS])
+[FAIL: next call did not revert as expected; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkNestedExpectRevertCreateInternal() ([METRICS])
+[PASS] checkNestedExpectRevertInStorageHook() ([METRICS])
+[FAIL: Error != expected error: vm.expectRevert: you must call another function prior to expecting a second revert != zzz; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkNestedExpectRevertMismatch() ([METRICS])
+[PASS] checkNestedExpectRevertTwoLevels() ([METRICS])
+Suite result: FAILED. 4 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
@@ -4626,14 +5555,14 @@ Ran 17 tests for test/SymbolicExpectRevertReverter.t.sol:SymbolicExpectRevertRev
 [PASS] checkDelegateCaller() ([METRICS])
 [FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkDelegateLibrary() ([METRICS])
 [PASS] checkDeployCodeHaltCheatcode() ([METRICS])
-[FAIL: Reverter != expected reverter: 0x7109709ECfa91a80626fF3989D68f67F5b1DD12D != 0x000000000000000000000000000000000000dEaD; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkDeployCodeHaltOther() ([METRICS])
+[PASS] checkDeployCodeHaltOther() ([METRICS])
 [PASS] checkMockedInner() ([METRICS])
 [FAIL: Reverter != expected reverter: 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f != 0x2e234DAe75C793f67A35089C9d99245E1C58470b; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMockedOuter() ([METRICS])
 [PASS] checkNestedInner() ([METRICS])
 [FAIL: Reverter != expected reverter: 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f != 0x2e234DAe75C793f67A35089C9d99245E1C58470b; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkNestedOuter() ([METRICS])
 [PASS] checkValueTransferInner() ([METRICS])
 [FAIL: Reverter != expected reverter: 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f != 0x2e234DAe75C793f67A35089C9d99245E1C58470b; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkValueTransferOuter() ([METRICS])
-Suite result: FAILED. 9 passed; 8 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 10 passed; 7 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

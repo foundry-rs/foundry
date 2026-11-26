@@ -1,6 +1,12 @@
-use super::InvariantContract;
+use super::{
+    InvariantContract,
+    shrink::{
+        CheckSequenceFailureSite, TerminalFailureSite, sequence_call_failure_site,
+        terminal_failure_site,
+    },
+};
 use crate::{
-    executors::RawCallResult,
+    executors::{RawCallResult, RawFailure},
     inspectors::{EdgeCovHit, EdgeCoverage},
 };
 use alloy_json_abi::Function;
@@ -74,15 +80,28 @@ impl<'a> InvariantRunCtx<'a> {
     /// Builds a [`FailedInvariantCaseData`] attributed to `broken_fn`. `fail_on_revert` is
     /// passed in because `assert_invariants` overrides it with the per-invariant flag.
     /// `assertion_failure=true` normalizes empty revert data so output is not blank.
-    pub fn failed_case<FEN: FoundryEvmNetwork>(
+    /// `terminal_site` identifies a predicate or hook call; `None` identifies the last handler.
+    pub(super) fn failed_case<FEN: FoundryEvmNetwork>(
         &self,
         broken_fn: &Function,
         fail_on_revert: bool,
         assertion_failure: bool,
         call_result: RawCallResult<FEN>,
         inner_sequence: &[Option<BasicTxDetails>],
+        terminal_site: Option<TerminalFailureSite>,
     ) -> FailedInvariantCaseData {
         let revert_reason = self.decode_revert_reason(&call_result, assertion_failure);
+        let site = if let Some(terminal_site) = terminal_site {
+            Some(terminal_failure_site(
+                terminal_site,
+                self.contract.address,
+                &broken_fn.selector().into(),
+                &call_result,
+            ))
+        } else {
+            self.calldata.last().map(|call| sequence_call_failure_site(call, &call_result))
+        };
+        let campaign_failure = site.zip(call_result.raw_failure());
         let origin = broken_fn.name.as_str();
         FailedInvariantCaseData {
             test_error: TestError::Fail(
@@ -98,6 +117,9 @@ impl<'a> InvariantRunCtx<'a> {
             fail_on_revert,
             assertion_failure,
             fork_block_number: call_result.fork_block_number,
+            campaign_failure,
+            after_invariant: false,
+            unchecked_invariants: Vec::new(),
         }
     }
 
@@ -147,8 +169,7 @@ pub fn handler_edge_fingerprint(
 }
 
 /// Records a handler-side assertion bug (if strictly shorter than the existing repro for
-/// this site) and pops the just-asserted reverted input from `inputs`. Shared by the
-/// periodic-check path and the inline check-skipped path.
+/// this site) and pops the just-asserted reverted input from `inputs`.
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn record_handler_assertion_bug<FEN: FoundryEvmNetwork>(
     invariant_contract: &InvariantContract<'_>,
@@ -288,6 +309,8 @@ pub struct InvariantFailures {
     handler_count: usize,
     /// Increments whenever a failure or its reproducer is inserted or replaced.
     revision: usize,
+    /// Invariants that the current run does not check, see [`Self::start_run`].
+    unchecked_invariants: Vec<String>,
 }
 
 impl InvariantFailures {
@@ -315,7 +338,29 @@ impl InvariantFailures {
         (invariant_errors, handler_errors)
     }
 
-    pub fn record_failure(&mut self, invariant: &Function, failure: InvariantFuzzError) {
+    /// Returns the names of the invariants broken so far.
+    pub fn broken_invariants(&self) -> Vec<String> {
+        self.failures
+            .keys()
+            .filter_map(|key| match key {
+                FailureKey::Invariant(name) => Some(name.clone()),
+                FailureKey::Handler(..) => None,
+            })
+            .collect()
+    }
+
+    /// Sets the invariants not checked after any call of the run starting now; failures it records
+    /// carry them.
+    pub fn start_run(&mut self, unchecked_invariants: Vec<String>) {
+        self.unchecked_invariants = unchecked_invariants;
+    }
+
+    pub fn record_failure(&mut self, invariant: &Function, mut failure: InvariantFuzzError) {
+        if let InvariantFuzzError::BrokenInvariant(case) | InvariantFuzzError::Revert(case) =
+            &mut failure
+        {
+            case.unchecked_invariants.clone_from(&self.unchecked_invariants);
+        }
         let prev = self.failures.insert(FailureKey::Invariant(invariant.name.clone()), failure);
         self.revision = self.revision.wrapping_add(1);
         if prev.is_none() {
@@ -324,10 +369,14 @@ impl InvariantFailures {
     }
 
     pub fn has_failure(&self, invariant: &Function) -> bool {
-        self.failures.contains_key(&FailureKey::Invariant(invariant.name.clone()))
+        self.get_failure(invariant).is_some()
     }
 
     pub fn get_failure(&self, invariant: &Function) -> Option<&InvariantFuzzError> {
+        // Most checks run before any invariant fails; skip the key allocation for them.
+        if self.invariant_count == 0 {
+            return None;
+        }
         self.failures.get(&FailureKey::Invariant(invariant.name.clone()))
     }
 
@@ -450,6 +499,9 @@ impl InvariantFuzzError {
             fail_on_revert,
             assertion_failure,
             fork_block_number: None,
+            campaign_failure: None,
+            after_invariant: false,
+            unchecked_invariants: Vec::new(),
         };
         if is_revert { Self::Revert(failure) } else { Self::BrokenInvariant(failure) }
     }
@@ -518,6 +570,14 @@ pub struct FailedInvariantCaseData {
     pub assertion_failure: bool,
     /// Active fork block when the failure was observed, if any.
     pub fork_block_number: Option<u64>,
+    /// Site and observable outcome of the campaign's failing call, to check that a replay
+    /// reproduced it. `None` when its failure provenance was not recorded.
+    pub campaign_failure: Option<(CheckSequenceFailureSite, RawFailure)>,
+    /// Whether `afterInvariant` failed, which can happen without any calls.
+    pub after_invariant: bool,
+    /// Invariants that the campaign did not check after any call of the failing sequence, because
+    /// they broke before it.
+    pub unchecked_invariants: Vec<String>,
 }
 
 #[cfg(test)]

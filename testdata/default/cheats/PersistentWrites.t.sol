@@ -32,6 +32,16 @@ contract Dealer {
     }
 }
 
+contract SendThenDealZero {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    fallback() external payable {
+        payable(address(0xA11CE)).transfer(msg.value);
+        vm.deal(address(0xA11CE), 0);
+        revert();
+    }
+}
+
 /// `deal` and nonce cheatcodes survive reverts of the enclosing calls, and compose with the
 /// transfers and nonce bumps those reverts undo.
 contract PersistentWritesTest is Test {
@@ -44,6 +54,7 @@ contract PersistentWritesTest is Test {
     address constant TARGET = 0x6Fd0A0CFF9A87aDF51695b40b4fA267855a8F4c6;
     // Unfunded on the forked chains.
     address constant FRESH = address(uint160(uint256(keccak256("persistent writes"))));
+    address constant FRESH_RESTORED = address(uint160(uint256(keccak256("persistent writes after a restore"))));
     Bumper bumper;
     Reverter reverter = new Reverter();
     uint256 otherFork;
@@ -73,6 +84,37 @@ contract PersistentWritesTest is Test {
         revert();
     }
 
+    function transferThenDealZero() external {
+        A.transfer(10);
+        vm.deal(A, 0);
+        revert();
+    }
+
+    function transferThenDealZeroThenDeal() external {
+        A.transfer(10);
+        vm.deal(A, 0);
+        vm.deal(A, 100);
+        revert();
+    }
+
+    function dealAfterSaturatedChild() external {
+        try this.transferThenDealZero() {} catch {}
+        vm.deal(A, 5);
+        revert();
+    }
+
+    function transferThenExecute() external {
+        A.transfer(200);
+        vm.executeTransaction(RAW_TX);
+        revert();
+    }
+
+    function failedExecuteThenDeal() external {
+        try vm.executeTransaction(RAW_TX) {} catch {}
+        vm.deal(A, 5);
+        revert();
+    }
+
     function dealInRevertedChild() external {
         try this.dealTwice() {} catch {}
         A.transfer(10);
@@ -88,6 +130,12 @@ contract PersistentWritesTest is Test {
     function restoreThenDeal() external {
         uint256 id = vm.snapshotState();
         vm.deal(A, 77);
+        vm.revertToState(id);
+        vm.deal(A, 100);
+        revert();
+    }
+
+    function restoreEarlierThenDeal(uint256 id) external {
         vm.revertToState(id);
         vm.deal(A, 100);
         revert();
@@ -146,6 +194,11 @@ contract PersistentWritesTest is Test {
         vm.stopBroadcast();
     }
 
+    function broadcastThenRevert() external {
+        vm.broadcastRawTransaction(RAW_TX);
+        revert();
+    }
+
     function executeThenRevert() external {
         vm.store(TARGET, bytes32(uint256(1)), bytes32(uint256(42)));
         vm.executeTransaction(RAW_TX);
@@ -155,6 +208,19 @@ contract PersistentWritesTest is Test {
     function selectThenDeal() external {
         vm.selectFork(otherFork);
         vm.deal(FRESH, 100);
+        revert();
+    }
+
+    function restoreThenSelectThenDeal() external {
+        vm.revertToState(vm.snapshotState());
+        vm.selectFork(otherFork);
+        vm.deal(FRESH, 300);
+        revert();
+    }
+
+    function restoreOtherForkThenDeal(uint256 id) external {
+        vm.revertToState(id);
+        vm.deal(FRESH_RESTORED, 300);
         revert();
     }
 
@@ -179,11 +245,23 @@ contract PersistentWritesTest is Test {
         assertEq(balanceAfter(abi.encodeCall(this.dealTwice, ())), 2, "dealTwice");
         assertEq(balanceAfter(abi.encodeCall(this.transferThenDeal, ())), 90, "transferThenDeal");
         assertEq(balanceAfter(abi.encodeCall(this.dealThenTransfer, ())), 100, "dealThenTransfer");
+        // A change below the balance the revert restores leaves no balance.
+        assertEq(balanceAfter(abi.encodeCall(this.transferThenDealZero, ())), 0, "transferThenDealZero");
+        // The changes add up before saturating, and an enclosing revert keeps the saturated balance.
+        assertEq(
+            balanceAfter(abi.encodeCall(this.transferThenDealZeroThenDeal, ())), 90, "transferThenDealZeroThenDeal"
+        );
+        assertEq(balanceAfter(abi.encodeCall(this.dealAfterSaturatedChild, ())), 5, "dealAfterSaturatedChild");
         assertEq(balanceAfter(abi.encodeCall(this.dealInRevertedChild, ())), 2, "dealInRevertedChild");
         // A snapshot restore keeps the writes made before the snapshot.
         assertEq(balanceAfter(abi.encodeCall(this.dealThenRestoreInChild, ())), 100, "dealThenRestoreInChild");
         assertEq(balanceAfter(abi.encodeCall(this.dealThenRestore, ())), 100, "dealThenRestore");
-        assertEq(balanceAfter(abi.encodeCall(this.restoreThenDeal, ())), 77, "restoreThenDeal");
+        // The revert undoes the restore, and a write made after it replays as the value it set.
+        assertEq(balanceAfter(abi.encodeCall(this.restoreThenDeal, ())), 100, "restoreThenDeal");
+        uint256 id = vm.snapshotState();
+        vm.deal(A, 10);
+        callReverting(abi.encodeCall(this.restoreEarlierThenDeal, (id)));
+        assertEq(A.balance, 100, "restoreEarlierThenDeal");
 
         callReverting(abi.encodeCall(this.createThenSetNonce, ()));
         assertEq(vm.getNonce(address(bumper)), 9, "createThenSetNonce");
@@ -198,6 +276,14 @@ contract PersistentWritesTest is Test {
         vm.store(TARGET, 0, bytes32(uint256(1)));
         try vm.executeTransaction(RAW_TX) {} catch {}
         assertEq(A.balance, 100, "failed executeTransaction deal");
+        // The executed transaction's `deal` merges as a change, which saturates the same way.
+        vm.setNonceUnsafe(SENDER, 0);
+        vm.store(TARGET, 0, 0);
+        assertEq(balanceAfter(abi.encodeCall(this.transferThenExecute, ())), 0, "transferThenExecute");
+        // So does a failed executed transaction's `deal`, under an enclosing revert.
+        vm.setNonceUnsafe(SENDER, 0);
+        vm.etch(TARGET, type(SendThenDealZero).runtimeCode);
+        assertEq(balanceAfter(abi.encodeCall(this.failedExecuteThenDeal, ())), 5, "failedExecuteThenDeal");
 
         // A snapshot of an earlier transaction holds none of the writes; last, as it rolls back the
         // rest of the state.
@@ -242,6 +328,49 @@ contract PersistentWritesTest is Test {
         assertEq(A.balance, 50, "failed raw transaction deal");
     }
 
+    // A raw transaction accepts its changes to accounts the running transaction has not loaded, so
+    // a revert neither undoes nor replays them. Only a failing call that undoes a snapshot restore
+    // replays them, see `StateSnapshots.t.sol`.
+    function testRawTransactionInRevertedCall() public {
+        vm.chainId(1);
+        vm.deal(SENDER, 1 ether);
+        callReverting(abi.encodeCall(this.broadcastThenRevert, ()));
+        assertEq(TARGET.balance, 17);
+        assertEq(vm.getNonce(SENDER), 1);
+    }
+
+    // A failed executed transaction drops the changes a raw transaction it ran accepted, with the
+    // rest of its state.
+    function testRawTransactionInFailedExecutedTransaction() public {
+        vm.chainId(1);
+        vm.deal(SENDER, 1 ether);
+        vm.deal(vm.addr(1), 1 ether);
+        bytes[] memory unsigned = new bytes[](9);
+        unsigned[1] = hex"01";
+        unsigned[2] = hex"030d40";
+        unsigned[3] = abi.encodePacked(address(this));
+        unsigned[5] = abi.encodeCall(this.broadcastThenRevert, ());
+        unsigned[6] = hex"01";
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(1, keccak256(vm.toRlp(unsigned)));
+        unsigned[6] = abi.encodePacked(v + 10);
+        unsigned[7] = trimLeadingZeros(r);
+        unsigned[8] = trimLeadingZeros(s);
+        try vm.executeTransaction(vm.toRlp(unsigned)) {} catch {}
+        assertEq(TARGET.balance, 0);
+        assertEq(vm.getNonce(SENDER), 0);
+    }
+
+    function trimLeadingZeros(bytes32 word) internal pure returns (bytes memory out) {
+        uint256 offset;
+        while (offset < 32 && word[offset] == bytes1(0)) {
+            offset++;
+        }
+        out = new bytes(32 - offset);
+        for (uint256 i; i < out.length; i++) {
+            out[i] = word[offset + i];
+        }
+    }
+
     // A fork switch accepts the writes on the fork it leaves, so a later revert does not replay
     // them on the fork it selected.
     function testForkWritesStayOnTheirFork() public {
@@ -255,5 +384,20 @@ contract PersistentWritesTest is Test {
         // A write after the switch is undone with the frame only if its rollback reached it.
         callReverting(abi.encodeCall(this.selectThenDeal, ()));
         assertEq(FRESH.balance, 100, "dealt after the switch");
+
+        // A revert that undoes a restore does not keep the writes made after a later switch, which
+        // accepted the state the restore installed.
+        vm.selectFork(fork);
+        callReverting(abi.encodeCall(this.restoreThenSelectThenDeal, ()));
+        assertEq(FRESH.balance, 100, "dealt after a restore and a switch");
+
+        // Nor the writes made after a restore that switches back to the fork of an earlier
+        // snapshot, taken before the selected fork was created.
+        vm.selectFork(fork);
+        uint256 id = vm.snapshotState();
+        vm.createSelectFork("mainnet");
+        callReverting(abi.encodeCall(this.restoreOtherForkThenDeal, (id)));
+        assertEq(vm.activeFork(), fork, "restored fork");
+        assertEq(FRESH_RESTORED.balance, 0, "dealt after a restore to another fork");
     }
 }

@@ -19,7 +19,7 @@ use crate::{
         collect_symbolic_artifacts_from_suites, emit_symbolic_regressions,
     },
     traces::{
-        CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
+        CallTraceDecoder, CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
         debug::{ContractSources, DebugTraceIdentifier},
         decode_trace_arena, folded_stack_trace,
         identifier::SignaturesIdentifier,
@@ -48,14 +48,14 @@ use foundry_common::{
     sh_status, sh_warn, shell,
 };
 use foundry_compilers::{
-    Artifact, ArtifactId, ProjectCompileOutput,
+    Artifact, ArtifactId, Graph, ProjectCompileOutput,
     artifacts::{
-        BytecodeObject, ConfigurableContractArtifact, Libraries,
+        BytecodeObject, ConfigurableContractArtifact, Source, ast::NodeType,
         output_selection::ContractOutputSelection,
     },
     compilers::{
         Language,
-        multi::{MultiCompiler, MultiCompilerLanguage},
+        multi::{MultiCompiler, MultiCompilerLanguage, MultiCompilerParser},
     },
     utils::source_files_iter,
 };
@@ -87,7 +87,7 @@ use rand::Rng;
 use regex::Regex;
 use solar::ast::{ContractKind as SolarContractKind, ItemKind};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     fmt::Write,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, mpsc::channel},
@@ -1207,8 +1207,7 @@ impl TestArgs {
                 trial: self.showmap_trial.clone().unwrap_or_else(|| {
                     let ns = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_nanos())
-                        .unwrap_or(0);
+                        .map_or(0, |d| d.as_nanos());
                     format!("trial-{ns}")
                 }),
                 per_input: self.showmap_per_input,
@@ -1240,6 +1239,10 @@ impl TestArgs {
                 Some(root) => root.join(AUTO_CORPUS_DIR),
                 None => config.cache_path.join(AUTO_FUZZ_FAILURE_DIR).join(AUTO_CORPUS_DIR),
             });
+        }
+        // `--json` and `--junit` keep stdout for the report, so logs are captured into it.
+        if shell::is_json() || self.junit {
+            config.live_logs = false;
         }
         // The debugger labels slots from the layout, and symbolic execution learns the mapping
         // roots behind constant-folded slots from it.
@@ -1347,6 +1350,48 @@ impl TestArgs {
         Ok(())
     }
 
+    /// Warns about test contracts that the project compiles from outside its `src`, `test` and
+    /// `script` directories and `libs`, since they no longer run as test suites.
+    fn warn_skipped_test_suites(
+        &self,
+        output: &ProjectCompileOutput,
+        config: &Config,
+        inline_config: &InlineConfig,
+        filter: &ProjectPathsAwareFilter,
+    ) -> Result<()> {
+        let matcher = TestFunctionMatcher::new(config, inline_config, None);
+        let mut skipped = output
+            .artifact_ids()
+            .filter_map(|(id, artifact)| {
+                let abi = artifact.abi.as_ref()?;
+                let id = id.with_stripped_file_prefixes(&config.root);
+                (filter.is_outside_test_roots(&id.source)
+                    && filter.matches_contract(&id.name)
+                    && is_runnable_test_contract(output, config, &id, artifact, abi)
+                    && matcher
+                        .test_functions(id.identifier(), abi, |contract_id, func, kind| {
+                            filter.matches_test_function_kind_in_contract(contract_id, func, kind)
+                        })
+                        .next()
+                        .is_some())
+                .then(|| id.identifier())
+            })
+            .collect::<Vec<_>>();
+        skipped.sort();
+        skipped.dedup();
+        if !skipped.is_empty() {
+            sh_warn!(
+                "Skipping test contracts outside the configured `src`, `test` and `script` directories:\n\t{}\n\
+                 They are compiled because other files import them, but do not run as test \
+                 suites. To run them, set `test` (currently `{}`) to a directory that contains \
+                 them.",
+                skipped.join("\n\t"),
+                config.test.strip_prefix(&config.root).unwrap_or(&config.test).display(),
+            )?;
+        }
+        Ok(())
+    }
+
     /// Builds the delegated `forge test` invocation for `forge fuzz run`.
     pub(crate) fn from_fuzz_run(args: FuzzRunArgs) -> Self {
         let campaign = args.campaign;
@@ -1429,8 +1474,9 @@ impl TestArgs {
         }
 
         let display = path.display();
-        let value = fs::read_json_file::<serde_json::Value>(path)
-            .wrap_err(format!("failed to read symbolic counterexample artifact {display}"))?;
+        let value = fs::read_json_file::<serde_json::Value>(path).wrap_err_with(|| {
+            format!("failed to read symbolic counterexample artifact {display}")
+        })?;
         let schema_version =
             value.get("schema_version").and_then(serde_json::Value::as_u64).ok_or_else(|| {
                 eyre::eyre!(
@@ -1449,7 +1495,9 @@ impl TestArgs {
             bail!("unsupported symbolic counterexample artifact schema `{schema}` in {display}");
         }
         let artifact = serde_json::from_value::<SymbolicCounterexampleArtifact>(value)
-            .wrap_err(format!("failed to parse symbolic counterexample artifact {display}"))?;
+            .wrap_err_with(|| {
+                format!("failed to parse symbolic counterexample artifact {display}")
+            })?;
         if artifact.calls.is_empty() {
             bail!("symbolic counterexample artifact {display} has no calls");
         }
@@ -1713,13 +1761,15 @@ impl TestArgs {
         }
         trace!(target: "forge::test", ?filter, "using filter");
 
-        let compiler = ProjectCompiler::new()
-            .allow_linked_libraries(config.allow_linked_libraries || self.list)
-            .external_compilers(&config)
-            .dynamic_test_linking(config.dynamic_test_linking)
-            .quiet(shell::is_json() || self.junit);
+        let compiler = || {
+            ProjectCompiler::new()
+                .allow_linked_libraries(config.allow_linked_libraries || self.list)
+                .external_compilers(&config)
+                .dynamic_test_linking(config.dynamic_test_linking)
+                .quiet(shell::is_json() || self.junit)
+        };
         let (output, selected_sources, inline_config) = if self.list {
-            let compiler = compiler.external_artifacts(false);
+            let compiler = compiler().external_artifacts(false);
             // Only the ABI is needed to list tests, so skip the full compile when possible.
             let compiler = if filter.args().path_pattern.is_some()
                 && config.extra_output.is_empty()
@@ -1742,16 +1792,102 @@ impl TestArgs {
         } else {
             let (files, inline_config) =
                 self.get_sources_to_compile(&config, &filter, replay_symbolic_artifact.as_ref())?;
-            let compiler = if filter.is_empty() {
-                compiler
-            } else {
-                compiler.source_order_fallback(
-                    source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS).chain(
-                        source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS),
-                    ),
-                )
+            let compile = |files: &BTreeSet<PathBuf>| {
+                let compiler = if filter.is_empty() {
+                    compiler()
+                } else {
+                    compiler().source_order_fallback(
+                        source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
+                            .chain(source_files_iter(
+                                &config.test,
+                                MultiCompilerLanguage::FILE_EXTENSIONS,
+                            )),
+                    )
+                };
+                compiler.files(files.iter().cloned()).compile(&project)
             };
-            let output = compiler.files(files.clone()).compile(&project);
+            let mut output = compile(&files);
+            let mut reresolved = false;
+            // A build without storage layouts keeps a cached profile that requested them, so its
+            // artifacts are reused here without layouts. Delete them so they are recompiled.
+            // Artifacts of sources without contracts never have layouts, and their AST has no
+            // contract definition.
+            while config.extra_output.contains(&ContractOutputSelection::StorageLayout)
+                && let Ok(compiled) = &output
+            {
+                let mut stale = compiled
+                    .cached_artifacts()
+                    .iter()
+                    .flat_map(|(source, artifacts)| {
+                        artifacts.values().flatten().map(move |file| (source, file))
+                    })
+                    .filter(|(_, file)| {
+                        file.artifact.storage_layout.is_none()
+                            && file.artifact.ast.as_ref().is_none_or(|ast| {
+                                ast.nodes
+                                    .iter()
+                                    .any(|node| node.node_type == NodeType::ContractDefinition)
+                            })
+                    })
+                    .collect::<Vec<_>>();
+                if stale.is_empty() {
+                    break;
+                }
+                // Cached artifacts of other profiles are reused for every source in scope, but
+                // only the profiles compiled from these roots are rewritten. Deleting any other
+                // artifact would leave the cache pointing at a missing file, and every later build
+                // would recompile. The roots are those of the compilation that produced the output,
+                // which differ from `files` after a source order fallback.
+                let graph = compiled.graph();
+                let roots = graph
+                    .source_files()
+                    .map(|id| graph.node_path(id).to_path_buf())
+                    .collect::<BTreeSet<_>>();
+                let scope = Graph::<MultiCompilerParser>::resolve_sources(
+                    &project.paths,
+                    Source::read_all(&roots)?,
+                )?
+                .into_sources_by_version(&project)?
+                .sources
+                .into_values()
+                .flatten()
+                .flat_map(|(version, sources, (profile, _))| {
+                    sources.into_iter().map(move |(path, _)| (path, version.clone(), profile))
+                })
+                .collect::<HashSet<_>>();
+                // Resolving the roots again can pick another compiler version than the compilation
+                // that produced the output, such as one it installed. The recompile would not
+                // rewrite stale artifacts of the old version, so recompile once with the new
+                // versions instead of deleting them.
+                if !reresolved
+                    && stale.iter().any(|(source, file)| {
+                        !scope
+                            .iter()
+                            .any(|(path, version, _)| path == *source && *version == file.version)
+                    })
+                {
+                    reresolved = true;
+                    output = compile(&roots);
+                    continue;
+                }
+                stale.retain(|(source, file)| {
+                    scope.contains(&(
+                        (*source).clone(),
+                        file.version.clone(),
+                        file.profile.as_str(),
+                    ))
+                });
+                if stale.is_empty() {
+                    break;
+                }
+                if !(shell::is_json() || self.junit) {
+                    sh_status!("Recompiling cached artifacts without storage layouts...")?;
+                }
+                for (_, file) in stale {
+                    fs::remove_file(&file.file)?;
+                }
+                output = compile(&roots);
+            }
             let output = if should_mutate {
                 output.wrap_err(
                     "Mutation testing compiler profile failed to compile before applying mutations",
@@ -1793,7 +1929,7 @@ impl TestArgs {
         for corpus in [&mut config.fuzz.corpus, &mut config.invariant.corpus] {
             corpus.corpus_dir.get_or_insert_with(|| corpus_dir.to_path_buf());
         }
-        config.fuzz.seed = config.fuzz.seed.or(Some(U256::ZERO));
+        config.fuzz.seed.get_or_insert(U256::ZERO);
 
         evm_opts.infer_network_from_fork().await?;
         config.networks = evm_opts.networks;
@@ -1869,15 +2005,16 @@ impl TestArgs {
             filter,
             &execution.multi_network,
         )?;
+        self.warn_skipped_test_suites(output, &config, &execution.inline_config, filter)?;
 
         let mut filter = filter.clone();
         self.apply_gas_report_overrides(&mut config, &mut evm_opts);
 
         // Generate a random fuzz seed if none provided, for reproducibility.
-        config.fuzz.seed = config
+        config
             .fuzz
             .seed
-            .or_else(|| Some(U256::from_be_bytes(rand::rng().random::<[u8; 32]>())));
+            .get_or_insert_with(|| U256::from_be_bytes(rand::rng().random::<[u8; 32]>()));
 
         let trace_output = if self.flamegraph {
             Some(TraceOutputKind::Flamegraph)
@@ -1946,7 +2083,7 @@ impl TestArgs {
                     .run_tests_inner(runner, default_config, default_verbosity, &mut filter, output)
                     .await?;
                 for pass in override_passes {
-                    let (_, pass_outcome) =
+                    let pass_outcome =
                         self.run_network_pass(pass, output, &mut filter, execution.clone()).await?;
                     merge_outcomes(&mut outcome, pass_outcome);
                 }
@@ -2115,7 +2252,7 @@ impl TestArgs {
         }
         let decoder = outcome
             .last_run_decoder
-            .clone()
+            .as_ref()
             .ok_or_else(|| eyre::eyre!("cannot generate {label}: missing trace decoder"))?;
         let (suite_name, test_name, test_result) =
             outcome
@@ -2127,7 +2264,7 @@ impl TestArgs {
                     })
                 })
                 .ok_or_else(|| eyre::eyre!("{no_tests}"))?;
-        let contract = suite_name.split(':').next_back().unwrap();
+        let contract = suite_name.rsplit(':').next().unwrap();
         let test_name = test_name.trim_end_matches("()");
         let (_, arena) =
             test_result.traces.iter_mut().find(|(kind, _)| kind.is_execution()).ok_or_else(
@@ -2138,7 +2275,7 @@ impl TestArgs {
                     )
                 },
             )?;
-        decode_trace_arena(arena, &decoder).await;
+        decode_trace_arena(arena, decoder).await;
 
         match trace_output {
             TraceOutputKind::Flamegraph | TraceOutputKind::Flamechart => {
@@ -2220,7 +2357,7 @@ impl TestArgs {
         output: &ProjectCompileOutput,
         filter: &mut ProjectPathsAwareFilter,
         execution: TestExecutionOptions,
-    ) -> Result<(Libraries, TestOutcome)> {
+    ) -> Result<TestOutcome> {
         let NetworkPass { config, evm_opts, multi_network } = pass;
         let execution = TestExecutionOptions { multi_network, ..execution };
         let verbosity = evm_opts.verbosity;
@@ -2237,9 +2374,7 @@ impl TestArgs {
                     ExecutorBuilder::<Net>::new(),
                 )
                 .await?;
-            let libraries = runner.libraries.clone();
-            let outcome = self.run_tests_inner(runner, config, verbosity, filter, output).await?;
-            Ok((libraries, outcome))
+            self.run_tests_inner(runner, config, verbosity, filter, output).await
         })
     }
 
@@ -2454,7 +2589,10 @@ impl TestArgs {
             let mut gas_snapshots = BTreeMap::<String, BTreeMap<String, String>>::new();
             for result in results.values().flat_map(|suite| suite.test_results.values()) {
                 for (group, new_snapshots) in &result.gas_snapshots {
-                    gas_snapshots.entry(group.clone()).or_default().extend(new_snapshots.clone());
+                    gas_snapshots
+                        .entry(group.clone())
+                        .or_default()
+                        .extend(new_snapshots.iter().map(|(k, v)| (k.clone(), v.clone())));
                 }
             }
             if !gas_snapshots.is_empty() {
@@ -2710,11 +2848,15 @@ impl TestArgs {
                         }
                         let identities = decoder.address_identities();
 
+                        // Only a run that identified an address changed the decoder.
+                        let mut identified = false;
                         for trace in &result.gas_report_traces {
-                            decoder.restore_address_identities(&identities);
+                            if std::mem::take(&mut identified) {
+                                decoder.restore_address_identities(&identities);
+                            }
 
                             for arena in trace {
-                                decoder.identify_scoped(arena, &mut identifier);
+                                identified |= decoder.identify_scoped(arena, &mut identifier);
                                 gas_report.analyze([arena], &decoder).await;
                             }
                         }
@@ -2733,7 +2875,10 @@ impl TestArgs {
 
                 // Collect and merge gas snapshots.
                 for (group, new_snapshots) in &result.gas_snapshots {
-                    gas_snapshots.entry(group.clone()).or_default().extend(new_snapshots.clone());
+                    gas_snapshots
+                        .entry(group.clone())
+                        .or_default()
+                        .extend(new_snapshots.iter().map(|(k, v)| (k.clone(), v.clone())));
                 }
             }
 
@@ -2833,8 +2978,7 @@ impl TestArgs {
                 if !path.exists() {
                     continue;
                 }
-                let previous_snapshots: BTreeMap<String, String> =
-                    fs::read_json_file(&path).expect("Failed to read snapshots from disk");
+                let previous_snapshots: BTreeMap<String, String> = fs::read_json_file(&path)?;
                 let diff = snapshots
                     .iter()
                     .filter_map(|(k, v)| {
@@ -2866,13 +3010,11 @@ impl TestArgs {
         }
 
         if self.gas_snapshot_emit.unwrap_or(config.gas_snapshot_emit) {
-            fs::create_dir_all(&config.snapshots)?;
             for (group, snapshots) in gas_snapshots {
-                fs::write_pretty_json_file(
-                    &config.snapshots.join(format!("{group}.json")),
-                    &snapshots,
-                )
-                .expect("Failed to write gas snapshots to disk");
+                // Groups may be nested, such as `core/Pool`.
+                let path = config.snapshots.join(format!("{group}.json"));
+                fs::create_dir_all(path.parent().unwrap_or(&config.snapshots))?;
+                fs::write_pretty_json_file(&path, &snapshots)?;
             }
         }
         Ok(())
@@ -2927,6 +3069,7 @@ fn prepare_results_for_json(
     verbosity: u8,
     trace_depth: Option<usize>,
 ) {
+    let decoder = CallTraceDecoder::new();
     for test_result in results.values_mut().flat_map(|suite| suite.test_results.values_mut()) {
         if verbosity >= 2 {
             test_result.decoded_logs = decode_console_logs(&test_result.logs);
@@ -2936,12 +3079,13 @@ fn prepare_results_for_json(
         for (_, arena) in &mut test_result.traces {
             // Discard presentation-only decoding populated by the streaming renderer.
             for node in arena.nodes_mut() {
+                decoder.redact_raw_cheatcode_secrets(&mut node.trace);
                 node.trace.decoded = None;
                 for log in &mut node.logs {
                     log.decoded = None;
                 }
-                for step in &mut node.trace.steps {
-                    step.decoded = None;
+                for extra in node.trace.steps.iter_mut().filter_map(|step| step.extra.as_mut()) {
+                    extra.decoded = None;
                 }
             }
             if let Some(trace_depth) = trace_depth {

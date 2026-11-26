@@ -1,6 +1,6 @@
-use crate::utils::generate_large_init_contract;
+use crate::utils::{generate_large_init_contract, generate_large_runtime_contract};
 use foundry_compilers::artifacts::{BytecodeHash, EvmVersion};
-use foundry_config::{CompilationRestrictions, SettingsOverrides};
+use foundry_config::{CompilationRestrictions, SettingsOverrides, SolidityErrorCode};
 use foundry_test_utils::{
     TestProject, forgetest, forgetest_init, snapbox::IntoData, str, util::OutputExt,
 };
@@ -132,6 +132,26 @@ done
     assert!(!invoked.exists(), "switching Forge commands unexpectedly recompiled the units");
     assert_eq!(fs::read(&retained_cache).unwrap(), cache_before);
     assert_eq!(fs::read(&retained_artifact).unwrap(), artifact_before);
+
+    // `script --no-compile` reports stale external units with stale built-in sources instead of
+    // compiling them.
+    let lib = fs::read_to_string(&external_source).unwrap();
+    fs::write(&external_source, format!("{lib}\n")).unwrap();
+    let builtin_source = fs::read_to_string(&builtin).unwrap();
+    fs::write(&builtin, format!("{builtin_source}\n")).unwrap();
+    cmd.forge_fuse()
+        .args(["script", "src/Builtin.sol", "--no-compile"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: compilation disabled by --no-compile; sources need compiling:
+native/fe.toml
+native/src/lib.fe
+src/Builtin.sol
+
+"#]]);
+    assert!(!invoked.exists());
+    fs::write(&external_source, lib).unwrap();
+    fs::write(&builtin, builtin_source).unwrap();
 
     fs::remove_file(native.join("src/other.fe")).unwrap();
     let read_only_commands = [
@@ -300,6 +320,27 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]],
     );
+    cmd.forge_fuse()
+        .args(["test", "--list", "--json", "--match-path", "native/**"])
+        .assert_json_stdout(str![[r#"
+{"native/src/lib.fe":{"Counter":["testExternalArtifactIsDeployable"]}}
+"#]]);
+    cmd.forge_fuse()
+        .args(["coverage", "--report", "lcov", "--match-contract", "^Counter$"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[..]
+Analysing contracts...
+Running tests...
+
+Ran 1 test for native/src/lib.fe:Counter
+[PASS] testExternalArtifactIsDeployable() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+Wrote LCOV report.
+
+"#]]);
     for name in ["Counter.V1", "Counter-V1"] {
         fs::write(&adapter, adapter_script.replace("name=Counter", &format!("name={name}")))
             .unwrap();
@@ -429,14 +470,21 @@ fn can_build_physical_and_symlinked_dependency_configs(prj: _, cmd: _) {
         fs::create_dir_all(dependency.join("vendor/file/src")).unwrap();
         fs::write(
             dependency.join("foundry.toml"),
-            r#"
+            format!(
+                r#"
 [profile.default]
 src = "custom-source"
-remappings = ["special-alias/=vendor/inner/src/"]
+remappings = ["{}:special-alias/=vendor/inner/src/"]
 "#,
+                prj.root().display()
+            ),
         )
         .unwrap();
-        fs::write(dependency.join("remappings.txt"), "file-alias/=vendor/file/src/\n").unwrap();
+        fs::write(
+            dependency.join("remappings.txt"),
+            format!("{}:file-alias/=vendor/file/src/\n", prj.root().display()),
+        )
+        .unwrap();
         fs::write(
             dependency.join("custom-source/Dep.sol"),
             r#"
@@ -471,21 +519,38 @@ contract FromFile {}
 
     write_dependency(&physical);
     write_dependency(&linked);
+    prj.add_lib("special-alias/src/Thing.sol", "contract RootThing {}");
+    prj.add_lib("file-alias/src/FromFile.sol", "contract RootFromFile {}");
+    prj.add_lib(
+        "sibling/src/Sibling.sol",
+        r#"
+import {RootThing} from "special-alias/Thing.sol";
+import {RootFromFile} from "file-alias/FromFile.sol";
+
+contract Sibling is RootThing, RootFromFile {}
+"#,
+    );
     prj.add_raw_source(
         "Root.sol",
         r#"
 pragma solidity >=0.8.0;
 
 import {Dep} from "linked/Dep.sol";
+import {RootThing} from "special-alias/Thing.sol";
+import {RootFromFile} from "file-alias/FromFile.sol";
+import {Sibling} from "sibling/Sibling.sol";
 
-contract Root is Dep {}
+contract Root is Dep, Sibling {}
 "#,
     );
 
     let remappings = str![[r#"
-file-alias/=lib/linked/vendor/file/src/
+lib/linked/:special-alias/=lib/linked/vendor/inner/src/
+lib/linked/:file-alias/=lib/linked/vendor/file/src/
+file-alias/=lib/file-alias/src/
 linked/=lib/linked/custom-source/
-special-alias/=lib/linked/vendor/inner/src/
+sibling/=lib/sibling/src/
+special-alias/=lib/special-alias/src/
 
 "#]];
     cmd.arg("remappings").assert_success().stdout_eq(remappings.clone());
@@ -967,6 +1032,50 @@ fn build_sizes_respects_amsterdam_code_size_limits(prj: _, cmd: _) {
 "#]]
         .is_json(),
     );
+}
+
+// Solc 0.8.39 reports the Amsterdam code size limits with their own warning codes, which are
+// ignored by default like the pre-Amsterdam ones.
+#[forgetest]
+fn build_ignores_amsterdam_code_size_warnings(prj: _, cmd: _) {
+    prj.add_source(
+        "LargeRuntime.sol",
+        &format!("pragma solidity =0.8.39;\n{}", generate_large_runtime_contract(140_000)),
+    );
+    prj.update_config(|config| {
+        config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 39)));
+        config.evm_version = EvmVersion::Amsterdam;
+        config.experimental = true;
+    });
+
+    cmd.arg("build").assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
+
+    prj.update_config(|config| {
+        config.ignored_error_codes = vec![SolidityErrorCode::SpdxLicenseNotProvided];
+    });
+    cmd.forge_fuse().args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful with warnings:
+Warning (5776): Contract code size is 140343 bytes and exceeds 65536 bytes (a limit introduced in Amsterdam). This contract may not be deployable on Mainnet. Consider enabling the optimizer (with a low "runs" value!), turning off revert strings, or using libraries.
+ [FILE]:3:1:
+  |
+3 | contract LargeRuntime {
+  | ^ (Relevant source part starts here and spans across multiple lines).
+
+Warning (7868): Contract initcode size is 140373 bytes and exceeds 131072 bytes (a limit introduced in Amsterdam). This contract may not be deployable on Mainnet. Consider enabling the optimizer (with a low "runs" value!), turning off revert strings, or using libraries.
+ [FILE]:3:1:
+  |
+3 | contract LargeRuntime {
+  | ^ (Relevant source part starts here and spans across multiple lines).
+
+
+"#]]);
 }
 
 // tests build output is as expected

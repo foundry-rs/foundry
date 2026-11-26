@@ -106,14 +106,18 @@ impl<'ast> State<'_, 'ast> {
         let mut exp = &strip_underscores_if(strip_underscores, exp)[..];
         let mut fract = &strip_underscores_if(strip_underscores, fract)[..];
 
-        // strip any padded 0's
+        // strip any padded 0's, together with any underscores that would be left dangling
+        // (e.g. `1.5_0` -> `1.5`, not `1.5_`), since solc rejects leading/trailing underscores.
         let mut exp_sign = "";
         if is_dec {
-            val = val.trim_start_matches('0');
-            fract = fract.trim_end_matches('0');
+            val = val.trim_start_matches(['0', '_']);
+            fract = fract.trim_end_matches(['0', '_']);
             (exp_sign, exp) =
                 if let Some(exp) = exp.strip_prefix('-') { ("-", exp) } else { ("", exp) };
-            exp = exp.trim_start_matches('0');
+            // Preserve nonzero exponent prefixes: solc interprets leading-zero exponents as octal.
+            if exp.bytes().all(|b| b == b'0' || b == b'_') {
+                exp = "";
+            }
         }
 
         let mut out = String::with_capacity(source.len() * 2);
@@ -163,7 +167,7 @@ impl<'ast> State<'_, 'ast> {
                 match self.config.hex_underscore {
                     config::HexUnderscore::Preserve => {}
                     config::HexUnderscore::Remove | config::HexUnderscore::Bytes => {
-                        let mut clean = s.to_string().replace('_', "");
+                        let mut clean = s.replace('_', "");
                         if matches!(self.config.hex_underscore, config::HexUnderscore::Bytes) {
                             clean =
                                 clean.chars().chunks(2).into_iter().map(|c| c.format("")).join("_");
@@ -597,7 +601,7 @@ impl<'ast> State<'_, 'ast> {
         match block_format {
             BlockFormat::NoBraces(None) => {
                 if !self.handle_span(self.cursor.span(block_lo), false) {
-                    self.print_comments(block_lo, CommentConfig::default());
+                    self.print_comments(block_lo, CommentConfig::skip_ws());
                 }
                 self.s.cbox(0);
             }
@@ -768,7 +772,7 @@ impl<'ast> State<'_, 'ast> {
         let offset = if let BlockFormat::NoBraces(Some(off)) = block_format { off } else { 0 };
         self.print_comments(
             pos_hi,
-            self.cmnt_config()
+            CommentConfig::default()
                 .offset(offset)
                 .mixed_no_break()
                 .mixed_prev_space()

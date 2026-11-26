@@ -232,8 +232,7 @@ impl TargetedContracts {
                     .call_details
                     .calldata
                     .get(..4)
-                    .and_then(|selector| <[u8; 4]>::try_from(selector).ok())
-                    .map(Selector::from)
+                    .map(Selector::from_slice)
                     .and_then(|selector| c.function_by_selector(selector));
                 (Some(c), function)
             }
@@ -261,8 +260,7 @@ impl TargetedContracts {
         self.inner.get(&tx.call_details.target).is_some_and(|c| {
             calldata
                 .get(..4)
-                .and_then(|selector| <[u8; 4]>::try_from(selector).ok())
-                .map(Selector::from)
+                .map(Selector::from_slice)
                 .and_then(|selector| c.fuzzed_function_by_selector(selector))
                 .is_some_and(|function| {
                     (function.state_mutability == StateMutability::Payable
@@ -284,14 +282,9 @@ impl TargetedContracts {
     /// Identifies fuzzed contract and function based on given tx details and returns unique metric
     /// key composed from contract identifier and function name.
     pub fn fuzzed_metric_key(&self, tx: &BasicTxDetails) -> Option<String> {
-        tx.call_details
-            .calldata
-            .get(..4)
-            .and_then(|selector| <[u8; 4]>::try_from(selector).ok())
-            .map(Selector::from)
-            .and_then(|selector| {
-                self.fuzzed_metric_key_for_selector(tx.call_details.target, selector)
-            })
+        tx.call_details.calldata.get(..4).map(Selector::from_slice).and_then(|selector| {
+            self.fuzzed_metric_key_for_selector(tx.call_details.target, selector)
+        })
     }
 
     /// Identifies fuzzed contract and function from target and selector and returns unique metric

@@ -5,6 +5,7 @@ use alloy_network::{Ethereum, Network, TransactionBuilder};
 use alloy_primitives::{Address, B256};
 use alloy_provider::Provider;
 use alloy_rpc_client::BuiltInConnectionString;
+use alloy_rpc_types::BlockId;
 use alloy_transport::{BoxTransport, TransportConnect, TransportError};
 use eyre::Result;
 use foundry_cli::{
@@ -16,18 +17,21 @@ use foundry_common::{
     FoundryTransactionBuilder,
     provider::{ProviderBuilder, RetryProvider},
     shell,
-    tempo::{is_tempo_hardfork_active, maybe_print_fee_token, resolve_and_set_fee_token},
+    tempo::{
+        configurable_account::{ConfigurableAccountSigner, simulation_spec},
+        is_tempo_hardfork_active, maybe_print_fee_token, resolve_and_set_fee_token,
+    },
 };
 use foundry_config::{Chain, Config, Eip1559FeeEstimatePreset};
 use foundry_evm_networks::NetworkVariant;
 use foundry_wallets::{WalletOpts, WalletSigner};
 use serde_json::Value;
-use std::str::FromStr;
+use std::{str::FromStr, sync::Arc};
 use tempo_alloy::{
     TempoNetwork,
     accounts::TempoAccountsWallet,
     chainspec::hardfork::TempoHardfork,
-    rpc::TempoTransactionRequest,
+    rpc::{ConfigurableAccountSimulationSpec, TempoTransactionRequest},
     transport::{RelayConnector, SponsorshipMode},
 };
 
@@ -158,9 +162,15 @@ pub(crate) async fn resolve_session_or_wallet_signer(
     wallet: &WalletOpts,
     chain_id: u64,
 ) -> Result<(Option<WalletSigner>, Option<TempoAccountsWallet>)> {
+    // `--from` names the parent of a configurable access key, whose own access key in the Tempo
+    // Accounts store must not sign instead.
+    let mut store_wallet = wallet.clone();
+    if tempo.configurable_access_key.is_some() {
+        store_wallet.from = None;
+    }
     let (signer, access_key) = match tempo.session_signer_for_wallet(wallet, chain_id)? {
         Some(session) => (None, Some(session.access_key)),
-        None => foundry_common::tempo::maybe_signer(wallet, Some(chain_id)).await?,
+        None => foundry_common::tempo::maybe_signer(&store_wallet, Some(chain_id)).await?,
     };
     if let (Some(from), Some(access_key)) = (wallet.from, &access_key) {
         eyre::ensure!(
@@ -251,9 +261,18 @@ pub(crate) async fn resolve_transaction_network_and_signer(
     eth: &EthereumOpts,
 ) -> Result<(NetworkVariant, Option<WalletSigner>, Option<TempoAccountsWallet>)> {
     let config = eth.load_config()?;
+    resolve_transaction_network_and_signer_with_config(tempo, eth, &config).await
+}
+
+/// Resolves the transaction network and signer using an already loaded configuration.
+pub(crate) async fn resolve_transaction_network_and_signer_with_config(
+    tempo: &TempoOpts,
+    eth: &EthereumOpts,
+    config: &Config,
+) -> Result<(NetworkVariant, Option<WalletSigner>, Option<TempoAccountsWallet>)> {
     let has_session = tempo.session_id()?.is_some();
     let requires_tempo = tempo.is_tempo() || has_session;
-    crate::cmd::validate_tempo_network(&config, requires_tempo)?;
+    crate::cmd::validate_tempo_network(config, requires_tempo)?;
     if has_session {
         return Ok((NetworkVariant::Tempo, None, None));
     }
@@ -262,7 +281,7 @@ pub(crate) async fn resolve_transaction_network_and_signer(
     explicit_wallet.from = None;
     let (signer, access_key) = foundry_common::tempo::maybe_signer(&explicit_wallet, None).await?;
     let network =
-        crate::cmd::resolve_transaction_network(&config, requires_tempo || access_key.is_some())
+        crate::cmd::resolve_transaction_network(config, requires_tempo || access_key.is_some())
             .await?;
     if let (Some(from), Some(access_key)) = (eth.wallet.from, &access_key) {
         eyre::ensure!(
@@ -271,13 +290,18 @@ pub(crate) async fn resolve_transaction_network_and_signer(
             access_key.account()
         );
     }
-    if !network.is_tempo() || signer.is_some() || access_key.is_some() || eth.wallet.from.is_none()
+    // `--from` names the parent of a configurable access key, which signs instead of its keys.
+    if !network.is_tempo()
+        || signer.is_some()
+        || access_key.is_some()
+        || eth.wallet.from.is_none()
+        || tempo.configurable_access_key.is_some()
     {
         return Ok((network, signer, access_key));
     }
 
     // Only consult the Accounts store after selecting Tempo.
-    let provider = ProviderBuilder::<Ethereum>::from_config(&config)?.build()?;
+    let provider = ProviderBuilder::<Ethereum>::from_config(config)?.build()?;
     let chain = get_chain(config.chain, &provider).await?;
     let (signer, access_key) =
         foundry_common::tempo::maybe_signer(&eth.wallet, Some(chain.id())).await?;
@@ -290,6 +314,118 @@ pub(crate) async fn resolve_transaction_network_and_signer(
         );
     }
     Ok((network, signer, access_key))
+}
+
+/// How a Cast command tells the owners of a configurable account that are not local how to sign.
+const CAST_OWNERS_HINT: &str = "Pass the other owner keys with --tempo.owner, or have each owner \
+     sign the digest from `cast mktx --raw-unsigned --tempo.digest` with \
+     `cast wallet sign --no-hash` and combine the signatures with `cast wallet assemble`.";
+
+/// How a Cast command tells the owners of a configurable account that are not local how to sign
+/// when its signature cannot be assembled from signatures made elsewhere: for a configurable
+/// access key's keychain signature, and for zone commands.
+pub(crate) const CAST_LOCAL_OWNERS_HINT: &str =
+    "Pass the other owner keys with --tempo.owner, or keep them in the Tempo Accounts store.";
+
+/// Detects a Tempo configurable account sender and selects its local owners, taking `signer` when
+/// it is one of them.
+///
+/// The sender is `--tempo.configurable-account`, `--from`, the account linked to the signer's
+/// keystore when T14 is active, or the signer's address. Detection only runs on Tempo, and not in
+/// `--curl` mode, whose transport answers with placeholders.
+pub(crate) async fn resolve_configurable_account<N: Network>(
+    tempo: &TempoOpts,
+    config: &Config,
+    wallet: &WalletOpts,
+    signer: &mut Option<WalletSigner>,
+) -> Result<Option<ConfigurableAccountSigner>>
+where
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
+    // Only Tempo requests carry a fee token.
+    let is_tempo = N::TransactionRequest::default().supports_fee_token();
+    if !is_tempo || (config.eth_rpc_curl && !tempo.has_configurable_account_options()) {
+        eyre::ensure!(
+            !tempo.has_configurable_account_options(),
+            "Tempo configurable accounts require a Tempo network and an RPC"
+        );
+        return Ok(None);
+    }
+    let hint = if tempo.configurable_access_key.is_some() {
+        CAST_LOCAL_OWNERS_HINT
+    } else {
+        CAST_OWNERS_HINT
+    };
+    let account = tempo.configurable_account_signer(config, wallet, signer, hint).await?;
+    if let Some(account) = &account {
+        if account.sender() == account.account() {
+            sh_status!("Sending as Tempo configurable account {}", account.account())?;
+        } else {
+            sh_status!(
+                "Sending as {} with Tempo configurable access key {}",
+                account.sender(),
+                account.account()
+            )?;
+        }
+    }
+    Ok(account)
+}
+
+/// Returns the Tempo configurable account that sends for `sender`, which is `sender` itself or the
+/// account linked to its keystore, with the owner quorum that gas estimation models: the local
+/// owners when they reach the threshold, as `cast send` signs, otherwise the largest quorum of
+/// maximum-size `WebAuthn` approvals. `signer` is the wallet signer the sender already resolved,
+/// and the account's configuration is read at `block`, where the estimate runs.
+pub(crate) async fn configurable_account_simulation<N: Network>(
+    tempo: &TempoOpts,
+    config: &Config,
+    wallet: &WalletOpts,
+    sender: Address,
+    signer: Option<Arc<WalletSigner>>,
+    block: BlockId,
+) -> Result<Option<(Address, ConfigurableAccountSimulationSpec)>>
+where
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
+    let is_tempo = N::TransactionRequest::default().supports_fee_token();
+    if !is_tempo || (config.eth_rpc_curl && !tempo.has_configurable_account_options()) {
+        eyre::ensure!(
+            !tempo.has_configurable_account_options(),
+            "Tempo configurable accounts require a Tempo network and an RPC"
+        );
+        return Ok(None);
+    }
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(config)?.build()?;
+    // The sender resolves the signer unless `--from` names it, so that a keystore or hardware
+    // wallet is unlocked once.
+    let signer = match signer {
+        Some(signer) => Some(signer),
+        None if wallet.from.is_some() => {
+            let mut explicit_wallet = wallet.clone();
+            explicit_wallet.from = None;
+            explicit_wallet.maybe_signer().await?.0.map(Arc::new)
+        }
+        None => None,
+    };
+    let signers = signer.into_iter().collect::<Vec<_>>();
+    // A sender that is the linked keystore's own key was not named with `--from`.
+    let linked = tempo.linked_account(wallet)?;
+    let from = if tempo.configurable_access_key.is_some() {
+        // A configurable access key signs for the account `--from` names, never for its owner.
+        wallet.from
+    } else {
+        (!linked.is_some_and(|(_, owner)| owner == sender)).then_some(sender)
+    };
+    let Some((account, config, keys)) =
+        tempo.configurable_account_owners(&provider, from, linked, &signers, block).await?
+    else {
+        return Ok(None);
+    };
+    let spec = match ConfigurableAccountSigner::new(account, config.clone(), keys, "") {
+        Ok(signer) => signer.simulation_spec(),
+        Err(_) => simulation_spec(account, &config, &[]),
+    };
+    Ok(Some((account, spec)))
 }
 
 /// Fills a Tempo transaction request that was built outside [`crate::tx::CastTxBuilder`] before

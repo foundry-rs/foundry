@@ -8,7 +8,7 @@ use alloy_primitives::{Address, B256, U256, map::AddressHashMap};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::Filter;
 use alloy_sol_types::SolValue;
-use foundry_common::provider::ProviderBuilder;
+use foundry_common::provider::{BlockNotFound, ProviderBuilder};
 use foundry_evm_core::{
     backend::{Backend, ForkAccountField, LocalForkId},
     evm::{ExecutionPhase, FoundryEvmFor, FoundryEvmNetwork},
@@ -274,7 +274,7 @@ impl Cheatcode for eth_getLogsCall {
         }
 
         let logs = foundry_common::block_on(provider.get_logs(&filter))
-            .map_err(|e| fmt_err!("failed to get logs: {e}"))?;
+            .map_err(|e| fmt_err!("failed to get logs: {e}").with_rpc_failure_of(&e))?;
 
         let eth_logs = logs
             .into_iter()
@@ -305,7 +305,7 @@ impl Cheatcode for eth_getProofCall {
         let proof = foundry_common::block_on(async move {
             provider.get_proof(*target, slots.clone()).number(block_number).await
         })
-        .map_err(|e| fmt_err!("failed to get proof: {e}"))?;
+        .map_err(|e| fmt_err!("failed to get proof: {e}").with_rpc_failure_of(&e))?;
 
         let storage_proof = proof
             .storage_proof
@@ -334,8 +334,12 @@ impl Cheatcode for getRawBlockHeaderCall {
             .map_err(|_| fmt_err!("block number must be less than 2^64"))?;
         let block =
             foundry_common::block_on(async move { provider.get_block(block_number.into()).await })
-                .map_err(|e| fmt_err!("failed to get block: {e}"))?
-                .ok_or_else(|| fmt_err!("block {block_number} not found"))?;
+                .map_err(|e| fmt_err!("failed to get block: {e}").with_rpc_failure_of(&e))?
+                .ok_or_else(|| {
+                    // The endpoint answered that it has no such block.
+                    let err = BlockNotFound(format!("block {block_number} not found"));
+                    fmt_err!("{err}").with_rpc_failure_of(&err)
+                })?;
 
         let header: alloy_consensus::Header = block
             .into_inner()
@@ -481,6 +485,7 @@ fn record_fork_switch<FEN: FoundryEvmNetwork>(
         ccx.state.commit_created_account_changes(source_fork_id);
         // The switch accepted the running state, so reverts no longer undo its persistent writes.
         ccx.state.persistent_writes.clear();
+        ccx.state.snapshot_restores.accept_writes();
     }
     ccx.state.record_initial_created_accounts(target_fork_id, initial);
     ccx.state.record_propagated_accounts(target_fork_id, propagated);
@@ -499,6 +504,7 @@ fn record_fork_roll<FEN: FoundryEvmNetwork>(
         ccx.state.commit_created_account_changes(active_fork_id);
         // The roll accepted the running state, so reverts no longer undo its persistent writes.
         ccx.state.persistent_writes.clear();
+        ccx.state.snapshot_restores.accept_writes();
         sync_chain_id_override(ccx, active_fork_id);
     }
 }
@@ -638,7 +644,7 @@ fn rpc_result(url: &str, method: &str, params: &str) -> Result<serde_json::Value
     let provider = ProviderBuilder::<AnyNetwork>::new(url).build()?;
     let params_json: serde_json::Value = serde_json::from_str(params)?;
     foundry_common::block_on(provider.raw_request(method.to_string().into(), params_json))
-        .map_err(|err| fmt_err!("{method:?}: {err}"))
+        .map_err(|err| fmt_err!("{method:?}: {err}").with_rpc_failure_of(&err))
 }
 
 /// Convert fixed bytes and address values to bytes in order to prevent encoding issues.

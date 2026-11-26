@@ -216,6 +216,7 @@ impl SymbolicExecutor {
             parent.constraints = std::mem::take(&mut outcome.state.constraints);
             parent.witness_preferences = std::mem::take(&mut outcome.state.witness_preferences);
             parent.next_symbol = outcome.state.next_symbol;
+            parent.svm_returns = std::mem::take(&mut outcome.state.svm_returns);
             parent.storage_load_hooks = std::mem::take(&mut outcome.state.storage_load_hooks);
             parent.storage_store_hooks = std::mem::take(&mut outcome.state.storage_store_hooks);
             parent.mapping_storage_store_hooks =
@@ -315,8 +316,7 @@ impl SymbolicExecutor {
             if self.ignores_out_of_gas() {
                 return Ok(Some(StepOutcome::AssumeRejected));
             }
-            state.return_data = SymReturnData::empty(&mut self.cx);
-            return Ok(Some(StepOutcome::ExceptionalHalt));
+            return Ok(Some(self.memory_halt(state)));
         }
 
         let expanded_size_bound = state
@@ -344,8 +344,7 @@ impl SymbolicExecutor {
             if self.ignores_out_of_gas() {
                 return Ok(Some(StepOutcome::AssumeRejected));
             }
-            state.return_data = SymReturnData::empty(&mut self.cx);
-            return Ok(Some(StepOutcome::ExceptionalHalt));
+            return Ok(Some(self.memory_halt(state)));
         }
         let memory_limit = SymExpr::constant(&mut self.cx, U256::from(memory_limit));
         let within_limit = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, local_size, memory_limit);
@@ -358,7 +357,11 @@ impl SymbolicExecutor {
             state.constraints = constraints;
             return Ok(None);
         }
-        self.apply_memory_access_guard(state, worklist, valid_access)
+        let outcome = self.apply_memory_access_guard(state, worklist, valid_access)?;
+        if matches!(outcome, Some(StepOutcome::ExceptionalHalt)) {
+            state.memory_halt_pc = Some(state.pc - 1);
+        }
+        Ok(outcome)
     }
 
     fn apply_memory_access_guard(
@@ -399,6 +402,14 @@ impl SymbolicExecutor {
         }
     }
 
+    /// Halts `state` exceptionally on a memory access the EVM cannot expand to. The access is
+    /// the instruction before `state.pc`.
+    fn memory_halt(&mut self, state: &mut PathState) -> StepOutcome {
+        state.return_data = SymReturnData::empty(&mut self.cx);
+        state.memory_halt_pc = Some(state.pc - 1);
+        StepOutcome::ExceptionalHalt
+    }
+
     pub(super) fn guard_memory_range(
         &mut self,
         executor: &ExecutorView<'_>,
@@ -421,8 +432,7 @@ impl SymbolicExecutor {
                 if self.ignores_out_of_gas() {
                     return Ok(Some(StepOutcome::AssumeRejected));
                 }
-                state.return_data = SymReturnData::empty(&mut self.cx);
-                return Ok(Some(StepOutcome::ExceptionalHalt));
+                return Ok(Some(self.memory_halt(state)));
             }
             state.memory.expand_range(&mut self.cx, offset.clone(), size.clone());
             return Ok(None);
@@ -473,6 +483,9 @@ impl SymbolicExecutor {
         let outcome = self.apply_memory_access_guard(state, worklist, valid_access)?;
         if outcome.is_none() {
             state.memory.expand_range(&mut self.cx, offset.clone(), size.clone());
+        }
+        if matches!(outcome, Some(StepOutcome::ExceptionalHalt)) {
+            state.memory_halt_pc = Some(state.pc - 1);
         }
         Ok(outcome)
     }
@@ -734,20 +747,23 @@ impl SymbolicExecutor {
             }
             opcode::BALANCE => {
                 let target = state.stack.pop()?;
+                let target = self.fixed_address_word(state, target)?;
                 let balance = state.balance_word(&mut self.cx, executor, target)?;
                 state.stack.push(balance)?;
             }
             opcode::SELFBALANCE => {
-                let balance = state.balance(&mut self.cx, executor, state.address);
+                let balance = state.balance(&mut self.cx, executor, state.address)?;
                 state.stack.push(balance)?;
             }
             opcode::EXTCODESIZE => {
                 let target = state.stack.pop()?;
+                let target = self.fixed_address_word(state, target)?;
                 let size = state.extcode_size_word(&mut self.cx, executor, target)?;
                 state.stack.push(size)?;
             }
             opcode::EXTCODEHASH => {
                 let target = state.stack.pop()?;
+                let target = self.fixed_address_word(state, target)?;
                 let hash = state.extcode_hash_word(&mut self.cx, executor, target)?;
                 state.stack.push(hash)?;
             }
@@ -760,6 +776,7 @@ impl SymbolicExecutor {
                     return Ok(outcome);
                 }
                 let target = state.stack.pop()?;
+                let target = self.fixed_address_word(state, target)?;
                 let dest = state.stack.pop()?;
                 let offset = state.stack.pop()?;
                 let size = state.stack.pop()?;
@@ -1388,7 +1405,7 @@ impl SymbolicExecutor {
                         executor,
                         state.address,
                         beneficiary,
-                    );
+                    )?;
                 }
                 state.return_data = SymReturnData::empty(&mut self.cx);
                 return Ok(StepOutcome::Halt);
@@ -1615,7 +1632,8 @@ impl SymbolicExecutor {
     ) -> Result<StepOutcome, SymbolicError> {
         // Forge consumes this assumption in call_end, not create_end. A constructor must leave
         // both its revert bytes and any pending assumption for the caller to handle.
-        if !state.frame.is_constructor
+        let assumed = !state.frame.is_constructor && state.assume_no_revert_next_call.is_some();
+        if assumed
             && let Some(assumption) = state.assume_no_revert_next_call.take()
             && self.assume_no_revert_matches(
                 state,
@@ -1626,6 +1644,13 @@ impl SymbolicExecutor {
         {
             state.return_data =
                 SymReturnData::from_concrete_bytes(&mut self.cx, MAGIC_ASSUME.to_vec());
+        }
+        // Forge's call_end then skips `vm.expectRevert` for this revert. A nested frame leaves it
+        // pending for later calls, which is not modeled.
+        if assumed && state.call_depth != 0 && state.expected_revert.is_some() {
+            return Err(SymbolicError::Unsupported(
+                "symbolic vm.expectRevert pending after vm.assumeNoRevert",
+            ));
         }
         if state.call_depth != 0 {
             return Ok(StepOutcome::Revert);
@@ -1645,6 +1670,22 @@ impl SymbolicExecutor {
         // was caught or only set the fail slot.
         if state.root_calldata.is_some() && state.assertion_failed {
             return Ok(StepOutcome::Failure);
+        }
+        // Like Forge's `call_end` for the test call, a pending `vm.expectRevert` that a frame
+        // deeper left pending passes the depth check and turns a matching revert into a return.
+        if state.root_calldata.is_some()
+            && !assumed
+            && let Some(mut expected) = state.expected_revert.take_if(|e| e.deeper_frame_ran())
+        {
+            let reverter = expected.reverted_by(Some(state.address), state.first_failed_callee);
+            let return_data = state.return_data.clone();
+            if !self.expected_revert_matches(state, &expected, reverter, &return_data)? {
+                return Ok(StepOutcome::Failure);
+            }
+            if !expected.consume_one() {
+                state.expected_revert = Some(expected);
+            }
+            return Ok(StepOutcome::Halt);
         }
         // In `check*`/`prove*` tests, a `CheatcodeError` that reaches the top frame, such as an
         // unmet `vm.expectRevert`, is a failure. Invariant handlers treat it as a revert.

@@ -308,6 +308,9 @@ pub struct WalletsInner {
     pub multi_wallet: MultiWallet,
     /// Optional signer provided as `--sender` flag.
     pub provided_sender: Option<Address>,
+    /// The key that signs messages for `provided_sender` when it has no key of its own, such as
+    /// the owner of the Tempo configurable account linked to the script's keystore.
+    pub sender_owner: Option<Address>,
 }
 
 /// Cloneable wrapper around [`WalletsInner`].
@@ -320,7 +323,13 @@ pub struct Wallets {
 impl Wallets {
     #[expect(missing_docs)]
     pub fn new(multi_wallet: MultiWallet, provided_sender: Option<Address>) -> Self {
-        Self { inner: Arc::new(Mutex::new(WalletsInner { multi_wallet, provided_sender })) }
+        Self {
+            inner: Arc::new(Mutex::new(WalletsInner {
+                multi_wallet,
+                provided_sender,
+                sender_owner: None,
+            })),
+        }
     }
 
     /// Consumes [Wallets] and returns [MultiWallet].

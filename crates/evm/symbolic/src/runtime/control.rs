@@ -35,5 +35,8 @@ pub(crate) enum CheatcodeOutcome {
         passing: Box<PathState>,
         revert: Option<SymReturnData>,
     },
+    /// A call that returns one of several values: each choice continues on its own path with its
+    /// constraints. The list is never empty.
+    Choices(Vec<(Vec<SymBoolExpr>, SymReturnData)>),
     Failure,
 }

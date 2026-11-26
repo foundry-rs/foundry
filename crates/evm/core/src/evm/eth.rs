@@ -2,12 +2,13 @@
 
 use super::{
     EvmEnv, FoundryEvmFactory, FoundryEvmNetwork, FoundryExecutionHooks, FoundryTxConversion,
-    TxPayload, eth_envelope_from_any_rpc, eth_tx, with_eip7702_delegations,
+    TxPayload, eth_envelope_from_any_rpc, eth_tx, eth_tx_from_request, with_eip7702_delegations,
 };
 use crate::edgecov;
 use alloy_consensus::transaction::Recovered;
 use alloy_network::{AnyRpcTransaction, Ethereum};
 use alloy_primitives::{Address, Bytes, U256, address};
+use alloy_rpc_types::TransactionRequest;
 use evm2::{
     BaseEvmTypes, Evm, EvmTypes, ExecutionConfig, PrecompileError, Precompiles, SpecId, TxResult,
     Version,
@@ -60,6 +61,10 @@ impl FoundryTxConversion<Ethereum> for BaseEvmTypes {
         _payload: TxPayload,
     ) -> eyre::Result<Recovered<TxEnvelope>> {
         Ok(Recovered::new_unchecked(eth_tx(envelope), sender))
+    }
+
+    fn tx_from_request(request: TransactionRequest) -> eyre::Result<Recovered<TxEnvelope>> {
+        eth_tx_from_request(request)
     }
 
     fn envelope_from_any_rpc(tx: &AnyRpcTransaction) -> eyre::Result<alloy_consensus::TxEnvelope> {

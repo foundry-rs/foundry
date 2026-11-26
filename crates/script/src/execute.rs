@@ -1,4 +1,4 @@
-use super::{JsonResult, NestedValue, ScriptResult, runner::ScriptRunner};
+use super::{JsonResult, NestedValue, ScriptResult, revert_error, runner::ScriptRunner};
 use crate::{
     ScriptArgs, ScriptConfig,
     build::{CompiledState, LinkedBuildData},
@@ -6,7 +6,7 @@ use crate::{
 };
 use alloy_dyn_abi::FunctionExt;
 use alloy_json_abi::{Function, InternalType, JsonAbi};
-use alloy_network::{AnyNetwork, Network};
+use alloy_network::{AnyNetwork, Network, TransactionBuilder};
 use alloy_primitives::{
     Address, Bytes,
     map::{HashMap, HashSet},
@@ -25,7 +25,7 @@ use foundry_config::{Chain, NamedChain};
 use foundry_debugger::DebuggerBuilder;
 use foundry_evm::{
     core::evm::FoundryEvmNetwork,
-    decode::decode_console_logs,
+    decode::{RevertDecoder, decode_console_logs},
     inspectors::cheatcodes::BroadcastableTransactions,
     traces::{
         CallTraceDecoder, CallTraceDecoderBuilder, DebugTraceIdentifier, TraceKind,
@@ -68,7 +68,7 @@ impl<FEN: FoundryEvmNetwork> LinkedState<FEN> {
     /// Given linked and compiled artifacts, prepares data we need for execution.
     /// This includes the function to call and the calldata to pass to it.
     pub async fn prepare_execution(self) -> Result<PreExecutionState<FEN>> {
-        let Self { args, script_config, script_wallets, browser_wallet, build_data } = self;
+        let Self { mut args, script_config, script_wallets, browser_wallet, build_data } = self;
 
         let target_contract = build_data.get_target_contract()?;
 
@@ -166,9 +166,19 @@ impl<FEN: FoundryEvmNetwork> PreExecutionState<FEN> {
         &self,
         runner: &mut ScriptRunner<FEN>,
     ) -> Result<ScriptResult<FEN::Network>> {
+        // Authorize linked libraries before the script constructor can call them. Configured
+        // libraries already present on a fork are not in `predeploy_libraries`.
+        for address in
+            self.build_data.libraries.libs.values().flat_map(|libraries| libraries.values())
+        {
+            runner.executor.backend_mut().allow_cheatcode_access(address.parse()?);
+        }
+
         let (address, mut setup_result) = runner.setup(
             &self.build_data.predeploy_libraries,
             self.execution_data.bytecode.clone(),
+            &RevertDecoder::new()
+                .with_abis(self.build_data.known_contracts.values().map(|contract| &contract.abi)),
             needs_setup(&self.execution_data.abi),
             &self.script_config,
             self.args.broadcast,
@@ -186,6 +196,7 @@ impl<FEN: FoundryEvmNetwork> PreExecutionState<FEN> {
             setup_result.returned = script_result.returned;
             setup_result.exit_reason = script_result.exit_reason;
             setup_result.breakpoints = script_result.breakpoints;
+            setup_result.rpc_failure = script_result.rpc_failure;
 
             match (&mut setup_result.transactions, script_result.transactions) {
                 (Some(txs), Some(new_txs)) => {
@@ -484,23 +495,44 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
             }
         }
 
+        // Like simulation, set each unsigned transaction's chain ID to its RPC's chain, since
+        // CREATE broadcasts and library deployments are recorded without one.
+        for tx in result.transactions.iter_mut().flatten() {
+            if let Some(rpc) = &tx.rpc
+                && let Some(&chain_id) = self.execution_artifacts.rpc_data.chain_ids.get(rpc)
+                && let Some(tx) = tx.transaction.as_unsigned_mut()
+            {
+                tx.set_chain_id(chain_id);
+            }
+        }
+
         let json_result = JsonResult {
             logs: decode_console_logs(&result.logs),
             returns: &self.execution_artifacts.returns,
             result: &result,
+            broadcastable_transactions: result
+                .transactions
+                .iter()
+                .flatten()
+                .map(|tx| &tx.transaction)
+                .collect(),
         };
         let json = serde_json::to_string(&json_result)?;
 
         sh_println!("{json}")?;
 
         if !self.execution_result.success {
-            return Err(eyre::eyre!(
-                "script failed: {}",
-                &self
-                    .execution_artifacts
-                    .decoder
-                    .revert_decoder
-                    .decode(&result.returned[..], result.exit_reason)
+            let reason = self
+                .execution_artifacts
+                .decoder
+                .revert_decoder
+                .decode(&result.returned[..], result.exit_reason);
+            return Err(revert_error(
+                format!("script failed: {reason}"),
+                &result.returned,
+                &reason,
+                result.exit_reason,
+                result.rpc_failure.as_ref(),
             ));
         }
 

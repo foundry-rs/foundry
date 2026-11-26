@@ -28,7 +28,10 @@ use foundry_common::{
     },
     retry::Retry,
     shell,
-    tempo::{mark_sponsored_gas_estimation, maybe_print_fee_token, resolve_and_set_fee_token},
+    tempo::{
+        configurable_account::ConfigurableAccountSigner, mark_sponsored_gas_estimation,
+        maybe_print_fee_token, resolve_and_set_fee_token,
+    },
 };
 use foundry_compilers::{
     ArtifactId, artifacts::BytecodeObject, info::ContractInfo, utils::canonicalize,
@@ -143,6 +146,11 @@ impl CreateArgs {
                  --tempo.sponsor-signer or --tempo.sponsor-sig"
             );
         }
+        // Tempo rejects keychain transactions whose first call is a CREATE.
+        eyre::ensure!(
+            self.tx.tempo.configurable_access_key.is_none(),
+            "--tempo.configurable-access-key cannot deploy: Tempo access keys cannot sign CREATE"
+        );
 
         // Resolve chain early so we can dispatch to the correct network type.
         let chain = if let Some(chain) = self.chain_id() {
@@ -161,8 +169,36 @@ impl CreateArgs {
             // deployment into a Tempo transaction.
             wallet.from = None;
         }
-        let (signer, tempo_access_key) =
+        let (mut signer, tempo_access_key) =
             foundry_common::tempo::maybe_signer(&wallet, Some(chain.id())).await?;
+
+        // A configurable account sender deploys with its owners' approvals.
+        let is_tempo = tempo_access_key.is_some() || self.tx.tempo.is_tempo() || chain.is_tempo();
+        let configurable_account = if !is_tempo
+            || tempo_access_key.is_some()
+            || self.unlocked
+            || self.browser.browser
+            || (self.load_config()?.eth_rpc_curl
+                && !self.tx.tempo.has_configurable_account_options())
+        {
+            eyre::ensure!(
+                !self.tx.tempo.has_configurable_account_options(),
+                "Tempo configurable accounts need a Tempo network and an RPC, and cannot be \
+                 combined with --unlocked, --browser or an access key"
+            );
+            None
+        } else {
+            self.tx
+                .tempo
+                .configurable_account_signer(
+                    &self.load_config()?,
+                    &self.eth.wallet,
+                    &mut signer,
+                    "forge create needs the owner keys locally: pass the other owners with \
+                     --tempo.owner, or keep them in the Tempo Accounts store.",
+                )
+                .await?
+        };
 
         // Never deploy from an account other than the one explicitly selected by the user. Unlocked
         // and browser deployments do not use the resolved signer.
@@ -170,7 +206,8 @@ impl CreateArgs {
             .as_ref()
             .map(|signer| signer.address())
             .or_else(|| tempo_access_key.as_ref().map(|ak| ak.account()));
-        if !self.unlocked
+        if configurable_account.is_none()
+            && !self.unlocked
             && !self.browser.browser
             && let Some(from) = self.eth.wallet.from
             && let Some(deployer) = deployer
@@ -182,10 +219,10 @@ impl CreateArgs {
             );
         }
 
-        if tempo_access_key.is_some() || self.tx.tempo.is_tempo() || chain.is_tempo() {
-            self.run_generic::<TempoNetwork>(signer, tempo_access_key).await
+        if is_tempo {
+            self.run_generic::<TempoNetwork>(signer, tempo_access_key, configurable_account).await
         } else {
-            self.run_generic::<Ethereum>(signer, None).await
+            self.run_generic::<Ethereum>(signer, None, None).await
         }
     }
 
@@ -193,6 +230,7 @@ impl CreateArgs {
         mut self,
         pre_resolved_signer: Option<WalletSigner>,
         access_key: Option<TempoAccountsWallet>,
+        configurable_account: Option<ConfigurableAccountSigner>,
     ) -> Result<()>
     where
         N::TxEnvelope: From<Signed<N::UnsignedTx>>,
@@ -218,7 +256,6 @@ impl CreateArgs {
         let compiler = compile::ProjectCompiler::new()
             .allow_linked_libraries(config.allow_linked_libraries)
             .external_compilers(&config)
-            .quiet(shell::is_json())
             .target_files([target_path.clone()]);
         let output = compiler.compile(&project)?;
 
@@ -291,7 +328,7 @@ impl CreateArgs {
                 config.transaction_timeout,
                 id,
                 dry_run,
-                None,
+                TempoSigner::None,
                 Some(browser),
                 resolved_lane,
                 expires_at,
@@ -311,7 +348,26 @@ impl CreateArgs {
                 config.transaction_timeout,
                 id,
                 dry_run,
+                TempoSigner::None,
                 None,
+                resolved_lane,
+                expires_at,
+                resolve_unknown_fee_token_symbol,
+                config.eip1559_fee_estimate,
+            )
+            .await
+        } else if let Some(account) = configurable_account {
+            let deployer_address = account.account();
+            self.deploy(
+                abi,
+                bin,
+                params,
+                provider,
+                deployer_address,
+                config.transaction_timeout,
+                id,
+                dry_run,
+                TempoSigner::ConfigurableAccount(account),
                 None,
                 resolved_lane,
                 expires_at,
@@ -330,7 +386,7 @@ impl CreateArgs {
                 config.transaction_timeout,
                 id,
                 dry_run,
-                Some(ak),
+                TempoSigner::AccessKey(ak),
                 None,
                 resolved_lane,
                 expires_at,
@@ -357,7 +413,7 @@ impl CreateArgs {
                 config.transaction_timeout,
                 id,
                 dry_run,
-                None,
+                TempoSigner::None,
                 None,
                 resolved_lane,
                 expires_at,
@@ -454,7 +510,7 @@ impl CreateArgs {
         timeout: u64,
         id: ArtifactId,
         dry_run: bool,
-        mut tempo_keychain: Option<TempoAccountsWallet>,
+        mut tempo_signer: TempoSigner,
         browser_signer: Option<BrowserSigner<N>>,
         resolved_lane: Option<ResolvedLane>,
         expires_at: Option<u64>,
@@ -500,12 +556,17 @@ impl CreateArgs {
         // Convert only AA CREATE transactions into a call entry. Plain Tempo
         // CREATE transactions remain Ethereum transactions, while AA requests
         // (for example, an expiring nonce) require a non-empty `calls` list.
+        match &tempo_signer {
+            TempoSigner::AccessKey(_) if deployer.tx.nonce_key().is_none() => {
+                deployer.tx.set_nonce_key(U256::ZERO);
+            }
+            TempoSigner::ConfigurableAccount(account) => {
+                account.prepare_request::<N>(&mut deployer.tx);
+            }
+            _ => {}
+        }
         if deployer.tx.is_tempo_aa() {
             deployer.tx.convert_create_to_call();
-        }
-
-        if tempo_keychain.is_some() && deployer.tx.nonce_key().is_none() {
-            deployer.tx.set_nonce_key(U256::ZERO);
         }
 
         // Fetch defaults from provider for values not specified by user.
@@ -515,9 +576,10 @@ impl CreateArgs {
 
         maybe_print_resolved_lane(resolved_lane.as_ref(), deployer.tx.nonce().unwrap_or_default())?;
 
-        if let Some(wallet) = tempo_keychain.as_ref() {
-            tempo_keychain =
-                Some(deployer.tx.prepare_with_tempo_wallet(provider.as_ref(), wallet).await?);
+        if let TempoSigner::AccessKey(wallet) = &tempo_signer {
+            tempo_signer = TempoSigner::AccessKey(
+                deployer.tx.prepare_with_tempo_wallet(provider.as_ref(), wallet).await?,
+            );
         }
 
         if is_legacy {
@@ -581,6 +643,7 @@ impl CreateArgs {
             deployer.tx.set_gas_limit(apply_gas_estimate_multiplier(
                 estimated,
                 self.gas_estimate_multiplier,
+                Some(chain.id()),
             )?);
         }
 
@@ -654,8 +717,15 @@ impl CreateArgs {
             let tx_hash = browser.send_transaction_via_browser(deployer.tx).await?;
             wait_for_deployment(PendingTransactionBuilder::new(provider.root().clone(), tx_hash))
                 .await?
-        } else if let Some(wallet) = tempo_keychain {
-            let raw_tx = deployer.tx.sign_with_tempo_wallet(&wallet).await?;
+        } else if let Some(raw_tx) = match &tempo_signer {
+            TempoSigner::AccessKey(wallet) => {
+                Some(deployer.tx.clone().sign_with_tempo_wallet(wallet).await?)
+            }
+            TempoSigner::ConfigurableAccount(account) => {
+                Some(deployer.tx.clone().sign_with_configurable_account(account).await?)
+            }
+            TempoSigner::None => None,
+        } {
             let pending = provider
                 .send_raw_transaction(&raw_tx)
                 .await?
@@ -801,6 +871,15 @@ impl<N: Network, P: Provider<N>> Deployer<N, P> {
             .with_timeout(Some(Duration::from_secs(self.timeout)));
         wait_for_deployment(pending).await
     }
+}
+
+/// How a Tempo deployment is signed, besides a wallet-filled provider or a browser wallet.
+enum TempoSigner {
+    None,
+    /// A Tempo access key.
+    AccessKey(TempoAccountsWallet),
+    /// A configurable account's local owners.
+    ConfigurableAccount(ConfigurableAccountSigner),
 }
 
 /// Waits for a deployment transaction's receipt and returns the deployed address with it.

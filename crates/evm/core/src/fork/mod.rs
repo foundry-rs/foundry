@@ -5,7 +5,8 @@ use alloy_network::{AnyNetwork, AnyRpcBlock, Network};
 use alloy_primitives::{B256, BlockNumber, keccak256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::RpcClient;
-use eyre::OptionExt;
+use foundry_common::provider::BlockNotFound;
+use foundry_fork_db::StateBlockId;
 use std::{
     fmt,
     hash::{Hash, Hasher},
@@ -21,7 +22,7 @@ pub use multi::{ForkId, ForkResult, MultiFork, MultiForkHandler};
 mod bal;
 pub use bal::{cache_bal, validate_bal};
 
-mod prefetch;
+pub(crate) mod prefetch;
 
 /// Represents a _fork_ of a remote chain whose data is available only via the `url` endpoint.
 #[derive(Clone, Debug)]
@@ -112,9 +113,16 @@ impl Fork {
         BlockId::from((self.hash(), Some(false)))
     }
 
-    /// Returns the state selector, honoring the RPC compatibility opt-in.
-    pub(crate) fn state_block_id(&self) -> BlockId {
-        if self.state_by_number { BlockId::number(self.number()) } else { self.exact_block_id() }
+    /// Returns the state selector for preflight RPC reads, honoring the RPC compatibility opt-in.
+    ///
+    /// The hash selector leaves `requireCanonical` unset, which EIP-1898 defines as `false`, so it
+    /// pins the same block as [`Self::exact_block_id`] and serializes as `{"blockHash": "0x…"}`.
+    pub(crate) fn state_block_id(&self) -> StateBlockId {
+        StateBlockId(if self.state_by_number {
+            BlockId::number(self.number())
+        } else {
+            BlockId::hash(self.hash())
+        })
     }
 
     pub(crate) fn block(&self) -> BlockNumHash {
@@ -131,7 +139,7 @@ impl Fork {
         let response = provider
             .get_block_by_hash(block.hash)
             .await?
-            .ok_or_eyre("exact fork block is unavailable")?;
+            .ok_or_else(|| BlockNotFound("exact fork block is unavailable".into()))?;
         eyre::ensure!(
             response.header.number() == block.number && response.header.hash == block.hash,
             "exact fork block does not match the requested number and hash"
@@ -296,13 +304,31 @@ mod tests {
     }
 
     #[test]
+    fn state_block_id_serializes_as_hash_object_without_canonical_flag() {
+        let hash = B256::with_last_byte(1);
+        let fork = Fork::test(
+            "http://localhost:8545",
+            None,
+            None,
+            None,
+            BlockNumHash::new(1, hash),
+            context(1),
+        );
+
+        assert_eq!(
+            serde_json::to_value(fork.state_block_id()).unwrap(),
+            json!({ "blockHash": hash })
+        );
+    }
+
+    #[test]
     fn fork_state_by_number_preserves_anchor_and_separates_identity() {
         let block = BlockNumHash::new(42, B256::with_last_byte(1));
         let exact = Fork::test("http://localhost:8545", None, None, None, block, context(42));
         let mut numbered = exact.clone();
         numbered.state_by_number = true;
         assert_eq!(serde_json::to_value(numbered.state_block_id()).unwrap(), json!("0x2a"));
-        assert_eq!(exact.state_block_id(), exact.exact_block_id());
+        assert_eq!(exact.state_block_id().0, BlockId::hash(block.hash));
         assert_eq!(numbered.exact_block_id(), exact.exact_block_id());
         assert_ne!(numbered, exact);
         assert_eq!(numbered.source_id(), exact.source_id());

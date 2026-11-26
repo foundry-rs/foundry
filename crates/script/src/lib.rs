@@ -13,6 +13,8 @@ extern crate foundry_common;
 extern crate tracing;
 
 use crate::{broadcast::BundledState, runner::ScriptRunner, simulate::PreSimulationState};
+use alloy_dyn_abi::{DynSolType, JsonAbiExt, Specifier};
+use alloy_eips::BlockId;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::{Network, TransactionBuilder};
 use alloy_primitives::{
@@ -24,18 +26,21 @@ use build::PreprocessedState;
 use clap::{Parser, ValueHint, builder::RangedU64ValueParser};
 use dialoguer::Confirm;
 use evm2::{EvmFeatures, interpreter::InstrStop};
-use eyre::{ContextCompat, Result};
+use eyre::{ContextCompat, Result, WrapErr};
 use forge_script_sequence::{AdditionalContract, NestedValue};
 use forge_verify::{RetryArgs, VerifierArgs};
 use foundry_cli::{
+    json::{JsonEnvelope, JsonError, JsonMessage, print_json},
     opts::{BuildOpts, EvmArgs, GlobalArgs, TempoOpts, TracingArgs},
     utils::LoadConfig,
 };
 use foundry_common::{
-    ContractsByArtifact, FoundryTransactionBuilder, SELECTOR_LEN,
+    ContractsByArtifact, FoundryTransactionBuilder, SELECTOR_LEN, TransactionMaybeSigned,
     abi::{encode_function_args, get_func},
     compile::ContractSizeLimits,
+    provider::{ProviderBuilder, RpcFailure},
     shell,
+    tempo::configurable_account::{detect_configurable_account, linked_account},
 };
 use foundry_compilers::{ArtifactId, artifacts::output_selection::ContractOutputSelection};
 use foundry_config::{
@@ -47,7 +52,7 @@ use foundry_config::{
 };
 use foundry_debugger::ensure_dump_dir;
 use foundry_evm::{
-    backend::Backend,
+    backend::{Backend, rpc_failure_in},
     core::{
         Breakpoints,
         evm::{
@@ -59,15 +64,16 @@ use foundry_evm::{
     hardforks::ExecutionSpec,
     inspectors::{
         CheatsConfig,
-        cheatcodes::{BroadcastableTransactions, Wallets},
+        cheatcodes::{BroadcastableTransactions, Wallets, parse_json_as},
     },
     opts::{EvmOpts, ExecutionSpecContext, ForkContext, resolve_execution_spec},
     traces::{InternalTraceMode, TraceRequirements, Traces},
 };
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
-use foundry_wallets::{MultiWalletOpts, wallet_multi::MultiWallet};
+use foundry_wallets::{MultiWalletOpts, utils::maybe_get_keystore_path, wallet_multi::MultiWallet};
 use serde::Serialize;
 use std::path::PathBuf;
+use tempo_alloy::TempoNetwork;
 
 #[cfg(feature = "base")]
 use foundry_evm::core::evm::BaseEvmNetwork;
@@ -83,6 +89,7 @@ mod build;
 mod execute;
 mod library_deployments;
 mod multi_sequence;
+mod owner_approvals;
 mod progress;
 mod providers;
 mod receipts;
@@ -124,6 +131,16 @@ pub struct ScriptArgs {
 
     /// Arguments to pass to the script function.
     pub args: Vec<String>,
+
+    /// JSON file with the script function arguments as an array, encoded against `--sig`.
+    ///
+    /// Structs are JSON objects keyed by field name.
+    #[arg(long, value_name = "FILE", value_hint = ValueHint::FilePath, conflicts_with = "args")]
+    pub args_json: Option<PathBuf>,
+
+    /// The `--args-json` contents, read on the first script run so reruns reuse them.
+    #[arg(skip)]
+    args_json_value: Option<serde_json::Value>,
 
     /// The name of the contract you want to run.
     #[arg(long, visible_alias = "tc", value_name = "CONTRACT_NAME")]
@@ -182,6 +199,10 @@ pub struct ScriptArgs {
     #[arg(long)]
     pub skip_simulation: bool,
 
+    /// Uses only cached artifacts, and fails instead of compiling when a source needs compiling.
+    #[arg(long, conflicts_with_all = ["force", "verify"])]
+    pub no_compile: bool,
+
     /// Relative percentage to multiply gas estimates by.
     #[arg(long, short, default_value = "130")]
     pub gas_estimate_multiplier: u64,
@@ -229,6 +250,22 @@ pub struct ScriptArgs {
         conflicts_with = "resume_tx_hash"
     )]
     pub resume_retry: bool,
+
+    /// An owner's approval of a Tempo configurable account transaction that awaits its owners.
+    ///
+    /// When the local owner keys of a configurable account sender do not reach its threshold,
+    /// `--broadcast` saves its transactions unsigned and prints the digest of each. Owners sign
+    /// the digests with `cast wallet sign --no-hash <DIGEST>` or with a passkey, and `--resume`
+    /// sends the transactions once their approvals reach the threshold. Repeat for each approval,
+    /// in any order. Takes a hex signature, a JSON signature, or a browser WebAuthn assertion, as
+    /// `cast wallet assemble` does; a value naming a file is read from it.
+    #[arg(
+        long = "tempo.owner-signature",
+        value_name = "SIGNATURE",
+        requires = "resume",
+        conflicts_with = "batch"
+    )]
+    pub tempo_owner_signatures: Vec<String>,
 
     /// Archives an unfinished previous broadcast of this script and broadcasts it anew.
     ///
@@ -420,15 +457,49 @@ impl ScriptArgs {
             }
         }
 
+        // An explicit configurable account is the sender of a bare `vm.startBroadcast()`, as
+        // `--sender` would make it; its owner keys must not broadcast in its place.
+        if let Some(account) = args.tempo.configurable_account
+            && !args.resume
+        {
+            if let Some(sender) = args.evm.sender {
+                eyre::ensure!(
+                    sender == account,
+                    "--sender {sender} conflicts with --tempo.configurable-account {account}"
+                );
+            }
+            evm_opts.sender = account;
+            script_wallets.inner.lock().provided_sender = Some(account);
+        } else if !args.resume
+            && !args.batch
+            && args.evm.sender.is_none()
+            && !args.tempo.eoa
+            && let Some((account, owner)) = args.linked_account_sender(&config, &evm_opts).await?
+        {
+            // `vm.startBroadcast()` without an address broadcasts from the provided sender, and
+            // `vm.sign` without a signer signs with its owner key.
+            evm_opts.sender = account;
+            let mut wallets = script_wallets.inner.lock();
+            wallets.provided_sender = Some(account);
+            wallets.sender_owner = Some(owner);
+        }
+
         tempo.resolve_expires();
         config.tracing = args.tracing.resolve(&config.tracing, evm_opts.verbosity);
+        // `--json` keeps stdout for the result, so logs are captured into it.
+        if shell::is_json() {
+            config.live_logs = false;
+        }
         if args.debug {
             if !config.extra_output.contains(&ContractOutputSelection::StorageLayout) {
                 config.extra_output.push(ContractOutputSelection::StorageLayout);
             }
             // Full build infos keep the sources the compiler saw, which dynamic test linking
-            // rewrites in scripts.
-            if let Err(error) = config.enable_debug_build_info() {
+            // rewrites in scripts. Getting them evicts cache entries, which `--no-compile` must
+            // not write.
+            if !args.no_compile
+                && let Err(error) = config.enable_debug_build_info()
+            {
                 let _ = sh_warn!(
                     "the debugger may show source files that differ from the compiled ones: {error:#}"
                 );
@@ -447,9 +518,24 @@ impl ScriptArgs {
         Ok(PreprocessedState { args, script_config, script_wallets, browser_wallet })
     }
 
-    /// Executes the script
-    #[allow(clippy::large_stack_frames)]
+    /// Executes the script.
+    ///
+    /// With `--json`, a failure ends stdout with a failure envelope whose code tells a revert, an
+    /// RPC failure, a compiler failure, and any other failure apart.
     pub async fn run_script(self) -> Result<()> {
+        let result = Box::pin(self.execute_script()).await;
+        // The inner `forge script` of a wallet session reports its own failure.
+        if shell::is_json()
+            && let Err(err) = &result
+            && !err.is::<wallet_session::InnerScriptFailed>()
+        {
+            let _ = print_json_failure(err);
+        }
+        result
+    }
+
+    #[allow(clippy::large_stack_frames)]
+    async fn execute_script(self) -> Result<()> {
         trace!(target: "script", "executing script command");
 
         if self.tempo.sponsor_url.is_some() {
@@ -458,6 +544,10 @@ impl ScriptArgs {
                  --tempo.sponsor-signer or --tempo.sponsor-sig"
             );
         }
+        eyre::ensure!(
+            self.tempo.configurable_access_key.is_none(),
+            "--tempo.configurable-access-key is not supported by forge script; use cast send"
+        );
 
         if let Some(dir) = &self.dump {
             ensure_dump_dir(dir)?;
@@ -467,7 +557,8 @@ impl ScriptArgs {
             return self.run_wallet_session_wrapper();
         }
 
-        let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
+        let (mut config, evm_opts) =
+            self.load_config_and_evm_opts().map_err(|err| coded(err, "config.error"))?;
         self.install_missing_dependencies(&mut config)?;
         let (config, evm_opts) = self.resolved_evm_opts(config, evm_opts).await?;
 
@@ -487,16 +578,15 @@ impl ScriptArgs {
             NetworkVariant::Tempo => {
                 let batch = self.batch;
                 Box::pin(async move {
-                    let bundled = match self
+                    let Some(bundled) = self
                         .prepare_bundled::<TempoEvmNetwork>(
                             config,
                             evm_opts,
                             ExecutorBuilder::<TempoEvmNetwork>::new(),
                         )
                         .await?
-                    {
-                        Some(bundled) => bundled,
-                        None => return Ok(()),
+                    else {
+                        return Ok(());
                     };
                     // batch mode owns its own pending recovery inside broadcast_batch(); running
                     // the generic wait_for_pending() first would race with that and could
@@ -507,6 +597,10 @@ impl ScriptArgs {
                     } else {
                         bundled.broadcast().await?
                     };
+                    // Transactions saved for their owners are deployed and verified on resume.
+                    if owner_approvals::awaits_approvals(&broadcasted.sequence) {
+                        return Ok(());
+                    }
                     broadcasted.print_deployed_contracts()?;
                     if broadcasted.args.verify {
                         broadcasted.verify().await?;
@@ -713,9 +807,9 @@ impl ScriptArgs {
         evm_opts: EvmOpts,
         executor_builder: ExecutorBuilder<FEN>,
     ) -> Result<()> {
-        let bundled = match self.prepare_bundled::<FEN>(config, evm_opts, executor_builder).await? {
-            Some(bundled) => bundled,
-            None => return Ok(()),
+        let Some(bundled) = self.prepare_bundled::<FEN>(config, evm_opts, executor_builder).await?
+        else {
+            return Ok(());
         };
 
         // Wait for pending txes and broadcast others.
@@ -731,6 +825,58 @@ impl ScriptArgs {
         }
 
         Ok(())
+    }
+
+    /// Returns the Tempo configurable account linked to the keystore of the detected sender, and
+    /// its owner key. The account becomes the script sender when the RPC is a Tempo chain where
+    /// T14 is active.
+    async fn linked_account_sender(
+        &self,
+        config: &Config,
+        evm_opts: &EvmOpts,
+    ) -> Result<Option<(Address, Address)>> {
+        let Some(fork_url) = evm_opts.fork_url.as_deref() else { return Ok(None) };
+        if !evm_opts.networks.is_tempo() {
+            return Ok(None);
+        }
+        let paths = match (&self.wallets.keystore_paths, &self.wallets.keystore_account_names) {
+            (Some(paths), _) => paths.iter().map(PathBuf::from).collect(),
+            (None, Some(names)) => {
+                let mut paths = Vec::with_capacity(names.len());
+                for name in names {
+                    paths.extend(maybe_get_keystore_path(None, Some(name))?);
+                }
+                paths
+            }
+            (None, None) => Vec::new(),
+        };
+        for path in paths {
+            if let Some((account, owner)) = linked_account(&path)?
+                && owner == evm_opts.sender
+            {
+                let provider =
+                    ProviderBuilder::<TempoNetwork>::from_config_with_url(config, fork_url)?
+                        .build()?;
+                // Before T14 the linked account does not exist yet, and the key sends as before.
+                let config = detect_configurable_account(
+                    &provider,
+                    account,
+                    &[owner],
+                    None,
+                    false,
+                    BlockId::latest(),
+                )
+                .await
+                .wrap_err_with(|| {
+                    format!(
+                        "could not check the configurable account {account} linked to the \
+                             keystore; pass --sender {owner} or --eoa to send from the key"
+                    )
+                })?;
+                return Ok(config.map(|_| (account, owner)));
+            }
+        }
+        Ok(None)
     }
 
     /// In case the user has loaded *only* one private-key or a single remote signer (e.g.,
@@ -755,7 +901,7 @@ impl ScriptArgs {
     /// corresponding function by matching the selector, first 4 bytes in the calldata.
     ///
     /// Note: We assume that the `sig` is already stripped of its prefix, See [`ScriptArgs`]
-    fn get_method_and_calldata(&self, abi: &JsonAbi) -> Result<(Function, Bytes)> {
+    fn get_method_and_calldata(&mut self, abi: &JsonAbi) -> Result<(Function, Bytes)> {
         // Hex shorter than a selector cannot be calldata, so it is treated as a function name.
         if let Ok(decoded) = hex::decode(&self.sig)
             && let Some(selector) = decoded.get(..SELECTOR_LEN)
@@ -767,23 +913,23 @@ impl ScriptArgs {
                         hex::encode(selector)
                     )
                 })?;
+            eyre::ensure!(self.args_json.is_none(), "--args-json cannot be used with raw calldata");
             return Ok((func.clone(), decoded.into()));
         }
 
         let func = if self.sig.contains('(') {
             let func = get_func(&self.sig)?;
-            abi.functions()
-                .find(|&abi_func| abi_func.selector() == func.selector())
-                .wrap_err(format!("Function `{}` is not implemented in your script.", self.sig))?
+            abi.functions().find(|&abi_func| abi_func.selector() == func.selector()).wrap_err_with(
+                || format!("Function `{}` is not implemented in your script.", self.sig),
+            )?
         } else {
-            let matching_functions =
-                abi.functions().filter(|func| func.name == self.sig).collect::<Vec<_>>();
-            match matching_functions.len() {
-                0 => {
+            let mut matching_functions = abi.functions().filter(|func| func.name == self.sig);
+            match (matching_functions.next(), matching_functions.next()) {
+                (None, _) => {
                     eyre::bail!("Function `{}` not found in the ABI", self.sig);
                 }
-                1 => matching_functions[0],
-                2.. => {
+                (Some(func), None) => func,
+                _ => {
                     eyre::bail!(
                         "Multiple functions with the same name `{}` found in the ABI",
                         self.sig
@@ -791,7 +937,44 @@ impl ScriptArgs {
                 }
             }
         };
-        let data = encode_function_args(func, &self.args)?;
+        if self.args_json_value.is_none()
+            && let Some(path) = &self.args_json
+        {
+            self.args_json_value = Some(foundry_common::fs::read_json_file(path)?);
+        }
+        let data = if let Some(json) = &self.args_json_value {
+            let serde_json::Value::Array(values) = json else {
+                eyre::bail!("--args-json must contain a JSON array of arguments");
+            };
+            eyre::ensure!(
+                values.len() == func.inputs.len(),
+                "--args-json has {} arguments, but `{}` takes {}",
+                values.len(),
+                func.signature(),
+                func.inputs.len()
+            );
+            let values = func
+                .inputs
+                .iter()
+                .zip(values)
+                .enumerate()
+                .map(|(i, (param, value))| {
+                    let ty = param.resolve()?;
+                    let name =
+                        if param.name.is_empty() { i.to_string() } else { param.name.clone() };
+                    // `parse_json_as` would encode `null` as the string "null".
+                    eyre::ensure!(
+                        !contains_json_null(value, &ty),
+                        "argument `{name}` {ty}: JSON null is not supported"
+                    );
+                    parse_json_as(value, &ty)
+                        .map_err(|e| eyre::eyre!("argument `{name}` {ty}: {e}"))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            func.abi_encode_input(&values)?
+        } else {
+            encode_function_args(func, &self.args)?
+        };
 
         Ok((func.clone(), data.into()))
     }
@@ -848,17 +1031,13 @@ impl ScriptArgs {
                     .map(|data| (data, tx.transaction.to()))
             })
         }) {
-            let mut offset = 0;
-
             // Find if it's a CREATE or CREATE2. Otherwise, skip transaction.
-            if let Some(to) = to {
-                if to == create2_deployer {
-                    // Size of the salt prefix.
-                    offset = 32;
-                } else {
-                    continue;
-                }
-            }
+            let offset = match to {
+                None => 0,
+                // Size of the salt prefix.
+                Some(to) if to == create2_deployer => 32,
+                Some(_) => continue,
+            };
 
             // Find artifact with a deployment code same as the data.
             if let Some((name, _, deployed_code)) =
@@ -882,7 +1061,7 @@ impl ScriptArgs {
                     "contract above the code size limit requires confirmation; pass --non-interactive to continue without confirmation"
                 );
             }
-            if !Confirm::new().with_prompt("Do you wish to continue?".to_string()).interact()? {
+            if !Confirm::new().with_prompt("Do you wish to continue?").interact()? {
                 eyre::bail!("User canceled the script.");
             }
         }
@@ -973,6 +1152,9 @@ pub struct ScriptResult<N: Network> {
     pub address: Option<Address>,
     #[serde(skip)]
     pub breakpoints: Breakpoints,
+    /// How the RPC request failed when a cheatcode error that failure caused is the revert data.
+    #[serde(skip)]
+    pub rpc_failure: Option<RpcFailure>,
 }
 
 impl<N: Network> Default for ScriptResult<N> {
@@ -989,6 +1171,7 @@ impl<N: Network> Default for ScriptResult<N> {
             exit_reason: Default::default(),
             address: Default::default(),
             breakpoints: Default::default(),
+            rpc_failure: Default::default(),
         }
     }
 }
@@ -1046,12 +1229,14 @@ impl<N: Network> ScriptResult<N> {
 }
 
 #[derive(Serialize)]
-#[serde(bound = "")]
+#[serde(bound = "N::TransactionRequest: Serialize, N::TxEnvelope: Serialize")]
 struct JsonResult<'a, N: Network> {
     logs: Vec<String>,
     returns: &'a HashMap<String, NestedValue>,
     #[serde(flatten)]
     result: &'a ScriptResult<N>,
+    /// Transactions the script recorded for broadcast, before on-chain simulation.
+    broadcastable_transactions: Vec<&'a TransactionMaybeSigned<N>>,
 }
 
 #[derive(Clone, Debug)]
@@ -1230,6 +1415,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
                     .logs(self.config.live_logs)
                     .trace_requirements(script_trace_requirements(&self.config, debug))
                     .create2_deployer(self.evm_opts.create2_deployer)
+                    .fork_prefetch(self.evm_opts.fork_prefetch)
             })
             .gas_limit(self.evm_opts.gas_limit())
             .legacy_assertions(self.config.legacy_assertions);
@@ -1342,6 +1528,98 @@ const fn script_trace_requirements(config: &Config, debug: bool) -> TraceRequire
         } else {
             InternalTraceMode::None
         })
+}
+
+/// Returns the error of a script call that failed, coded as an RPC failure when a cheatcode's
+/// failed RPC request caused the revert, and as `script.error` when the call halted.
+fn revert_error(
+    message: String,
+    data: &Bytes,
+    reason: &str,
+    exit_reason: Option<InstrStop>,
+    rpc_failure: Option<&RpcFailure>,
+) -> eyre::Report {
+    let (code, mut details) = match rpc_failure {
+        Some(rpc) => (rpc.kind(), serde_json::json!(rpc)),
+        None if exit_reason == Some(InstrStop::Revert) => ("script.revert", serde_json::json!({})),
+        None => return json_failure(JsonMessage::error("script.error", message)).into(),
+    };
+    details["data"] = data.to_string().into();
+    details["reason"] = reason.into();
+    json_failure(JsonMessage::error(code, message).with_details(details)).into()
+}
+
+/// Returns a failure that `--json` reports as `error`.
+fn json_failure(error: JsonMessage) -> JsonError {
+    JsonError { data: serde_json::Value::Null, errors: vec![error] }
+}
+
+/// Returns `err` coded as `code` for `--json`, keeping its causes and its text.
+fn coded(err: eyre::Report, code: &str) -> eyre::Report {
+    // The handler drops the repeated top message when it prints the causes.
+    let message = err.chain().next().unwrap().to_string();
+    err.wrap_err(json_failure(JsonMessage::error(code, message)))
+}
+
+/// Returns a new report with `message`, keeping the `--json` code of `cause`.
+fn flattened(message: String, cause: &(dyn std::error::Error + 'static)) -> eyre::Report {
+    match rpc_failure_in(cause) {
+        Some(rpc) => json_failure(
+            JsonMessage::error(rpc.kind(), message).with_details(serde_json::json!(rpc)),
+        )
+        .into(),
+        None => eyre::eyre!(message),
+    }
+}
+
+/// Joins the errors of several sequences into one with all their messages, keeping the `--json`
+/// code of the first that is not an RPC failure, since a revert does not call for a retry, or else
+/// of the first.
+fn joined(mut errors: Vec<eyre::Report>) -> eyre::Report {
+    let message = errors.iter().map(ToString::to_string).collect::<Vec<_>>().join("\n");
+    let is_rpc_failure = |err: &eyre::Report| match err.downcast_ref::<JsonError>() {
+        Some(json) => json.errors[0].code.starts_with("rpc."),
+        None => rpc_failure_in(err.as_ref()).is_some(),
+    };
+    let index = errors.iter().position(|err| !is_rpc_failure(err)).unwrap_or(0);
+    errors.swap_remove(index).wrap_err(message)
+}
+
+/// Prints the `--json` failure envelope of `err`, whose message is the text of the whole error.
+fn print_json_failure(err: &eyre::Report) -> Result<()> {
+    let message = err.to_string();
+    if let Some(json) = err.downcast_ref::<JsonError>() {
+        let mut errors = json.errors.clone();
+        errors[0].message = message;
+        return print_json(&JsonEnvelope::failure_with_data(&json.data, errors));
+    }
+    let error = match rpc_failure_in(err.as_ref()) {
+        Some(rpc) => JsonMessage::error(rpc.kind(), message).with_details(serde_json::json!(rpc)),
+        None => JsonMessage::error("script.error", message),
+    };
+    print_json(&JsonEnvelope::<()>::error(error))
+}
+
+/// Returns whether `value` has a JSON `null` where it would be parsed as `ty`.
+fn contains_json_null(value: &serde_json::Value, ty: &DynSolType) -> bool {
+    match (value, ty) {
+        (serde_json::Value::Null, _) => true,
+        (
+            serde_json::Value::Array(values),
+            DynSolType::Array(ty) | DynSolType::FixedArray(ty, _),
+        ) => values.iter().any(|value| contains_json_null(value, ty)),
+        (serde_json::Value::Array(values), DynSolType::Tuple(types)) => {
+            values.iter().zip(types).any(|(value, ty)| contains_json_null(value, ty))
+        }
+        (serde_json::Value::Object(map), ty) => {
+            ty.as_custom_struct().is_some_and(|(_, fields, types)| {
+                fields.iter().zip(types).any(|(field, ty)| {
+                    map.get(field).is_some_and(|value| contains_json_null(value, ty))
+                })
+            })
+        }
+        _ => false,
+    }
 }
 
 #[cfg(test)]
@@ -1974,6 +2252,20 @@ mod tests {
         assert_eq!(args.sig, sig);
     }
 
+    // `--resume` with available signers never runs the script, so parsing must not need the file.
+    #[test]
+    fn args_json_is_not_read_at_parse_time() {
+        let args = ScriptArgs::try_parse_from([
+            "foundry-cli",
+            "Contract.sol",
+            "--args-json",
+            "missing.json",
+            "--resume",
+        ])
+        .unwrap();
+        assert_eq!(args.args_json, Some(PathBuf::from("missing.json")));
+    }
+
     #[test]
     fn short_hex_sig_is_resolved_as_function_name() {
         let abi = JsonAbi::parse(["function fade()", "function run()"]).unwrap();
@@ -1985,7 +2277,7 @@ mod tests {
         let fade = abi.function("fade").unwrap()[0].clone();
         let (func, calldata) = method("fade").unwrap();
         assert_eq!(func, fade);
-        assert_eq!(calldata, Bytes::from(fade.selector().to_vec()));
+        assert_eq!(calldata, Bytes::from(fade.selector()));
 
         for sig in ["", "0x12"] {
             assert_eq!(
@@ -1998,7 +2290,7 @@ mod tests {
         let run = abi.function("run").unwrap()[0].clone();
         let (func, calldata) = method(&hex::encode(run.selector())).unwrap();
         assert_eq!(func, run);
-        assert_eq!(calldata, Bytes::from(run.selector().to_vec()));
+        assert_eq!(calldata, Bytes::from(run.selector()));
     }
 
     #[test]
@@ -2904,5 +3196,16 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(state.script_config.evm_opts.sender, key_address);
+    }
+
+    #[test]
+    fn joined_codes_a_revert_before_an_rpc_failure() {
+        let rpc = || eyre::Report::from(json_failure(JsonMessage::error("rpc.error", "receipt")));
+        let err = joined(vec![rpc(), eyre::eyre!("Transaction Failure: 0x01")]);
+        assert_eq!(err.to_string(), "receipt\nTransaction Failure: 0x01");
+        assert!(err.downcast_ref::<JsonError>().is_none());
+
+        let err = joined(vec![rpc(), rpc()]);
+        assert_eq!(err.downcast_ref::<JsonError>().unwrap().errors[0].code, "rpc.error");
     }
 }

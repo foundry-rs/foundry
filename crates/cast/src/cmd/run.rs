@@ -174,7 +174,7 @@ pub struct RunArgs {
     #[arg(long)]
     pub disable_block_gas_limit: bool,
 
-    /// Enable the tx gas limit checks as imposed by Osaka (EIP-7825).
+    /// Enable the tx gas limit checks as imposed by Osaka (EIP-7825) and Amsterdam (EIP-8037).
     #[arg(long)]
     pub enable_tx_gas_limit: bool,
 }
@@ -415,6 +415,7 @@ impl RunArgs {
             .get_transaction_receipt(tx_hash)
             .await?
             .ok_or_else(|| eyre::eyre!("tx receipt not found: {:?}", tx_hash))?;
+        ensure_requested_receipt(tx_hash, &receipt)?;
         ensure_remote_transaction_inclusion(
             tx_hash,
             tx_inclusion,
@@ -527,14 +528,18 @@ impl RunArgs {
         config.fork_block_number = Some(tx_block_number - 1);
 
         let create2_deployer = evm_opts.create2_deployer;
+        let fork_prefetch = evm_opts.fork_prefetch;
         let (block, receipt, mut fork) = tokio::try_join!(
             // fetch the block the transaction was mined in
             provider.get_block(tx_block_number.into()).full().into_future().map_err(Into::into),
             // The receipt only backs the check after the replay, so a failed lookup skips that
-            // check instead of failing the run.
+            // check instead of failing the run; a receipt for another transaction fails the run.
             async { Ok(provider.get_transaction_receipt(tx_hash).await.ok().flatten()) },
             TracingExecutor::<FEN>::get_fork(&mut config, evm_opts)
         )?;
+        if let Some(receipt) = &receipt {
+            ensure_requested_receipt(tx_hash, receipt)?;
+        }
         let chain = fork.context().chain();
         let networks = fork.context().networks();
 
@@ -545,10 +550,12 @@ impl RunArgs {
         // the chain accepted.
         fork.evm_env.set_feature(EvmFeatures::BLOCK_GAS_LIMIT_CHECK, false);
 
-        // By default do not enforce transaction gas limits imposed by Osaka (EIP-7825).
+        // By default do not enforce transaction gas limits imposed by Osaka (EIP-7825) and
+        // Amsterdam (EIP-8037).
         // Users can opt-in to enable these limits by setting `enable_tx_gas_limit` to true.
         if !self.enable_tx_gas_limit {
             fork.evm_env.version.tx_gas_limit_cap = u64::MAX;
+            fork.evm_env.version.tx_total_gas_cap = u64::MAX;
         }
 
         // Replays enforce the chain's contract size limits rather than Foundry's unlimited
@@ -598,6 +605,7 @@ impl RunArgs {
             create2_deployer,
             None,
         )?;
+        executor.inspector_mut().fork_prefetch(fork_prefetch);
         // The fork is pinned to the parent block, but the replayed transactions execute in the
         // target's block, which block queries such as Arbitrum's `ArbSys.arbBlockNumber()` must
         // report.
@@ -1074,6 +1082,7 @@ async fn fetch_nitro_l1_gas_used(provider: &RetryProvider, tx_hash: B256) -> Res
         .get_transaction_receipt(tx_hash)
         .await?
         .ok_or_else(|| eyre::eyre!("receipt not found for Nitro transaction {tx_hash:?}"))?;
+    ensure_requested_receipt(tx_hash, &receipt)?;
     let l1_gas_used = parse_nitro_l1_gas_used(receipt.other_fields().get("gasUsedForL1"))
         .wrap_err_with(|| format!("invalid Nitro poster gas for transaction {tx_hash:?}"))?;
     Ok((tx_hash, l1_gas_used))
@@ -1164,6 +1173,16 @@ fn ensure_requested_transaction(requested: B256, tx: &AnyRpcTransaction) -> Resu
     eyre::ensure!(
         returned == requested,
         "RPC returned transaction {returned:?} for requested {requested:?}"
+    );
+    Ok(())
+}
+
+/// Ensures the RPC answered `eth_getTransactionReceipt` with the requested transaction's receipt.
+fn ensure_requested_receipt(requested: B256, receipt: &AnyTransactionReceipt) -> Result<()> {
+    let returned = receipt.transaction_hash();
+    eyre::ensure!(
+        returned == requested,
+        "RPC returned the receipt of transaction {returned:?} for requested {requested:?}"
     );
     Ok(())
 }

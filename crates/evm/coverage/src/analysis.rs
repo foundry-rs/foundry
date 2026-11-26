@@ -1,12 +1,12 @@
-use super::{CoverageItem, CoverageItemKind, SourceLocation};
-use alloy_primitives::map::{HashMap, HashSet};
+use super::{CoverageItem, CoverageItemKind, RevertGuard, SourceLocation};
+use alloy_primitives::map::HashMap;
 use foundry_common::TestFunctionExt;
 use foundry_compilers::ProjectCompileOutput;
 use rayon::prelude::*;
 use solar::{
     ast::{self, ExprKind, ItemKind, StmtKind, yul},
     data_structures::{Never, map::FxHashMap},
-    interface::{RelativeBytePos, Span},
+    interface::{RelativeBytePos, Span, sym},
     sema::{Gcx, hir},
 };
 use std::{
@@ -31,21 +31,89 @@ struct SourceVisitor<'gcx> {
 
     /// Coverage items
     items: Vec<CoverageItem>,
+    /// Sparse anchor hints keyed by the current visitor item index.
+    anchor_hints: HashMap<usize, AnchorHints>,
 
     all_lines: Vec<u32>,
-    /// Branch IDs whose jumps must match the exact ternary expression span.
-    ternary_branches: Vec<u32>,
+    /// Branch IDs whose anchors need more than their source span, with their kind.
+    branch_kinds: Vec<(u32, BranchKind)>,
     /// Deferred function-call spans, each paired with the contract scope active where the call
     /// was collected, so scope travels with the span to the delayed HIR resolution pass.
     function_calls: Vec<(Span, Arc<str>)>,
     function_call_scopes: FxHashMap<Span, Arc<str>>,
+    /// The span of the statement that follows each `if` statement in its block.
+    stmts_after_if: FxHashMap<Span, Span>,
+    /// The coverage source ID of every HIR source.
+    hir_source_ids: Arc<HashMap<hir::SourceId, u32>>,
+    /// The byte range of every call by name and the functions it can call, as `(range,
+    /// callees)`.
+    callees: Vec<(Range<u32>, Vec<SourceLocation>)>,
+    /// Direct revert guards, resolved against HIR after collecting their source items.
+    revert_guards: Vec<PendingRevertGuard>,
+    current_function: Option<SourceLocation>,
+}
+
+/// Optional recovery evidence, kept outside ordinary report items.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct AnchorHints {
+    pub revert_guard: Option<RevertGuard>,
+    pub alias_function: Option<SourceLocation>,
+}
+
+#[derive(Clone)]
+struct PendingRevertGuard {
+    call: Span,
+    condition: SourceLocation,
+    body: SourceLocation,
+    statement: SourceLocation,
+    function: SourceLocation,
 }
 
 struct SourceVisitorCheckpoint {
     items: usize,
     all_lines: usize,
     function_calls: usize,
-    ternary_branches: usize,
+    branch_kinds: usize,
+    revert_guards: usize,
+}
+
+/// The kind of a branch whose anchors depend on more than its source span.
+#[derive(Clone, Debug)]
+pub(crate) enum BranchKind {
+    /// A `require` call. Path 0 is the failing side and path 1 the passing side.
+    Require,
+    /// A ternary expression. Its jumps must match the exact expression span.
+    Ternary(TernaryArms),
+    /// An `if` statement. Path 0 enters the then arm and path 1 the else arm.
+    If(IfArms),
+    /// A Yul `if` with the given body. Path 0 enters the body and path 1 skips it.
+    YulIf(SourceLocation),
+}
+
+/// The source spans of the arms of an `if` statement.
+#[derive(Clone, Debug)]
+pub(crate) struct IfArms {
+    /// The statement executed when the condition holds.
+    pub(crate) then_arm: SourceLocation,
+    /// The statement executed when it does not, if it has statements.
+    pub(crate) else_arm: Option<SourceLocation>,
+    /// The next statement of the enclosing block, which control reaches when the `if` does not
+    /// leave it.
+    pub(crate) after: Option<SourceLocation>,
+    /// The functions that the then arm calls by name. A compiler can inline their code, which the
+    /// source map attributes to them and not to the arm.
+    pub(crate) then_callees: Vec<SourceLocation>,
+    /// The functions that the else arm calls by name.
+    pub(crate) else_callees: Vec<SourceLocation>,
+}
+
+/// The source spans of the arms of a ternary expression.
+#[derive(Clone, Debug)]
+pub(crate) struct TernaryArms {
+    /// The expression evaluated when the condition holds.
+    pub(crate) true_arm: SourceLocation,
+    /// The expression evaluated when the condition does not hold.
+    pub(crate) false_arm: SourceLocation,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -66,16 +134,8 @@ struct ResolvedEmptySpecialFunction {
 
 fn resolve_empty_special_functions(
     gcx: Gcx<'_>,
-    data: &SourceFiles,
+    hir_source_ids: &HashMap<hir::SourceId, u32>,
 ) -> Vec<ResolvedEmptySpecialFunction> {
-    let hir_source_ids = data
-        .sources
-        .iter()
-        .map(|(&source_id, path)| {
-            let (hir_source_id, _) = gcx.get_hir_source(path).unwrap();
-            (hir_source_id, source_id)
-        })
-        .collect::<HashMap<_, _>>();
     let mut resolved = Vec::new();
     for contract_id in gcx.hir.contract_ids() {
         let contract = gcx.hir.contract(contract_id);
@@ -115,17 +175,27 @@ fn resolve_empty_special_functions(
 }
 
 impl<'gcx> SourceVisitor<'gcx> {
-    fn new(source_id: u32, gcx: Gcx<'gcx>) -> Self {
+    fn new(
+        source_id: u32,
+        gcx: Gcx<'gcx>,
+        hir_source_ids: Arc<HashMap<hir::SourceId, u32>>,
+    ) -> Self {
         Self {
             source_id,
             gcx,
             contract_name: Arc::default(),
             branch_id: 0,
-            ternary_branches: Default::default(),
+            branch_kinds: Default::default(),
             all_lines: Default::default(),
             function_calls: Default::default(),
             function_call_scopes: Default::default(),
+            stmts_after_if: Default::default(),
+            hir_source_ids,
+            callees: Default::default(),
+            revert_guards: Default::default(),
+            current_function: None,
             items: Default::default(),
+            anchor_hints: Default::default(),
         }
     }
 
@@ -134,17 +204,25 @@ impl<'gcx> SourceVisitor<'gcx> {
             items: self.items.len(),
             all_lines: self.all_lines.len(),
             function_calls: self.function_calls.len(),
-            ternary_branches: self.ternary_branches.len(),
+            branch_kinds: self.branch_kinds.len(),
+            revert_guards: self.revert_guards.len(),
         }
     }
 
     fn restore_checkpoint(&mut self, checkpoint: SourceVisitorCheckpoint) {
-        let SourceVisitorCheckpoint { items, all_lines, function_calls, ternary_branches } =
-            checkpoint;
+        let SourceVisitorCheckpoint {
+            items,
+            all_lines,
+            function_calls,
+            branch_kinds,
+            revert_guards,
+        } = checkpoint;
         self.items.truncate(items);
+        self.anchor_hints.retain(|&id, _| id < items);
         self.all_lines.truncate(all_lines);
         self.function_calls.truncate(function_calls);
-        self.ternary_branches.truncate(ternary_branches);
+        self.branch_kinds.truncate(branch_kinds);
+        self.revert_guards.truncate(revert_guards);
     }
 
     fn visit_contract<'ast>(&mut self, contract: &'ast ast::ItemContract<'ast>) {
@@ -188,10 +266,54 @@ impl<'gcx> SourceVisitor<'gcx> {
     fn resolve_function_calls(&mut self, hir_source_id: hir::SourceId) {
         self.function_call_scopes = self.function_calls.iter().cloned().collect();
         let _ = hir::Visit::visit_nested_source(self, hir_source_id);
+        self.callees.sort_unstable_by_key(|(range, _)| range.start);
+        let callees = std::mem::take(&mut self.callees);
+        let callees_in = |arm: &SourceLocation| {
+            let start = callees.partition_point(|(range, _)| range.start < arm.bytes.start);
+            let mut found = callees[start..]
+                .iter()
+                .take_while(|(range, _)| range.start < arm.bytes.end)
+                .filter(|(range, _)| range.end <= arm.bytes.end)
+                .flat_map(|(_, callees)| callees.iter().cloned())
+                // A recursive call names a function that holds the whole `if`, so its code says
+                // nothing about the arm.
+                .filter(|callee| {
+                    callee.source_id != arm.source_id
+                        || callee.bytes.start > arm.bytes.start
+                        || arm.bytes.end > callee.bytes.end
+                })
+                .collect::<Vec<_>>();
+            found.sort_by_key(|callee| (callee.source_id, callee.bytes.start, callee.bytes.end));
+            found.dedup_by_key(|callee| (callee.source_id, callee.bytes.clone()));
+            found
+        };
+        for (_, kind) in &mut self.branch_kinds {
+            if let BranchKind::If(arms) = kind {
+                arms.then_callees = callees_in(&arms.then_arm);
+                arms.else_callees = arms.else_arm.as_ref().map(callees_in).unwrap_or_default();
+            }
+        }
     }
 
     fn sort(&mut self) {
-        self.items.sort();
+        if self.anchor_hints.is_empty() {
+            self.items.sort();
+            return;
+        }
+        // Item IDs follow the final report order, not AST traversal order.
+        let mut items = std::mem::take(&mut self.items).into_iter().enumerate().collect::<Vec<_>>();
+        items.sort_by(|(_, lhs), (_, rhs)| lhs.cmp(rhs));
+        let mut hints = std::mem::take(&mut self.anchor_hints);
+        self.items = items
+            .into_iter()
+            .enumerate()
+            .map(|(id, (old_id, item))| {
+                if let Some(hint) = hints.remove(&old_id) {
+                    self.anchor_hints.insert(id, hint);
+                }
+                item
+            })
+            .collect();
     }
 
     fn push_lines(&mut self) {
@@ -199,18 +321,25 @@ impl<'gcx> SourceVisitor<'gcx> {
         self.all_lines.dedup();
         let mut lines = Vec::with_capacity(self.all_lines.len());
         // Items are already ordered by line, so advance through them only once.
-        let mut items = self.items.iter().peekable();
+        let mut items = self.items.iter().enumerate().peekable();
         for &line in &self.all_lines {
-            while items.peek().is_some_and(|item| item.loc.lines.start < line) {
+            while items.peek().is_some_and(|(_, item)| item.loc.lines.start < line) {
                 items.next();
             }
-            if let Some(mut reference_item) = items.next_if(|item| item.loc.lines.start == line) {
+            if let Some((mut reference_id, mut reference_item)) =
+                items.next_if(|(_, item)| item.loc.lines.start == line)
+            {
                 // Anchor the line to its earliest source item, not the shortest span or a
                 // statement in a conditional body that may never execute.
-                while let Some(item) = items.next_if(|item| item.loc.lines.start == line) {
+                while let Some((id, item)) = items.next_if(|(_, item)| item.loc.lines.start == line)
+                {
                     if item.loc.bytes.start < reference_item.loc.bytes.start {
+                        reference_id = id;
                         reference_item = item;
                     }
+                }
+                if let Some(hints) = self.anchor_hints.get(&reference_id).cloned() {
+                    self.anchor_hints.insert(self.items.len() + lines.len(), hints);
                 }
                 lines.push(CoverageItem {
                     kind: CoverageItemKind::Line,
@@ -241,6 +370,10 @@ impl<'gcx> SourceVisitor<'gcx> {
     }
 
     fn source_location_for(&self, span: Span) -> SourceLocation {
+        self.location(span, self.source_id, self.contract_name.clone())
+    }
+
+    fn location(&self, span: Span, source_id: u32, contract_name: Arc<str>) -> SourceLocation {
         let files = self.gcx.sess.source_map().files();
         let source = files.span_to_source(span).unwrap();
         let mut bytes = source.data;
@@ -256,10 +389,33 @@ impl<'gcx> SourceVisitor<'gcx> {
         let first = source.file.lookup_line(RelativeBytePos::from_usize(bytes.start)).unwrap();
         let last = source.file.lookup_line(RelativeBytePos::from_usize(bytes.end)).unwrap();
         SourceLocation {
-            source_id: self.source_id as usize,
-            contract_name: self.contract_name.clone(),
+            source_id: source_id as usize,
+            contract_name,
             bytes: bytes.start as u32..bytes.end as u32,
             lines: first as u32 + 1..last as u32 + 2,
+        }
+    }
+
+    /// Records the functions that a call by name can run, from the functions its callee names
+    /// resolve to. An overloaded name resolves to every overload.
+    fn push_callees(&mut self, call: &hir::Expr<'_>, callee: &hir::Expr<'_>) {
+        let hir::ExprKind::Ident(res) = &callee.peel_parens().kind else { return };
+        let callees = res
+            .iter()
+            .filter_map(|res| match res {
+                hir::Res::Item(hir::ItemId::Function(id)) => Some(self.gcx.hir.function(*id)),
+                _ => None,
+            })
+            .filter(|function| function.body.is_some())
+            .filter_map(|function| {
+                let &source_id = self.hir_source_ids.get(&function.source)?;
+                let contract = function.contract.map(|id| self.gcx.hir.contract(id).name.as_str());
+                Some(self.location(function.span, source_id, contract.unwrap_or_default().into()))
+            })
+            .collect::<Vec<_>>();
+        if !callees.is_empty() {
+            let bytes = self.gcx.sess.source_map().span_to_source(call.span).unwrap().data;
+            self.callees.push((bytes.start as u32..bytes.end as u32, callees));
         }
     }
 
@@ -311,12 +467,31 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
 
                 // Discover decisions without changing the ordinary statement/call traversal.
                 TernaryVisitor(self).walk_item(item)?;
+                let first = self.items.len();
+                let location = self.source_location_for(item.span);
+                let previous_function = self.current_function.replace(location.clone());
                 self.walk_item(item)?;
+                self.current_function = previous_function;
+                if storage_alias_body(func) {
+                    for id in first..self.items.len() {
+                        self.anchor_hints.entry(id).or_default().alias_function =
+                            Some(location.clone());
+                    }
+                }
             }
             _ => {}
         }
         // Only walk functions.
         ControlFlow::Continue(())
+    }
+
+    fn visit_block(&mut self, block: &'ast ast::Block<'ast>) -> ControlFlow<Self::BreakValue> {
+        for stmts in block.windows(2) {
+            if matches!(stmts[0].kind, StmtKind::If(..)) {
+                self.stmts_after_if.insert(stmts[0].span, stmts[1].span);
+            }
+        }
+        self.walk_block(block)
     }
 
     fn visit_stmt(&mut self, stmt: &'ast ast::Stmt<'ast>) -> ControlFlow<Self::BreakValue> {
@@ -330,7 +505,23 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
                 self.push_stmt(stmt.span);
             }
 
-            StmtKind::If(_cond, then_stmt, else_stmt) => {
+            StmtKind::If(cond, then_stmt, else_stmt) => {
+                let body = match &then_stmt.kind {
+                    StmtKind::Block(block) if block.stmts.len() == 1 => &block.stmts[0],
+                    _ => then_stmt,
+                };
+                if matches!(body.kind, StmtKind::Revert(..))
+                    && else_stmt.is_none()
+                    && let Some(function) = self.current_function.clone()
+                {
+                    self.revert_guards.push(PendingRevertGuard {
+                        call: body.span,
+                        condition: self.source_location_for(cond.span),
+                        body: self.source_location_for(body.span),
+                        statement: self.source_location_for(stmt.span),
+                        function,
+                    });
+                }
                 let branch_id = self.next_branch_id();
 
                 // Add branch coverage items only if one of true/branch bodies contains statements.
@@ -340,21 +531,36 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
                     // Report the branch at the condition, but count hits in the true body.
                     // Line coverage uses the reported span so it also sees false conditions.
                     let anchor_loc = self.source_location_for(then_stmt.span);
+                    let after_span = self.stmts_after_if.get(&stmt.span).copied();
+                    let after = after_span.map(|span| self.source_location_for(span));
+                    let mut arms = IfArms {
+                        then_arm: anchor_loc.clone(),
+                        else_arm: None,
+                        after,
+                        then_callees: Vec::new(),
+                        else_callees: Vec::new(),
+                    };
                     self.push_item_kind(
                         CoverageItemKind::Branch { branch_id, path_id: 0, is_first_opcode: true },
                         stmt.span,
                     )
                     .anchor_loc = Some(anchor_loc);
                     if let Some(else_stmt) = else_stmt {
+                        // An `else if` continues with the statement after the outer `if`.
+                        if let Some(span) = after_span {
+                            self.stmts_after_if.insert(else_stmt.span, span);
+                        }
                         let is_first_opcode = stmt_has_statements(else_stmt);
                         let anchor_loc =
                             is_first_opcode.then(|| self.source_location_for(else_stmt.span));
+                        arms.else_arm.clone_from(&anchor_loc);
                         self.push_item_kind(
                             CoverageItemKind::Branch { branch_id, path_id: 1, is_first_opcode },
                             stmt.span,
                         )
                         .anchor_loc = anchor_loc;
                     }
+                    self.branch_kinds.push((branch_id, BranchKind::If(arms)));
                 }
             }
 
@@ -413,6 +619,7 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
                     // Asserts should not be considered branches: <https://github.com/foundry-rs/foundry/issues/9460>.
                     if ident.as_str() == "require" {
                         let branch_id = self.next_branch_id();
+                        self.branch_kinds.push((branch_id, BranchKind::Require));
                         self.push_item_kind(
                             CoverageItemKind::Branch {
                                 branch_id,
@@ -451,8 +658,10 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
                 // Don't walk assignments.
                 return ControlFlow::Continue(());
             }
-            StmtKind::If(..) => {
+            StmtKind::If(_, body) => {
                 let branch_id = self.next_branch_id();
+                let body = self.source_location_for(body.span);
+                self.branch_kinds.push((branch_id, BranchKind::YulIf(body)));
                 // Track both outcomes, including the implicit path that skips the body.
                 for path_id in 0..2 {
                     self.push_item_kind(
@@ -503,10 +712,15 @@ impl<'ast> ast::Visit<'ast> for TernaryVisitor<'_, '_> {
     type BreakValue = Never;
 
     fn visit_expr(&mut self, expr: &'ast ast::Expr<'ast>) -> ControlFlow<Self::BreakValue> {
-        if matches!(expr.kind, ExprKind::Ternary(..)) {
+        if let ExprKind::Ternary(_, true_arm, false_arm) = &expr.kind {
             let branch_id = self.0.next_branch_id();
-            self.0.ternary_branches.push(branch_id);
-            // Ternary path 0 is the false arm (fallthrough); path 1 is the true arm (jump target).
+            let arms = TernaryArms {
+                true_arm: self.0.source_location_for(true_arm.span),
+                false_arm: self.0.source_location_for(false_arm.span),
+            };
+            self.0.branch_kinds.push((branch_id, BranchKind::Ternary(arms)));
+            // Ternary path 0 is the false arm and path 1 the true arm. Which side of the jump each
+            // is on depends on the compiler.
             for path_id in 0..2 {
                 self.0.push_item_kind(
                     CoverageItemKind::Branch { branch_id, path_id, is_first_opcode: false },
@@ -526,6 +740,34 @@ impl<'gcx> hir::Visit<'gcx> for SourceVisitor<'gcx> {
     }
 
     fn visit_expr(&mut self, expr: &'gcx hir::Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
+        if let Some((callee, args, _)) = expr.as_call()
+            && args.is_empty()
+            && let Some(hir::Res::Item(hir::ItemId::Error(error))) = self.gcx.resolved_expr(callee)
+        {
+            let selector = self.gcx.function_selector(error).0;
+            for guard in &self.revert_guards {
+                if guard.call != expr.span {
+                    continue;
+                }
+                for (id, item) in self.items.iter().enumerate() {
+                    if item.loc.contract_name == guard.body.contract_name
+                        && (item.loc.bytes == guard.body.bytes
+                            || (item.loc.bytes == guard.statement.bytes
+                                && matches!(
+                                    item.kind,
+                                    CoverageItemKind::Branch { path_id: 0, .. }
+                                )))
+                    {
+                        self.anchor_hints.entry(id).or_default().revert_guard = Some(RevertGuard {
+                            condition: guard.condition.clone(),
+                            statement: guard.statement.clone(),
+                            function: guard.function.clone(),
+                            selector,
+                        });
+                    }
+                }
+            }
+        }
         if let hir::ExprKind::Call(lhs, ..) = &expr.kind
             && is_regular_call(lhs)
             && let Some(scope) = self.function_call_scopes.get(&expr.span).cloned()
@@ -535,6 +777,7 @@ impl<'gcx> hir::Visit<'gcx> for SourceVisitor<'gcx> {
             let prev = std::mem::replace(&mut self.contract_name, scope);
             self.push_stmt(expr.span);
             self.contract_name = prev;
+            self.push_callees(expr, lhs);
         }
         self.walk_expr(expr)
     }
@@ -550,6 +793,45 @@ fn is_regular_call(lhs: &hir::Expr<'_>) -> bool {
         hir::ExprKind::Type(_) => false,
         _ => true,
     }
+}
+
+/// Only source-level aliases, without calls, control flow, or modifiers, are mandatory on every
+/// normal return. Bytecode must independently prove a side-effect-free, straight-line return.
+fn storage_alias_body(function: &ast::ItemFunction<'_>) -> bool {
+    if !matches!(
+        function.header.visibility(),
+        Some(ast::Visibility::Internal | ast::Visibility::Private)
+    ) || !function.header.modifiers.is_empty()
+        || function.header.returns().is_empty()
+        || !function.header.returns().iter().all(|parameter| {
+            parameter.name.is_some() && parameter.data_location == Some(ast::DataLocation::Storage)
+        })
+    {
+        return false;
+    }
+    let Some(body) = &function.body else { return false };
+    !body.is_empty()
+        && body.iter().all(|statement| match &statement.kind {
+            StmtKind::DeclSingle(variable) => {
+                variable.initializer.as_ref().is_some_and(|initializer| {
+                    matches!(initializer.peel_parens().kind, ExprKind::Ident(_) | ExprKind::Lit(..))
+                })
+            }
+            StmtKind::Assembly(assembly) => assembly.block.iter().all(|statement| {
+                let yul::StmtKind::AssignSingle(path, value) = &statement.kind else {
+                    return false;
+                };
+                let [name, suffix] = path.segments() else { return false };
+                suffix.name == sym::slot
+                    && function
+                        .header
+                        .returns()
+                        .iter()
+                        .any(|parameter| parameter.name.is_some_and(|id| id.name == name.name))
+                    && matches!(value.kind, yul::ExprKind::Path(_) | yul::ExprKind::Lit(_))
+            }),
+            _ => false,
+        })
 }
 
 fn has_statements(block: Option<&ast::Block<'_>>) -> bool {
@@ -569,8 +851,10 @@ fn stmt_has_statements(stmt: &ast::Stmt<'_>) -> bool {
 pub struct SourceAnalysis {
     /// All the coverage items.
     all_items: Vec<CoverageItem>,
-    /// Source and branch IDs requiring exact decision-node source-map matching.
-    ternary_branches: HashSet<(u32, u32)>,
+    /// Recovery evidence only for items that need it, keyed by final report item ID.
+    anchor_hints: HashMap<u32, AnchorHints>,
+    /// Kinds of the branches that need special anchoring, by source and branch ID.
+    branch_kinds: HashMap<(u32, u32), BranchKind>,
     /// Source ID to `(offset, len)` into `all_items`.
     map: Vec<(u32, u32)>,
     /// Empty receive and fallback items keyed by coverage item ID.
@@ -597,8 +881,17 @@ impl SourceAnalysis {
     pub fn new(data: &SourceFiles, output: &ProjectCompileOutput) -> eyre::Result<Self> {
         let mut resolved_empty_special_functions = Vec::new();
         let mut sourced_items = output.parser().solc().compiler().enter(|compiler| {
+            let hir_source_ids = Arc::new(
+                data.sources
+                    .iter()
+                    .map(|(&source_id, path)| {
+                        let (hir_source_id, _) = compiler.gcx().get_hir_source(path).unwrap();
+                        (hir_source_id, source_id)
+                    })
+                    .collect::<HashMap<_, _>>(),
+            );
             resolved_empty_special_functions =
-                resolve_empty_special_functions(compiler.gcx(), data);
+                resolve_empty_special_functions(compiler.gcx(), &hir_source_ids);
             data.sources
                 .par_iter()
                 .map(|(&source_id, path)| {
@@ -608,7 +901,8 @@ impl SourceAnalysis {
                     let ast = source.ast.as_ref().unwrap();
                     let (hir_source_id, _) = compiler.gcx().get_hir_source(path).unwrap();
 
-                    let mut visitor = SourceVisitor::new(source_id, compiler.gcx());
+                    let mut visitor =
+                        SourceVisitor::new(source_id, compiler.gcx(), hir_source_ids.clone());
                     for item in ast.items.iter() {
                         match &item.kind {
                             // Contracts: walk their functions, dropping test contracts.
@@ -638,7 +932,7 @@ impl SourceAnalysis {
                         }
                     }
 
-                    if !visitor.function_calls.is_empty() {
+                    if !visitor.function_calls.is_empty() || !visitor.revert_guards.is_empty() {
                         visitor.resolve_function_calls(hir_source_id);
                     }
 
@@ -648,20 +942,24 @@ impl SourceAnalysis {
                         visitor.push_lines();
                         visitor.sort();
                     }
-                    (source_id, visitor.items, visitor.ternary_branches)
+                    (source_id, visitor.items, visitor.anchor_hints, visitor.branch_kinds)
                 })
                 .collect::<Vec<_>>()
         });
 
         // Create mapping and merge items.
-        sourced_items.sort_by_key(|(id, items, _)| (*id, items.first().map(|i| i.loc.bytes.start)));
-        let Some(&(max_idx, _, _)) = sourced_items.last() else { return Ok(Self::default()) };
+        sourced_items
+            .sort_by_key(|(id, items, _, _)| (*id, items.first().map(|i| i.loc.bytes.start)));
+        let Some(&(max_idx, _, _, _)) = sourced_items.last() else { return Ok(Self::default()) };
         let len = max_idx + 1;
         let mut all_items = Vec::new();
+        let mut anchor_hints = HashMap::default();
         let mut map = vec![(u32::MAX, 0); len as usize];
-        let mut ternary_branches = HashSet::default();
-        for (idx, items, branches) in sourced_items {
-            ternary_branches.extend(branches.into_iter().map(|branch| (idx, branch)));
+        let mut branch_kinds = HashMap::default();
+        for (idx, items, hints, branches) in sourced_items {
+            let base = all_items.len() as u32;
+            anchor_hints.extend(hints.into_iter().map(|(id, hint)| (base + id as u32, hint)));
+            branch_kinds.extend(branches.into_iter().map(|(branch, kind)| ((idx, branch), kind)));
             // Assumes that all `idx` items are consecutive, guaranteed by the sort above.
             let idx = idx as usize;
             if map[idx].0 == u32::MAX {
@@ -697,15 +995,20 @@ impl SourceAnalysis {
 
         Ok(Self {
             all_items,
+            anchor_hints,
             map,
-            ternary_branches,
+            branch_kinds,
             empty_special_functions,
             contract_empty_special_functions,
         })
     }
 
-    pub(crate) fn is_ternary_branch(&self, source_id: u32, branch_id: u32) -> bool {
-        self.ternary_branches.contains(&(source_id, branch_id))
+    pub(crate) fn anchor_hints(&self, item_id: u32) -> Option<&AnchorHints> {
+        self.anchor_hints.get(&item_id)
+    }
+
+    pub(crate) fn branch_kind(&self, source_id: u32, branch_id: u32) -> Option<&BranchKind> {
+        self.branch_kinds.get(&(source_id, branch_id))
     }
 
     /// Returns all the coverage items.
@@ -761,6 +1064,17 @@ impl SourceAnalysis {
             .flatten()
             .copied()
     }
+
+    /// Creates an analysis of source 0 from `items`, with the given branch kinds by branch ID.
+    #[cfg(test)]
+    pub(crate) fn for_test(items: Vec<CoverageItem>, branch_kinds: Vec<(u32, BranchKind)>) -> Self {
+        Self {
+            map: vec![(0, items.len() as u32)],
+            all_items: items,
+            branch_kinds: branch_kinds.into_iter().map(|(id, kind)| ((0, id), kind)).collect(),
+            ..Default::default()
+        }
+    }
 }
 
 /// A list of sources from one compiler build.
@@ -768,4 +1082,165 @@ impl SourceAnalysis {
 pub struct SourceFiles {
     /// The sources keyed by their IDs within the compiler build.
     pub sources: HashMap<u32, PathBuf>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use evm2::interpreter::op as opcode;
+    use foundry_compilers::artifacts::sourcemap;
+    use foundry_evm_core::ic::IcPcMap;
+
+    fn item(start: u32, line: u32) -> CoverageItem {
+        CoverageItem {
+            kind: CoverageItemKind::Statement,
+            loc: SourceLocation {
+                source_id: 0,
+                contract_name: "T".into(),
+                bytes: start..start + 1,
+                lines: line..line + 1,
+            },
+            anchor_loc: None,
+            hits: 0,
+        }
+    }
+
+    #[test]
+    fn hints_follow_sorting_lines_and_checkpoint_reuse() {
+        let session = solar::interface::Session::builder()
+            .with_buffer_emitter(solar::interface::ColorChoice::Never)
+            .build();
+        let compiler = solar::sema::Compiler::new(session);
+        compiler.enter(|compiler| {
+            let mut visitor = SourceVisitor::new(0, compiler.gcx(), Default::default());
+            visitor.items = vec![item(30, 3), item(10, 1), item(20, 2)];
+            visitor.all_lines = vec![3, 1, 2];
+            visitor.anchor_hints.insert(
+                0,
+                AnchorHints { alias_function: Some(item(30, 3).loc), ..Default::default() },
+            );
+            visitor.anchor_hints.insert(
+                2,
+                AnchorHints {
+                    revert_guard: Some(RevertGuard {
+                        condition: item(20, 2).loc,
+                        statement: item(20, 2).loc,
+                        function: item(20, 2).loc,
+                        selector: [1, 2, 3, 4],
+                    }),
+                    ..Default::default()
+                },
+            );
+            visitor.sort();
+            visitor.push_lines();
+            visitor.sort();
+            assert_eq!(visitor.items.len(), 6);
+            assert_eq!(visitor.anchor_hints.len(), 4);
+            for (id, covered) in visitor.items.iter().enumerate() {
+                match covered.loc.bytes.start {
+                    10 => assert!(!visitor.anchor_hints.contains_key(&id)),
+                    20 => assert_eq!(
+                        visitor.anchor_hints[&id].revert_guard.as_ref().unwrap().condition.bytes,
+                        covered.loc.bytes
+                    ),
+                    30 => assert_eq!(
+                        visitor.anchor_hints[&id].alias_function.as_ref().unwrap().bytes,
+                        covered.loc.bytes
+                    ),
+                    _ => unreachable!(),
+                }
+            }
+            // Discarded test contracts must not leave hints on a later item reusing that ID.
+            let checkpoint = visitor.checkpoint();
+            let reused = visitor.items.len();
+            visitor.items.push(item(40, 4));
+            visitor.anchor_hints.insert(
+                reused,
+                AnchorHints { alias_function: Some(item(40, 4).loc), ..Default::default() },
+            );
+            visitor.restore_checkpoint(checkpoint);
+            visitor.items.push(item(50, 5));
+            assert!(!visitor.anchor_hints.contains_key(&reused));
+            visitor.sort();
+            assert_eq!(visitor.anchor_hints.len(), 4);
+        });
+    }
+
+    #[test]
+    fn codeless_if_keeps_shared_revert_recovery() {
+        let location = |bytes| SourceLocation { bytes, ..item(0, 1).loc };
+        let statement = location(10..40);
+        let mut analysis = SourceAnalysis {
+            all_items: vec![CoverageItem {
+                kind: CoverageItemKind::Branch { branch_id: 0, path_id: 0, is_first_opcode: false },
+                loc: statement.clone(),
+                anchor_loc: None,
+                hits: 0,
+            }],
+            branch_kinds: [(
+                (0, 0),
+                BranchKind::If(IfArms {
+                    then_arm: location(30..40),
+                    else_arm: None,
+                    // A nested block ends at the guard; its continuation is outside the block.
+                    after: None,
+                    then_callees: vec![],
+                    else_callees: vec![],
+                }),
+            )]
+            .into_iter()
+            .collect(),
+            anchor_hints: [(
+                0,
+                AnchorHints {
+                    revert_guard: Some(RevertGuard {
+                        condition: location(10..20),
+                        statement,
+                        function: location(0..100),
+                        selector: [0xe3, 0x37, 0x2e, 0x2d],
+                    }),
+                    ..Default::default()
+                },
+            )]
+            .into_iter()
+            .collect(),
+            map: vec![(0, 1)],
+            ..Default::default()
+        };
+        let bytecode = [
+            opcode::PUSH0,
+            opcode::ISZERO,
+            opcode::PUSH1,
+            7,
+            opcode::JUMPI,
+            opcode::POP,
+            opcode::STOP,
+            opcode::JUMPDEST,
+            opcode::PUSH4,
+            0xe3,
+            0x37,
+            0x2e,
+            0x2d,
+            opcode::PUSH0,
+            opcode::MSTORE,
+            opcode::PUSH1,
+            4,
+            opcode::PUSH1,
+            28,
+            opcode::REVERT,
+        ];
+        let source_map = sourcemap::parse("10:10:0;;;;50:10:0;-1:-1:-1;;;;;;;;").unwrap();
+        let ic_pc_map = IcPcMap::new(&bytecode);
+        let anchors = crate::anchors::find_anchors(&bytecode, &source_map, &ic_pc_map, &analysis);
+        assert_eq!(anchors.anchors.len(), 1);
+        assert_eq!(anchors.anchors[0].instruction, 7);
+        assert_eq!(anchors.jumps.get(&0), Some(&4));
+
+        analysis.anchor_hints.clear();
+        let anchors = crate::anchors::find_anchors(&bytecode, &source_map, &ic_pc_map, &analysis);
+        assert!(
+            anchors.anchors.is_empty(),
+            "an ambiguous arm without recovery evidence stays unanchored"
+        );
+    }
 }

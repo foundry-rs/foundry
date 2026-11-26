@@ -93,7 +93,7 @@ impl<'a> DebugStepsWalker<'a> {
     fn src_map(&self, step: usize) -> Option<(SourceElement, &SourceData)> {
         self.sources.find_source_mapping(
             self.contract_name,
-            self.node.trace.steps[step].pc as u32,
+            self.node.trace.steps[step].pc,
             self.node.trace.kind.is_any_create(),
         )
     }
@@ -114,23 +114,23 @@ impl<'a> DebugStepsWalker<'a> {
             return false;
         };
 
-        loc.offset() == other_loc.offset()
-            && loc.length() == other_loc.length()
-            && loc.index() == other_loc.index()
+        same_loc(&loc, &other_loc)
     }
 
     /// Invoked when current step is a JUMPDEST preceded by a JUMP marked as [Jump::In].
-    fn jump_in(&mut self) {
-        // This usually means that this is a jump into the external function which is an
-        // entrypoint for the current frame. We don't want to include this to avoid
-        // duplicating traces.
-        if self.is_same_loc(self.current_step, self.current_step - 1) {
-            return;
-        }
-
+    ///
+    /// `prev_source_element` is the source element of the JUMP.
+    fn jump_in(&mut self, prev_source_element: &SourceElement) {
         let Some((source_element, source)) = self.src_map(self.current_step) else {
             return;
         };
+
+        // This usually means that this is a jump into the external function which is an
+        // entrypoint for the current frame. We don't want to include this to avoid
+        // duplicating traces.
+        if same_loc(&source_element, prev_source_element) {
+            return;
+        }
 
         if let Some(name) = parse_function_from_loc(source, &source_element) {
             self.stack.push((name, self.current_step - 1));
@@ -172,10 +172,10 @@ impl<'a> DebugStepsWalker<'a> {
             })
             .unwrap_or_default();
 
-        self.node.trace.steps[start_idx].decoded = Some(Box::new(DecodedTraceStep::InternalCall(
+        *self.node.trace.steps[start_idx].decoded_mut() = DecodedTraceStep::InternalCall(
             DecodedInternalCall { func_name, args: inputs, return_data: outputs },
             self.current_step,
-        )));
+        );
     }
 
     fn process(&mut self) {
@@ -189,7 +189,7 @@ impl<'a> DebugStepsWalker<'a> {
         };
 
         match prev_source_element.jump() {
-            Jump::In => self.jump_in(),
+            Jump::In => self.jump_in(&prev_source_element),
             Jump::Out => self.jump_out(),
             _ => {}
         };
@@ -205,6 +205,11 @@ impl<'a> DebugStepsWalker<'a> {
             self.step();
         }
     }
+}
+
+/// Returns whether both source elements refer to the same source location.
+fn same_loc(loc: &SourceElement, other: &SourceElement) -> bool {
+    loc.offset() == other.offset() && loc.length() == other.length() && loc.index() == other.index()
 }
 
 /// Tries to parse the function name from the source code and detect the contract name which
@@ -451,7 +456,6 @@ fn memory_range(memory: &[u8], start: usize, len: usize) -> Option<&[u8]> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::Bytes;
     use evm2::interpreter::InstrStop;
 
     fn trace_step(stack: Vec<U256>) -> CallTraceStep {
@@ -461,17 +465,13 @@ mod tests {
             stack: Some(stack.into_boxed_slice()),
             push_stack: None,
             memory: None,
-            returndata: Bytes::new(),
             gas_remaining: 0,
             gas_refund_counter: 0,
             gas_cost: 0,
-            state_gas_cost: None,
             state_gas_reservoir: None,
-            state_gas_spent: 0,
             storage_change: None,
             status: Some(InstrStop::Stop),
-            immediate_bytes: None,
-            decoded: None,
+            extra: None,
         }
     }
 

@@ -153,15 +153,16 @@ impl<'a> BacktraceBuilder<'a> {
                 // Match and insert artifacts using trace labels
                 artifacts_by_address
                     .insert(*address, (artifact_id.clone(), SourceData { source_map, bytecode }));
-            } else if let Some(&lib_address) =
-                // Match and insert the linked library artifacts
-                linked_lib_targets.get(&artifact_id.identifier()).or_else(|| {
-                        let id = artifact_id
-                            .clone()
-                            .with_stripped_file_prefixes(&self.root)
-                            .identifier();
-                        linked_lib_targets.get(&id)
-                    })
+            } else if !linked_lib_targets.is_empty()
+                && let Some(&lib_address) =
+                    // Match and insert the linked library artifacts
+                    linked_lib_targets.get(&artifact_id.identifier()).or_else(|| {
+                            let id = artifact_id
+                                .clone()
+                                .with_stripped_file_prefixes(&self.root)
+                                .identifier();
+                            linked_lib_targets.get(&id)
+                        })
                 && let Some((source_map, bytecode)) = get_source(artifact)
             {
                 // Insert linked libraries
@@ -229,47 +230,35 @@ impl<'a> Backtrace<'a> {
     fn extract_frames(&mut self, arena: &SparsedTraceArena) {
         let resolved_arena = &arena.arena;
 
-        if resolved_arena.nodes().is_empty() {
-            return;
-        }
-
         // Find the deepest failed node (where the actual revert happened)
-        let mut current_idx = None;
-        let mut max_depth = 0;
-
-        for (idx, node) in resolved_arena.nodes().iter().enumerate() {
-            if !node.trace.success && node.trace.depth >= max_depth {
-                max_depth = node.trace.depth;
-                current_idx = Some(idx);
-            }
-        }
-
-        if current_idx.is_none() {
-            return;
-        }
+        let mut current_idx = resolved_arena
+            .nodes()
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| !node.trace.success)
+            .max_by_key(|(_, node)| node.trace.depth)
+            .map(|(idx, _)| idx);
 
         // Build the call stack by walking from the deepest node back to root
         while let Some(idx) = current_idx {
             let node = &resolved_arena.nodes()[idx];
             let trace = &node.trace;
 
-            if let Some(frame) = self.create_frame(trace) {
-                self.frames.push(frame);
-            }
+            self.frames.push(self.create_frame(trace));
 
             current_idx = node.parent;
         }
     }
 
     /// Creates a frame from a call trace.
-    fn create_frame(&self, trace: &CallTrace) -> Option<BacktraceFrame> {
+    fn create_frame(&self, trace: &CallTrace) -> BacktraceFrame {
         let contract_address = trace.address;
         let mut frame = BacktraceFrame::new(contract_address);
 
         // Try to get source location from PC mapper
         if !self.disable_source_locs
             && let Some(source_location) = trace.steps.last().and_then(|last_step| {
-                self.pc_mappers.get(&contract_address).and_then(|m| m.map_pc(last_step.pc))
+                self.pc_mappers.get(&contract_address).and_then(|m| m.map_pc(last_step.pc as usize))
             })
         {
             frame = frame
@@ -292,13 +281,12 @@ impl<'a> Backtrace<'a> {
 
             if let Some(call_data) = &decoded.call_data {
                 let sig = &call_data.signature;
-                let func_name =
-                    if let Some(paren_pos) = sig.find('(') { &sig[..paren_pos] } else { sig };
+                let func_name = sig.split_once('(').map_or(sig.as_str(), |(name, _)| name);
                 frame = frame.with_function_name(func_name.to_string());
             }
         }
 
-        Some(frame)
+        frame
     }
 
     /// Returns true if the backtrace is empty.
@@ -316,9 +304,7 @@ impl fmt::Display for Backtrace<'_> {
         writeln!(f, "{}", Paint::yellow("Backtrace:"))?;
 
         for frame in &self.frames {
-            write!(f, "  ")?;
-            write!(f, "at ")?;
-            writeln!(f, "{frame}")?;
+            writeln!(f, "  at {frame}")?;
         }
 
         Ok(())
@@ -388,32 +374,30 @@ impl BacktraceFrame {
 // Format: <CONTRACT_NAME>.<FUNCTION_NAME> (FILE:LINE:COL)
 impl fmt::Display for BacktraceFrame {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut result = String::new();
-
         // No contract name, show address
-        result.push_str(self.contract_name.as_ref().unwrap_or(&self.contract_address.to_string()));
+        match &self.contract_name {
+            Some(name) => f.write_str(name)?,
+            None => write!(f, "{}", self.contract_address)?,
+        }
 
         // Add function name if available
-        result.push_str(&self.function_name.as_ref().map_or(String::new(), |f| format!(".{f}")));
+        if let Some(function) = &self.function_name {
+            write!(f, ".{function}")?;
+        }
 
         if let Some(file) = &self.file {
-            result.push_str(" (");
-            result.push_str(&file.display().to_string());
+            write!(f, " ({}", file.display())?;
         }
 
         if let Some(line) = self.line {
-            result.push(':');
-            result.push_str(&line.to_string());
-
-            result.push(':');
-            result.push_str(&self.column.as_ref().map_or("0".to_string(), |c| c.to_string()));
+            write!(f, ":{line}:{}", self.column.unwrap_or(0))?;
         }
 
         // Add location in parentheses if available
         if self.file.is_some() || self.line.is_some() {
-            result.push(')');
+            f.write_str(")")?;
         }
 
-        write!(f, "{result}")
+        Ok(())
     }
 }

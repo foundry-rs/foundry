@@ -8,7 +8,7 @@ use crate::{
 use alloy_eips::BlockId;
 use alloy_network::{AnyNetwork, EthereumWallet, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{
-    Address, B256, Bytes, U256, address,
+    Address, B256, Bytes, U256, address, bytes,
     hex::{self, FromHex},
 };
 use alloy_provider::{
@@ -41,6 +41,7 @@ use anvil::{
     eth::{EthApi, backend::env::BlobExcessGasAndPrice},
     spawn,
 };
+use axum::{Json, Router, routing::post};
 use foundry_evm_hardforks::EthereumHardfork;
 use foundry_primitives::FoundryNetwork;
 use serde_json::{Value, json};
@@ -2547,6 +2548,7 @@ async fn test_trace_filter() {
 
     // Test default block ranges: omitted bounds both default to latest.
     let tracer = TraceFilter {
+        block_hash: None,
         from_block: None,
         to_block: None,
         from_address: vec![],
@@ -2577,6 +2579,7 @@ async fn test_trace_filter() {
 
     // Test filtering by address
     let tracer = TraceFilter {
+        block_hash: None,
         from_block: Some(provider.get_block_number().await.unwrap()),
         to_block: None,
         from_address: vec![from_two],
@@ -2609,6 +2612,7 @@ async fn test_trace_filter() {
 
     // Test TraceActions
     let tracer = TraceFilter {
+        block_hash: None,
         from_block: Some(provider.get_block_number().await.unwrap()),
         to_block: None,
         from_address: vec![from, contract_addr],
@@ -2636,6 +2640,7 @@ async fn test_trace_filter() {
     // Test Range Error
     let latest = provider.get_block_number().await.unwrap();
     let tracer = TraceFilter {
+        block_hash: None,
         from_block: Some(latest),
         to_block: Some(latest + 301),
         from_address: vec![],
@@ -2651,6 +2656,7 @@ async fn test_trace_filter() {
     // Test same from and to block is valid
     let latest = provider.get_block_number().await.unwrap();
     let tracer = TraceFilter {
+        block_hash: None,
         from_block: Some(latest),
         to_block: Some(latest),
         from_address: vec![],
@@ -2666,6 +2672,7 @@ async fn test_trace_filter() {
     // Test invalid block range
     let latest = provider.get_block_number().await.unwrap();
     let tracer = TraceFilter {
+        block_hash: None,
         from_block: Some(latest + 10),
         to_block: Some(latest),
         from_address: vec![],
@@ -2680,6 +2687,7 @@ async fn test_trace_filter() {
 
     // Test after and count
     let tracer = TraceFilter {
+        block_hash: None,
         from_block: Some(provider.get_block_number().await.unwrap()),
         to_block: None,
         from_address: vec![],
@@ -2697,6 +2705,310 @@ async fn test_trace_filter() {
 
     let traces = api.trace_filter(tracer).await.unwrap();
     assert_eq!(traces.len(), 5);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_filter_block_hash_rpc() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let accounts = handle.dev_wallets().map(|wallet| wallet.address()).collect::<Vec<_>>();
+    api.anvil_set_auto_mine(false).await.unwrap();
+    for nonce in 0..3 {
+        let tx = TransactionRequest::default()
+            .from(accounts[0])
+            .to(accounts[nonce as usize + 1])
+            .nonce(nonce)
+            .gas_limit(21_000);
+        let _ = provider.send_transaction(WithOtherFields::new(tx)).await.unwrap();
+    }
+    api.mine_one().await.unwrap();
+    let block = provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    let hash = block.header.hash;
+    let expected = provider.trace_block(block.header.number.into()).await.unwrap();
+    assert_eq!(expected.len(), 3);
+
+    // A newer empty head must not replace the selected block, even for an empty result.
+    api.mine_one().await.unwrap();
+    let filter = TraceFilter::default().block_hash(hash);
+    assert_eq!(provider.trace_filter(&filter).await.unwrap(), expected);
+    assert_eq!(
+        provider.trace_filter(&filter.clone().after(1).count(1)).await.unwrap(),
+        expected[1..2]
+    );
+    assert!(provider.trace_filter(&filter.clone().after(3)).await.unwrap().is_empty());
+    assert!(provider.trace_filter(&filter.clone().count(0)).await.unwrap().is_empty());
+    assert_eq!(
+        provider.trace_filter(&filter.clone().to_address(vec![accounts[2]])).await.unwrap(),
+        expected[1..2]
+    );
+    let mismatched = filter.clone().from_address(vec![accounts[4]]).to_address(vec![accounts[2]]);
+    assert!(provider.trace_filter(&mismatched).await.unwrap().is_empty());
+    assert_eq!(
+        provider.trace_filter(&mismatched.mode(TraceFilterMode::Union)).await.unwrap(),
+        expected[1..2]
+    );
+
+    let null_bounds: Vec<LocalizedTransactionTrace> = provider
+        .raw_request(
+            "trace_filter".into(),
+            (json!({"blockHash": hash, "fromBlock": null, "toBlock": null}),),
+        )
+        .await
+        .unwrap();
+    assert_eq!(null_bounds, expected);
+    let null_hash: Vec<LocalizedTransactionTrace> = provider
+        .raw_request(
+            "trace_filter".into(),
+            (json!({"blockHash": null, "fromBlock": "0x1", "toBlock": "0x1"}),),
+        )
+        .await
+        .unwrap();
+    assert_eq!(null_hash, expected);
+
+    let genesis = provider.get_block_by_number(0.into()).await.unwrap().unwrap();
+    assert!(
+        provider
+            .trace_filter(&TraceFilter::default().block_hash(genesis.header.hash))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    for invalid in [
+        json!({"blockHash": hash, "fromBlock": "0x1"}),
+        json!({"blockHash": hash, "toBlock": "0x1", "count": 0}),
+        json!({"blockHash": "0x1234"}),
+    ] {
+        let err = provider
+            .raw_request::<_, Vec<LocalizedTransactionTrace>>("trace_filter".into(), (invalid,))
+            .await
+            .unwrap_err();
+        assert_eq!(err.as_error_resp().unwrap().code, -32602);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_filter_block_hash_reorg_rpc() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let accounts = handle.dev_wallets().map(|wallet| wallet.address()).collect::<Vec<_>>();
+    let snapshot = api.evm_snapshot().await.unwrap();
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(accounts[0]).to(accounts[1]).value(U256::from(1)),
+        ))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let hash = receipt.block_hash.unwrap();
+    assert_eq!(
+        provider.trace_filter(&TraceFilter::default().block_hash(hash)).await.unwrap().len(),
+        1
+    );
+
+    assert!(api.evm_revert(snapshot).await.unwrap());
+    api.mine_one().await.unwrap();
+    let replacement =
+        provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(replacement.header.number, receipt.block_number.unwrap());
+    assert_ne!(replacement.header.hash, hash);
+    assert!(
+        provider
+            .trace_filter(&TraceFilter::default().block_hash(replacement.header.hash))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    for hash in [hash, B256::repeat_byte(0xff)] {
+        for count in [None, Some(0)] {
+            let filter = TraceFilter { block_hash: Some(hash), count, ..Default::default() };
+            let err = provider.trace_filter(&filter).await.unwrap_err();
+            assert_eq!(err.as_error_resp().unwrap().code, -32001);
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_filter_block_hash_fork_rpc() {
+    let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let origin = origin_handle.http_provider();
+    let accounts = origin_handle.dev_wallets().map(|wallet| wallet.address()).collect::<Vec<_>>();
+    let snapshot = origin_api.evm_snapshot().await.unwrap();
+    let receipt = origin
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(accounts[0]).to(accounts[1]).value(U256::from(1)),
+        ))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let hash = receipt.block_hash.unwrap();
+    let expected = origin.trace_block(receipt.block_number.unwrap().into()).await.unwrap();
+    let root_snapshot = origin_api.evm_snapshot().await.unwrap();
+    origin_api.mine_one().await.unwrap();
+    let root = origin.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    let (api, handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+    let provider = handle.http_provider();
+
+    // An upstream head after the fork boundary is not part of the fork's chain.
+    origin_api.mine_one().await.unwrap();
+    let future = origin.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(
+        provider.trace_filter(&TraceFilter::default().block_hash(hash)).await.unwrap(),
+        expected
+    );
+    assert!(
+        provider
+            .trace_filter(&TraceFilter::default().block_hash(root.header.hash))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let err = provider
+        .trace_filter(&TraceFilter::default().block_hash(future.header.hash).count(0))
+        .await
+        .unwrap_err();
+    assert_eq!(err.as_error_resp().unwrap().code, -32001);
+
+    // A locally mined block remains available without consulting the upstream block at its height.
+    api.evm_set_next_block_timestamp(future.header.timestamp + 1).unwrap();
+    api.mine_one().await.unwrap();
+    let local = provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_ne!(local.header.hash, future.header.hash);
+    assert!(
+        provider
+            .trace_filter(&TraceFilter::default().block_hash(local.header.hash))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    // A reorg that replaces only the fork root keeps the blocks below it available.
+    assert!(origin_api.evm_revert(root_snapshot).await.unwrap());
+    origin_api.evm_set_next_block_timestamp(root.header.timestamp + 1).unwrap();
+    origin_api.mine_one().await.unwrap();
+    assert_ne!(
+        origin.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap().header.hash,
+        root.header.hash
+    );
+    assert_eq!(
+        provider.trace_filter(&TraceFilter::default().block_hash(hash)).await.unwrap(),
+        expected
+    );
+    let err = provider
+        .trace_filter(&TraceFilter::default().block_hash(root.header.hash))
+        .await
+        .unwrap_err();
+    assert_eq!(err.as_error_resp().unwrap().code, -32001);
+
+    // Do not accept blocks on a replacement upstream branch, even below the old fork boundary.
+    assert!(origin_api.evm_revert(snapshot).await.unwrap());
+    origin_api.mine_one().await.unwrap();
+    let replacement = origin.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    origin_api.mine_one().await.unwrap();
+    for invalid in [hash, replacement.header.hash] {
+        let err =
+            provider.trace_filter(&TraceFilter::default().block_hash(invalid)).await.unwrap_err();
+        assert_eq!(err.as_error_resp().unwrap().code, -32001);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_filter_block_hash_fork_rejects_inconsistent_traces() {
+    let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let origin = origin_handle.http_provider();
+    let accounts = origin_handle.dev_wallets().map(|wallet| wallet.address()).collect::<Vec<_>>();
+    let receipt = origin
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(accounts[0]).to(accounts[1]).value(U256::from(1)),
+        ))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let hash = receipt.block_hash.unwrap();
+    let mut wrong_block = origin.trace_block(receipt.block_number.unwrap().into()).await.unwrap();
+    wrong_block[0].block_hash = Some(B256::repeat_byte(0xff));
+
+    // Model a replacement block returned between the upstream header and trace reads.
+    for (traces, code) in [(vec![], -32603), (wrong_block, -32001)] {
+        let endpoint = origin_handle.http_endpoint();
+        let client = reqwest::Client::new();
+        let router = Router::new().route(
+            "/",
+            post(move |Json(request): Json<Value>| {
+                let endpoint = endpoint.clone();
+                let client = client.clone();
+                let traces = traces.clone();
+                async move {
+                    if request["method"] == "trace_block" {
+                        return Json(
+                            json!({"jsonrpc": "2.0", "id": request["id"], "result": traces}),
+                        );
+                    }
+                    Json(
+                        client
+                            .post(endpoint)
+                            .json(&request)
+                            .send()
+                            .await
+                            .unwrap()
+                            .json::<Value>()
+                            .await
+                            .unwrap(),
+                    )
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let proxy = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let (_api, handle) = spawn(NodeConfig::test().with_eth_rpc_url(Some(endpoint))).await;
+        let err = handle
+            .http_provider()
+            .trace_filter(&TraceFilter::default().block_hash(hash).count(0))
+            .await
+            .unwrap_err();
+        assert_eq!(err.as_error_resp().unwrap().code, code);
+        proxy.abort();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_filter_block_hash_pruned_rpc() {
+    let (api, handle) = spawn(NodeConfig::test().with_transaction_block_keeper(Some(1usize))).await;
+    let provider = handle.http_provider();
+    let accounts = handle.dev_wallets().map(|wallet| wallet.address()).collect::<Vec<_>>();
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(accounts[0]).to(accounts[1]).value(U256::from(1)),
+        ))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    api.mine_one().await.unwrap();
+    api.mine_one().await.unwrap();
+    let err = provider
+        .trace_filter(&TraceFilter::default().block_hash(receipt.block_hash.unwrap()))
+        .await
+        .unwrap_err();
+    assert_eq!(err.as_error_resp().unwrap().code, -32603);
+
+    // A fork of the pruned node gets an empty body with a nonempty transactions root.
+    let (_fork_api, fork_handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(handle.http_endpoint()))).await;
+    let err = fork_handle
+        .http_provider()
+        .trace_filter(&TraceFilter::default().block_hash(receipt.block_hash.unwrap()))
+        .await
+        .unwrap_err();
+    assert_eq!(err.as_error_resp().unwrap().code, -32603);
 }
 
 #[cfg(feature = "js-tracer")]
@@ -3672,4 +3984,108 @@ async fn test_debug_trace_block_invalid_js_tracer_error() {
         error,
         "failed to evaluate JS code: SyntaxError: expected one of ')' or ',', got 'a' in CoverParenthesizedExpressionAndArrowParameterList at line 1, col 6 (native)"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_debug_trace_call_root_gas() {
+    // Monad roots report the charged limit; Ethereum reports consumption.
+    for (config, charges_limit) in [
+        (NodeConfig::test(), false),
+        #[cfg(feature = "monad")]
+        (NodeConfig::test_monad(), true),
+    ] {
+        let (api, handle) = spawn(config).await;
+        let provider = handle.http_provider();
+        let sender = handle.dev_accounts().next().unwrap();
+        let contract = Address::repeat_byte(0x55);
+        for limit in [100_000, 1_000_000] {
+            for (code, consumed, failed) in [
+                (bytes!("5f5000"), 21_004, false),
+                (bytes!("5f5ffd"), 21_004, true),
+                (bytes!("fe"), limit, true),
+            ] {
+                let expected = if charges_limit { limit } else { consumed };
+                api.anvil_set_code(contract, code).await.unwrap();
+                let request =
+                    TransactionRequest::default().from(sender).to(contract).gas_limit(limit);
+                let trace = provider
+                    .debug_trace_call(
+                        request.clone().into(),
+                        BlockId::latest(),
+                        GethDebugTracingCallOptions::default(),
+                    )
+                    .await
+                    .unwrap();
+                let GethTrace::Default(frame) = trace else { panic!("expected opcode trace") };
+                assert_eq!(frame.gas, expected);
+                assert_eq!(frame.failed, failed);
+                assert_eq!(frame.struct_logs[0].gas, limit - 21_000);
+                let trace = provider
+                    .debug_trace_call(
+                        request.into(),
+                        BlockId::latest(),
+                        GethDebugTracingCallOptions::default().with_tracing_options(
+                            GethDebugTracingOptions::default()
+                                .with_tracer(GethDebugBuiltInTracerType::CallTracer.into()),
+                        ),
+                    )
+                    .await
+                    .unwrap();
+                let GethTrace::CallTracer(frame) = trace else { panic!("expected call trace") };
+                assert_eq!(frame.gas, U256::from(limit));
+                assert_eq!(frame.gas_used, U256::from(expected));
+                assert_eq!(frame.error.is_some(), failed);
+            }
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_call_tracer_mined_gas_limits() {
+    for (config, charged_gas) in [
+        (NodeConfig::test(), [21_000, 21_000]),
+        #[cfg(feature = "monad")]
+        (NodeConfig::test_monad(), [100_000, 200_000]),
+    ] {
+        let (api, handle) = spawn(config).await;
+        let provider = handle.http_provider();
+        let sender = handle.dev_accounts().next().unwrap();
+        let limits = [100_000, 200_000];
+        api.anvil_set_auto_mine(false).await.unwrap();
+        let mut hashes = Vec::new();
+        for (nonce, limit) in limits.into_iter().enumerate() {
+            let tx = TransactionRequest::default()
+                .from(sender)
+                .to(Address::repeat_byte(0x55))
+                .nonce(nonce as u64)
+                .gas_limit(limit);
+            hashes.push(api.send_transaction(WithOtherFields::new(tx)).await.unwrap());
+        }
+        api.mine_one().await.unwrap();
+        let block = provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+        assert_eq!(block.header.gas_used, charged_gas.iter().sum::<u64>());
+        let options = GethDebugTracingOptions::default()
+            .with_tracer(GethDebugBuiltInTracerType::CallTracer.into());
+        let mut expected = Vec::new();
+        for ((hash, limit), gas_used) in hashes.into_iter().zip(limits).zip(charged_gas) {
+            let receipt = provider.get_transaction_receipt(hash).await.unwrap().unwrap();
+            assert_eq!(receipt.gas_used(), gas_used);
+            let trace = provider.debug_trace_transaction(hash, options.clone()).await.unwrap();
+            let GethTrace::CallTracer(frame) = &trace else { panic!("expected call trace") };
+            assert_eq!(frame.gas, U256::from(limit));
+            assert_eq!(frame.gas_used, U256::from(gas_used));
+            expected.push(TraceResult::Success { result: trace, tx_hash: Some(hash) });
+        }
+        assert_eq!(
+            provider
+                .debug_trace_block_by_number(BlockNumberOrTag::Latest, options.clone())
+                .await
+                .unwrap(),
+            expected,
+        );
+        assert_eq!(
+            provider.debug_trace_block_by_hash(block.header.hash, options).await.unwrap(),
+            expected,
+        );
+    }
 }

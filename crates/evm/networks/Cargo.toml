@@ -27,7 +27,7 @@ alloy-primitives = { workspace = true, features = [
 ] }
 
 # base
-base-common-eip8130 = { workspace = true, optional = true }
+base-common-base-tx = { workspace = true, optional = true }
 base-evm2 = { workspace = true, optional = true }
 
 # monad
@@ -45,7 +45,7 @@ default = ["optimism"]
 monad = ["dep:monad-evm2", "foundry-evm-hardforks/monad"]
 optimism = ["dep:alloy-op-hardforks", "foundry-evm-hardforks/optimism"]
 base = [
-    "dep:base-common-eip8130",
+    "dep:base-common-base-tx",
     "dep:base-evm2",
     "foundry-evm-hardforks/base",
 ]

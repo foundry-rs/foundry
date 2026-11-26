@@ -1,5 +1,5 @@
 use crate::executors::{
-    EarlyExit, EvmError, Executor, RawCallResult,
+    EarlyExit, EvmError, Executor, RawCallResult, RawFailure,
     campaign::{CampaignCallKind, apply_block_delay, execute_invariant_replay_tx},
     invariant::{
         IInvariantTest, call_after_invariant_function, call_invariant_function,
@@ -16,7 +16,7 @@ use foundry_evm_core::{constants::MAGIC_ASSUME, decode::RevertDecoder, evm::Foun
 use foundry_evm_fuzz::{BaseCounterExample, BasicTxDetails, invariant::InvariantContract};
 use indicatif::ProgressBar;
 use proptest::bits::{BitSetLike, VarBitSet};
-use std::{borrow::Cow, cell::Cell, fmt::Write, hash::Hash, ops::Range};
+use std::{borrow::Cow, cell::Cell, fmt::Write, hash::Hash, ops::Range, time::Instant};
 
 const LIVE_SHRINK_SEQUENCE_EDGE_CALLS: usize = 16;
 
@@ -122,16 +122,28 @@ pub struct ShrinkRunStats {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ShrinkRun {
     max_attempts: usize,
+    /// When to stop trying candidates, for a run with a time budget.
+    deadline: Option<Instant>,
     stats: ShrinkRunStats,
 }
 
 impl ShrinkRun {
     pub const fn new(max_attempts: usize) -> Self {
-        Self { max_attempts, stats: ShrinkRunStats { attempts: 0, accepted: 0 } }
+        Self { max_attempts, deadline: None, stats: ShrinkRunStats { attempts: 0, accepted: 0 } }
     }
 
-    pub const fn can_try(&self) -> bool {
-        self.stats.attempts < self.max_attempts
+    /// Also stops trying candidates at `deadline`, if set.
+    pub const fn with_deadline(mut self, deadline: Option<Instant>) -> Self {
+        self.deadline = deadline;
+        self
+    }
+
+    pub fn can_try(&self) -> bool {
+        self.stats.attempts < self.max_attempts && !deadline_passed(self.deadline)
+    }
+
+    pub const fn deadline(&self) -> Option<Instant> {
+        self.deadline
     }
 
     pub const fn remaining_attempts(&self) -> usize {
@@ -158,6 +170,24 @@ impl ShrinkRun {
         }
         Some(accepted)
     }
+}
+
+/// Returns whether `deadline` is set and has passed.
+pub fn deadline_passed(deadline: Option<Instant>) -> bool {
+    deadline.is_some_and(|deadline| Instant::now() >= deadline)
+}
+
+/// Returns `executor`, or with a `deadline` a copy whose executions stop at it, for replaying
+/// shrink candidates that the deadline must not wait for.
+fn candidate_executor<'a, FEN: FoundryEvmNetwork>(
+    executor: &'a Executor<FEN>,
+    early_exit: &EarlyExit,
+    deadline: Option<Instant>,
+) -> Cow<'a, Executor<FEN>> {
+    let Some(deadline) = deadline else { return Cow::Borrowed(executor) };
+    let mut executor = executor.clone();
+    executor.inspector_mut().set_execution_deadline(early_exit.clone(), deadline);
+    Cow::Owned(executor)
 }
 
 /// Shared key set for shrinkers that need to skip duplicate concrete replays.
@@ -207,6 +237,10 @@ pub struct CheckSequenceOutcome {
     pub sequence_assertion_failure: bool,
     /// Innermost reverter for a sequence assertion, used to recognize legacy handler identities.
     pub sequence_reverter: Option<Address>,
+    /// Observable outcome of the failing call, see [`RawCallResult::raw_failure`].
+    pub raw_failure: Option<RawFailure>,
+    /// Value-independent identity of the failing call, see [`RawCallResult::failure_identity`].
+    pub failure_identity: Option<B256>,
 }
 
 pub struct ShrunkSequence {
@@ -231,7 +265,7 @@ pub struct HandlerReplayOutcome {
 
 /// Resets the progress bar before each shrink. `position = Some((i, N))` renders
 /// `[i/N] Shrink: <label>` for multi-invariant campaigns.
-pub(crate) fn reset_shrink_progress(
+pub fn reset_shrink_progress(
     config: &InvariantConfig,
     progress: Option<&ProgressBar>,
     label: &str,
@@ -487,19 +521,21 @@ where
 
 /// Shared shrink loop driver. Tries to drop each call; `predicate` returns whether the
 /// candidate still triggers the bug.
+#[expect(clippy::too_many_arguments)]
 fn run_shrink_loop<P>(
     config: &InvariantConfig,
     calls: &[BasicTxDetails],
     progress: &ShrinkProgress<'_>,
     accumulate_warp_roll: bool,
     early_exit: &EarlyExit,
+    deadline: Option<Instant>,
     error_policy: ShrinkErrorPolicy,
     mut predicate: P,
 ) -> SequenceShrink
 where
     P: FnMut(&SequenceShrink, usize) -> eyre::Result<bool>,
 {
-    let mut run = ShrinkRun::new(config.shrink_run_limit as usize);
+    let mut run = ShrinkRun::new(config.shrink_run_limit as usize).with_deadline(deadline);
     let initial = SequenceShrink::new(calls.len());
     progress.update(calls, &initial, accumulate_warp_roll);
 
@@ -511,7 +547,13 @@ where
         || progress.inc(),
         |shrinker, first_removed| {
             progress.update(calls, shrinker, accumulate_warp_roll);
-            match predicate(shrinker, first_removed) {
+            let decision = predicate(shrinker, first_removed);
+            // The deadline can cancel a candidate's execution, so a decision made after it is not
+            // trusted: the candidate is discarded and the last confirmed sequence stays.
+            if deadline_passed(deadline) {
+                return None;
+            }
+            match decision {
                 Ok(bug_still_present) => Some(bug_still_present),
                 Err(_) => Some(matches!(error_policy, ShrinkErrorPolicy::KeepRemoved)),
             }
@@ -539,14 +581,25 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
     rd: Option<&RevertDecoder>,
     progress: &ShrinkProgress<'_>,
     early_exit: &EarlyExit,
+    deadline: Option<Instant>,
 ) -> eyre::Result<ShrunkSequence> {
     trace!(target: "forge::test", "Shrinking sequence of {} calls.", calls.len());
 
     let target_address = invariant_contract.address;
     let calldata: Bytes = target_invariant.selector().into();
+    // With the budget spent, keep the recorded sequence without starting another replay.
+    let unshrunk = || ShrunkSequence { calls: calls.to_vec(), result: None };
+    if config.shrink_run_limit == 0 || deadline_passed(deadline) {
+        return Ok(unshrunk());
+    }
+    let candidates = candidate_executor(executor, early_exit, deadline);
     // Special case test: the invariant is *unsatisfiable* - it took 0 calls to
     // break the invariant -- consider emitting a warning.
-    let (_, success) = call_invariant_function(executor, target_address, calldata.clone())?;
+    let (_, success) = call_invariant_function(&candidates, target_address, calldata.clone())?;
+    // A deadline that passed during the check may have cancelled it.
+    if deadline_passed(deadline) {
+        return Ok(unshrunk());
+    }
     if !success {
         return Ok(ShrunkSequence { calls: vec![], result: None });
     }
@@ -556,7 +609,7 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
     let mut last_result = None;
     let mut last_result_matches_shrinker = true;
     let mut replay = PrefixReplay::new(
-        executor,
+        &candidates,
         calls,
         CheckSequencePolicy {
             options: CheckSequenceOptions {
@@ -568,6 +621,9 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
             },
             test_address: target_address,
             calldata: calldata.clone(),
+            identify: None,
+            between_calls: Vec::new(),
+            checks_between_calls: false,
         },
     );
     let shrinker = run_shrink_loop(
@@ -576,6 +632,7 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
         progress,
         accumulate_warp_roll,
         early_exit,
+        deadline,
         // Preserve legacy invariant-shrink behavior: errors during candidate evaluation
         // do not roll back the removal.
         ShrinkErrorPolicy::KeepRemoved,
@@ -589,9 +646,10 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
                     return Err(err);
                 }
             };
-            // Bug still present iff the invariant predicate did not pass.
+            // Bug still present iff the invariant predicate did not pass. A result after the
+            // deadline may come from a cancelled replay, and `run_shrink_loop` discards it.
             let bug_still_present = !result.success;
-            if bug_still_present {
+            if bug_still_present && !deadline_passed(deadline) {
                 last_result = Some(result);
                 last_result_matches_shrinker = true;
             }
@@ -602,6 +660,8 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
     let shrunk = build_shrunk_sequence(calls, &shrinker, accumulate_warp_roll);
     let result = if last_result_matches_shrinker {
         last_result
+    } else if deadline_passed(deadline) {
+        None
     } else {
         match check_sequence(
             executor.clone(),
@@ -645,8 +705,85 @@ pub fn check_sequence<FEN: FoundryEvmNetwork>(
     calldata: Bytes,
     options: CheckSequenceOptions<'_>,
 ) -> eyre::Result<CheckSequenceOutcome> {
-    let policy = CheckSequencePolicy { options, test_address, calldata };
+    let policy = CheckSequencePolicy {
+        options,
+        test_address,
+        calldata,
+        identify: None,
+        between_calls: Vec::new(),
+        checks_between_calls: false,
+    };
     PrefixReplay::new(&executor, calls, policy).check(sequence, 0)
+}
+
+/// Replays the candidates of a failing sequence's minimizer, reusing the state after the calls a
+/// candidate shares with the previous one.
+///
+/// Every call skips cheatcodes with effects outside the EVM, as when recording failure identities,
+/// but recording them steps every instruction, so only the call that failed at the expected site
+/// records its identity and provenance: the last call for a sequence call, or the final checks.
+///
+/// The campaign also checks the invariants between calls, and those checks can have such effects
+/// as well. With `between_calls`, the replay runs these checks between calls, unless
+/// `checks_between_calls` is false, and before the final checks, unless the failure is at a
+/// sequence call, so that skipping their effects leaves the failure unidentified too.
+pub struct CandidateReplay<'a, FEN: FoundryEvmNetwork> {
+    replay: PrefixReplay<'a, FEN, CheckSequencePolicy<'a>>,
+    /// Whether the latest replay skipped a cheatcode with effects outside the EVM.
+    pub skipped_host_effects: bool,
+}
+
+impl<'a, FEN: FoundryEvmNetwork> CandidateReplay<'a, FEN> {
+    pub fn new(
+        executor: &'a mut Executor<FEN>,
+        test_address: Address,
+        calldata: Bytes,
+        options: CheckSequenceOptions<'a>,
+        site: CheckSequenceFailureSite,
+        between_calls: Vec<Bytes>,
+        checks_between_calls: bool,
+    ) -> Self {
+        executor.inspector_mut().collect_failure_identity(true);
+        executor.inspector_mut().pause_failure_identity(true);
+        let policy = CheckSequencePolicy {
+            options,
+            test_address,
+            calldata,
+            identify: Some(site),
+            between_calls,
+            checks_between_calls,
+        };
+        Self { replay: PrefixReplay::new(executor, &[], policy), skipped_host_effects: false }
+    }
+
+    /// Replays `calls` from the first call that differs from the previous candidate.
+    pub fn check(&mut self, calls: Vec<BasicTxDetails>) -> eyre::Result<CheckSequenceOutcome> {
+        let replay = &mut self.replay;
+        // The last call records its identity, so it never comes from the cached state.
+        let first_changed = replay
+            .calls
+            .iter()
+            .zip(&calls)
+            .take_while(|(a, b)| a == b)
+            .count()
+            .min(calls.len().saturating_sub(1));
+        replay.calls = Cow::Owned(calls);
+        let outcome = replay.check(&(0..replay.calls.len()).collect::<Vec<_>>(), first_changed);
+        // Copies of the executor share whether a replay skipped such an effect, which leaves later
+        // calls unidentified, so after one did, the next candidate starts over without it.
+        self.skipped_host_effects = replay.initial.inspector().take_skipped_host_effects();
+        if self.skipped_host_effects {
+            replay.reset();
+        }
+        outcome
+    }
+}
+
+/// Records the failure identity, paused by [`CandidateReplay::new`], and the provenance of the
+/// calls `executor` runs next.
+fn identify_failure<FEN: FoundryEvmNetwork>(executor: &mut Executor<FEN>) {
+    executor.inspector_mut().pause_failure_identity(false);
+    executor.inspector_mut().collect_failure_provenance(true);
 }
 
 /// Counters carried across the calls of one sequence replay.
@@ -666,6 +803,16 @@ trait ReplayPolicy<FEN: FoundryEvmNetwork> {
     /// Whether warp/roll of removed calls is folded into the next kept call.
     fn accumulate_warp_roll(&self) -> bool;
 
+    /// Prepares `executor` to run the kept call `idx` of `sequence`. An error stops the replay.
+    fn before_call(
+        &self,
+        _executor: &mut Executor<FEN>,
+        _sequence: &[usize],
+        _idx: usize,
+    ) -> eyre::Result<()> {
+        Ok(())
+    }
+
     /// Classifies one replayed call of `sequence`. Returns the outcome when the call stops the
     /// replay. The decision for a call that is not the last kept call must not depend on the
     /// calls after it, because [`PrefixReplay`] reuses it for later candidates.
@@ -681,7 +828,7 @@ trait ReplayPolicy<FEN: FoundryEvmNetwork> {
     /// Builds the outcome once every kept call ran.
     fn finish(
         &self,
-        executor: &Executor<FEN>,
+        executor: &mut Executor<FEN>,
         counters: &ReplayCounters,
     ) -> eyre::Result<Self::Outcome>;
 }
@@ -701,6 +848,7 @@ fn replay_kept_calls<FEN: FoundryEvmNetwork, P: ReplayPolicy<FEN>>(
     // `&calls[idx]` directly to skip the per-call `BasicTxDetails` clone.
     if !policy.accumulate_warp_roll() {
         for &idx in kept {
+            policy.before_call(executor, sequence, idx)?;
             let (_, call_result) = execute_invariant_replay_tx(executor, &calls[idx])?;
             if let Some(outcome) = policy.on_call(calls, sequence, idx, call_result, counters) {
                 return Ok(Some(outcome));
@@ -722,6 +870,7 @@ fn replay_kept_calls<FEN: FoundryEvmNetwork, P: ReplayPolicy<FEN>>(
         kept.next();
 
         let executed = apply_warp_roll(tx.clone(), counters.warp, counters.roll);
+        policy.before_call(executor, sequence, idx)?;
         let (_, call_result) = execute_invariant_replay_tx(executor, &executed)?;
         counters.warp = U256::ZERO;
         counters.roll = U256::ZERO;
@@ -740,7 +889,7 @@ fn replay_kept_calls<FEN: FoundryEvmNetwork, P: ReplayPolicy<FEN>>(
 /// a call before the cached position starts again from the initial executor.
 struct PrefixReplay<'a, FEN: FoundryEvmNetwork, P: ReplayPolicy<FEN>> {
     initial: &'a Executor<FEN>,
-    calls: &'a [BasicTxDetails],
+    calls: Cow<'a, [BasicTxDetails]>,
     policy: P,
     executor: Executor<FEN>,
     /// Calls before this index are replayed on `executor`.
@@ -754,7 +903,7 @@ impl<'a, FEN: FoundryEvmNetwork, P: ReplayPolicy<FEN>> PrefixReplay<'a, FEN, P> 
     fn new(initial: &'a Executor<FEN>, calls: &'a [BasicTxDetails], policy: P) -> Self {
         Self {
             initial,
-            calls,
+            calls: Cow::Borrowed(calls),
             policy,
             executor: initial.clone(),
             position: 0,
@@ -782,7 +931,7 @@ impl<'a, FEN: FoundryEvmNetwork, P: ReplayPolicy<FEN>> PrefixReplay<'a, FEN, P> 
             let end = sequence.partition_point(|&idx| idx < shared_end);
             let advanced = replay_kept_calls(
                 &mut self.executor,
-                self.calls,
+                &self.calls,
                 sequence,
                 &sequence[start..end],
                 self.position..shared_end,
@@ -810,7 +959,7 @@ impl<'a, FEN: FoundryEvmNetwork, P: ReplayPolicy<FEN>> PrefixReplay<'a, FEN, P> 
         let rest = &sequence[sequence.partition_point(|&idx| idx < self.position)..];
         if let Some(outcome) = replay_kept_calls(
             &mut executor,
-            self.calls,
+            &self.calls,
             sequence,
             rest,
             self.position..self.calls.len(),
@@ -819,7 +968,7 @@ impl<'a, FEN: FoundryEvmNetwork, P: ReplayPolicy<FEN>> PrefixReplay<'a, FEN, P> 
         )? {
             return Ok(outcome);
         }
-        self.policy.finish(&executor, &counters)
+        self.policy.finish(&mut executor, &counters)
     }
 }
 
@@ -829,6 +978,38 @@ struct CheckSequencePolicy<'a> {
     options: CheckSequenceOptions<'a>,
     test_address: Address,
     calldata: Bytes,
+    /// Site whose failing call records its failure identity and provenance, see
+    /// [`CandidateReplay`].
+    identify: Option<CheckSequenceFailureSite>,
+    /// Calldata of the invariant checks run between calls and before the final checks, see
+    /// [`CandidateReplay`].
+    between_calls: Vec<Bytes>,
+    /// Whether `between_calls` run between calls as well as before the final checks, as in a
+    /// campaign whose `check_interval` is not 0.
+    checks_between_calls: bool,
+}
+
+impl CheckSequencePolicy<'_> {
+    /// Runs the checks of `between_calls` on discarded copies of `executor`, except the checked
+    /// invariant itself before the final checks, which run it.
+    fn check_between_calls<FEN: FoundryEvmNetwork>(
+        &self,
+        executor: &Executor<FEN>,
+        before_final: bool,
+    ) -> eyre::Result<()> {
+        for calldata in &self.between_calls {
+            if before_final && *calldata == self.calldata {
+                continue;
+            }
+            let (result, _) =
+                call_invariant_function(executor, self.test_address, calldata.clone())?;
+            // A cancelled check may not have reached its effects outside the EVM.
+            if result.execution_cancelled {
+                eyre::bail!("invariant check cancelled");
+            }
+        }
+        Ok(())
+    }
 }
 
 impl<FEN: FoundryEvmNetwork> ReplayPolicy<FEN> for CheckSequencePolicy<'_> {
@@ -836,6 +1017,25 @@ impl<FEN: FoundryEvmNetwork> ReplayPolicy<FEN> for CheckSequencePolicy<'_> {
 
     fn accumulate_warp_roll(&self) -> bool {
         self.options.accumulate_warp_roll
+    }
+
+    fn before_call(
+        &self,
+        executor: &mut Executor<FEN>,
+        sequence: &[usize],
+        idx: usize,
+    ) -> eyre::Result<()> {
+        // The checks before the first call see the same state for every candidate, which the
+        // campaign checked as well.
+        if self.checks_between_calls && sequence.first() != Some(&idx) {
+            self.check_between_calls(executor, false)?;
+        }
+        if matches!(self.identify, Some(CheckSequenceFailureSite::SequenceCall { .. }))
+            && sequence.last() == Some(&idx)
+        {
+            identify_failure(executor);
+        }
+        Ok(())
     }
 
     fn on_call(
@@ -865,6 +1065,8 @@ impl<FEN: FoundryEvmNetwork> ReplayPolicy<FEN> for CheckSequencePolicy<'_> {
                 handler_edge_fingerprint(snapshot_edge_fingerprint(&call_result), target, selector);
             let sequence_reverter = call_result.reverter.or(Some(target));
             let site = CheckSequenceFailureSite::SequenceCall { target, selector, fingerprint };
+            let (raw_failure, failure_identity) =
+                (call_result.raw_failure(), call_result.failure_identity);
             return Some(CheckSequenceOutcome {
                 success: false,
                 replayed_entirely: false,
@@ -874,6 +1076,8 @@ impl<FEN: FoundryEvmNetwork> ReplayPolicy<FEN> for CheckSequencePolicy<'_> {
                 failure_site: Some(site),
                 sequence_assertion_failure: true,
                 sequence_reverter,
+                raw_failure,
+                failure_identity,
             });
         }
         if call_result.reverted && options.fail_on_revert {
@@ -887,9 +1091,13 @@ impl<FEN: FoundryEvmNetwork> ReplayPolicy<FEN> for CheckSequencePolicy<'_> {
                     failure_site: None,
                     sequence_assertion_failure: false,
                     sequence_reverter: None,
+                    raw_failure: None,
+                    failure_identity: None,
                 });
             }
             let site = sequence_call_failure_site(&calls[idx], &call_result);
+            let (raw_failure, failure_identity) =
+                (call_result.raw_failure(), call_result.failure_identity);
             return Some(CheckSequenceOutcome {
                 success: false,
                 replayed_entirely: false,
@@ -899,6 +1107,8 @@ impl<FEN: FoundryEvmNetwork> ReplayPolicy<FEN> for CheckSequencePolicy<'_> {
                 failure_site: Some(site),
                 sequence_assertion_failure: false,
                 sequence_reverter: None,
+                raw_failure,
+                failure_identity,
             });
         }
         None
@@ -906,27 +1116,32 @@ impl<FEN: FoundryEvmNetwork> ReplayPolicy<FEN> for CheckSequencePolicy<'_> {
 
     fn finish(
         &self,
-        executor: &Executor<FEN>,
+        executor: &mut Executor<FEN>,
         counters: &ReplayCounters,
     ) -> eyre::Result<CheckSequenceOutcome> {
+        match self.identify {
+            // The checks after the failing call only skip effects outside the EVM. A replay that
+            // reaches them did not fail at that call, so it is rejected without the checks between
+            // calls.
+            Some(CheckSequenceFailureSite::SequenceCall { .. }) => {
+                executor.inspector_mut().pause_failure_identity(true);
+                executor.inspector_mut().collect_failure_provenance(false);
+            }
+            Some(_) => {
+                self.check_between_calls(executor, true)?;
+                identify_failure(executor);
+            }
+            None => {}
+        }
         // Unlike optimization mode we intentionally do not apply trailing warp/roll before the
         // invariant call: those delays would not be representable in the final shrunk sequence.
-        let (success, replayed_entirely, reason, failure_site) = finish_sequence_check(
+        finish_sequence_check(
             executor,
             self.test_address,
             self.calldata.clone(),
             &self.options,
-        )?;
-        Ok(CheckSequenceOutcome {
-            success,
-            replayed_entirely,
-            reason,
-            calls_count: counters.calls_executed,
-            reverts: counters.reverts,
-            failure_site,
-            sequence_assertion_failure: false,
-            sequence_reverter: None,
-        })
+            counters,
+        )
     }
 }
 
@@ -935,7 +1150,21 @@ fn finish_sequence_check<FEN: FoundryEvmNetwork>(
     test_address: Address,
     calldata: Bytes,
     options: &CheckSequenceOptions<'_>,
-) -> eyre::Result<(bool, bool, Option<String>, Option<CheckSequenceFailureSite>)> {
+    counters: &ReplayCounters,
+) -> eyre::Result<CheckSequenceOutcome> {
+    let outcome =
+        |success, reason, failure_site, raw_failure, failure_identity| CheckSequenceOutcome {
+            success,
+            replayed_entirely: true,
+            reason,
+            calls_count: counters.calls_executed,
+            reverts: counters.reverts,
+            failure_site,
+            sequence_assertion_failure: false,
+            sequence_reverter: None,
+            raw_failure,
+            failure_identity,
+        };
     let handle_terminal_failure =
         |call_result: RawCallResult<FEN>, site_kind: TerminalFailureSite| {
             let should_ignore_failure = options.expect_assertion_failure
@@ -943,16 +1172,18 @@ fn finish_sequence_check<FEN: FoundryEvmNetwork>(
                 && !did_fail_on_assert(&call_result, &call_result.state_changeset);
 
             if should_ignore_failure {
-                return (true, true, None, None);
+                return outcome(true, None, None, None, None);
             }
 
             let site = terminal_failure_site(site_kind, test_address, &calldata, &call_result);
+            let (raw_failure, failure_identity) =
+                (call_result.raw_failure(), call_result.failure_identity);
             // Terminal calls follow the live rule: a revert after a caught assertion wins.
             let reason = call_failure_reason(call_result, options.rd).or_else(|| {
                 options.expect_assertion_failure.then(|| "assertion failed".to_string())
             });
 
-            (false, true, reason, Some(site))
+            outcome(false, reason, Some(site), raw_failure, failure_identity)
         };
 
     let (invariant_result, mut success) =
@@ -975,16 +1206,16 @@ fn finish_sequence_check<FEN: FoundryEvmNetwork>(
         }
     }
 
-    Ok((success, true, None, None))
+    Ok(outcome(success, None, None, None, None))
 }
 
 #[derive(Clone, Copy)]
-enum TerminalFailureSite {
+pub(super) enum TerminalFailureSite {
     Invariant,
     AfterInvariant,
 }
 
-fn sequence_call_failure_site<FEN: FoundryEvmNetwork>(
+pub(super) fn sequence_call_failure_site<FEN: FoundryEvmNetwork>(
     call: &BasicTxDetails,
     call_result: &RawCallResult<FEN>,
 ) -> CheckSequenceFailureSite {
@@ -995,7 +1226,7 @@ fn sequence_call_failure_site<FEN: FoundryEvmNetwork>(
     CheckSequenceFailureSite::SequenceCall { target, selector, fingerprint }
 }
 
-fn terminal_failure_site<FEN: FoundryEvmNetwork>(
+pub(super) fn terminal_failure_site<FEN: FoundryEvmNetwork>(
     kind: TerminalFailureSite,
     target: Address,
     calldata: &Bytes,
@@ -1021,8 +1252,7 @@ fn terminal_failure_site<FEN: FoundryEvmNetwork>(
 }
 
 fn selector_from_calldata(calldata: &Bytes) -> Selector {
-    let selector: [u8; 4] = calldata.get(..4).and_then(|s| s.try_into().ok()).unwrap_or_default();
-    Selector::from(selector)
+    calldata.get(..4).map(Selector::from_slice).unwrap_or_default()
 }
 
 fn call_failure_reason<FEN: FoundryEvmNetwork>(
@@ -1061,32 +1291,43 @@ pub(crate) fn shrink_sequence_value<FEN: FoundryEvmNetwork>(
     targets: &[Address],
     progress: &ShrinkProgress<'_>,
     early_exit: &EarlyExit,
+    deadline: Option<Instant>,
 ) -> eyre::Result<(Vec<BasicTxDetails>, I256)> {
     trace!(target: "forge::test", "Shrinking optimization sequence of {} calls for target value {}.", calls.len(), target_value);
 
     let target_address = invariant_contract.address;
     let calldata: Bytes = target_invariant.selector().into();
 
+    // With the budget spent, keep the recorded witness and score without another replay.
+    if deadline_passed(deadline) {
+        return Ok((calls.to_vec(), target_value));
+    }
+    let candidates = candidate_executor(executor, early_exit, deadline);
+
     // Candidates replay only up to their last kept call: the returned witness drops the delays of
     // removed trailing calls, so its value must not count them.
     // Campaigns score only after a call, so an empty witness must match the target exactly.
-    if check_sequence_value(
-        executor.clone(),
+    let empty_value = check_sequence_value(
+        candidates.clone().into_owned(),
         &[],
         &[],
         target_address,
         calldata.clone(),
         config.fail_on_revert,
         targets,
-    )? == Some(target_value)
-    {
+    );
+    // A deadline that passed during the check may have cancelled it.
+    if deadline_passed(deadline) {
+        return Ok((calls.to_vec(), target_value));
+    }
+    if empty_value? == Some(target_value) {
         return Ok((vec![], target_value));
     }
 
     let replay_failed = Cell::new(false);
     let mut replay_error = None;
     let mut best = target_value;
-    let mut run = ShrinkRun::new(config.shrink_run_limit as usize);
+    let mut run = ShrinkRun::new(config.shrink_run_limit as usize).with_deadline(deadline);
     let initial = SequenceShrink::new(calls.len());
     progress.update(calls, &initial, true);
     let mut sequence = Vec::with_capacity(calls.len());
@@ -1106,15 +1347,20 @@ pub(crate) fn shrink_sequence_value<FEN: FoundryEvmNetwork>(
             if sequence.is_empty() {
                 return Some(false);
             }
-            match check_sequence_value(
-                executor.clone(),
+            let value = check_sequence_value(
+                candidates.clone().into_owned(),
                 &calls[..=sequence[sequence.len() - 1]],
                 &sequence,
                 target_address,
                 calldata.clone(),
                 config.fail_on_revert,
                 targets,
-            ) {
+            );
+            // A replay after the deadline may have been cancelled, so it is discarded.
+            if deadline_passed(deadline) {
+                return None;
+            }
+            match value {
                 Ok(Some(value)) if value >= best => {
                     best = value;
                     Some(true)
@@ -1203,7 +1449,7 @@ impl<FEN: FoundryEvmNetwork> ReplayPolicy<FEN> for HandlerReplayPolicy<'_> {
 
     fn finish(
         &self,
-        _executor: &Executor<FEN>,
+        _executor: &mut Executor<FEN>,
         _counters: &ReplayCounters,
     ) -> eyre::Result<HandlerReplayOutcome> {
         Ok(HandlerReplayOutcome::default())
@@ -1219,6 +1465,7 @@ pub(crate) fn shrink_handler_sequence<FEN: FoundryEvmNetwork>(
     executor: &Executor<FEN>,
     progress: &ShrinkProgress<'_>,
     early_exit: &EarlyExit,
+    deadline: Option<Instant>,
 ) -> eyre::Result<Vec<BasicTxDetails>> {
     if calls.is_empty() {
         return Ok(vec![]);
@@ -1226,14 +1473,19 @@ pub(crate) fn shrink_handler_sequence<FEN: FoundryEvmNetwork>(
     trace!(target: "forge::test", "Shrinking handler sequence of {} calls.", calls.len());
     let accumulate_warp_roll = config.has_delay();
     let mut sequence = Vec::with_capacity(calls.len());
-    let mut replay =
-        PrefixReplay::new(executor, calls, HandlerReplayPolicy { accumulate_warp_roll, rd: None });
+    let candidates = candidate_executor(executor, early_exit, deadline);
+    let mut replay = PrefixReplay::new(
+        &candidates,
+        calls,
+        HandlerReplayPolicy { accumulate_warp_roll, rd: None },
+    );
     let shrinker = run_shrink_loop(
         config,
         calls,
         progress,
         accumulate_warp_roll,
         early_exit,
+        deadline,
         ShrinkErrorPolicy::RestoreRemoved,
         |shrinker, first_removed| {
             sequence.clear();
@@ -1243,20 +1495,30 @@ pub(crate) fn shrink_handler_sequence<FEN: FoundryEvmNetwork>(
         },
     );
 
+    if shrinker.included_count() == calls.len() {
+        return Ok(calls.to_vec());
+    }
     let shrunk = build_shrunk_sequence(calls, &shrinker, accumulate_warp_roll);
+    // Every removal the shrinker kept was confirmed before the deadline, so once it passed the
+    // shrunk sequence is kept without starting the verifying replay, which would not be cancelled
+    // before its first poll.
+    if deadline_passed(deadline) {
+        return Ok(shrunk);
+    }
 
-    // Verify shrunk repro; fall back to original on any failure.
+    // Verify shrunk repro; fall back to original on any failure, unless the deadline cancelled the
+    // verification.
     sequence.clear();
     sequence.extend(shrinker.current());
     let verified = handler_sequence_still_triggers_bug(
-        executor.clone(),
+        candidates.as_ref().clone(),
         calls,
         &sequence,
         accumulate_warp_roll,
         expected_fingerprint,
     )
     .unwrap_or(false);
-    if verified { Ok(shrunk) } else { Ok(calls.to_vec()) }
+    if verified || deadline_passed(deadline) { Ok(shrunk) } else { Ok(calls.to_vec()) }
 }
 
 /// Shrink predicate: anchor asserts on the same path as the originally recorded bug.
@@ -1536,11 +1798,152 @@ mod tests {
             &progress,
             false,
             &early_exit,
+            None,
             ShrinkErrorPolicy::KeepRemoved,
             |_, _| Err(eyre::eyre!("candidate replay failed")),
         );
 
         assert_eq!(shrinker.current().collect::<Vec<_>>(), vec![1]);
+    }
+
+    #[test]
+    fn shrink_loop_stops_at_deadline() {
+        let calls = vec![tx(None, None); 4];
+        let early_exit = EarlyExit::new(false);
+        let config = InvariantConfig::default();
+        let attempts = |deadline| {
+            let progress = ShrinkProgress::new(&config, None, "test", None, None, false);
+            let mut attempts = 0;
+            run_shrink_loop(
+                &config,
+                &calls,
+                &progress,
+                false,
+                &early_exit,
+                deadline,
+                ShrinkErrorPolicy::RestoreRemoved,
+                |_, _| {
+                    attempts += 1;
+                    Ok(false)
+                },
+            );
+            attempts
+        };
+
+        assert!(attempts(None) > 0);
+        // A passed deadline stops shrinking however many attempts `shrink_run_limit` leaves.
+        assert_eq!(attempts(Some(Instant::now())), 0);
+    }
+
+    #[test]
+    fn shrink_loop_discards_candidate_finished_after_deadline() {
+        let config = InvariantConfig::default();
+        let early_exit = EarlyExit::new(false);
+        let calls = vec![tx(None, None); 4];
+        let progress = ShrinkProgress::new(&config, None, "test", None, None, false);
+        let deadline = Instant::now() + std::time::Duration::from_millis(50);
+
+        // Under `KeepRemoved` an error would accept the removal, like a cancelled replay can.
+        let shrinker = run_shrink_loop(
+            &config,
+            &calls,
+            &progress,
+            false,
+            &early_exit,
+            Some(deadline),
+            ShrinkErrorPolicy::KeepRemoved,
+            |_, _| {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                Err(eyre::eyre!("cancelled replay"))
+            },
+        );
+
+        assert_eq!(shrinker.current().collect::<Vec<_>>(), vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn candidate_executor_cancels_execution_at_deadline() {
+        let mut executor = crate::executors::test_executor(
+            ExecutorBuilder::<EthEvmNetwork>::default().gas_limit(1 << 24),
+            Default::default(),
+        );
+        let target = Address::repeat_byte(0x11);
+        // JUMPDEST; PUSH1 0; JUMP loops until gas runs out.
+        executor
+            .set_code(target, Bytecode::new_raw(Bytes::from_static(&[0x5b, 0x60, 0x00, 0x56])))
+            .unwrap();
+        let early_exit = EarlyExit::new(false);
+
+        let candidates = candidate_executor(&executor, &early_exit, Some(Instant::now()));
+        let result = candidates
+            .call_raw(foundry_evm_core::constants::CALLER, target, Bytes::new(), U256::ZERO)
+            .unwrap();
+        assert!(result.execution_cancelled);
+
+        // Without a deadline candidates run on the executor itself, uncancelled.
+        let candidates = candidate_executor(&executor, &early_exit, None);
+        assert!(matches!(candidates, Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn handler_shrink_keeps_candidate_confirmed_before_deadline() {
+        let mut executor = crate::executors::test_executor(
+            ExecutorBuilder::<EthEvmNetwork>::default()
+                .inspectors(|stack| stack.cheatcodes(Arc::new(CheatsConfig::default())))
+                .gas_limit(1 << 24),
+            Default::default(),
+        );
+        let handler = Address::repeat_byte(0x11);
+        // Empty calldata is a no-op. Otherwise the calldata is forwarded to the cheatcode address
+        // when it is 36 bytes long (`vm.sleep`) or slot zero is set, and a 36-byte call then sets
+        // slot zero.
+        let mut code =
+            hex!("3615604557366024146000541715604557366000600037600060003660006000").to_vec();
+        code.push(0x73);
+        code.extend_from_slice(CHEATCODE_ADDRESS.as_slice());
+        code.extend_from_slice(&hex!("5af150366024141560455760016000555b00"));
+        executor.set_code(handler, Bytecode::new_raw(code.into())).unwrap();
+        let call = |calldata: Vec<u8>| {
+            let mut call = tx(None, None);
+            call.call_details.target = handler;
+            call.call_details.calldata = calldata.into();
+            call
+        };
+        let sleep = std::time::Duration::from_millis(500);
+        let noop = call(vec![]);
+        // A call to the cheatcode address itself runs `vm.sleep` before any cancellation poll.
+        let mut pause =
+            call(Vm::sleepCall { duration: U256::from(sleep.as_millis()) }.abi_encode());
+        pause.call_details.target = CHEATCODE_ADDRESS;
+        let arm = call(Vm::sleepCall { duration: U256::ZERO }.abi_encode());
+        let boom = call(Vm::assertTrue_1Call { condition: false, err: "boom".into() }.abi_encode());
+        let mut calls = vec![noop; 9];
+        calls[4] = pause;
+        calls[5] = arm;
+        calls[8] = boom;
+        let all = (0..calls.len()).collect::<Vec<_>>();
+        let full =
+            replay_handler_failure_sequence(executor.clone(), &calls, &all, false, None).unwrap();
+        assert!(full.anchor_asserted);
+
+        // Dropping the first four calls replays one sleep and is confirmed before the deadline. A
+        // later candidate replays the sleep again and crosses the deadline.
+        let config = InvariantConfig::default();
+        let progress = ShrinkProgress::new(&config, None, "test", None, None, false);
+        let start = Instant::now();
+        let shrunk = shrink_handler_sequence(
+            &config,
+            &calls,
+            full.anchor_fingerprint,
+            &executor,
+            &progress,
+            &EarlyExit::new(false),
+            Some(start + 2 * sleep),
+        )
+        .unwrap();
+        assert_eq!(shrunk, calls[4..]);
+        // A verifying replay after the deadline would sleep again.
+        assert!(start.elapsed() < 2 * sleep + sleep / 2);
     }
 
     #[test]
@@ -1695,6 +2098,7 @@ mod tests {
             &executor,
             &progress,
             &EarlyExit::new(false),
+            None,
         )
         .unwrap();
         assert_eq!(shrunk, calls);

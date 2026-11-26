@@ -373,6 +373,87 @@ async fn source_plain_and_directory(prj: _, cmd: _) {
     server.abort();
 }
 
+// Explorer replies must have a non-hidden contract root and nonempty sanitized source paths
+// before they can be expanded or used as a project source root.
+#[casttest]
+async fn source_directory_rejects_unsafe_contract_names(prj: _, cmd: _) {
+    let directory = prj.root().join("sources");
+    fs::create_dir_all(&directory).unwrap();
+    let sentinel = directory.join("foundry.toml");
+    let sentinel_contents = "[profile.default]\nffi = false\n";
+    fs::write(&sentinel, sentinel_contents).unwrap();
+    let external = prj.root().join("external");
+    let source = "[profile.default]\nffi = true\n";
+    let source_code = json!({ "foundry.toml": { "content": source } });
+
+    // Full name boundaries are covered in core; exercise each CLI validation entry point:
+    // `-d` writes the source tree, and `--flatten` uses it as the project source root.
+    for (contract_name, source_code, flatten, expected_error) in [
+        (
+            "",
+            source_code.clone(),
+            false,
+            "Error: invalid contract name from explorer: \"\"\n".to_string(),
+        ),
+        (
+            external.to_str().unwrap(),
+            source_code,
+            true,
+            format!(
+                "Error: invalid contract name from explorer: {:?}\n",
+                external.to_str().unwrap()
+            ),
+        ),
+        (
+            "foundry.toml",
+            json!({ "": { "content": source } }),
+            false,
+            format!(
+                "Error: invalid source path from explorer: {:?}\n",
+                Path::new("foundry.toml").join("")
+            ),
+        ),
+    ] {
+        let response = json!({
+            "status": "1", "message": "OK", "result": [{
+                "SourceCode": source_code,
+                "ABI": "[]", "ContractName": contract_name,
+                "CompilerVersion": "v0.8.30+commit.73712a01", "OptimizationUsed": "0",
+                "Runs": "200", "EVMVersion": "Default", "Proxy": "0"
+            }]
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let app = Router::new().route(
+            "/api",
+            get(move || {
+                let response = response.clone();
+                async move { Json(response) }
+            }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let command = cmd.cast_fuse().args([
+            "source",
+            "0x0000000000000000000000000000000000000001",
+            "--explorer-api-url",
+            &format!("{url}/api"),
+            "--explorer-url",
+            &url,
+            "-d",
+        ]);
+        if flatten {
+            command.arg(&sentinel).arg("--flatten");
+        } else {
+            command.arg(&directory);
+        }
+        command.assert_failure().stdout_eq("").stderr_eq(expected_error.raw());
+        assert_eq!(fs::read_to_string(&sentinel).unwrap(), sentinel_contents);
+        assert!(!external.exists());
+        server.abort();
+    }
+}
+
 // Tests that proxy interfaces include the implementation and remain valid Solidity.
 #[casttest]
 async fn interface_follows_etherscan_proxy_implementation(prj: _, cmd: _) {

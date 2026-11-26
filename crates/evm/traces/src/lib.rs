@@ -24,11 +24,11 @@ use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
     collections::{BTreeMap, BTreeSet},
-    fmt,
+    fmt::{self, Write},
     ops::{Deref, DerefMut},
 };
 
-use alloy_primitives::{Address, U256, map::HashMap};
+use alloy_primitives::{Address, Bytes, U256, map::HashMap};
 use tempo_contracts::precompiles::TIP20_CHANNEL_RESERVE_ADDRESS;
 
 /// Network context used to identify and decode execution traces.
@@ -89,9 +89,9 @@ pub use evm2_inspectors::tracing::{
     CallTraceArena, FourByteInspector, GethTraceBuilder, ParityTraceBuilder, StackSnapshotType,
     TraceWriter, TracingInspector, TracingInspectorConfig,
     types::{
-        CallKind, CallLog, CallTrace, CallTraceNode, CallTraceStep, DecodedCallData,
-        DecodedCallLog, DecodedCallTrace, DecodedInternalCall, DecodedTraceStep, RecordedMemory,
-        StorageChange, StorageChangeReason, TraceMemberOrder,
+        CallKind, CallLog, CallTrace, CallTraceNode, CallTraceStep, CallTraceStepExtra,
+        DecodedCallData, DecodedCallLog, DecodedCallTrace, DecodedInternalCall, DecodedTraceStep,
+        RecordedMemory, SelfdestructTrace, StorageChange, StorageChangeReason, TraceMemberOrder,
     },
 };
 
@@ -208,15 +208,12 @@ impl SparsedTraceArena {
                 ignored: &HashMap<(usize, usize), (usize, usize)>,
                 cur_ignore_end: &mut Option<(usize, usize)>,
             ) {
-                // Prepend an additional None item to the ordering to handle the beginning of the
-                // trace.
-                let items = std::iter::once(None)
-                    .chain(nodes[node_idx].ordering.clone().into_iter().map(Some))
-                    .enumerate();
-
                 let mut internal_calls = Vec::new();
                 let mut items_to_remove = BTreeSet::new();
-                for (item_idx, item) in items {
+                // Item 0 is an additional None item before the ordering to handle the beginning
+                // of the trace. The ordering of this node only changes after the loop.
+                for item_idx in 0..=nodes[node_idx].ordering.len() {
+                    let item = item_idx.checked_sub(1).map(|idx| nodes[node_idx].ordering[idx]);
                     if let Some(end_node) = ignored.get(&(node_idx, item_idx)) {
                         *cur_ignore_end = Some(*end_node);
                     }
@@ -237,8 +234,8 @@ impl SparsedTraceArena {
                         // we only remove decoded internal calls if they did not start/pause tracing
                         Some(TraceMemberOrder::Step(step_idx)) => {
                             // If this is an internal call beginning, track it in `internal_calls`
-                            if let Some(decoded) = &nodes[node_idx].trace.steps[step_idx].decoded
-                                && let DecodedTraceStep::InternalCall(_, end_step_idx) = &**decoded
+                            if let Some(DecodedTraceStep::InternalCall(_, end_step_idx)) =
+                                nodes[node_idx].trace.steps[step_idx].decoded()
                             {
                                 internal_calls.push((item_idx, remove, *end_step_idx));
                                 // we decide if we should remove it later
@@ -323,6 +320,26 @@ impl SparsedTraceArena {
             debug_steps.frames.iter_mut().for_each(|frame| frame.depth -= 1);
         }
     }
+
+    /// Returns the arena with only the data that a gas report reads.
+    ///
+    /// A gas report keeps every sampled run of a test until its suite is reported. Logs, the
+    /// return data of calls and spare node capacity are not read, and they add up over the
+    /// samples. The output of a create stays, because it is the runtime code that identifies the
+    /// created contract.
+    pub fn into_gas_report_arena(self) -> CallTraceArena {
+        let mut arena = self.arena;
+        let nodes = arena.nodes_mut();
+        for node in nodes.iter_mut() {
+            node.logs = Vec::new();
+            node.ordering = Vec::new();
+            if !node.trace.kind.is_any_create() {
+                node.trace.output = Bytes::new();
+            }
+        }
+        nodes.shrink_to_fit();
+        arena
+    }
 }
 
 impl Deref for SparsedTraceArena {
@@ -355,7 +372,7 @@ pub fn render_trace_arena(arena: &SparsedTraceArena) -> String {
 /// Prunes trace depth if depth is provided as an argument.
 pub fn prune_trace_depth(arena: &mut CallTraceArena, depth: usize) {
     for node in arena.nodes_mut() {
-        if node.trace.depth >= depth {
+        if usize::from(node.trace.depth) >= depth {
             node.ordering.clear();
         }
     }
@@ -373,7 +390,7 @@ pub fn trace_arena_at_depth(arena: &SparsedTraceArena, depth: usize) -> SparsedT
         }
         reachable[node_idx] = true;
         let node = &nodes[node_idx];
-        if node.trace.depth < depth {
+        if usize::from(node.trace.depth) < depth {
             pending.extend(node.ordering.iter().filter_map(|item| match item {
                 TraceMemberOrder::Call(child_idx) => Some(node.children[*child_idx]),
                 _ => None,
@@ -384,7 +401,7 @@ pub fn trace_arena_at_depth(arena: &SparsedTraceArena, depth: usize) -> SparsedT
     let mut remapped = vec![None; nodes.len()];
     for (next_idx, node) in nodes.iter_mut().filter(|node| reachable[node.idx]).enumerate() {
         remapped[node.idx] = Some(next_idx);
-        if node.trace.depth >= depth {
+        if usize::from(node.trace.depth) >= depth {
             node.ordering.clear();
             node.children.clear();
         } else {
@@ -446,7 +463,7 @@ pub fn render_trace_arena_inner(
         let needs_dedup = resolved.as_ref().nodes().iter().any(|node| {
             node.trace.steps.iter().any(|step| {
                 step.storage_change.is_some()
-                    && matches!(step.decoded.as_deref(), Some(DecodedTraceStep::Line(_)))
+                    && matches!(step.decoded(), Some(DecodedTraceStep::Line(_)))
             })
         });
         if needs_dedup {
@@ -454,7 +471,7 @@ pub fn render_trace_arena_inner(
             for node in resolved.to_mut().nodes_mut() {
                 for step in &mut node.trace.steps {
                     if step.storage_change.is_some()
-                        && matches!(step.decoded.as_deref(), Some(DecodedTraceStep::Line(_)))
+                        && matches!(step.decoded(), Some(DecodedTraceStep::Line(_)))
                     {
                         step.storage_change = None;
                     }
@@ -496,12 +513,14 @@ fn tempo_channel_storage_decodes(arena: &CallTraceArena) -> Option<String> {
     let mut rendered = String::new();
     rendered.push_str("Decoded TIP20ChannelReserve storage:\n");
     for (slot, before, after) in decoded_changes {
-        rendered.push_str(&format!(
-            "  @ {}: {} -> {}\n",
+        writeln!(
+            rendered,
+            "  @ {}: {} -> {}",
             format_storage_word(slot),
             format_channel_state(before),
             format_channel_state(after),
-        ));
+        )
+        .unwrap();
     }
     Some(rendered)
 }
@@ -543,7 +562,7 @@ fn decode_channel_state(value: U256) -> (U256, U256, u32) {
 }
 
 fn format_storage_word(value: U256) -> String {
-    if value < U256::from(1_000_000u64) { value.to_string() } else { format!("0x{value:x}") }
+    if value < U256::from(1_000_000u64) { value.to_string() } else { format!("{value:#x}") }
 }
 
 const fn convert_color_choice(choice: shell::ColorChoice) -> ColorChoice {
@@ -808,7 +827,6 @@ impl TraceRequirements {
 mod tests {
     use super::*;
     use alloy_network::TransactionBuilder;
-    use alloy_primitives::Bytes;
     use evm2::{
         bytecode::Bytecode,
         evm::{AccountInfo, InMemoryDB},
@@ -984,13 +1002,10 @@ mod tests {
                 stack: None,
                 push_stack: None,
                 memory: None,
-                returndata: Bytes::new(),
                 gas_remaining: 0,
                 gas_refund_counter: 0,
                 gas_cost: 0,
-                state_gas_cost: None,
                 state_gas_reservoir: None,
-                state_gas_spent: 0,
                 storage_change: Some(Box::new(StorageChange {
                     key: U256::ONE,
                     value: U256::from(2),
@@ -998,8 +1013,7 @@ mod tests {
                     reason: StorageChangeReason::SSTORE,
                 })),
                 status: Some(InstrStop::Stop),
-                immediate_bytes: None,
-                decoded: None,
+                extra: None,
             }],
             ..Default::default()
         };

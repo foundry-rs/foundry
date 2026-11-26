@@ -212,6 +212,48 @@ impl SymbolicExecutor {
         if self.is_sat_with_state(state, &constraints)? { Ok(None) } else { Ok(Some(value)) }
     }
 
+    /// Returns the account the path constraints fix the address word `expr` to, so a call or
+    /// account read through it sees that account. A word whose alias holds state stands for the
+    /// account and stays symbolic, as does a word another stateful alias may name, which only the
+    /// symbolic read sees; that read is unsupported when the word's own alias would hide the
+    /// account. A cheatcode address still has to be named concretely.
+    pub(super) fn fixed_address_word(
+        &mut self,
+        state: &PathState,
+        expr: SymExpr,
+    ) -> Result<SymExpr, SymbolicError> {
+        if expr.as_const().is_some() || state.world.alias_holds_state(&expr) {
+            return Ok(expr);
+        }
+        let Some(value) = state.constrained_word(&mut self.cx, &expr) else { return Ok(expr) };
+        // Only the low 160 bits name the account.
+        let address = word_to_address(value);
+        let value = address_word(address);
+        if [CHEATCODE_ADDRESS, SYMBOLIC_VM_COMPAT_ADDRESS].contains(&address) {
+            return Ok(expr);
+        }
+        let names_address = state
+            .world
+            .stateful_aliases_unguarded_against(address)
+            .cloned()
+            .map(|other| {
+                let other = other.address_operand(&mut self.cx);
+                SymBoolExpr::eq_word_const(&mut self.cx, &other, value)
+            })
+            .collect();
+        let names_address = SymBoolExpr::or(&mut self.cx, names_address);
+        if self.constraints_for_condition(state, names_address)?.is_none() {
+            return Ok(SymExpr::constant(&mut self.cx, value));
+        }
+        if state.world.resolve_address(&expr).is_some() {
+            return Err(SymbolicError::Unsupported(
+                "symbolic address fixed to an account whose state another symbolic address may \
+                 hold",
+            ));
+        }
+        Ok(expr)
+    }
+
     /// Rejects symbolic integer bit widths outside the EVM word size.
     pub(super) fn validate_symbolic_integer_bits(
         bits: U256,

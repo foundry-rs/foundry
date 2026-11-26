@@ -290,10 +290,10 @@ fn compile_storage_layout(
         namespaced_storage::parse_standard_json(&input.sources, &input.settings.remappings);
     let mut matches = output
         .contracts
-        .iter()
-        .filter_map(|(path, contracts)| Some((path, contracts.get(&name)?)))
+        .into_iter()
+        .filter_map(|(path, mut contracts)| Some((path, contracts.remove(&name)?)))
         .map(|(path, contract)| {
-            let layout = contract.storage_layout.clone();
+            let layout = contract.storage_layout;
             let Some(compiler) = &mut namespaces else { return layout };
             extend_external_storage_layout(compiler, path.as_str().as_ref(), &name, layout, address)
         })
@@ -314,15 +314,15 @@ fn compile_storage_layout(
 
 /// Appends the ERC-7201 namespaces of contract `name` in source `path` to its solc layout.
 ///
-/// Namespaces only add decoding coverage, so on failure the solc layout is returned unchanged.
+/// Namespaces only add decoding coverage, so on failure the solc layout is returned unchanged;
+/// [`namespaced_storage::extend_storage_layout`] leaves it untouched when it fails.
 fn extend_external_storage_layout(
     compiler: &mut solar::sema::Compiler,
     path: &Path,
     name: &str,
-    layout: StorageLayout,
+    mut layout: StorageLayout,
     address: Address,
 ) -> StorageLayout {
-    let mut extended = layout.clone();
     let result = compiler.enter_mut(|compiler| {
         namespaced_storage::lower(compiler)?;
         let gcx = compiler.gcx();
@@ -331,15 +331,12 @@ fn extend_external_storage_layout(
         let Some(contract) = namespaced_storage::find_contract(gcx, root, path, name) else {
             return Ok(());
         };
-        namespaced_storage::extend_storage_layout(&mut extended, gcx, root, contract)
+        namespaced_storage::extend_storage_layout(&mut layout, gcx, root, contract)
     });
-    match result {
-        Ok(()) => extended,
-        Err(err) => {
-            warn!(target: "external-storage", %address, %name, %err, "skipping ERC-7201 namespaces");
-            layout
-        }
+    if let Err(err) = result {
+        warn!(target: "external-storage", %address, %name, %err, "skipping ERC-7201 namespaces");
     }
+    layout
 }
 
 /// Runs solc in an empty directory and terminates it if the remaining lookup budget expires.
@@ -414,7 +411,9 @@ struct CachedStorageLayout {
 }
 
 /// Current [`CachedStorageLayout`] format.
-const CACHE_VERSION: u32 = 3;
+///
+/// Version 3 layouts may have been compiled from responses in the legacy shared mainnet cache.
+const CACHE_VERSION: u32 = 4;
 
 /// Path of the cache entry for `address`.
 fn cache_path(cache_dir: &Path, address: Address) -> PathBuf {
