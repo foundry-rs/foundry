@@ -9283,6 +9283,12 @@ contract SymbolicVestingSchedule {
             let result = json_test_result(&output, signature);
             assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
         }
+        let result =
+            json_test_result(&output, "checkStreamedBelowDeposit(uint128,uint40,uint40,uint40)");
+        assert_eq!(
+            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+            "optimized={optimized}: {result}"
+        );
 
         for signature in [
             "checkVestedPastLongerEnd(uint64,uint32,uint128,uint64)",
