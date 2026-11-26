@@ -54,9 +54,9 @@ struct ResolvedType {
     /// The type that its stack words can be decoded as. Structs and function types are not.
     decodable: Option<DynSolType>,
     abi: AbiType,
-    /// Whether a library ABI spells the type other than `abi`, or leaves out the function: enums,
-    /// structs and contracts by name, and storage pointers.
-    library_spelled: bool,
+    /// The name that the signature of a library function spells for the type: enums, structs and
+    /// contracts by name, and storage pointers with `storage`.
+    library_name: Option<String>,
 }
 
 /// A function, modifier, public state variable getter, or Yul function.
@@ -96,27 +96,15 @@ pub struct FunctionInfo {
     pub declared_name: String,
     /// What the ABI spells for each parameter, or `None` if the parameters are not known.
     pub abi_types: Option<Vec<AbiType>>,
-    /// What the ABI of a library spells for each parameter: the same, except that the types that
-    /// a library ABI spells by name are not known.
-    pub library_abi_types: Option<Vec<AbiType>>,
+    /// The signature that a library dispatches this function by, which spells enums, structs and
+    /// contracts by name and storage pointers with `storage`, or `None` if a type is not known.
+    pub library_signature: Option<String>,
     /// Whether the dispatcher or the call frame itself enters it.
     pub is_entry: bool,
-    /// Whether a library ABI spells a parameter other than the ABI types do, or leaves the
-    /// function out, so that its selector is no selector of the ABI.
-    pub library_spelled: bool,
     /// The names of the functions without an entry point that the compiler may have merged into
     /// this function, because they take and leave as many words and have the same code. A call
     /// to the entry can be a call to any of them.
     pub merged: Vec<String>,
-}
-
-/// Whether `name`, as the ABI spells a type, is an elementary type or an array of one.
-fn is_elementary(name: &str) -> bool {
-    let base = name.split('[').next().unwrap_or(name);
-    let digits = |rest: &str| rest.bytes().all(|b| b.is_ascii_digit());
-    matches!(base, "address" | "bool" | "string" | "bytes" | "function")
-        || base.strip_prefix("bytes").is_some_and(|rest| !rest.is_empty() && digits(rest))
-        || base.strip_prefix("uint").or_else(|| base.strip_prefix("int")).is_some_and(digits)
 }
 
 /// What the ABI spells for a parameter of a function.
@@ -126,30 +114,17 @@ pub enum AbiType {
     Known(String),
     /// A type that Solar did not resolve.
     Unknown,
-    /// A type that a library ABI spells by name, such as `Lib.K` or `Token`, and not by an
-    /// elementary type.
-    ByName,
 }
 
 impl FunctionInfo {
     /// Whether `signature`, as the ABI spells it, can be the signature of this function. The
     /// parameters that are not known match any type.
     pub fn matches_signature(&self, signature: &str) -> bool {
-        self.matches(signature, &self.abi_types)
-    }
-
-    /// Whether `signature`, as the ABI of a library spells it, can be the signature of this
-    /// function.
-    pub fn matches_library_signature(&self, signature: &str) -> bool {
-        self.matches(signature, &self.library_abi_types)
-    }
-
-    fn matches(&self, signature: &str, types: &Option<Vec<AbiType>>) -> bool {
         let Some((name, arguments)) = signature.split_once('(') else { return false };
         if name != self.declared_name {
             return false;
         }
-        let Some(types) = types else { return true };
+        let Some(types) = &self.abi_types else { return true };
         let Some(arguments) = arguments.strip_suffix(')') else { return false };
         // Split at the commas outside tuples.
         let mut depth = 0;
@@ -167,7 +142,6 @@ impl FunctionInfo {
             arguments.next().is_some_and(|argument| match ty {
                 AbiType::Known(known) => known == argument,
                 AbiType::Unknown => true,
-                AbiType::ByName => !is_elementary(argument),
             })
         });
         matches && arguments.next().is_none()
@@ -181,9 +155,8 @@ impl FunctionInfo {
             params: None,
             returns: None,
             abi_types: None,
-            library_abi_types: None,
+            library_signature: None,
             is_entry,
-            library_spelled: false,
             merged: Vec::new(),
         }
     }
@@ -228,19 +201,14 @@ impl SourceFunction {
             .as_ref()
             .filter(|_| !self.is_yul)
             .map(|params| params.iter().map(|param| param.ty.abi.clone()).collect());
-        let spelled_by_name = |param: &SourceParam| {
-            param.ty.library_spelled || param.storage == Some(Storage::Storage)
-        };
-        let library_abi_types =
-            self.params.as_ref().filter(|_| !self.is_yul).map(|params| {
-                params
-                    .iter()
-                    .map(|param| {
-                        if spelled_by_name(param) { AbiType::ByName } else { param.ty.abi.clone() }
-                    })
-                    .collect()
-            });
-        let library_spelled = self.params.iter().flatten().any(spelled_by_name);
+        let library_signature = self
+            .params
+            .as_ref()
+            .filter(|_| !self.is_yul)
+            .and_then(|params| {
+                params.iter().map(|param| param.ty.library_name.clone()).collect::<Option<Vec<_>>>()
+            })
+            .map(|names| format!("{}({})", self.name, names.join(",")));
         let spelled = signature.as_ref().unwrap_or(&self.name);
         let name = match &self.contract {
             Some(contract) => format!("{contract}::{spelled}"),
@@ -252,9 +220,8 @@ impl SourceFunction {
             returns,
             declared_name: self.name.clone(),
             abi_types,
-            library_abi_types,
+            library_signature,
             is_entry: self.is_entry,
-            library_spelled,
             merged: Vec::new(),
         }
     }
@@ -301,30 +268,46 @@ pub fn resolve_types(
 }
 
 fn resolve_type<'gcx>(gcx: Gcx<'gcx>, ty: Ty<'gcx>) -> ResolvedType {
-    let library_spelled = library_spelled(ty);
+    let library_name = library_name(gcx, ty, 0);
     match dyn_type(gcx, ty, 0) {
         Some(dyn_type) => ResolvedType {
             abi: AbiType::Known(abi_name(&dyn_type)),
             decodable: Some(dyn_type).filter(|ty| !has_tuple_or_function(ty)),
-            library_spelled,
+            library_name,
         },
-        None => ResolvedType { decodable: None, abi: AbiType::Unknown, library_spelled },
+        None => ResolvedType { decodable: None, abi: AbiType::Unknown, library_name },
     }
 }
 
-/// Whether the ABI of a library spells the type by name, or leaves out a function that has it:
-/// enums, structs and contracts, mappings, and storage pointers. User-defined value types are
-/// spelled as their underlying type.
-fn library_spelled(ty: Ty<'_>) -> bool {
-    match ty.kind {
-        TyKind::Ref(inner, location) => {
-            matches!(location, DataLocation::Storage) || library_spelled(inner)
-        }
-        TyKind::Array(element, _) | TyKind::DynArray(element) => library_spelled(element),
-        TyKind::Enum(_) | TyKind::Struct(_) | TyKind::Contract(_) | TyKind::Mapping(..) => true,
-        TyKind::Udvt(inner, _) => library_spelled(inner),
-        _ => false,
+/// The name that the signature of a library function spells for a type: enums, structs and
+/// contracts by their qualified name, user-defined value types as their underlying type, and
+/// storage pointers with `storage`. `depth` stops what contains itself.
+fn library_name<'gcx>(gcx: Gcx<'gcx>, ty: Ty<'gcx>, depth: usize) -> Option<String> {
+    if depth > 8 {
+        return None;
     }
+    Some(match ty.kind {
+        TyKind::Elementary(ty) => abi_name(&elementary(ty)),
+        TyKind::Ref(inner, location) => {
+            let name = library_name(gcx, inner, depth + 1)?;
+            if matches!(location, DataLocation::Storage) { format!("{name} storage") } else { name }
+        }
+        TyKind::Udvt(inner, _) => return library_name(gcx, inner, depth + 1),
+        TyKind::Array(element, size) => {
+            let size: usize = size.try_into().ok()?;
+            format!("{}[{size}]", library_name(gcx, element, depth + 1)?)
+        }
+        TyKind::DynArray(element) => format!("{}[]", library_name(gcx, element, depth + 1)?),
+        TyKind::Enum(id) => gcx.item_canonical_name(id).to_string(),
+        TyKind::Struct(id) => gcx.item_canonical_name(id).to_string(),
+        TyKind::Contract(id) => gcx.item_canonical_name(id).to_string(),
+        TyKind::Mapping(key, value) => format!(
+            "mapping({} => {})",
+            library_name(gcx, key, depth + 1)?,
+            library_name(gcx, value, depth + 1)?
+        ),
+        _ => return None,
+    })
 }
 
 /// The type that the ABI has for a type of Solar: user-defined value types are their underlying
@@ -517,7 +500,7 @@ impl<'ast> Visit<'ast> for YulFunctions<'_> {
                 ty: ResolvedType {
                     decodable: Some(DynSolType::Uint(256)),
                     abi: AbiType::Known("uint256".to_string()),
-                    library_spelled: false,
+                    library_name: Some("uint256".to_string()),
                 },
                 storage: None,
                 slots: 1,
@@ -605,7 +588,7 @@ fn params(
                 DataLocation::Storage | DataLocation::Transient => Storage::Storage,
             });
             let ty = resolved.map_or(
-                ResolvedType { decodable: None, abi: AbiType::Unknown, library_spelled: false },
+                ResolvedType { decodable: None, abi: AbiType::Unknown, library_name: None },
                 |resolved| resolved[i].clone(),
             );
             SourceParam { slots: slots(&var.ty, storage), ty, storage }
@@ -800,5 +783,41 @@ contract C {
         });
 
         assert!(resolved.is_empty());
+    }
+
+    #[test]
+    fn library_signatures_spell_types_as_solc_does() {
+        let source = "
+type Signed is int256;
+interface Tok {}
+library L {
+    enum K { A }
+    struct S { uint256 v; }
+    function a(K k) public pure {}
+    function b(Tok t) public pure {}
+    function c(S memory s) public pure {}
+    function d(S[] memory s, K[2] memory k) public pure {}
+    function e(S storage s, Signed x) public {}
+}
+";
+        let resolved = compiler(source, true).enter(|compiler| {
+            resolve_types(
+                compiler.gcx(),
+                compiler.sess().source_map(),
+                std::path::PathBuf::from("test.sol"),
+            )
+        });
+        let signature = |name: &str| {
+            let function = &resolved[&source.find(&format!("function {name}(")).unwrap()];
+            function.params.iter().map(|ty| ty.library_name.clone().unwrap()).collect::<Vec<_>>()
+        };
+
+        // The method identifiers that solc 0.8.39 gives: `a(L.K)`, `b(Tok)`, `c(L.S)` and
+        // `d(L.S[],L.K[2])`.
+        assert_eq!(signature("a"), ["L.K"]);
+        assert_eq!(signature("b"), ["Tok"]);
+        assert_eq!(signature("c"), ["L.S"]);
+        assert_eq!(signature("d"), ["L.S[]", "L.K[2]"]);
+        assert_eq!(signature("e"), ["L.S storage", "int256"]);
     }
 }

@@ -5,7 +5,7 @@ mod sources;
 
 use crate::{CallTraceNode, DecodedInternalCall, DecodedTraceStep};
 use alloy_dyn_abi::{DynSolType, DynSolValue, parser::Storage};
-use alloy_primitives::U256;
+use alloy_primitives::{U256, keccak256};
 use evm2::interpreter::opcode::OpCode;
 use foundry_common::fmt::format_token;
 use foundry_compilers::{artifacts::sourcemap::Jump, buildinfo::SourceEdit};
@@ -57,18 +57,19 @@ impl DebugTraceIdentifier {
         // Without an ABI every external function counts as dispatched.
         let selected =
             node.trace.data.first_chunk().and_then(|selector| artifact.selectors.get(selector));
-        // The signature tells overloads apart. A library ABI spells enums, structs and contracts
-        // by name, and leaves out the functions with `storage` parameters: the types spelled by
-        // name match any name that is no elementary type, and a selector that the ABI does not
-        // have is the one of such a function. The source of the artifact tells whether it is a
-        // library; contracts of the same name in other sources are others.
+        // The signature tells overloads apart. A library dispatches by a signature that spells
+        // enums, structs and contracts by name and storage pointers with `storage`, which is no
+        // signature of its ABI, so the selector of the call data is compared to the selector of
+        // that signature. The source of the artifact tells whether it is a library; contracts of
+        // the same name in other sources are others.
         let is_library = sources.is_library(artifact, contract_name);
+        let calldata_selector = node.trace.data.first_chunk::<4>();
         let is_dispatched = |function: &FunctionInfo| {
             artifact.selectors.is_empty()
-                || match (selected, is_library) {
-                    (Some(selected), false) => function.matches_signature(selected),
-                    (Some(selected), true) => function.matches_library_signature(selected),
-                    (None, is_library) => is_library && function.library_spelled,
+                || match (&function.library_signature, is_library) {
+                    (Some(signature), true) => calldata_selector
+                        .is_some_and(|selector| keccak256(signature)[..4] == selector[..]),
+                    _ => selected.is_some_and(|selected| function.matches_signature(selected)),
                 }
         };
         let resolve = |pc: u32, entries: &[FunctionEntry]| {
