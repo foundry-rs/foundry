@@ -6059,5 +6059,10 @@ async fn test_fork_debug_get_raw_header_and_block_pre_fork() {
             let raw: Bytes = fork.client().request(method, (fork_id,)).await.unwrap();
             assert_eq!(raw, expected, "{method} {fork_id}");
         }
+
+        // A block past the head is not found, as it is without a fork.
+        let err =
+            fork.client().request::<_, Bytes>(method, (BlockId::number(3),)).await.unwrap_err();
+        assert_eq!(err.as_error_resp().unwrap().code, -32001, "{method}");
     }
 }

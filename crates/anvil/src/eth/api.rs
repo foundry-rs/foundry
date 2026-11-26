@@ -4316,7 +4316,7 @@ impl EthApi<FoundryNetwork> {
         }
         // In fork mode, serve pre-fork blocks from the upstream provider.
         if let Some(fork) = self.get_fork()
-            && let BlockRequest::Number(number) = self.block_request(Some(block)).await?
+            && let BlockRequest::Number(number) = self.trace_block_request(block).await?
             && fork.predates_fork_inclusive(number)
         {
             return fork.raw_header(number).await?.ok_or(BlockchainError::BlockNotFound);
@@ -4334,7 +4334,7 @@ impl EthApi<FoundryNetwork> {
         }
         // In fork mode, serve pre-fork blocks from the upstream provider.
         if let Some(fork) = self.get_fork()
-            && let BlockRequest::Number(number) = self.block_request(Some(block)).await?
+            && let BlockRequest::Number(number) = self.trace_block_request(block).await?
             && fork.predates_fork_inclusive(number)
         {
             return fork.raw_block(number).await?.ok_or(BlockchainError::BlockNotFound);
