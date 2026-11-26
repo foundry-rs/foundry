@@ -470,9 +470,10 @@ contract BTest is Base {
 }
 "#,
     );
-    cmd.args(["test", "-vvvv", "--decode-internal", "--match-path", "test/A.t.sol"])
-        .assert_success()
-        .stdout_eq(str![[r#"
+    // One run compiles both builds, and which of them is first is not fixed. With one thread the
+    // two tests print in order.
+    cmd.args(["test", "-vvvv", "--decode-internal", "--threads", "1"]).assert_success().stdout_eq(
+        str![[r#"
 ...
 Traces:
   [..] ATest::test_a()
@@ -480,17 +481,12 @@ Traces:
     ├─ [..] Base::helper(uint256)(5)
     │   └─ ← 6
 ...
-"#]]);
-    cmd.forge_fuse()
-        .args(["test", "-vvvv", "--decode-internal", "--match-path", "test/B.t.sol"])
-        .assert_success()
-        .stdout_eq(str![[r#"
-...
 Traces:
   [..] BTest::test_b()
 ...
     ├─ [..] Base::helper(uint256)(6)
     │   └─ ← 7
 ...
-"#]]);
+"#]],
+    );
 }
