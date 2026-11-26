@@ -599,6 +599,8 @@ pub(super) struct ConstraintContext {
     facts: HashSet<SymBoolExpr>,
     /// The words each word is asserted to be at most, by a `<=` or `<` conjunct.
     order_facts: HashMap<SymExpr, Vec<SymExpr>>,
+    /// The `(small, large)` pairs of `order_facts` asserted by a strict `<` conjunct.
+    strict_order_facts: HashSet<(SymExpr, SymExpr)>,
 }
 
 #[derive(Clone, Copy)]
@@ -685,7 +687,11 @@ impl ConstraintContext {
         }
         for fact in &context.facts {
             let (small, large) = match fact.kind() {
-                SymBoolExprKind::Cmp(SymCmpOp::Ult | SymCmpOp::Ule, left, right) => (left, right),
+                SymBoolExprKind::Cmp(SymCmpOp::Ult, left, right) => {
+                    context.strict_order_facts.insert((left.clone(), right.clone()));
+                    (left, right)
+                }
+                SymBoolExprKind::Cmp(SymCmpOp::Ule, left, right) => (left, right),
                 SymBoolExprKind::Not(inner)
                     if let SymBoolExprKind::Cmp(SymCmpOp::Ult, left, right) = inner.kind() =>
                 {
@@ -1655,11 +1661,14 @@ impl ConstraintContext {
                     });
                 }
                 if left.min < right.max {
-                    // An asserted `subtrahend <= minuend` rules out wrapping.
-                    return self
-                        .asserted_upper_bounds(subtrahend)
-                        .contains(minuend)
-                        .then(|| WordInterval { min: U256::ZERO, max: left.max - right.min });
+                    // An asserted `subtrahend <= minuend` rules out wrapping, and a strict
+                    // `subtrahend < minuend` also rules out a zero difference.
+                    if !self.asserted_upper_bounds(subtrahend).contains(minuend) {
+                        return None;
+                    }
+                    let strict =
+                        self.strict_order_facts.contains(&(subtrahend.clone(), minuend.clone()));
+                    return WordInterval::new(U256::from(strict), left.max - right.min);
                 }
                 Some(WordInterval {
                     min: left.min.checked_sub(right.max)?,
