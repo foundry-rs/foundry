@@ -3050,6 +3050,52 @@ BRDA:12,0,0,-
     );
 }
 
+// A call of an abstract function runs its override, so a dead arm that calls the override must not
+// take the hits of the override that `run` dispatches to.
+#[forgetest]
+fn if_arm_calling_override_of_abstract_function_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Abstract.sol",
+        r#"
+abstract contract Base {
+    uint256 public total;
+    function run() external { _hook(); }
+    function _hook() internal virtual;
+}
+contract V is Base {
+    function never(bool b) internal { if (b) { _hook(); } }
+    function _hook() internal override { total = total | 1; }
+}
+"#,
+    );
+    prj.add_test(
+        "Abstract.t.sol",
+        r#"
+import "../src/Abstract.sol";
+
+contract AbstractTest {
+    function testRun() public {
+        V v = new V();
+        for (uint256 i = 0; i < 3; i++) v.run();
+    }
+}
+"#,
+    );
+
+    let optimized = ["coverage", "--no-isolate", "--keep-optimizer", "--optimize"];
+    let expected = str![[r#"
+...
+BRDA:10,0,0,-
+...
+"#]];
+    assert_lcov(cmd.args(optimized), expected.clone());
+    prj.update_config(|config| config.via_ir = true);
+    assert_lcov(cmd.forge_fuse().args(optimized), expected.clone());
+    prj.update_config(|config| config.via_ir = false);
+    let solar = prj.ensure_foundry_bin("solar");
+    assert_lcov(cmd.forge_fuse().args(optimized).arg("--use").arg(&solar), expected);
+}
+
 // An arm of an `if` with a proved condition has no jump, and it takes the hits of the function it
 // calls only when nothing else can run that function. Every `never` below is not compiled and its
 // function runs another way, so no arm may report hits, while the live control reports its own.

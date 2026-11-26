@@ -433,12 +433,23 @@ impl<'gcx> SourceVisitor<'gcx> {
     /// dropped from the report, as a test's, only counts as a call to those functions.
     fn push_callees(&mut self, call: &hir::Expr<'_>, callee: &hir::Expr<'_>, record: bool) {
         let hir::ExprKind::Ident(res) = &callee.peel_parens().kind else { return };
-        let callees = res
+        let functions = res
             .iter()
             .filter_map(|res| match res {
                 hir::Res::Item(hir::ItemId::Function(id)) => Some(self.gcx.hir.function(*id)),
                 _ => None,
             })
+            .collect::<Vec<_>>();
+        // A call that only names a function without a body runs an override of it, which the
+        // call counts for by name.
+        if let Some(function) = functions.first()
+            && functions.iter().all(|function| function.body.is_none())
+            && let Some(name) = &function.name
+        {
+            *self.member_calls.entry(Arc::from(name.as_str())).or_default() += 1;
+        }
+        let callees = functions
+            .into_iter()
             .filter(|function| function.body.is_some())
             .filter_map(|function| {
                 let &source_id = self.hir_source_ids.get(&function.source)?;
