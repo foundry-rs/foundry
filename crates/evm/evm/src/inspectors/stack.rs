@@ -505,6 +505,11 @@ pub struct InspectorStackInner {
     executed_destructs: Option<AddressMap<DestructedAccount>>,
     /// Address that reverted the call, if any.
     pub reverter: Option<Address>,
+    /// Gas tracker of the transaction's root frame, captured before settlement.
+    ///
+    /// Handlers that bill the whole gas limit overwrite the receipt afterwards. This is the
+    /// execution gas measured before that replacement.
+    pub root_frame_gas: Option<GasTracker>,
     /// LIFO stack tracking the effective address of traced calls delegated to the EVM provider.
     pending_call_traces: Vec<PendingCallTrace>,
     /// Pending CREATE2 deployer validation error, returned after the create hooks of the other
@@ -2478,6 +2483,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         if let Some(revert_diag) = self.inner.revert_diag.as_deref_mut() {
             revert_diag.frame_end();
         }
+        self.record_root_frame_gas(interp, message, result);
         self.restore_cheat_stepped();
     }
 
@@ -2600,6 +2606,8 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         if message.kind == MessageKind::Call {
             self.call_end(interp, message, result);
             self.finish_create2_redirect(message, result);
+            // `call_end` recorded the factory call. Record again once the result is the CREATE.
+            self.record_root_frame_gas(interp, message, result);
             return;
         }
 
@@ -2625,6 +2633,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
         if let Some(revert_diag) = self.inner.revert_diag.as_deref_mut() {
             revert_diag.frame_end();
         }
+        self.record_root_frame_gas(interp, message, result);
         self.restore_cheat_stepped();
     }
 
@@ -2648,6 +2657,22 @@ impl<FEN: FoundryEvmNetwork> Inspector<TypesFor<FEN>> for InspectorStackRefMut<'
 }
 
 impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
+    /// Records the root frame's gas when this frame is that root.
+    ///
+    /// Nested transactions keep the surrounding transaction's frame. Settlement may replace the
+    /// receipt gas with the gas limit; the root frame still holds the gas execution consumed.
+    fn record_root_frame_gas(
+        &mut self,
+        interp: &mut InterpreterFor<'_, '_, FEN>,
+        message: &MessageFor<FEN>,
+        result: &MessageResultFor<FEN>,
+    ) {
+        if self.inner.in_inner_context || message.depth != interp.host().initial_call_depth() {
+            return;
+        }
+        self.inner.root_frame_gas = Some(result.gas);
+    }
+
     /// Cools the running transaction's loaded accounts and storage before an isolated STATICCALL,
     /// as for a separate transaction.
     ///

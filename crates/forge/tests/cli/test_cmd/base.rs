@@ -732,3 +732,103 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
+
+/// Gas-limit billing must leave `forge test` reporting the gas each test consumed.
+///
+/// `1_073_720_760` is the default limit (`2^30`) minus the intrinsic gas of a 4-byte selector.
+#[forgetest]
+fn base_zenith_test_gas_is_metered(prj: _, cmd: _) {
+    prj.add_test(
+        "Gas.t.sol",
+        r#"
+contract Store {
+    uint256 public value = 1;
+}
+
+contract GasTest {
+    function test_Empty() public {}
+
+    function test_DeployAndStore() public {
+        new Store();
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args([
+            "test",
+            "--network",
+            "base",
+            "--hardfork",
+            "base:Zenith",
+            "--chain-id",
+            "8453",
+            "--match-contract",
+            "GasTest",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let empty = reported_gas(&stdout, "test_Empty");
+    let deploy = reported_gas(&stdout, "test_DeployAndStore");
+    assert_ne!(empty, deploy, "{stdout}");
+    assert_ne!(empty, 1_073_720_760, "{stdout}");
+    assert_ne!(deploy, 1_073_720_760, "{stdout}");
+    assert!(empty > 0 && empty < 10_000, "empty gas {empty}\n{stdout}");
+    assert!(deploy > empty && deploy < 1_000_000, "deploy gas {deploy}\n{stdout}");
+}
+
+/// The script summary uses the same synthetic call, so an empty `run` reports metered gas.
+#[forgetest]
+fn base_zenith_script_gas_is_metered(prj: _, cmd: _) {
+    prj.add_script(
+        "Gas.s.sol",
+        r#"
+contract GasScript {
+    function run() public {}
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args([
+            "script",
+            "script/Gas.s.sol:GasScript",
+            "--network",
+            "base",
+            "--hardfork",
+            "base:Zenith",
+            "--chain-id",
+            "8453",
+            "--non-interactive",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let gas = script_gas_used(&stdout);
+    assert_ne!(gas, 1_073_741_824, "{stdout}");
+    assert!(gas > 21_000 && gas < 100_000, "script gas {gas}\n{stdout}");
+}
+
+/// Reads the gas forge prints for `test` in `stdout`.
+fn reported_gas(stdout: &str, test: &str) -> u64 {
+    let marker = format!("{test}() (gas: ");
+    let start =
+        stdout.find(&marker).unwrap_or_else(|| panic!("missing {test}\n{stdout}")) + marker.len();
+    let end =
+        stdout[start..].find(')').unwrap_or_else(|| panic!("missing gas end\n{stdout}")) + start;
+    stdout[start..end].trim().parse().unwrap_or_else(|err| panic!("gas parse {err}\n{stdout}"))
+}
+
+/// Reads the `Gas used:` line forge script prints.
+fn script_gas_used(stdout: &str) -> u64 {
+    let marker = "Gas used: ";
+    let start =
+        stdout.find(marker).unwrap_or_else(|| panic!("missing gas\n{stdout}")) + marker.len();
+    let rest = &stdout[start..];
+    let end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+    rest[..end].parse().unwrap_or_else(|err| panic!("gas parse {err}\n{stdout}"))
+}
