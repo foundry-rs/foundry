@@ -754,12 +754,12 @@ impl ConstraintContext {
                 break;
             }
             for ((small, large), strict) in derived {
-                let larges = self.order_facts.entry(small.clone()).or_default();
-                if !larges.contains(&large) {
+                let uppers = self.order_facts.entry(small.clone()).or_default();
+                if !uppers.contains(&large) {
                     if pair_count >= MAX_LOCAL_ANALYSIS_NODES {
                         return;
                     }
-                    larges.push(large.clone());
+                    uppers.push(large.clone());
                     pair_count += 1;
                 }
                 if strict {
