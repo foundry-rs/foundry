@@ -48,13 +48,10 @@ ARG VERGEN_GIT_SHA="ffffffffffffffffffffffffffffffffffffffff"
 ENV VERGEN_GIT_SHA=$VERGEN_GIT_SHA
 
 # Build the project.
-ARG TARGETARCH
 COPY . .
-# Limit concurrent fat-LTO jobs on the ARM64 builder to reduce peak memory use.
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=shared \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=shared \
     --mount=type=cache,target=$SCCACHE_DIR,sharing=shared \
-    if [ "$TARGETARCH" = arm64 ]; then export CARGO_BUILD_JOBS=2; fi; \
     cargo build --locked --profile ${RUST_PROFILE} --no-default-features --features "${RUST_FEATURES}" \
     && sccache --show-stats
 
