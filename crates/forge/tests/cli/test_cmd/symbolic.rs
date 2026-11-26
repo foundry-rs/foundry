@@ -9005,7 +9005,10 @@ contract SymbolicMinRatioNested {
 // `a <= b` and `t <= k`, but not strictly, not at most `a`, not without either guard, and not
 // with another start or the reversed difference `a - b`. Likewise a Dutch auction price
 // `s - (s - e) * t / d` stays at least `e` once `e <= s` and `t <= d`, but not strictly, not at
-// least another floor, not without either guard, and not with a span from another start.
+// least another floor, not without either guard, and not with a span from another start. A time
+// ramp `a + (b - a) * (t - t0) / (t1 - t0)` stays at most `b` once `t0 <= t <= t1`, as a falling
+// one stays at least its end, but not strictly, not past `t1` or another deadline, not before `t0`,
+// and not over a span from another start.
 #[forgetest_init]
 fn symbolic_proves_weighted_average_bound(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_weighted_average_bound");
@@ -9280,6 +9283,82 @@ contract SymbolicWeightedAverage {
         uint256 price = start - (uint256(top) - end) * elapsed / duration;
         assert(price >= end);
     }
+
+    function checkRampBelowEnd(uint128 a, uint128 b, uint64 t0, uint64 t1, uint64 t) public pure {
+        require(a <= b && t0 < t1 && t0 <= t && t <= t1);
+        uint256 v = a + (uint256(b) - a) * (uint256(t) - t0) / (uint256(t1) - t0);
+        assert(v <= b);
+    }
+
+    // Curve's `_A()` ramps either way, with checked `uint64` times.
+    function checkCurveRampWithinEnds(uint128 a0, uint128 a1, uint64 t0, uint64 t1, uint64 t)
+        public
+        pure
+    {
+        require(t0 < t1 && t0 <= t && t <= t1);
+        if (a1 > a0) {
+            assert(a0 + (uint256(a1) - a0) * (t - t0) / (t1 - t0) <= a1);
+        } else {
+            assert(a0 - (uint256(a0) - a1) * (t - t0) / (t1 - t0) >= a1);
+        }
+    }
+
+    function checkRampDownAboveEnd(uint128 a, uint128 b, uint64 t0, uint64 t1, uint64 t)
+        public
+        pure
+    {
+        require(b <= a && t0 < t1 && t0 <= t && t <= t1);
+        uint256 v = a - (uint256(a) - b) * (uint256(t) - t0) / (uint256(t1) - t0);
+        assert(v >= b);
+    }
+
+    function checkRampStrictlyBelowEnd(uint128 a, uint128 b, uint64 t0, uint64 t1, uint64 t)
+        public
+        pure
+    {
+        require(a <= b && t0 < t1 && t0 <= t && t <= t1);
+        uint256 v = a + (uint256(b) - a) * (uint256(t) - t0) / (uint256(t1) - t0);
+        assert(v < b);
+    }
+
+    function checkRampAfterEnd(uint128 a, uint128 b, uint64 t0, uint64 t1, uint64 t) public pure {
+        require(a <= b && t0 < t1 && t0 <= t);
+        uint256 v = a + (uint256(b) - a) * (uint256(t) - t0) / (uint256(t1) - t0);
+        assert(v <= b);
+    }
+
+    // Ramps to `WAD`, so that the counterexample has few enough inputs for the local search.
+    function checkRampOtherSpanStart(uint128 a, uint64 t0, uint64 t1, uint64 t2, uint64 t)
+        public
+        pure
+    {
+        require(a <= WAD && t2 < t1 && t0 <= t && t <= t1);
+        uint256 v = a + (WAD - a) * (uint256(t) - t0) / (uint256(t1) - t2);
+        assert(v <= WAD);
+    }
+
+    // Unchecked, `t - t0` wraps once `t < t0`.
+    function checkRampBeforeStart(uint128 a, uint64 t0, uint64 t1, uint64 t) public pure {
+        require(a <= WAD && t0 < t1 && t <= t1);
+        uint256 v;
+        unchecked {
+            v = a + (WAD - a) * (uint256(t) - t0) / (uint256(t1) - t0);
+        }
+        assert(v <= WAD);
+    }
+
+    function checkRampOtherDeadline(
+        uint128 a,
+        uint128 b,
+        uint64 t0,
+        uint64 t1,
+        uint64 t3,
+        uint64 t
+    ) public pure {
+        require(a <= b && t0 < t1 && t0 <= t && t <= t3);
+        uint256 v = a + (uint256(b) - a) * (uint256(t) - t0) / (uint256(t1) - t0);
+        assert(v <= b);
+    }
 }
 "#,
     );
@@ -9306,6 +9385,9 @@ contract SymbolicWeightedAverage {
             "checkLerpBelowEnd(uint128,uint128,uint64)",
             "checkStepFeeBelowCap(uint128,uint128,uint16)",
             "checkDutchPriceAboveEnd(uint128,uint128,uint64,uint64)",
+            "checkRampBelowEnd(uint128,uint128,uint64,uint64,uint64)",
+            "checkCurveRampWithinEnds(uint128,uint128,uint64,uint64,uint64)",
+            "checkRampDownAboveEnd(uint128,uint128,uint64,uint64,uint64)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
@@ -9334,6 +9416,11 @@ contract SymbolicWeightedAverage {
             "checkDutchPriceStrictlyAboveEnd(uint128,uint128,uint64,uint64)",
             "checkDutchPriceOtherFloor(uint128,uint128,uint128,uint64,uint64)",
             "checkDutchPriceOtherStart(uint128,uint128,uint128,uint64,uint64)",
+            "checkRampStrictlyBelowEnd(uint128,uint128,uint64,uint64,uint64)",
+            "checkRampAfterEnd(uint128,uint128,uint64,uint64,uint64)",
+            "checkRampOtherSpanStart(uint128,uint64,uint64,uint64,uint64)",
+            "checkRampBeforeStart(uint128,uint64,uint64,uint64)",
+            "checkRampOtherDeadline(uint128,uint128,uint64,uint64,uint64,uint64)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(
