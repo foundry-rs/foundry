@@ -143,15 +143,14 @@ When adding or changing a `foundry.toml` setting:
 5. Run `cargo config-reference` and commit the updated
    `crates/config/assets/config-reference.json`. The test fails for settings
    without doc comments.
-6. Document the setting in `foundry-rs/book` under
-   `src/pages/config/reference/`, including its section, type, default, environment
-   variable when supported, behavior, and a valid TOML example. Update the config
-   reference navigation and `default-config.mdx` in the same documentation PR.
+6. `foundry-rs/book` imports that file into `src/pages/config/reference/`. A
+   new key lands in the Book's fallback region until a Book PR moves it to a
+   fitting page; workflows that span several settings belong in the Book's
+   prose.
 7. Keep CLI option text in the Rust clap definition; the book's CLI reference is
    generated from command help and should not be edited by hand.
 
-Use the implementation, defaults, and tests as the source of truth. Do not merge
-new user-facing configuration without the corresponding book update.
+Use the implementation, defaults, and tests as the source of truth.
 
 ## Cheatcodes
 
