@@ -47,7 +47,7 @@ pub enum CompilerSubcommands {
     #[command(visible_alias = "ls")]
     List(ListArgs),
 
-    /// Removes installed solc or Solar releases.
+    /// Removes installed Solar releases.
     #[command(visible_alias = "rm")]
     Remove(RemoveArgs),
 }
@@ -245,7 +245,7 @@ impl InstallArgs {
                 },
             };
             if !shell::is_json() {
-                sh_println!("{compiler}: {}", solc.solc.display())?;
+                sh_println!("{}", solc.solc.display())?;
             }
             installed.push(InstalledCompiler::new(&compiler, solc.solc));
         }
@@ -312,42 +312,19 @@ impl ListArgs {
 /// CLI arguments for `forge compiler remove`.
 #[derive(Debug, Parser)]
 pub struct RemoveArgs {
-    /// The compilers to remove: a solc version such as `0.8.30`, `solar` for the latest known
-    /// Solar release, or `solar:<version>`.
-    #[arg(required = true, value_name = "COMPILER", value_parser = parse_compiler)]
-    compilers: Vec<Compiler>,
+    /// The Solar releases to remove, as `solar:<version>`. Use `svm remove` for solc releases.
+    #[arg(required = true, value_name = "COMPILER", value_parser = parse_solar_pin)]
+    compilers: Vec<Version>,
 }
 
 impl RemoveArgs {
     pub fn run(self) -> Result<()> {
-        for compiler in self.compilers {
-            let removed = match &compiler {
-                Compiler::Solc(version) => remove_solc(version)?,
-                Compiler::Solar(version) => Solc::remove_solar(version)?,
-            };
-            eyre::ensure!(removed, "{compiler} is not installed");
-            sh_status!("Removed {compiler}")?;
+        for version in self.compilers {
+            eyre::ensure!(Solc::remove_solar(&version)?, "solar {version} is not installed");
+            sh_status!("Removed solar {version}")?;
         }
         Ok(())
     }
-}
-
-/// Removes an svm-installed solc release and returns whether it was installed.
-///
-/// Like `svm remove`, a removed global version is replaced by the newest remaining release, or
-/// cleared if none remains, so the svm `solc` shim keeps working.
-fn remove_solc(version: &Version) -> Result<bool> {
-    let mut installed = Solc::installed_versions();
-    let Some(index) = installed.iter().position(|v| v == version) else { return Ok(false) };
-    svm::remove_version(version)?;
-    installed.remove(index);
-    if svm::get_global_version().ok().flatten().as_ref() == Some(version) {
-        match installed.iter().max() {
-            Some(newest) => svm::set_global_version(newest)?,
-            None => svm::unset_global_version()?,
-        }
-    }
-    Ok(true)
 }
 
 /// A solc or Solar release named on the command line.
@@ -398,16 +375,6 @@ fn resolved_compiler_path(
 /// Parses a solc version, `solar`, or a `solar:<version>` pin, with the same rules as the `solc`
 /// config key.
 fn parse_compiler(s: &str) -> Result<Compiler, String> {
-    // Like the build path, stable releases are named without build metadata, so
-    // `0.8.30+commit.73712a01` installs and removes `0.8.30`. A prerelease keeps its full version,
-    // which is the name a `solc` pin installs it under.
-    let release = |version: Version| {
-        if version.pre.is_empty() {
-            Version { build: BuildMetadata::EMPTY, ..version }
-        } else {
-            version
-        }
-    };
     match SolcReq::from(s) {
         SolcReq::Version(version) => Ok(Compiler::Solc(release(version))),
         SolcReq::Solar(version) => Ok(Compiler::Solar(release(version))),
@@ -418,5 +385,27 @@ fn parse_compiler(s: &str) -> Result<Compiler, String> {
         SolcReq::Local(_) => Err("expected a solc version such as `0.8.30`, `solar`, or \
                                   `solar:<version>` naming a release 0.2.0 or later"
             .to_string()),
+    }
+}
+
+/// Parses a `solar:<version>` pin. A bare `solar` is rejected, because the release it names
+/// changes with the known releases.
+fn parse_solar_pin(s: &str) -> Result<Version, String> {
+    match SolcReq::from(s) {
+        SolcReq::Solar(version) => Ok(release(version)),
+        _ => Err("expected `solar:<version>`; use `svm remove` for solc releases".to_string()),
+    }
+}
+
+/// Returns the release name of `version`.
+///
+/// Like the build path, stable releases are named without build metadata, so
+/// `0.8.30+commit.73712a01` names `0.8.30`. A prerelease keeps its full version, which is the name
+/// a `solc` pin installs it under.
+fn release(version: Version) -> Version {
+    if version.pre.is_empty() {
+        Version { build: BuildMetadata::EMPTY, ..version }
+    } else {
+        version
     }
 }

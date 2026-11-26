@@ -6,7 +6,9 @@ use foundry_test_utils::{
     util::{SOLC_VERSION, get_vyper},
 };
 use path_slash::PathBufExt;
-use std::fs;
+
+#[cfg(unix)]
+use crate::cmd::write_fake_solar;
 
 const CONTRACT_A: &str = r#"
 // SPDX-license-identifier: MIT
@@ -359,28 +361,27 @@ For more information, try '--help'.
 "#]]);
 }
 
+// Install, list and remove run offline against an installed release.
 #[cfg(unix)]
 #[forgetest]
 fn can_install_list_and_remove_solar(cmd: _) {
     let home = tempfile::tempdir().unwrap();
-    let home = home.path().to_str().unwrap();
+    let home = home.path();
+    write_fake_solar(&home.join(".foundry/solar/9.9.9/solar"), "0.8.38+commit.3a70399.solar.9.9.9");
 
     cmd.env("HOME", home);
-    cmd.args(["compiler", "install", "solar:0.3.0"])
+    cmd.args(["compiler", "install", "solar:9.9.9"])
         .assert_success()
         .stdout_eq(str![[r#"
-solar 0.3.0: [..]/.foundry/solar/0.3.0/solar
+[..]/.foundry/solar/9.9.9/solar
 
 "#]])
-        .stderr_eq(str![[r#"
-Installing solar 0.3.0
-
-"#]]);
+        .stderr_eq("");
 
     cmd.forge_fuse().env("HOME", home);
-    cmd.args(["compiler", "install", "solar:0.3.0", "--json"]).assert_success().stdout_eq(
+    cmd.args(["compiler", "install", "solar:9.9.9", "--json"]).assert_success().stdout_eq(
         str![[
-            r#"[{"compiler":"solar","version":"0.3.0","path":"[..]/.foundry/solar/0.3.0/solar"}]"#
+            r#"[{"compiler":"solar","version":"9.9.9","path":"[..]/.foundry/solar/9.9.9/solar"}]"#
         ]]
         .is_json(),
     );
@@ -388,63 +389,28 @@ Installing solar 0.3.0
     cmd.forge_fuse().env("HOME", home);
     cmd.args(["compiler", "list", "--json"])
         .assert_success()
-        .stdout_eq(str![[r#"{"solc":"{...}","solar":["0.3.0"]}"#]].is_json());
+        .stdout_eq(str![[r#"{"solc":"{...}","solar":["9.9.9"]}"#]].is_json());
+
+    // Only a pinned Solar release can be removed.
+    for compiler in ["solar", "0.8.30"] {
+        cmd.forge_fuse().env("HOME", home);
+        cmd.args(["compiler", "remove", compiler]).assert_failure().stderr_eq(format!(
+            "error: invalid value '{compiler}' for '<COMPILER>...': expected `solar:<version>`; use \
+             `svm remove` for solc releases\n\nFor more information, try '--help'.\n"
+        ));
+    }
 
     cmd.forge_fuse().env("HOME", home);
-    cmd.args(["compiler", "remove", "solar:0.3.0"]).assert_success().stdout_eq("").stderr_eq(str![
+    cmd.args(["compiler", "remove", "solar:9.9.9"]).assert_success().stdout_eq("").stderr_eq(str![
         [r#"
-Removed solar 0.3.0
+Removed solar 9.9.9
 
 "#]
     ]);
 
     cmd.forge_fuse().env("HOME", home);
-    cmd.args(["compiler", "remove", "solar:0.3.0"]).assert_failure().stderr_eq(str![[r#"
-Error: solar 0.3.0 is not installed
+    cmd.args(["compiler", "remove", "solar:9.9.9"]).assert_failure().stderr_eq(str![[r#"
+Error: solar 9.9.9 is not installed
 
 "#]]);
-}
-
-#[cfg(unix)]
-#[forgetest]
-fn compiler_remove_moves_svm_global_version(cmd: _) {
-    let home = tempfile::tempdir().unwrap();
-    let svm = home.path().join(".svm");
-    for version in ["0.8.29", "0.8.30", "0.8.30-pre.1", "0.8.31-pre.1+commit.b59566f6"] {
-        fs::create_dir_all(svm.join(version)).unwrap();
-        fs::write(svm.join(version).join(format!("solc-{version}")), "").unwrap();
-    }
-    fs::write(svm.join(".global-version"), "0.8.30").unwrap();
-
-    // A prerelease names another release, so the stable one and the global version stay.
-    cmd.env("HOME", home.path());
-    cmd.args(["compiler", "remove", "0.8.30-pre.1"]).assert_success().stderr_eq(str![[r#"
-Removed solc 0.8.30-pre.1
-
-"#]]);
-    assert!(svm.join("0.8.30").exists());
-    assert_eq!(fs::read_to_string(svm.join(".global-version")).unwrap(), "0.8.30");
-
-    // A prerelease pinned with build metadata is installed under its full version.
-    cmd.forge_fuse().env("HOME", home.path());
-    cmd.args(["compiler", "remove", "0.8.31-pre.1+commit.b59566f6"]).assert_success().stderr_eq(
-        str![[r#"
-Removed solc 0.8.31-pre.1+commit.b59566f6
-
-"#]],
-    );
-
-    // Build metadata names the same release.
-    cmd.forge_fuse().env("HOME", home.path());
-    cmd.args(["compiler", "remove", "0.8.30+commit.73712a01"]).assert_success().stderr_eq(str![[
-        r#"
-Removed solc 0.8.30
-
-"#
-    ]]);
-    assert_eq!(fs::read_to_string(svm.join(".global-version")).unwrap(), "0.8.29");
-
-    cmd.forge_fuse().env("HOME", home.path());
-    cmd.args(["compiler", "remove", "0.8.29"]).assert_success();
-    assert_eq!(fs::read_to_string(svm.join(".global-version")).unwrap(), "");
 }
