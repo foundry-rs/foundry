@@ -8933,7 +8933,9 @@ contract SymbolicMinRatioNested {
 // An EMA or weighted average `(p * u + q * v) / k` with `u + v <= k` stays at most a bound on
 // `p` and `q`. A lerp or a two-step fee written as `a + (b - a) * t / k` stays at most `b` once
 // `a <= b` and `t <= k`, but not strictly, not at most `a`, not without either guard, and not
-// with another start or the reversed difference `a - b`.
+// with another start or the reversed difference `a - b`. Likewise a Dutch auction price
+// `s - (s - e) * t / d` stays at least `e` once `e <= s` and `t <= d`, but not strictly, not at
+// least another floor, not without either guard, and not with a span from another start.
 #[forgetest_init]
 fn symbolic_proves_weighted_average_bound(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_weighted_average_bound");
@@ -9137,6 +9139,77 @@ contract SymbolicWeightedAverage {
         }
         assert(a + span * t / WAD <= b);
     }
+
+    function checkDutchPriceAboveEnd(uint128 start, uint128 end, uint64 elapsed, uint64 duration)
+        public
+        pure
+    {
+        require(end <= start && elapsed <= duration);
+        uint256 price = start - (uint256(start) - end) * elapsed / duration;
+        assert(price >= end);
+    }
+
+    function checkDutchPriceAfterDuration(
+        uint128 start,
+        uint128 end,
+        uint64 elapsed,
+        uint64 duration
+    ) public pure {
+        require(end <= start);
+        uint256 price = start - (uint256(start) - end) * elapsed / duration;
+        assert(price >= end);
+    }
+
+    // Unchecked, `start - end` wraps once `end > start`.
+    function checkDutchPriceUnorderedEnds(
+        uint128 start,
+        uint128 end,
+        uint64 elapsed,
+        uint64 duration
+    ) public pure {
+        require(elapsed <= duration);
+        uint256 span;
+        unchecked {
+            span = uint256(start) - end;
+        }
+        uint256 price = start - span * elapsed / duration;
+        assert(price >= end);
+    }
+
+    function checkDutchPriceStrictlyAboveEnd(
+        uint128 start,
+        uint128 end,
+        uint64 elapsed,
+        uint64 duration
+    ) public pure {
+        require(end <= start && elapsed <= duration);
+        uint256 price = start - (uint256(start) - end) * elapsed / duration;
+        assert(price > end);
+    }
+
+    function checkDutchPriceOtherFloor(
+        uint128 start,
+        uint128 end,
+        uint128 floor,
+        uint64 elapsed,
+        uint64 duration
+    ) public pure {
+        require(end <= start && floor <= start && elapsed <= duration);
+        uint256 price = start - (uint256(start) - end) * elapsed / duration;
+        assert(price >= floor);
+    }
+
+    function checkDutchPriceOtherStart(
+        uint128 start,
+        uint128 top,
+        uint128 end,
+        uint64 elapsed,
+        uint64 duration
+    ) public pure {
+        require(end <= start && end <= top && elapsed <= duration);
+        uint256 price = start - (uint256(top) - end) * elapsed / duration;
+        assert(price >= end);
+    }
 }
 "#,
     );
@@ -9162,6 +9235,7 @@ contract SymbolicWeightedAverage {
             "checkMaskedComplement(uint128,uint128,uint256,uint256,uint128)",
             "checkLerpBelowEnd(uint128,uint128,uint64)",
             "checkStepFeeBelowCap(uint128,uint128,uint16)",
+            "checkDutchPriceAboveEnd(uint128,uint128,uint64,uint64)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
@@ -9185,6 +9259,11 @@ contract SymbolicWeightedAverage {
             "checkLerpBelowStart(uint128,uint128,uint64)",
             "checkLerpOtherStart(uint128,uint128,uint128,uint64)",
             "checkLerpSwappedSpan(uint128,uint128,uint64)",
+            "checkDutchPriceAfterDuration(uint128,uint128,uint64,uint64)",
+            "checkDutchPriceUnorderedEnds(uint128,uint128,uint64,uint64)",
+            "checkDutchPriceStrictlyAboveEnd(uint128,uint128,uint64,uint64)",
+            "checkDutchPriceOtherFloor(uint128,uint128,uint128,uint64,uint64)",
+            "checkDutchPriceOtherStart(uint128,uint128,uint128,uint64,uint64)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(
