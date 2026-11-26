@@ -750,6 +750,16 @@ impl<'a> AnchorIndex<'a> {
         }
         let statement = self.simple(item_id, loc).ok()?;
         let body = self.simple(item_id, body).ok()?;
+        // A body that starts with a loop head runs it once per iteration, not per entry.
+        let ic = self.pcs.binary_search(&body.instruction).ok()?;
+        let start = self.address_pushes.partition_point(|&(target, _)| target < body.instruction);
+        if self.address_pushes[start..]
+            .iter()
+            .take_while(|&&(target, _)| target == body.instruction)
+            .any(|&(_, push)| push >= ic)
+        {
+            return None;
+        }
         Some((statement, None, vec![(body.instruction, false)]))
     }
 

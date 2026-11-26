@@ -5389,6 +5389,48 @@ BRDA:19,2,1,2
     assert_lcov(cmd.forge_fuse().args(modes).arg("--use").arg(&solar), expected);
 }
 
+// A body that starts with a loop runs its head once per iteration, so the implicit false branch
+// counts the skipped evaluations from the condition's jump instead.
+#[forgetest]
+fn implicit_false_branch_counts_before_a_loop_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Loop.sol",
+        r#"
+contract Loop {
+    function run(uint256 n) external pure returns (uint256) {
+        if (n > 0) { while (n > 0) n--; }
+        return n;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Loop.t.sol",
+        r#"
+import "../src/Loop.sol";
+
+contract LoopTest {
+    function testRun() public {
+        Loop loop = new Loop();
+        loop.run(2);
+        loop.run(0);
+        loop.run(0);
+    }
+}
+"#,
+    );
+
+    let expected = str![[r#"
+...
+BRDA:6,0,0,[..]
+BRDA:6,0,1,2
+...
+"#]];
+    assert_lcov(cmd.args(["coverage", "--no-isolate"]), expected.clone());
+    prj.update_config(|config| config.via_ir = true);
+    assert_lcov(cmd.forge_fuse().args(["coverage", "--no-isolate"]), expected);
+}
+
 // A condition without `else` reports its implicit false branch, so a hit line always has an
 // evaluated branch, as strict genhtml validation requires.
 #[forgetest]
