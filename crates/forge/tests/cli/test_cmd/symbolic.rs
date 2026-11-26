@@ -7754,18 +7754,17 @@ contract RoundedProductTest {
         assert(value / 1e9 / 1e9 == value / 1e18);
     }
 
-    // Once the divisors' product exceeds the word, no dividend reaches it.
-    function checkOverflowingNestedQuotient(uint256 value) external pure {
-        assert(value / 3e40 / 5e40 == 0);
+    // Equality orders two quotients by a stable hash, which puts this nested side on the right.
+    function checkReversedNestedConstantQuotient(uint256 value) external pure {
+        assert(value / 21 == value / 3 / 7);
     }
 
     function checkNestedQuotientIsNotFiner(uint256 value) external pure {
         assert(value / 1e9 / 1e9 == value / 1e17);
     }
 
-    // `9e76` still fits in a word, so `type(uint256).max` keeps a quotient of one.
-    function checkNestedQuotientBelowWord(uint256 value) external pure {
-        assert(value / 3e38 / 3e38 == 0);
+    function checkNestedQuotientOfOtherValue(uint256 value, uint256 other) external pure {
+        assert(value / 1e9 / 1e9 == other / 1e18);
     }
 
     // The divisors' product wraps to `2**129 + 1`, which must not stand in for it.
@@ -7822,7 +7821,7 @@ contract RoundedProductTest {
                 "--symbolic-timeout",
                 "30",
                 "--match-test",
-                "check(FloorError|DividendRelation|WrappingDividendRelation|CeilingError|CeilingRoundTrip|SymbolicDivisorFacts|EuclideanIdentities|SymbolicEuclideanIdentity|NarrowFloorError|NestedConstantQuotient|OverflowingNestedQuotient|NestedFeeEuclideanIdentity|NestedFeeCeiling|BasisPointsFee|SlippageMinimum|TransferConservation)",
+                "check(FloorError|DividendRelation|WrappingDividendRelation|CeilingError|CeilingRoundTrip|SymbolicDivisorFacts|EuclideanIdentities|SymbolicEuclideanIdentity|NarrowFloorError|NestedConstantQuotient|ReversedNestedConstantQuotient|NestedFeeEuclideanIdentity|NestedFeeCeiling|BasisPointsFee|SlippageMinimum|TransferConservation)",
             ])
             .assert_success()
             .get_output()
@@ -7830,6 +7829,7 @@ contract RoundedProductTest {
             .clone();
         for signature in [
             "checkNestedConstantQuotient(uint256)",
+            "checkReversedNestedConstantQuotient(uint256)",
             "checkNestedFeeEuclideanIdentity(uint128,uint16)",
             "checkNestedFeeCeiling(uint128,uint16)",
         ] {
@@ -7848,7 +7848,7 @@ contract RoundedProductTest {
                 "--symbolic-timeout",
                 "30",
                 "--match-test",
-                "check(CeilingIsNotExact|WrappingCeiling|ReversedFloorError|NestedQuotientIsNotFiner|NestedQuotientBelowWord|WrappedNestedDivisor|MixedEuclideanSum)",
+                "check(CeilingIsNotExact|WrappingCeiling|ReversedFloorError|NestedQuotientIsNotFiner|NestedQuotientOfOtherValue|WrappedNestedDivisor|MixedEuclideanSum)",
             ])
             .assert_failure()
             .get_output()
@@ -7859,7 +7859,6 @@ contract RoundedProductTest {
             "checkWrappingCeiling",
             "checkReversedFloorError",
             "checkNestedQuotientIsNotFiner",
-            "checkNestedQuotientBelowWord",
             "checkWrappedNestedDivisor",
         ] {
             let signature = format!("{test}(uint256)");
@@ -7869,9 +7868,20 @@ contract RoundedProductTest {
                 "{test}, optimized={optimized}"
             );
         }
-        let result = json_test_result(&output, "checkMixedEuclideanSum(uint256,uint256,uint256)");
-        assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
-        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
+        for signature in [
+            "checkMixedEuclideanSum(uint256,uint256,uint256)",
+            "checkNestedQuotientOfOtherValue(uint256,uint256)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "{signature}, optimized={optimized}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "{signature}, optimized={optimized}"
+            );
+        }
     }
 }
 
