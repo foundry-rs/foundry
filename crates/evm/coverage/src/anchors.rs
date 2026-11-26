@@ -898,9 +898,11 @@ impl<'a> AnchorIndex<'a> {
                     | opcode::INVALID
                     | opcode::SELFDESTRUCT => return trace,
                     op @ opcode::PUSH1..=opcode::PUSH4 => {
-                        let immediate = &self.bytecode[pc + 1..];
                         let len = (op - opcode::PUSH0) as usize;
-                        push = jump_destination(&immediate[..len]).ok();
+                        push = self
+                            .bytecode
+                            .get(pc + 1..pc + 1 + len)
+                            .and_then(|immediate| jump_destination(immediate).ok());
                     }
                     _ => push = None,
                 }
@@ -1659,6 +1661,16 @@ mod tests {
         ] {
             assert_eq!(ternary_anchors(&bytecode, source_map), expected, "{source_map}");
         }
+    }
+
+    #[test]
+    fn trace_stops_at_a_truncated_push_after_the_source_map() {
+        // The source map ends before the `PUSH2` that the end of the code cuts short.
+        let bytecode = [opcode::JUMPDEST, opcode::PUSH2, 1];
+        let source_map = sourcemap::parse("10:20:0").unwrap();
+        let ic_pc_map = InstructionMap::new(&bytecode, SpecId::NEXT);
+        let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
+        assert_eq!(index.trace(0), [0, 1]);
     }
 
     #[test]
