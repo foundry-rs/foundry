@@ -3107,7 +3107,9 @@ contract Gate {
     uint256 public total;
     modifier gate(bool allowed) { while (allowed) { _; break; } }
     function bump(bool allowed) internal gate(allowed) { total += 1; }
-    function run(bool allowed) external { if (true) { bump(allowed); } }
+    function run(bool allowed) external {
+        if (true) { bump(allowed); }
+    }
 }
 "#,
     );
@@ -3134,7 +3136,7 @@ contract GateTest {
         cmd.args(optimized),
         str![[r#"
 ...
-BRDA:8,0,0,3
+BRDA:9,0,0,3
 ...
 "#]],
     );
@@ -3143,7 +3145,7 @@ BRDA:8,0,0,3
         cmd.forge_fuse().args(optimized),
         str![[r#"
 ...
-BRDA:8,0,0,-
+BRDA:9,0,0,-
 ...
 "#]],
     );
@@ -3153,7 +3155,7 @@ BRDA:8,0,0,-
         cmd.forge_fuse().args(optimized).arg("--use").arg(&solar),
         str![[r#"
 ...
-BRDA:8,0,0,0
+BRDA:9,0,0,-
 ...
 "#]],
     );
