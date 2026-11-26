@@ -3176,6 +3176,8 @@ BRDA:8,1,1,-
     assert_lcov(cmd.forge_fuse().args(optimized).arg("--use").arg(&solar), counted);
 }
 
+// An operator that a `using` directive binds to a function runs it from every use of the operator,
+// so a dead arm that calls the function by name must not take the hits of those uses.
 #[forgetest]
 fn if_arm_calling_operator_function_lcov(prj: _, cmd: _) {
     prj.add_source(
@@ -5421,7 +5423,6 @@ contract Called {
     uint256 t;
     modifier m(bool a) { if (a) { _; } }
     function bump(bool a) internal m(a) { t += 1; }
-    function never(bool a) internal { if (true) { bump(a); } }
     function run(bool a) external { bump(a); }
 }
 "#,
@@ -5456,8 +5457,8 @@ contract ModifiersTest {
 
     // The modifier of `Equal.f` runs the body once and skips it once, and the modifier of
     // `Equal.g` skips it three times and runs it once. The modifier of `Loop` runs a body that
-    // starts with a loop once and skips it twice. The modifier of `Dead` and the calls in the
-    // `never` functions never run, and `Called` runs its modifier twice.
+    // starts with a loop once and skips it twice. The modifier of `Dead` and the call in its
+    // `never` never run, and `Called` runs its modifier twice.
     let expected = str![[r#"
 ...
 BRDA:6,0,0,1
@@ -5478,9 +5479,6 @@ BRDA:22,4,1,-
 BRDA:28,5,0,1
 BRDA:28,5,1,1
 ...
-BRDA:30,6,0,-
-BRDA:30,6,1,-
-...
 "#]];
     assert_lcov(cmd.arg("coverage"), expected.clone());
     prj.update_config(|config| config.via_ir = true);
@@ -5488,6 +5486,77 @@ BRDA:30,6,1,-
     prj.update_config(|config| config.via_ir = false);
     let solar = prj.ensure_foundry_bin("solar");
     assert_lcov(cmd.forge_fuse().arg("coverage").arg("--use").arg(&solar), expected);
+}
+
+// A modifier's placeholder arm and a call of a function with a modifier stay uncounted when the
+// code of the modifier or of the function can be in several places: a function that two functions
+// call can be inlined into both, and a modifier that a derived contract overrides runs the
+// override.
+#[forgetest]
+fn modifier_arms_stay_uncounted_when_code_is_in_several_places_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Copies.sol",
+        r#"
+contract Twice {
+    uint256 t;
+    modifier m(bool a) { if (a) { _; } }
+    function bump(bool a) internal m(a) { t += 1; }
+    function f(bool a) external { bump(a); }
+    function g(bool a) external { bump(a); }
+}
+
+contract Base {
+    uint256 t;
+    modifier m(bool a) virtual { if (a) { _; } }
+    function bump(bool a) internal m(a) { t += 1; }
+    function run(bool a) external { if (true) { bump(a); } }
+}
+
+contract Derived is Base {
+    modifier m(bool a) override { if (!a) { _; } }
+}
+"#,
+    );
+    prj.add_test(
+        "Copies.t.sol",
+        r#"
+import "../src/Copies.sol";
+
+contract CopiesTest {
+    function testRun() public {
+        Twice twice = new Twice();
+        twice.f(true);
+        twice.g(true);
+        twice.g(false);
+        Derived derived = new Derived();
+        derived.run(true);
+        derived.run(false);
+        derived.run(false);
+    }
+}
+"#,
+    );
+
+    // `Twice` runs its modifier three times and `Derived` runs its override three times, once
+    // for `true` and twice for `false`, and calls `bump` three times.
+    let optimized = ["coverage", "--no-isolate", "--keep-optimizer", "--optimize"];
+    let solar = prj.ensure_foundry_bin("solar");
+    cmd.args(optimized)
+        .arg("--use")
+        .arg(&solar)
+        .args(["--report=lcov", "--report-file"])
+        .assert_file(str![[r#"
+...
+BRDA:6,0,0,0
+BRDA:6,0,1,0
+...
+BRDA:16,2,0,0
+BRDA:16,2,1,0
+...
+BRDA:20,3,0,0
+BRDA:20,3,1,0
+...
+"#]]);
 }
 
 // A body that starts with a loop runs its head once per iteration, so the implicit false branch
