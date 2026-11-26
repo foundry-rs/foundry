@@ -10679,6 +10679,90 @@ contract UpgradedResumeScript is Script {
     assert_eq!(provider.get_transaction_count(root.address()).await.unwrap(), nonce + 1);
 }
 
+/// A script that broadcasts from an EOA upgraded with its own key as the only owner, the default of
+/// `cast wallet upgrade`, signs with that key as the account's owner.
+#[forgetest_init]
+async fn tempo_t14_script_broadcasts_from_self_owned_upgraded_eoa(prj: _, cmd: _) {
+    prj.initialize_default_contracts();
+    let script = prj.add_script(
+        "SelfOwnedDeploy.s.sol",
+        r#"
+import {Script} from "forge-std/Script.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract SelfOwnedDeployScript is Script {
+    function run() external {
+        vm.startBroadcast();
+        new Counter();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let root = handle.dev_wallets().nth(3).unwrap();
+    let root_key = hex::encode_prefixed(root.to_bytes());
+    let fee_token = foundry_common::tempo::ALPHA_USD_ADDRESS.to_string();
+    let upgrade = prj.add_script(
+        "SelfUpgrade.s.sol",
+        &format!(
+            r#"
+import {{Script}} from "forge-std/Script.sol";
+
+interface IConfigurableAccount {{
+    struct ConfigurableAccountOwner {{
+        address owner;
+        uint8 weight;
+    }}
+
+    function upgradeAccount(uint8 threshold, ConfigurableAccountOwner[] calldata owners) external;
+}}
+
+contract SelfUpgradeScript is Script {{
+    function run() external {{
+        IConfigurableAccount.ConfigurableAccountOwner[] memory owners =
+            new IConfigurableAccount.ConfigurableAccountOwner[](1);
+        owners[0] = IConfigurableAccount.ConfigurableAccountOwner({owner}, 1);
+        vm.startBroadcast();
+        (bool ok,) = address(0xAACC000000000000000000000000000000000000).call(
+            abi.encodeCall(IConfigurableAccount.upgradeAccount, (1, owners))
+        );
+        require(ok, "upgrade failed");
+        vm.stopBroadcast();
+    }}
+}}
+"#,
+            owner = root.address()
+        ),
+    );
+    cmd.forge_fuse().arg("script").arg(&upgrade).args(["--rpc-url", &rpc, "--broadcast"]);
+    cmd.args(["--network", "tempo", "--tempo.fee-token", &fee_token]);
+    cmd.args(["--private-key", &root_key, "--skip-simulation"]).assert_success();
+
+    cmd.forge_fuse().arg("script").arg(&script).args(["--rpc-url", &rpc, "--broadcast"]);
+    cmd.args(["--network", "tempo", "--tempo.fee-token", &fee_token]);
+    cmd.args(["--private-key", &root_key]).assert_success();
+    let block = provider.get_block_number().await.unwrap();
+    let receipts = provider.get_block_receipts(block.into()).await.unwrap().unwrap();
+    let receipt = receipts.last().unwrap();
+    assert!(receipt.status());
+    assert_eq!(receipt.from(), root.address());
+    let raw = provider
+        .raw_request::<_, Bytes>(
+            "eth_getRawTransactionByHash".into(),
+            (receipt.transaction_hash(),),
+        )
+        .await
+        .unwrap();
+    let TempoTxEnvelope::AA(signed) = TempoTxEnvelope::decode_2718_exact(&raw).unwrap() else {
+        panic!("expected a Tempo transaction");
+    };
+    assert!(signed.signature().as_configurable_account().is_some());
+}
+
 /// `forge script` with one local owner of a 2-of-3 Tempo configurable account saves the account's
 /// transactions with their digests instead of sending them. An owner on another machine signs the
 /// digests with `cast wallet sign --no-hash`, and `--resume` sends the transactions in order once
