@@ -8931,7 +8931,9 @@ contract SymbolicMinRatioNested {
 }
 
 // An EMA or weighted average `(p * u + q * v) / k` with `u + v <= k` stays at most a bound on
-// `p` and `q`.
+// `p` and `q`. A lerp or a two-step fee written as `a + (b - a) * t / k` stays at most `b` once
+// `a <= b` and `t <= k`, but not strictly, not at most `a`, not without either guard, and not
+// with another start or the reversed difference `a - b`.
 #[forgetest_init]
 fn symbolic_proves_weighted_average_bound(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_weighted_average_bound");
@@ -9083,6 +9085,58 @@ contract SymbolicWeightedAverage {
         }
         assert(next <= cap);
     }
+
+    function checkLerpBelowEnd(uint128 a, uint128 b, uint64 t) public pure {
+        require(a <= b && t <= WAD);
+        assert(a + (uint256(b) - a) * t / WAD <= b);
+    }
+
+    // A fee taken on the amount's distance to a cap keeps the total within the cap.
+    function checkStepFeeBelowCap(uint128 amount, uint128 cap, uint16 bps) public pure {
+        require(amount <= cap && bps <= 10000);
+        uint256 total = amount + (uint256(cap) - amount) * bps / 10000;
+        assert(total <= cap);
+    }
+
+    // Unchecked, `b - a` wraps once `a > b`.
+    function checkLerpUnorderedEnds(uint128 a, uint128 b, uint64 t) public pure {
+        require(t <= WAD);
+        uint256 span;
+        unchecked {
+            span = uint256(b) - a;
+        }
+        assert(a + span * t / WAD <= b);
+    }
+
+    function checkLerpWeightAboveWad(uint128 a, uint128 b, uint64 t) public pure {
+        require(a <= b);
+        assert(a + (uint256(b) - a) * t / WAD <= b);
+    }
+
+    function checkLerpStrictlyBelowEnd(uint128 a, uint128 b, uint64 t) public pure {
+        require(a <= b && t <= WAD);
+        assert(a + (uint256(b) - a) * t / WAD < b);
+    }
+
+    function checkLerpBelowStart(uint128 a, uint128 b, uint64 t) public pure {
+        require(a <= b && t <= WAD);
+        assert(a + (uint256(b) - a) * t / WAD <= a);
+    }
+
+    function checkLerpOtherStart(uint128 a, uint128 b, uint128 e, uint64 t) public pure {
+        require(a <= b && e <= b && t <= WAD);
+        assert(a + (uint256(b) - e) * t / WAD <= b);
+    }
+
+    // Unchecked, `a - b` wraps once `a < b`.
+    function checkLerpSwappedSpan(uint128 a, uint128 b, uint64 t) public pure {
+        require(a <= b && t <= WAD);
+        uint256 span;
+        unchecked {
+            span = uint256(a) - b;
+        }
+        assert(a + span * t / WAD <= b);
+    }
 }
 "#,
     );
@@ -9106,6 +9160,8 @@ contract SymbolicWeightedAverage {
             "checkEmaWideCap(uint256,uint256,uint64,uint256)",
             "checkWeightedScaled(uint128,uint128,uint64,uint128)",
             "checkMaskedComplement(uint128,uint128,uint256,uint256,uint128)",
+            "checkLerpBelowEnd(uint128,uint128,uint64)",
+            "checkStepFeeBelowCap(uint128,uint128,uint16)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
@@ -9123,6 +9179,12 @@ contract SymbolicWeightedAverage {
             "checkWeightedZeroWhole(uint128,uint128,uint64,uint64,uint128)",
             "checkEmaOtherComplement(uint128,uint128,uint64,uint64,uint128)",
             "checkEmaWrappingComplement(uint128,uint128,uint64,uint128)",
+            "checkLerpUnorderedEnds(uint128,uint128,uint64)",
+            "checkLerpWeightAboveWad(uint128,uint128,uint64)",
+            "checkLerpStrictlyBelowEnd(uint128,uint128,uint64)",
+            "checkLerpBelowStart(uint128,uint128,uint64)",
+            "checkLerpOtherStart(uint128,uint128,uint128,uint64)",
+            "checkLerpSwappedSpan(uint128,uint128,uint64)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(

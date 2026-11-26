@@ -155,7 +155,8 @@ impl ConstraintContext {
     /// The shares `w * a / k + w * b / k <= w` once `a + b <= k`, and `n <= ceil(n / d) * d` for a
     /// nonzero `d` once the multiple cannot wrap. With a nonzero `d` and an `n + d` that cannot
     /// wrap, `n / d <= (n + d - 1) / d <= n / d + 1`. A difference `a - b` is at most `x` once
-    /// `b <= a` and `a <= x`.
+    /// `b <= a` and `a <= x`. An interpolation `a + (c - a) * t / d` is at most `c` once `a <= c`
+    /// and the quotient is at most `c - a`.
     /// A weighted average `(p * u + q * v) / k` with `u + v <= k` is at most a bound on `p` and
     /// `q`.
     pub(super) fn division_comparison_value(&self, expr: &SymBoolExpr) -> Option<bool> {
@@ -404,6 +405,35 @@ impl ConstraintContext {
                     })
                 })
                 .then_some(false),
+            // Linear interpolation `a + (c - a) * t / d <= c`, as in a lerp, a price ramp, or a fee
+            // `x + (cap - x) * bps / k`, once `a <= c` and the quotient is at most `c - a`. Then
+            // `c - a` cannot wrap and neither can the sum. The quotient's own rule decides whether
+            // a wrapped product still keeps it below `c - a`. Each recursion is charged to the
+            // budget, as for a difference below.
+            SymExprKind::BinOp(SymBinOp::Add, x, y) => {
+                let mut order = |small, large| {
+                    if small == large {
+                        return Some(false);
+                    }
+                    *remaining = remaining.checked_sub(1)?;
+                    self.division_order(small, large, intervals, remaining)
+                };
+                [(x, y), (y, x)].into_iter().find_map(|(a, quotient)| {
+                    let (product, _) = quotient.udiv_operands()?;
+                    let SymExprKind::BinOp(SymBinOp::Mul, left, right) = product.kind() else {
+                        return None;
+                    };
+                    let factor = [left, right].into_iter().find(|factor| {
+                        matches!(factor.kind(), SymExprKind::BinOp(SymBinOp::Sub, end, start)
+                            if end == large && start == a)
+                    })?;
+                    order(quotient, factor)?;
+                    if !self.asserts_less_or_equal(a, large) {
+                        order(a, large)?;
+                    }
+                    Some(false)
+                })
+            }
             // A payout minus its fee, `a - b <= a <= large` once `b <= a`, which also keeps the
             // subtraction from wrapping. Each recursion is charged to the budget, because cached
             // intervals cost nothing and subtractions that share operands would otherwise be walked
