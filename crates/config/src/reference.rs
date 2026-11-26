@@ -534,7 +534,7 @@ impl Generator {
                 }
             }
             self.out.push(Setting {
-                // Deprecated keys may not load from the environment; readers should use the replacement.
+                // Deprecated keys may not load from the environment, so list only the replacement.
                 env: if deprecated.is_some() {
                     Vec::new()
                 } else {
