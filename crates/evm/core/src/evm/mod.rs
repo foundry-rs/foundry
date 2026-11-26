@@ -18,7 +18,7 @@ use alloy_network::Network;
 use alloy_primitives::Signature;
 use alloy_rlp::Decodable;
 use evm2::{
-    Evm, EvmTypes, EvmTypesHost, ExecutionConfig, SpecId, TxResult, Version, env::BlockEnv,
+    Evm, EvmTypes, EvmTypesHost, ExecutionConfig, TxResult, Version, env::BlockEnv,
     evm::precompile::PrecompileProvider, registry::TxRegistry,
 };
 use foundry_common::{FoundryReceiptResponse, FoundryTransactionBuilder, fmt::UIfmt};
@@ -279,7 +279,7 @@ pub type InterpreterFor<'frame, 'host, FEN> =
 pub fn tx_gas_limit_cap(chain_id: u64, timestamp: u64) -> Option<u64> {
     let hardfork = FoundryHardfork::from_chain_and_timestamp(chain_id, timestamp)?;
     // Under EIP-8037 the cap only bounds regular gas, not the transaction's gas limit.
-    if SpecId::from(hardfork) >= SpecId::AMSTERDAM {
+    if evm2::SpecId::from(hardfork) >= evm2::SpecId::AMSTERDAM {
         return None;
     }
     let version = match hardfork {
