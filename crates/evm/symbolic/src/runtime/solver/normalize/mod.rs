@@ -1654,8 +1654,15 @@ impl ConstraintContext {
                         Some(left.max.saturating_sub(right.min)),
                     );
                 }
-                let left = left?;
-                let right = right?;
+                // `(c + y) - r = y + (c - r)` lies between `y` and `c + y` once `r <= c` and
+                // `c + y` cannot wrap.
+                let addend = self
+                    .addend_within_difference(minuend, subtrahend, intervals, remaining)
+                    .and_then(|addend| self.interval_cached(addend, intervals, remaining));
+                let Some((left, right)) = left.zip(right) else {
+                    let max = left.map_or(U256::MAX, |left| left.max);
+                    return addend.and_then(|addend| WordInterval::new(addend.min, max));
+                };
                 if left.max < right.min {
                     // Every subtraction wraps exactly once, so the unsigned image is contiguous.
                     return Some(WordInterval {
@@ -1666,12 +1673,15 @@ impl ConstraintContext {
                 if left.min < right.max {
                     // An asserted `subtrahend <= minuend` rules out wrapping, and a strict
                     // `subtrahend < minuend` also rules out a zero difference.
-                    if !self.asserted_upper_bounds(subtrahend).contains(minuend) {
+                    let ordered = self.asserted_upper_bounds(subtrahend).contains(minuend);
+                    if !ordered && addend.is_none() {
                         return None;
                     }
-                    let strict =
-                        self.strict_order_facts.contains(&(subtrahend.clone(), minuend.clone()));
-                    return WordInterval::new(U256::from(strict), left.max - right.min);
+                    let strict = ordered
+                        && self.strict_order_facts.contains(&(subtrahend.clone(), minuend.clone()));
+                    let min =
+                        addend.map_or(U256::ZERO, |addend| addend.min).max(U256::from(strict));
+                    return WordInterval::new(min, left.max - right.min);
                 }
                 Some(WordInterval {
                     min: left.min.checked_sub(right.max)?,

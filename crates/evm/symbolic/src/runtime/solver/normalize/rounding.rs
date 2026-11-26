@@ -672,6 +672,23 @@ impl ConstraintContext {
             || complement(b, a)
     }
 
+    /// Returns the addend `y` of `sum = c + y` that `sum - part` cannot fall below: once another
+    /// conjunct asserts `part <= c` and `c + y` cannot wrap, `(c + y) - part = y + (c - part)`.
+    pub(super) fn addend_within_difference<'a>(
+        &self,
+        sum: &'a SymExpr,
+        part: &SymExpr,
+        intervals: &mut HashMap<SymExpr, Option<WordInterval>>,
+        remaining: &mut usize,
+    ) -> Option<&'a SymExpr> {
+        let SymExprKind::BinOp(SymBinOp::Add, a, b) = sum.kind() else { return None };
+        [(a, b), (b, a)].into_iter().find_map(|(c, y)| {
+            (self.asserted_upper_bounds(part).contains(c)
+                && self.sum_cannot_wrap(c, y, intervals, remaining))
+            .then_some(y)
+        })
+    }
+
     /// Returns whether other conjuncts assert `small <= large`, including strict `<`. Once
     /// `s <= t`, a difference `t - s` cannot wrap, so it is at most `t`, and at most `d` once
     /// `t <= d + s`. A wrapped `d + s` would be below `s <= t`, so the two facts cannot both hold.
@@ -688,7 +705,8 @@ impl ConstraintContext {
                 }))
     }
 
-    /// Returns whether `factor <= divisor`, by equality, another conjunct, or value ranges, so
+    /// Returns whether `factor <= divisor`, by equality, another conjunct, a divisor that is a sum
+    /// minus part of its other addend, or value ranges, so
     /// `(n / divisor) * factor <= (n / divisor) * divisor <= n`. SMT's `n / 0` is all ones, but a
     /// zero divisor then forces a zero factor and product.
     pub(super) fn factor_within_divisor(
@@ -700,6 +718,8 @@ impl ConstraintContext {
     ) -> bool {
         factor == divisor
             || self.asserts_less_or_equal(factor, divisor)
+            || matches!(divisor.kind(), SymExprKind::BinOp(SymBinOp::Sub, sum, part)
+                if self.addend_within_difference(sum, part, intervals, remaining) == Some(factor))
             || self
                 .interval_cached(factor, intervals, remaining)
                 .zip(self.interval_cached(divisor, intervals, remaining))
