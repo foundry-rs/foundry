@@ -205,12 +205,6 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
             }
         };
 
-        let address = CALLER.create(self.executor.get_nonce(CALLER)?);
-
-        // Set the contracts initial balance before deployment, so it is available during the
-        // construction
-        self.executor.set_balance(address, self.evm_opts.initial_balance)?;
-
         // HACK: if the current sender is the default script sender (which is a default value), we
         // set its nonce to a very large value before deploying the script contract. This
         // ensures that the nonce increase during this CREATE does not affect deployment
@@ -221,6 +215,12 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
         if self.evm_opts.sender == CALLER {
             self.executor.set_nonce(self.evm_opts.sender, u64::MAX / 2)?;
         }
+
+        let address = CALLER.create(self.executor.get_nonce(CALLER)?);
+
+        // Set the contracts initial balance before deployment, so it is available during the
+        // construction
+        self.executor.set_balance(address, self.evm_opts.initial_balance)?;
 
         // Deploy an instance of the contract
         let DeployResult {
