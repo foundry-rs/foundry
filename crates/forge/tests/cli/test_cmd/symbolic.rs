@@ -7750,6 +7750,42 @@ contract RoundedProductTest {
         assert(rounded <= value);
     }
 
+    function checkNestedConstantQuotient(uint256 value) external pure {
+        assert(value / 1e9 / 1e9 == value / 1e18);
+    }
+
+    // Once the divisors' product exceeds the word, no dividend reaches it.
+    function checkOverflowingNestedQuotient(uint256 value) external pure {
+        assert(value / 3e40 / 5e40 == 0);
+    }
+
+    function checkNestedQuotientIsNotFiner(uint256 value) external pure {
+        assert(value / 1e9 / 1e9 == value / 1e17);
+    }
+
+    // `9e76` still fits in a word, so `type(uint256).max` keeps a quotient of one.
+    function checkNestedQuotientBelowWord(uint256 value) external pure {
+        assert(value / 3e38 / 3e38 == 0);
+    }
+
+    // The divisors' product wraps to `2**129 + 1`, which must not stand in for it.
+    function checkWrappedNestedDivisor(uint256 value) external pure {
+        assert(value / (2 ** 128 + 1) / (2 ** 128 + 1) == value / (2 ** 129 + 1));
+    }
+
+    // A fee that is itself a constant division keeps its Euclidean and ceiling relations.
+    function checkNestedFeeEuclideanIdentity(uint128 amount, uint16 bps) external pure {
+        require(bps <= 10000);
+        uint256 fee = uint256(amount) * bps / 10000;
+        assert(fee / 3 * 3 + fee % 3 == fee);
+    }
+
+    function checkNestedFeeCeiling(uint128 amount, uint16 bps) external pure {
+        require(bps <= 10000);
+        uint256 fee = uint256(amount) * bps / 10000;
+        assert((fee + 2) / 3 >= fee / 3);
+    }
+
     function checkBasisPointsFee(uint64 amount, uint16 bps) external pure {
         require(bps <= 10000);
         assert(uint256(amount) * bps / 10000 <= amount);
@@ -7777,15 +7813,6 @@ contract RoundedProductTest {
     );
     for optimized in [false, true] {
         prj.update_config(|config| config.optimizer = Some(optimized));
-        cmd.forge_fuse().args([
-            "test",
-            "--symbolic",
-            "--symbolic-timeout",
-            "30",
-            "--match-test",
-            "check(FloorError|DividendRelation|WrappingDividendRelation|CeilingError|CeilingRoundTrip|SymbolicDivisorFacts|EuclideanIdentities|SymbolicEuclideanIdentity|NarrowFloorError|BasisPointsFee|SlippageMinimum|TransferConservation)",
-        ])
-        .assert_success();
         let output = cmd
             .forge_fuse()
             .args([
@@ -7795,13 +7822,46 @@ contract RoundedProductTest {
                 "--symbolic-timeout",
                 "30",
                 "--match-test",
-                "check(CeilingIsNotExact|WrappingCeiling|ReversedFloorError|MixedEuclideanSum)",
+                "check(FloorError|DividendRelation|WrappingDividendRelation|CeilingError|CeilingRoundTrip|SymbolicDivisorFacts|EuclideanIdentities|SymbolicEuclideanIdentity|NarrowFloorError|NestedConstantQuotient|OverflowingNestedQuotient|NestedFeeEuclideanIdentity|NestedFeeCeiling|BasisPointsFee|SlippageMinimum|TransferConservation)",
+            ])
+            .assert_success()
+            .get_output()
+            .stdout
+            .clone();
+        for signature in [
+            "checkNestedConstantQuotient(uint256)",
+            "checkNestedFeeEuclideanIdentity(uint128,uint16)",
+            "checkNestedFeeCeiling(uint128,uint16)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+                "{signature}, optimized={optimized}: {result}"
+            );
+        }
+        let output = cmd
+            .forge_fuse()
+            .args([
+                "test",
+                "--symbolic",
+                "--json",
+                "--symbolic-timeout",
+                "30",
+                "--match-test",
+                "check(CeilingIsNotExact|WrappingCeiling|ReversedFloorError|NestedQuotientIsNotFiner|NestedQuotientBelowWord|WrappedNestedDivisor|MixedEuclideanSum)",
             ])
             .assert_failure()
             .get_output()
             .stdout
             .clone();
-        for test in ["checkCeilingIsNotExact", "checkWrappingCeiling", "checkReversedFloorError"] {
+        for test in [
+            "checkCeilingIsNotExact",
+            "checkWrappingCeiling",
+            "checkReversedFloorError",
+            "checkNestedQuotientIsNotFiner",
+            "checkNestedQuotientBelowWord",
+            "checkWrappedNestedDivisor",
+        ] {
             let signature = format!("{test}(uint256)");
             let result = json_test_result(&output, &signature);
             assert_eq!(
