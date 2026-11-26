@@ -56,6 +56,7 @@ use foundry_common::{
             ConfigurableAccountSigner, detect_configurable_account, reaches_threshold,
         },
         mark_sponsored_gas_estimation, maybe_print_fee_token, resolve_and_set_fee_token,
+        sets_user_fee_token,
     },
 };
 use foundry_config::Config;
@@ -341,6 +342,32 @@ where
             }
         }
     }
+}
+
+/// Returns whether Tempo `transactions` need `eth_estimateGas` right before each is sent, which
+/// also sends them one at a time.
+///
+/// Simulation runs Tempo's gas schedule, so its gas matches the chain for a transaction its sender
+/// signs with a secp256k1 key. It cannot see the intrinsic gas of other signers, such as access
+/// keys, configurable account owners, browser wallets and sponsors, nor of 2D nonce keys, which
+/// are only set when broadcasting. A transaction that sets its sender's fee token must also land
+/// before the fee tokens of later transactions are resolved.
+fn tempo_needs_rpc_estimate<N: Network>(
+    transactions: &[(SendTransactionKind<'_, N>, bool, usize)],
+    sponsored: bool,
+) -> bool
+where
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
+    sponsored
+        || transactions.iter().any(|(kind, ..)| match kind {
+            SendTransactionKind::Raw(tx, _) => {
+                tx.nonce_key().is_some_and(|key| !key.is_zero())
+                    || sets_user_fee_token(&tx.tempo_calls())
+            }
+            SendTransactionKind::Signed(_) | SendTransactionKind::PreparedRaw(..) => false,
+            _ => true,
+        })
 }
 
 fn is_definite_browser_non_submission(error: &eyre::Report) -> bool {
@@ -1279,9 +1306,12 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                         .unwrap_or(transactions.len());
                     let transactions = &transactions[..offline];
 
-                    let estimate_via_rpc = has_different_gas_calc(sequence.chain)
-                        || self.script_config.evm_opts.networks.is_tempo()
-                        || self.args.skip_simulation;
+                    let estimate_via_rpc = self.args.skip_simulation
+                        || if self.script_config.evm_opts.networks.is_tempo() {
+                            tempo_needs_rpc_estimate(transactions, tempo_sponsor.is_some())
+                        } else {
+                            has_different_gas_calc(sequence.chain)
+                        };
 
                     // We only wait for a transaction receipt before sending the next transaction,
                     // if there is more than one signer. There would be no way of assuring their

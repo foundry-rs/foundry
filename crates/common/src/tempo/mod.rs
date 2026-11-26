@@ -5,7 +5,7 @@ pub mod configurable_account;
 
 use crate::FoundryTransactionBuilder;
 use alloy_network::{Network, TransactionBuilder};
-use alloy_primitives::{Address, B256, Signature, TxKind, address};
+use alloy_primitives::{Address, B256, Signature, TxKind, U256, address, uint};
 use alloy_provider::Provider;
 use alloy_signer::Signer;
 use alloy_sol_types::SolCall;
@@ -69,6 +69,10 @@ pub const ALPHA_USD_ADDRESS: Address = address!("0x20C00000000000000000000000000
 pub const BETA_USD_ADDRESS: Address = address!("0x20C0000000000000000000000000000000000002");
 pub const THETA_USD_ADDRESS: Address = address!("0x20C0000000000000000000000000000000000003");
 pub const OUSD_ADDRESS: Address = address!("0x20c0000000000000000000006a37DA5C996874BE");
+
+/// The balance a Tempo node answers `eth_getBalance` with, since Tempo has no native token.
+pub const NATIVE_BALANCE_PLACEHOLDER: U256 =
+    uint!(4242424242424242424242424242424242424242424242424242424242424242424242424242_U256);
 
 /// Gas sponsor configuration for Tempo fee-payer signatures.
 #[derive(Clone, Debug)]
@@ -363,6 +367,15 @@ fn infer_fee_token_from_tip20_calls(
         return None;
     }
     target.is_tip20().then_some(target)
+}
+
+/// Returns whether `calls` set their sender's fee token preference in the FeeManager, which the
+/// fee token of the sender's later transactions is resolved from.
+pub fn sets_user_fee_token(calls: &[(TxKind, &[u8])]) -> bool {
+    calls.iter().any(|(to, input)| {
+        *to == TxKind::Call(TIP_FEE_MANAGER_ADDRESS)
+            && input.starts_with(&IFeeManager::setUserTokenCall::SELECTOR)
+    })
 }
 
 fn infer_fee_token_from_set_user_token_call(

@@ -730,9 +730,10 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
                 let is_fixed_gas_limit = tx.is_fixed_gas_limit;
                 let tx = tx.tx_mut();
 
+                // Forge simulates Tempo transactions with Tempo's gas schedule.
                 if !is_fixed_gas_limit
-                    && (has_different_gas_calc(provider_info.chain)
-                        || self.script_config.evm_opts.networks.is_tempo())
+                    && !self.script_config.evm_opts.networks.is_tempo()
+                    && has_different_gas_calc(provider_info.chain)
                 {
                     // only estimate gas for unsigned transactions
                     if let Some(tx) = tx.as_unsigned_mut() {

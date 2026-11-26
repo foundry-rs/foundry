@@ -8318,7 +8318,8 @@ Deployed contracts (chain 31337):
     );
 }
 
-// Bundle estimation must preserve script-specified gas and still estimate ordinary transactions.
+// Tempo scripts keep script-specified gas and give ordinary transactions their simulated gas,
+// unless their intrinsic gas is not simulated, as for an expiring nonce.
 #[forgetest_init]
 async fn tempo_script_preserves_fixed_gas_limit(prj: _, cmd: _) {
     let script = prj.add_script(
@@ -8339,15 +8340,11 @@ contract TempoFixedGas is Script {
 "#,
     );
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
-    // Both calls must be estimable before any transaction has been broadcast.
     api.anvil_set_code(address!("000000000000000000000000000000000000beef"), hex!("00").into())
         .await
         .unwrap();
-    let rpc = spawn_rpc_proxy_mapping_method(handle.http_endpoint(), "eth_estimateGas", |_, _| {
-        Value::from("0x186a0")
-    })
-    .await;
-    let (rpc, estimates) = spawn_rpc_proxy_recording_method(rpc, "eth_estimateGas").await;
+    let (rpc, estimates) =
+        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_estimateGas").await;
     let gas_limits = |dry_run| {
         let path = foundry_common::fs::json_files(&prj.root().join("broadcast"))
             .find(|path| {
@@ -8374,13 +8371,14 @@ contract TempoFixedGas is Script {
         "130",
     ]);
     cmd.assert_success();
-    assert_eq!(gas_limits(true), [(true, 500000), (false, 130000)]);
-    assert_eq!(estimates.lock().unwrap().len(), 1);
+    assert_eq!(gas_limits(true), [(true, 500000), (false, 29005)]);
 
     cmd.arg("--broadcast").assert_success();
-    assert_eq!(gas_limits(false), [(true, 500000), (false, 130000)]);
-    // The second run estimates the ordinary call during bundling and again before sending.
-    assert_eq!(estimates.lock().unwrap().len(), 3);
+    assert_eq!(gas_limits(false), [(true, 500000), (false, 29005)]);
+    assert!(estimates.lock().unwrap().is_empty());
+
+    cmd.args(["--tempo.expires", "30"]).assert_success();
+    assert_eq!(estimates.lock().unwrap().len(), 1);
 }
 
 #[forgetest_init]
@@ -8539,8 +8537,9 @@ contract TempoResume is Script {
     let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
     let transactions = sequence["transactions"].as_array().unwrap();
     assert_eq!(transactions.len(), 2);
-    assert_eq!(sequence["receipts"].as_array().unwrap().len(), 1);
-    assert!(sequence["pending"].as_array().unwrap().is_empty());
+    // Both transactions are sent in one batch, so the first one is still pending.
+    assert!(sequence["receipts"].as_array().unwrap().is_empty());
+    assert_eq!(sequence["pending"].as_array().unwrap(), &[transactions[0]["hash"].clone()]);
     assert_eq!(submissions.lock().unwrap().len(), 1);
     let first_hash = transactions[0]["hash"].as_str().unwrap().to_owned();
     let remaining_payload = transactions[1]["transaction"].clone();
