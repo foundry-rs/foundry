@@ -187,9 +187,11 @@ impl<N: Network> ScriptTransactionBuilder<N> {
             && let Some(unsigned) = self.transaction.transaction.as_unsigned_mut()
         {
             // We inflate the gas used by the user specified percentage
+            let chain_id = unsigned.chain_id();
             unsigned.set_gas_limit(apply_gas_estimate_multiplier(
                 result.gas_used,
                 Some(gas_estimate_multiplier),
+                chain_id,
             )?);
         }
 

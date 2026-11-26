@@ -943,8 +943,9 @@ where
         if sponsored {
             mark_sponsored_gas_estimation(provider, &mut request).await;
         }
+        let chain_id = request.chain_id();
         let err = match provider.estimate_gas(request).await {
-            Ok(estimated) => return apply_gas_estimate_multiplier(estimated, multiplier),
+            Ok(estimated) => return apply_gas_estimate_multiplier(estimated, multiplier, chain_id),
             Err(err) => err,
         };
         // If execution reverted with code 3 during provider gas estimation then try to decode
