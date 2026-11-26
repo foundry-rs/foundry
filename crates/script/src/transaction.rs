@@ -170,6 +170,7 @@ impl<N: Network> ScriptTransactionBuilder<N> {
         mut self,
         result: &ScriptResult<N>,
         gas_estimate_multiplier: u64,
+        chain_id: Option<u64>,
         linked_build_data: &LinkedBuildData,
     ) -> Result<Self> {
         let mut created_contracts =
@@ -187,7 +188,8 @@ impl<N: Network> ScriptTransactionBuilder<N> {
             && let Some(unsigned) = self.transaction.transaction.as_unsigned_mut()
         {
             // We inflate the gas used by the user specified percentage
-            let chain_id = unsigned.chain_id();
+            // CREATE broadcasts and library deployments get their chain ID only later.
+            let chain_id = unsigned.chain_id().or(chain_id);
             unsigned.set_gas_limit(apply_gas_estimate_multiplier(
                 result.gas_used,
                 Some(gas_estimate_multiplier),
