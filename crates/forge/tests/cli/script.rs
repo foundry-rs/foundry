@@ -12276,6 +12276,15 @@ Error: compilation disabled by --no-compile; sources need compiling:
 src/Foo.sol
 
 "#]]);
+    cmd.forge_fuse()
+        .arg("script")
+        .arg(&script)
+        .args(["--no-compile", "--json"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+{"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"compiler.stale","message":"compilation disabled by --no-compile; sources need compiling:\nsrc/Foo.sol","details":{"files":["src/Foo.sol"]}}],"warnings":[]}
+
+"#]].is_jsonlines());
 
     // The cache is untouched, so a normal run compiles the change.
     cmd.forge_fuse().arg("script").arg(&script).assert_success().stdout_eq(str![[r#"
