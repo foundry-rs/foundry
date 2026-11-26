@@ -175,7 +175,7 @@ When `forge script --json` fails, its last stdout line is a `JsonEnvelope` with
 | Code             | Failure                                                         | `details`                                             |
 | ---------------- | --------------------------------------------------------------- | ----------------------------------------------------- |
 | `script.revert`  | the script's constructor, `setUp`, or `run` reverted            | `data` (raw revert data), `reason` (decoded)          |
-| `rpc.error`      | an RPC endpoint answered with an error, or without a block that must exist | `code` (JSON-RPC code) and `status` (HTTP), when known |
+| `rpc.error`      | an RPC endpoint answered with an error, with a response that does not parse, or without a block that must exist | `code` (JSON-RPC code) and `status` (HTTP), when known |
 | `rpc.transport`  | an RPC request got no answer: connection failure, timeout, or an HTTP error without a JSON-RPC error | `status` (HTTP), when known |
 | `compiler.error` | the compiler could not be set up, or compilation failed         | none                                                  |
 | `config.error`   | the configuration could not be loaded                           | none                                                  |
@@ -184,6 +184,10 @@ When `forge script --json` fails, its last stdout line is a `JsonEnvelope` with
 The `rpc.*` codes also apply when a cheatcode, such as `vm.createSelectFork`,
 made the failed request and the failure caused the revert; they then also
 include the revert's `data` and `reason`.
+
+With `--broadcast`, an `rpc.*` failure can happen after some transactions were
+sent. Running the script again then refuses until you continue with `--resume`;
+`--start-fresh` sends them again.
 
 Commands not listed here have not been classified yet — please open an issue or
 PR before relying on their stdout format.
