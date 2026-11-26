@@ -68,9 +68,20 @@ pub struct CoverageConfig {
 
     /// Whether to keep the project's optimizer and `viaIR` settings instead of disabling them.
     ///
-    /// Optimized builds can miss or merge coverage items. Cannot be combined with `ir_minimum`,
-    /// including the `--ir-minimum` flag, so enabling it here also rules out that flag. The
-    /// `--keep-optimizer` flag also enables it; it cannot turn off a `true` value.
+    /// It does not turn optimization on: configure `optimizer`, `optimizer_runs` and `via_ir` in
+    /// the profile as usual. Optimized builds can miss or merge coverage items that the optimizer
+    /// removes or combines, so results can be less accurate. Cannot be combined with
+    /// `ir_minimum`, including the `--ir-minimum` flag, so enabling it here also rules out that
+    /// flag. The `--keep-optimizer` flag also enables it; it cannot turn off a `true` value.
+    ///
+    /// ```toml
+    /// [profile.default]
+    /// optimizer = true
+    /// optimizer_runs = 200
+    ///
+    /// [profile.default.coverage]
+    /// keep_optimizer = true
+    /// ```
     #[serde(default)]
     pub keep_optimizer: bool,
 

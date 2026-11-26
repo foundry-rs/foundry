@@ -84,7 +84,7 @@
         "FOUNDRY_REMAPPINGS",
         "DAPP_REMAPPINGS"
       ],
-      "description": "Import remappings used to resolve Solidity imports.\n\nEach entry has the form `[<context>:]<name>=<target>`. An import path that starts with\n`<name>` has that prefix replaced with `<target>`, a path relative to the project root. The\noptional `<context>` limits the remapping to imports made by source units whose paths start\nwith it.\n\n```toml\n[profile.default]\nremappings = [\n    \"@openzeppelin/=lib/openzeppelin-contracts/\",\n    \"lib/dep/:forge-std/=lib/dep/lib/forge-std/src/\",\n]\n```\n\nWith the first entry, `import \"@openzeppelin/contracts/utils/Context.sol\";` resolves to\n`lib/openzeppelin-contracts/contracts/utils/Context.sol`.\n\nThese entries are merged with remappings from `remappings.txt` in the project root, the\n`FOUNDRY_REMAPPINGS` environment variable, `--remappings` on the command line, and those\ndetected automatically (see `auto_detect_remappings`). For the same name, command-line\nremappings win over the environment, the environment over `remappings.txt`,\n`remappings.txt` over this key, and all of them over auto-detected ones. Run\n`forge remappings` to print the final list."
+      "description": "Import remappings used to resolve Solidity imports.\n\nEach entry has the form `[<context>:]<name>=<target>`. An import path that starts with\n`<name>` has that prefix replaced with `<target>`, a path relative to the project root. The\noptional `<context>` limits the remapping to imports made by source units whose paths start\nwith it.\n\n```toml\n[profile.default]\nremappings = [\n    \"@openzeppelin/=lib/openzeppelin-contracts/\",\n    \"lib/dep/:forge-std/=lib/dep/lib/forge-std/src/\",\n]\n```\n\nWith the first entry, `import \"@openzeppelin/contracts/utils/Context.sol\";` resolves to\n`lib/openzeppelin-contracts/contracts/utils/Context.sol`.\n\nThese entries are merged with remappings from `remappings.txt` in the project root, the\n`FOUNDRY_REMAPPINGS` environment variable, `--remappings` on the command line, and those\ndetected automatically (see `auto_detect_remappings`). For the same name, command-line\nremappings win over the environment, the environment over `remappings.txt`,\n`remappings.txt` over this key, and all of them over auto-detected ones, including inside\ndependencies. When two dependencies declare the same alias with different targets, each\ndeclaration applies only within its own dependency; see [Dependency remapping\nscope](https://www.getfoundry.sh/projects/dependencies#dependency-remapping-scope). Run\n`forge remappings` to print the final list."
     },
     {
       "key": "auto_detect_remappings",
@@ -1363,7 +1363,7 @@
       "env": [
         "FOUNDRY_INVARIANT_SHRINK_RUN_LIMIT"
       ],
-      "description": "Maximum number of attempts to shrink a failing call sequence.\n\nShrinking removes and simplifies calls to find the shortest sequence that still fails. `0`\ndisables shrinking. The same limit bounds minimizing the argument values of stateless fuzz\ntest counterexamples."
+      "description": "Maximum number of attempts to shrink a failing call sequence.\n\nShrinking removes and simplifies calls to find the shortest sequence that still fails. `0`\ndisables shrinking. The same limit bounds minimizing the argument values of stateless fuzz\ntest counterexamples, so set it under `[invariant]` for fuzz tests too."
     },
     {
       "key": "invariant.max_assume_rejects",
@@ -1671,7 +1671,7 @@
       "env": [
         "FOUNDRY_INVARIANT_MAX_TIME_DELAY"
       ],
-      "description": "Maximum time, in seconds, that may elapse between generated calls.\n\nWhen set above 0, each generated call can advance the block timestamp by a random amount up\nto this value. When unset or 0, calls do not advance time."
+      "description": "Maximum time, in seconds, that may elapse between generated calls.\n\nWhen set above 0, `block.timestamp` advances by a random amount, from 0 up to this value,\nbefore each generated call, and the delays add up over a run. When unset or 0, calls do\nnot advance time."
     },
     {
       "key": "invariant.max_block_delay",
@@ -1682,7 +1682,7 @@
       "env": [
         "FOUNDRY_INVARIANT_MAX_BLOCK_DELAY"
       ],
-      "description": "Maximum number of blocks that may elapse between generated calls.\n\nWhen set above 0, each generated call can advance the block number by a random amount up to\nthis value. When unset or 0, calls do not advance the block number."
+      "description": "Maximum number of blocks that may elapse between generated calls.\n\nWhen set above 0, `block.number` advances by a random amount, from 0 up to this value,\nbefore each generated call, and the delays add up over a run. When unset or 0, calls do\nnot advance the block number."
     },
     {
       "key": "invariant.check_interval",
@@ -2144,7 +2144,7 @@
       "env": [
         "FOUNDRY_COVERAGE_KEEP_OPTIMIZER"
       ],
-      "description": "Whether to keep the project's optimizer and `viaIR` settings instead of disabling them.\n\nOptimized builds can miss or merge coverage items. Cannot be combined with `ir_minimum`,\nincluding the `--ir-minimum` flag, so enabling it here also rules out that flag. The\n`--keep-optimizer` flag also enables it; it cannot turn off a `true` value."
+      "description": "Whether to keep the project's optimizer and `viaIR` settings instead of disabling them.\n\nIt does not turn optimization on: configure `optimizer`, `optimizer_runs` and `via_ir` in\nthe profile as usual. Optimized builds can miss or merge coverage items that the optimizer\nremoves or combines, so results can be less accurate. Cannot be combined with\n`ir_minimum`, including the `--ir-minimum` flag, so enabling it here also rules out that\nflag. The `--keep-optimizer` flag also enables it; it cannot turn off a `true` value.\n\n```toml\n[profile.default]\noptimizer = true\noptimizer_runs = 200\n\n[profile.default.coverage]\nkeep_optimizer = true\n```"
     },
     {
       "key": "coverage.report_file",

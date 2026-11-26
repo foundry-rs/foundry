@@ -171,7 +171,7 @@ pub struct InvariantConfig {
     ///
     /// Shrinking removes and simplifies calls to find the shortest sequence that still fails. `0`
     /// disables shrinking. The same limit bounds minimizing the argument values of stateless fuzz
-    /// test counterexamples.
+    /// test counterexamples, so set it under `[invariant]` for fuzz tests too.
     pub shrink_run_limit: u32,
     /// Maximum number of `vm.assume` rejections allowed in a single invariant run before the test
     /// fails.
@@ -219,13 +219,15 @@ pub struct InvariantConfig {
     pub show_solidity: bool,
     /// Maximum time, in seconds, that may elapse between generated calls.
     ///
-    /// When set above 0, each generated call can advance the block timestamp by a random amount up
-    /// to this value. When unset or 0, calls do not advance time.
+    /// When set above 0, `block.timestamp` advances by a random amount, from 0 up to this value,
+    /// before each generated call, and the delays add up over a run. When unset or 0, calls do
+    /// not advance time.
     pub max_time_delay: Option<u32>,
     /// Maximum number of blocks that may elapse between generated calls.
     ///
-    /// When set above 0, each generated call can advance the block number by a random amount up to
-    /// this value. When unset or 0, calls do not advance the block number.
+    /// When set above 0, `block.number` advances by a random amount, from 0 up to this value,
+    /// before each generated call, and the delays add up over a run. When unset or 0, calls do
+    /// not advance the block number.
     pub max_block_delay: Option<u32>,
     /// Number of calls to execute between invariant assertions.
     ///

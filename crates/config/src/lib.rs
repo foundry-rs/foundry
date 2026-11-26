@@ -306,7 +306,10 @@ pub struct Config {
     /// `FOUNDRY_REMAPPINGS` environment variable, `--remappings` on the command line, and those
     /// detected automatically (see `auto_detect_remappings`). For the same name, command-line
     /// remappings win over the environment, the environment over `remappings.txt`,
-    /// `remappings.txt` over this key, and all of them over auto-detected ones. Run
+    /// `remappings.txt` over this key, and all of them over auto-detected ones, including inside
+    /// dependencies. When two dependencies declare the same alias with different targets, each
+    /// declaration applies only within its own dependency; see [Dependency remapping
+    /// scope](https://www.getfoundry.sh/projects/dependencies#dependency-remapping-scope). Run
     /// `forge remappings` to print the final list.
     #[serde(serialize_with = "remappings_serde::serialize")]
     pub remappings: Vec<RelativeRemapping>,
