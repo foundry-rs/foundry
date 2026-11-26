@@ -10503,7 +10503,9 @@ contract SymbolicCollateralRatio {
 
 // Vaults round shares up as `(assets * supply + total - 1) / total` and down as
 // `assets * supply / total`. The ceiling is at least the floor and at most one above it once
-// the sum cannot wrap, from value ranges or a checked addition.
+// the sum cannot wrap, from value ranges or a checked addition. Aave's WadRayMath rounds half up
+// as `(a * b + WAD / 2) / WAD` and `(a * RAY + b / 2) / b`, which is also at most one above the
+// floor, as is any addend up to the divisor once `n / d + 1` cannot wrap.
 #[forgetest_init]
 fn symbolic_proves_additive_ceiling_bounds(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_additive_ceiling_bounds");
@@ -10570,6 +10572,64 @@ contract SymbolicCeilingBounds {
         require(d != 0 && e != 0);
         assert((uint256(n) + d - 1) / d <= uint256(n) / e + 1);
     }
+
+    function checkWadMulHalfUp(uint128 a, uint128 b) public pure {
+        assert((uint256(a) * b + 5e17) / 1e18 <= uint256(a) * b / 1e18 + 1);
+    }
+
+    function checkRayDivHalfUp(uint128 a, uint128 b) public pure {
+        require(b != 0);
+        assert((uint256(a) * 1e27 + b / 2) / b <= uint256(a) * 1e27 / b + 1);
+    }
+
+    // A zero `b` reverts in the checked division before the assertion.
+    function checkRayDivHalfUpUnguarded(uint128 a, uint128 b) public pure {
+        assert((uint256(a) * 1e27 + b / 2) / b <= uint256(a) * 1e27 / b + 1);
+    }
+
+    // A wrapped sum only shrinks the dividend, and `n / d + 1` cannot wrap once `d >= 2`.
+    function checkWrappedHalfUpWideDivisor(uint256 n, uint256 d) public pure {
+        require(d >= 2);
+        unchecked {
+            assert((n + d / 2) / d <= n / d + 1);
+        }
+    }
+
+    function checkWrappedHalfUpFloorPlusOne(uint256 n, uint256 d) public pure {
+        require(d != 0);
+        unchecked {
+            assert((n + d / 2) / d <= n / d + 1);
+        }
+    }
+
+    function checkCheckedHalfUpWrappedFloorPlusOne(uint256 n, uint256 d) public pure {
+        require(d != 0);
+        uint256 up = (n + d / 2) / d;
+        unchecked {
+            assert(up <= n / d + 1);
+        }
+    }
+
+    function checkAddendAboveDivisor(uint128 n, uint128 d) public pure {
+        require(d != 0);
+        uint256 e = uint256(d) + 1;
+        assert((uint256(n) + e) / d <= uint256(n) / d + 1);
+    }
+
+    function checkHalfUpOtherDivisor(uint128 a, uint128 b, uint128 c) public pure {
+        require(b != 0 && c != 0);
+        assert((uint256(a) * 1e27 + b / 2) / b <= uint256(a) * 1e27 / c + 1);
+    }
+
+    function checkHalfUpOtherNumerator(uint128 a, uint128 b, uint128 c) public pure {
+        require(b != 0);
+        assert((uint256(a) + b / 2) / b <= uint256(c) / b + 1);
+    }
+
+    function checkHalfOfOtherValue(uint128 n, uint128 c, uint128 d) public pure {
+        require(d != 0);
+        assert((uint256(n) + c / 2) / d <= uint256(n) / d + 1);
+    }
 }
 "#,
     );
@@ -10582,10 +10642,19 @@ contract SymbolicCeilingBounds {
             .get_output()
             .stdout
             .clone();
+        // Unoptimized, `rayDiv` still queries the solver for its overflow-checked product.
+        let ray_div =
+            ["checkRayDivHalfUp(uint128,uint128)", "checkRayDivHalfUpUnguarded(uint128,uint128)"];
+        let (without_queries, with_queries) =
+            if optimized { (&ray_div[..], &[][..]) } else { (&[][..], &ray_div[..]) };
         for signature in [
             "checkCeilingAboveFloor(uint128,uint128,uint128)",
             "checkCeilingAtMostFloorPlusOne(uint128,uint128,uint128)",
-        ] {
+            "checkWadMulHalfUp(uint128,uint128)",
+        ]
+        .into_iter()
+        .chain(without_queries.iter().copied())
+        {
             let result = json_test_result(&output, signature);
             assert_eq!(
                 result["symbolic"]["status"], "pass",
@@ -10597,12 +10666,19 @@ contract SymbolicCeilingBounds {
             );
         }
         // A checked `n + d` leaves its `d <= ~n` guard instead of a bounded range.
-        let signature = "checkCheckedCeilingAboveFloor(uint256,uint256)";
-        let result = json_test_result(&output, signature);
-        assert_eq!(
-            result["symbolic"]["status"], "pass",
-            "{signature}, optimized={optimized}: {result}"
-        );
+        for signature in [
+            "checkCheckedCeilingAboveFloor(uint256,uint256)",
+            "checkWrappedHalfUpWideDivisor(uint256,uint256)",
+        ]
+        .into_iter()
+        .chain(with_queries.iter().copied())
+        {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "pass",
+                "{signature}, optimized={optimized}: {result}"
+            );
+        }
         for signature in [
             "checkWrappedCeilingAboveFloor(uint256,uint256)",
             "checkWrappedCeilingAtMostFloorPlusOne(uint256,uint256)",
@@ -10610,6 +10686,12 @@ contract SymbolicCeilingBounds {
             "checkCeilingAtMostFloor(uint128,uint128)",
             "checkOtherDivisor(uint128,uint128,uint128)",
             "checkOtherDivisorPlusOne(uint128,uint128,uint128)",
+            "checkWrappedHalfUpFloorPlusOne(uint256,uint256)",
+            "checkCheckedHalfUpWrappedFloorPlusOne(uint256,uint256)",
+            "checkAddendAboveDivisor(uint128,uint128)",
+            "checkHalfUpOtherDivisor(uint128,uint128,uint128)",
+            "checkHalfUpOtherNumerator(uint128,uint128,uint128)",
+            "checkHalfOfOtherValue(uint128,uint128,uint128)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(

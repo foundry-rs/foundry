@@ -151,11 +151,13 @@ impl ConstraintContext {
     /// proved at most `x`.
     /// Another conjunct's cross-multiplied `x * k <= y * l` also decides `x <= y` once `k` is
     /// positive, `l <= k`, and `x * k` cannot wrap.
-    /// A shifted product `(x * y) >> k <= x` once `y <= 2**k`, even when `x * y` wraps.
+    /// A shift `x >> k <= x`, and a shifted product `(x * y) >> k <= x` once `y <= 2**k`, even
+    /// when `x * y` wraps.
     /// The shares `w * a / k + w * b / k <= w` once `a + b <= k`, and `n <= ceil(n / d) * d` for a
     /// nonzero `d` once the multiple cannot wrap. With a nonzero `d` and an `n + d` that cannot
-    /// wrap, `n / d <= (n + d - 1) / d <= n / d + 1`. A difference `a - b` is at most `x` once
-    /// `b <= a` and `a <= x`.
+    /// wrap, `n / d <= (n + d - 1) / d <= n / d + 1`, and `(n + e) / d <= n / d + 1` for any
+    /// `e <= d` once `n / d + 1` cannot wrap, since a wrapped `n + e` only shrinks the dividend.
+    /// A difference `a - b` is at most `x` once `b <= a` and `a <= x`.
     /// A weighted average `(p * u + q * v) / k` with `u + v <= k` is at most a bound on `p` and
     /// `q`.
     pub(super) fn division_comparison_value(&self, expr: &SymBoolExpr) -> Option<bool> {
@@ -266,20 +268,47 @@ impl ConstraintContext {
         // With `n = q * d + r` and `r < d`, `(n + d - 1) / d` is `q` or `q + 1`, so it lies between
         // `n / d` and `n / d + 1`. A wrapped `n + d` breaks the lower bound and lets `n / d + 1`
         // wrap at `n = MAX`, `d = 1`. A zero `d` makes both quotients all ones, which breaks the
-        // upper bound.
+        // upper bound. Any addend `e <= d` keeps `n + e < (q + 2) * d`, so half-up rounding as in
+        // Aave's WadRayMath, `(n + d / 2) / d`, is also at most `n / d + 1` once `n / d + 1` does
+        // not wrap, which needs `d >= 2` or `n < MAX`. A wrapped `n + e` only shrinks the
+        // dividend. Proving `e <= d` by recursion is charged to the budget.
         let ceiling = match large.kind() {
             SymExprKind::BinOp(SymBinOp::Add, quotient, one)
                 if one.as_const() == Some(U256::ONE) =>
             {
-                quotient.udiv_operands().filter(|&floor| ceil_sum_operands(small) == Some(floor))
+                quotient.udiv_operands().and_then(|(n, d)| {
+                    if ceil_sum_operands(small) == Some((n, d)) {
+                        return Some((n, d, None));
+                    }
+                    let sum = small.udiv_operands().filter(|&(_, x)| x == d)?.0;
+                    let SymExprKind::BinOp(SymBinOp::Add, a, b) = sum.kind() else { return None };
+                    let addend = (a == n).then_some(b).or((b == n).then_some(a))?;
+                    Some((n, d, Some(addend)))
+                })
             }
-            _ => ceil_sum_operands(large).filter(|&floor| small.udiv_operands() == Some(floor)),
+            _ => ceil_sum_operands(large)
+                .filter(|&floor| small.udiv_operands() == Some(floor))
+                .map(|(n, d)| (n, d, None)),
         };
-        if let Some((n, d)) = ceiling
-            && self
-                .interval_cached(d, intervals, remaining)
-                .is_some_and(|range| !range.min.is_zero())
-            && self.sum_cannot_wrap(n, d, intervals, remaining)
+        if let Some((n, d, addend)) = ceiling
+            && let Some(range) =
+                self.interval_cached(d, intervals, remaining).filter(|range| !range.min.is_zero())
+            && match addend {
+                None => self.sum_cannot_wrap(n, d, intervals, remaining),
+                Some(e) => {
+                    (range.min >= U256::from(2)
+                        || self
+                            .interval_cached(n, intervals, remaining)
+                            .is_some_and(|n| n.max < U256::MAX))
+                        && (self
+                            .interval_cached(e, intervals, remaining)
+                            .is_some_and(|e| e.max <= range.min)
+                            || remaining.checked_sub(1).is_some_and(|left| {
+                                *remaining = left;
+                                self.division_order(e, d, intervals, remaining).is_some()
+                            }))
+                }
+            }
         {
             return Some(false);
         }
@@ -382,6 +411,8 @@ impl ConstraintContext {
                 };
                 rounded_up.or_else(|| bounded(dividend, None))
             }
+            // `x >> k <= x`, as for a half `d / 2` added before dividing by `d`.
+            SymExprKind::BinOp(SymBinOp::Shr, value, _) if value == large => Some(false),
             // `(x * y) >> k` is `x * y / 2**k`, as in Q96 and Q128 fixed-point math, so it is at
             // most `x` once `y <= 2**k`. A wrapped product only shrinks the dividend.
             SymExprKind::BinOp(SymBinOp::Shr, value, shift)
