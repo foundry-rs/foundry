@@ -347,6 +347,14 @@ fn expr_less_or_equal<'a>(
         }
         // `~x <= ~y` for `y <= x`, as `~x` is `MAX - x`.
         (SymExprKind::Not(x), SymExprKind::Not(y)) => expr_less_or_equal(y, x, facts, bounds),
+        // `x - e <= x <= right` when `e <= x`, so the difference does not wrap, as for an accrued
+        // index delta.
+        (SymExprKind::BinOp(SymBinOp::Sub, minuend, subtrahend), _)
+            if expr_less_or_equal(subtrahend, minuend, facts, bounds)
+                && expr_less_or_equal(minuend, right, facts, bounds) =>
+        {
+            true
+        }
         // A failed bounded proof falls through: later arms can still order non-wrapping products.
         (
             SymExprKind::BinOp(SymBinOp::Mul, left_a, left_b),

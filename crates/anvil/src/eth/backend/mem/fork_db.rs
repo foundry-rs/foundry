@@ -252,6 +252,7 @@ impl<N: Network> Db for ForkedDatabase<N> {
             #[cfg(feature = "monad")]
             monad_block_replay_profiles: Default::default(),
             historical_states,
+            fork_replayed_blocks: Default::default(),
         }))
     }
 

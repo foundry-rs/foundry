@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
     collections::{BTreeMap, BTreeSet},
-    fmt,
+    fmt::{self, Write},
     ops::{Deref, DerefMut},
 };
 
@@ -513,12 +513,14 @@ fn tempo_channel_storage_decodes(arena: &CallTraceArena) -> Option<String> {
     let mut rendered = String::new();
     rendered.push_str("Decoded TIP20ChannelReserve storage:\n");
     for (slot, before, after) in decoded_changes {
-        rendered.push_str(&format!(
-            "  @ {}: {} -> {}\n",
+        writeln!(
+            rendered,
+            "  @ {}: {} -> {}",
             format_storage_word(slot),
             format_channel_state(before),
             format_channel_state(after),
-        ));
+        )
+        .unwrap();
     }
     Some(rendered)
 }

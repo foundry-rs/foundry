@@ -1632,13 +1632,21 @@ impl ConstraintContext {
                 })
             }
             SymExprKind::BinOp(SymBinOp::Sub, minuend, subtrahend) => {
-                if let Some(interval) =
-                    self.rounding_error_interval(minuend, subtrahend, intervals, remaining)
-                {
-                    return Some(interval);
+                let relation =
+                    self.rounding_error_interval(minuend, subtrahend, intervals, remaining);
+                let left = self.interval_cached(minuend, intervals, remaining);
+                let right = self.interval_cached(subtrahend, intervals, remaining);
+                if let Some(relation) = relation {
+                    // The relation proves that the subtraction does not wrap, so the operand
+                    // ranges still bound the difference.
+                    let Some((left, right)) = left.zip(right) else { return Some(relation) };
+                    return relation.with_bounds(
+                        Some(left.min.saturating_sub(right.max)),
+                        Some(left.max.saturating_sub(right.min)),
+                    );
                 }
-                let left = self.interval_cached(minuend, intervals, remaining)?;
-                let right = self.interval_cached(subtrahend, intervals, remaining)?;
+                let left = left?;
+                let right = right?;
                 if left.max < right.min {
                     // Every subtraction wraps exactly once, so the unsigned image is contiguous.
                     return Some(WordInterval {

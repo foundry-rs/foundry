@@ -13,6 +13,7 @@ use markdown::ParseOptions;
 use path_slash::PathExt;
 use std::{
     collections::HashMap,
+    fmt::Write,
     fs,
     path::{Path, PathBuf},
 };
@@ -102,17 +103,19 @@ fn vocs_config(config: &DocConfig, branch: Option<&str>) -> String {
     ts.push_str("import { defineConfig } from 'vocs/config'\n");
     ts.push_str("import { sidebar } from './vocs.sidebar'\n\n");
     ts.push_str("export default defineConfig({\n");
-    ts.push_str(&format!("  title: {},\n", json_str(title)));
+    writeln!(ts, "  title: {},", json_str(title)).unwrap();
 
     if let Some(repo) = &config.repository {
         // GitHub `edit/<branch>/<path>` requires a real branch name (it does not
         // accept `HEAD`). Use the detected current branch when available, else
         // fall back to `main`.
         let edit_branch = branch.unwrap_or("main");
-        ts.push_str(&format!(
-            "  editLink: {{ pattern: '{}/edit/{edit_branch}/{{path}}' }},\n",
+        writeln!(
+            ts,
+            "  editLink: {{ pattern: '{}/edit/{edit_branch}/{{path}}' }},",
             repo.trim_end_matches('/')
-        ));
+        )
+        .unwrap();
     }
 
     // Pin the shiki language bundle. Vocs otherwise scans every MDX page and
@@ -150,7 +153,7 @@ fn vocs_sidebar(pages: &[PathBuf]) -> String {
 /// Build a TypeScript sidebar array string from the list of relative page paths.
 fn build_sidebar(pages: &[PathBuf]) -> String {
     // Sort pages for deterministic output.
-    let mut sorted = pages.to_vec();
+    let mut sorted = pages.iter().collect::<Vec<_>>();
     sorted.sort();
 
     // Group by parent directory -> type category -> (name, link).
@@ -169,11 +172,7 @@ fn build_sidebar(pages: &[PathBuf]) -> String {
         let (kind, name) = stem.split_once('.').unwrap_or(("", stem));
         let cat = type_category_order(kind);
 
-        let dir = page
-            .parent()
-            .and_then(|p| if p == Path::new("") { None } else { Some(p.to_slash_lossy()) })
-            .map(|s| s.to_string())
-            .unwrap_or_default();
+        let dir = page.parent().map(|p| p.to_slash_lossy().into_owned()).unwrap_or_default();
 
         groups.entry(dir).or_default().entry(cat).or_default().push((name.to_string(), link));
     }
@@ -184,11 +183,8 @@ fn build_sidebar(pages: &[PathBuf]) -> String {
             // Top-level items, emit flat, preserving type prefix in name for clarity.
             for items in by_type.values() {
                 for (name, link) in items {
-                    out.push_str(&format!(
-                        "    {{ text: {}, link: {} }},\n",
-                        json_str(name),
-                        json_str(link)
-                    ));
+                    writeln!(out, "    {{ text: {}, link: {} }},", json_str(name), json_str(link))
+                        .unwrap();
                 }
             }
             continue;
@@ -197,32 +193,38 @@ fn build_sidebar(pages: &[PathBuf]) -> String {
         // Does this directory have more than one type category?
         let multi_type = by_type.len() > 1;
 
-        out.push_str(&format!("    {{\n      text: {},\n      items: [\n", json_str(dir)));
+        writeln!(out, "    {{\n      text: {},\n      items: [", json_str(dir)).unwrap();
 
         for (cat, items) in by_type {
             if multi_type {
                 // Emit a collapsed sub-group for this type category.
                 let cat_label = type_category_label(*cat);
-                out.push_str(&format!(
-                    "        {{\n          text: {},\n          collapsed: true,\n          items: [\n",
+                writeln!(
+                    out,
+                    "        {{\n          text: {},\n          collapsed: true,\n          items: [",
                     json_str(cat_label)
-                ));
+                )
+                .unwrap();
                 for (name, link) in items {
-                    out.push_str(&format!(
-                        "            {{ text: {}, link: {} }},\n",
+                    writeln!(
+                        out,
+                        "            {{ text: {}, link: {} }},",
                         json_str(name),
                         json_str(link)
-                    ));
+                    )
+                    .unwrap();
                 }
                 out.push_str("          ],\n        },\n");
             } else {
                 // Single type, list items directly without a wrapper.
                 for (name, link) in items {
-                    out.push_str(&format!(
-                        "        {{ text: {}, link: {} }},\n",
+                    writeln!(
+                        out,
+                        "        {{ text: {}, link: {} }},",
                         json_str(name),
                         json_str(link)
-                    ));
+                    )
+                    .unwrap();
                 }
             }
         }
@@ -278,18 +280,14 @@ const fn type_category_label(cat: u8) -> &'static str {
 fn find_homepage(config: &DocConfig, root: &Path, sources: &Path) -> (String, Option<PathBuf>) {
     // 1. Explicit homepage from config.
     if let Some(hp) = &config.homepage {
-        let path = if hp.is_absolute() { hp.clone() } else { root.join(hp) };
+        let path = root.join(hp);
         if let Ok(content) = fs::read_to_string(&path) {
             return (content, path.parent().map(Path::to_path_buf));
         }
     }
 
     // 2. <sources>/README.md (e.g. `src/README.md`).
-    let src_readme = if sources.is_absolute() {
-        sources.join("README.md")
-    } else {
-        root.join(sources).join("README.md")
-    };
+    let src_readme = root.join(sources).join("README.md");
     if let Ok(content) = fs::read_to_string(&src_readme) {
         return (content, src_readme.parent().map(Path::to_path_buf));
     }
@@ -511,7 +509,7 @@ fn try_rewrite_target(
     } else {
         normalize_path(&base_dir.join(path))
     };
-    let rel = abs.strip_prefix(root).ok()?.to_path_buf();
+    let rel = abs.strip_prefix(root).ok()?;
 
     // `.sol` -> vocs page.
     if path.extension().and_then(|e| e.to_str()) == Some("sol") {
