@@ -819,6 +819,45 @@ async fn cast_run_rejects_mismatched_transaction(cmd: _) {
     }
 }
 
+// The receipt returned by the RPC must belong to the requested transaction, even when it comes
+// from the same block.
+#[casttest]
+async fn cast_run_rejects_mismatched_receipt(cmd: _) {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let from = provider.get_accounts().await.unwrap()[0];
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let mut pending = Vec::new();
+    for to in [Address::with_last_byte(0xaa), Address::with_last_byte(0xbb)] {
+        pending.push(
+            provider
+                .send_transaction(TransactionRequest::default().with_from(from).with_to(to).into())
+                .await
+                .unwrap(),
+        );
+    }
+    api.mine_one().await.unwrap();
+    let requested = *pending[0].tx_hash();
+    let returned = *pending[1].tx_hash();
+    let returned_receipt = provider.get_transaction_receipt(returned).await.unwrap().unwrap();
+    let (endpoint, _) = spawn_rpc_proxy_canned_method(
+        handle.http_endpoint(),
+        "eth_getTransactionReceipt",
+        serde_json::to_value(returned_receipt).unwrap(),
+    )
+    .await;
+
+    for args in [&[][..], &["--debug-trace-transaction"]] {
+        cmd.cast_fuse()
+            .args(["run", &requested.to_string(), "--rpc-url", &endpoint])
+            .args(args)
+            .assert_failure()
+            .stderr_eq(format!(
+                "Error: RPC returned the receipt of transaction {returned} for requested {requested}\n"
+            ));
+    }
+}
+
 // Opens a replayed transaction in soldb and checks a source stop with its variables.
 #[forgetest]
 async fn cast_run_debug_soldb(prj: _, cmd: _) {
