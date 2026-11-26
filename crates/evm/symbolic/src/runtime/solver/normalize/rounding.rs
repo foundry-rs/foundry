@@ -271,7 +271,8 @@ impl ConstraintContext {
         // upper bound. Any addend `e <= d` keeps `n + e < (q + 2) * d`, so half-up rounding as in
         // Aave's WadRayMath, `(n + d / 2) / d`, is also at most `n / d + 1` once `n / d + 1` does
         // not wrap, which needs `d >= 2` or `n < MAX`. A wrapped `n + e` only shrinks the
-        // dividend. Proving `e <= d` by recursion is charged to the budget.
+        // dividend. `e <= d` comes from equality, another conjunct, or value ranges, and otherwise
+        // from a recursion charged to the budget.
         let ceiling = match large.kind() {
             SymExprKind::BinOp(SymBinOp::Add, quotient, one)
                 if one.as_const() == Some(U256::ONE) =>
@@ -300,9 +301,7 @@ impl ConstraintContext {
                         || self
                             .interval_cached(n, intervals, remaining)
                             .is_some_and(|n| n.max < U256::MAX))
-                        && (self
-                            .interval_cached(e, intervals, remaining)
-                            .is_some_and(|e| e.max <= range.min)
+                        && (self.factor_within_divisor(e, d, intervals, remaining)
                             || remaining.checked_sub(1).is_some_and(|left| {
                                 *remaining = left;
                                 self.division_order(e, d, intervals, remaining).is_some()

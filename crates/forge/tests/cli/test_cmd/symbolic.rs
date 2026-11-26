@@ -10595,6 +10595,21 @@ contract SymbolicCeilingBounds {
         }
     }
 
+    // A guarded offset up to the divisor, including the divisor itself, is decided from the guard.
+    function checkGuardedHalfUpOffset(uint256 n, uint256 e, uint256 d) public pure {
+        require(d >= 2 && e <= d);
+        unchecked {
+            assert((n + e) / d <= n / d + 1);
+        }
+    }
+
+    function checkDivisorOffset(uint256 n, uint256 d) public pure {
+        require(d >= 2);
+        unchecked {
+            assert((n + d) / d <= n / d + 1);
+        }
+    }
+
     function checkWrappedHalfUpFloorPlusOne(uint256 n, uint256 d) public pure {
         require(d != 0);
         unchecked {
@@ -10651,6 +10666,9 @@ contract SymbolicCeilingBounds {
             "checkCeilingAboveFloor(uint128,uint128,uint128)",
             "checkCeilingAtMostFloorPlusOne(uint128,uint128,uint128)",
             "checkWadMulHalfUp(uint128,uint128)",
+            "checkWrappedHalfUpWideDivisor(uint256,uint256)",
+            "checkGuardedHalfUpOffset(uint256,uint256,uint256)",
+            "checkDivisorOffset(uint256,uint256)",
         ]
         .into_iter()
         .chain(without_queries.iter().copied())
@@ -10666,12 +10684,9 @@ contract SymbolicCeilingBounds {
             );
         }
         // A checked `n + d` leaves its `d <= ~n` guard instead of a bounded range.
-        for signature in [
-            "checkCheckedCeilingAboveFloor(uint256,uint256)",
-            "checkWrappedHalfUpWideDivisor(uint256,uint256)",
-        ]
-        .into_iter()
-        .chain(with_queries.iter().copied())
+        for signature in ["checkCheckedCeilingAboveFloor(uint256,uint256)"]
+            .into_iter()
+            .chain(with_queries.iter().copied())
         {
             let result = json_test_result(&output, signature);
             assert_eq!(
