@@ -153,7 +153,8 @@ impl ConstraintContext {
     /// A shifted product `(x * y) >> k <= x` once `y <= 2**k`, even when `x * y` wraps.
     /// The shares `w * a / k + w * b / k <= w` once `a + b <= k`, and `n <= ceil(n / d) * d` for a
     /// nonzero `d` once the multiple cannot wrap. With a nonzero `d` and an `n + d` that cannot
-    /// wrap, `n / d <= (n + d - 1) / d <= n / d + 1`.
+    /// wrap, `n / d <= (n + d - 1) / d <= n / d + 1`. A difference `a - b` is at most `x` once
+    /// `b <= a` and `a <= x`.
     /// A weighted average `(p * u + q * v) / k` with `u + v <= k` is at most a bound on `p` and
     /// `q`.
     pub(super) fn division_comparison_value(&self, expr: &SymBoolExpr) -> Option<bool> {
@@ -390,6 +391,23 @@ impl ConstraintContext {
                     })
                 })
                 .then_some(false),
+            // A payout minus its fee, `a - b <= a <= large` once `b <= a`, which also keeps the
+            // subtraction from wrapping. Each recursion is charged to the budget, because cached
+            // intervals cost nothing and subtractions that share operands would otherwise be walked
+            // as a tree. A chain of deductions ends at `large` itself.
+            SymExprKind::BinOp(SymBinOp::Sub, a, b) => {
+                let mut order = |small, large| {
+                    if small == large {
+                        return Some(false);
+                    }
+                    *remaining = remaining.checked_sub(1)?;
+                    self.division_order(small, large, intervals, remaining)
+                };
+                if !self.asserts_less_or_equal(b, a) {
+                    order(b, a)?;
+                }
+                order(a, large)
+            }
             _ => None,
         }
     }

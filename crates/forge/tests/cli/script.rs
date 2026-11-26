@@ -12250,6 +12250,65 @@ async fn script_json_rpc_failure_codes_fork(prj: _, cmd: _) {
     );
 }
 
+// `--no-compile` runs a script from cached artifacts, and fails instead of compiling when a source
+// changed.
+#[forgetest]
+fn script_no_compile(prj: _, cmd: _) {
+    let script = prj.add_source("Foo", "contract Demo { function run() external {} }");
+    cmd.arg("build").assert_success();
+    cmd.forge_fuse().arg("script").arg(&script).arg("--no-compile").assert_success().stdout_eq(
+        str![[r#"
+No files changed, compilation skipped
+Script ran successfully.
+...
+"#]],
+    );
+
+    prj.add_source("Foo", "contract Demo { function run() external pure {} }");
+    cmd.forge_fuse()
+        .arg("script")
+        .arg(&script)
+        .arg("--no-compile")
+        .assert_failure()
+        .stdout_eq(str![[""]])
+        .stderr_eq(str![[r#"
+Error: compilation disabled by --no-compile; sources need compiling:
+src/Foo.sol
+
+"#]]);
+
+    // The cache is untouched, so a normal run compiles the change.
+    cmd.forge_fuse().arg("script").arg(&script).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+...
+"#]]);
+
+    // `--debug` needs storage layouts the build lacks, and reports them stale without touching
+    // the cache, so a later cached run still works.
+    let script = prj.add_script("Bar.s.sol", "contract Bar { function run() external {} }");
+    cmd.forge_fuse().arg("build").assert_success();
+    let cache = fs::read(prj.cache()).unwrap();
+    cmd.forge_fuse()
+        .arg("script")
+        .arg(&script)
+        .args(["--no-compile", "--debug", "--dump", "dump.json"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: compilation disabled by --no-compile; sources need compiling:
+...
+"#]]);
+    assert_eq!(fs::read(prj.cache()).unwrap(), cache);
+    cmd.forge_fuse().arg("script").arg(&script).arg("--no-compile").assert_success();
+
+    prj.update_config(|config| config.decode_external_storage = true);
+    cmd.forge_fuse().arg("script").arg(&script).arg("--no-compile").assert_failure().stderr_eq(
+        str![[r#"
+Error: `--no-compile` cannot be used with `decode_external_storage`
+
+"#]],
+    );
+}
+
 // `--args-json` encodes structs, struct arrays, and big integers against `--sig`.
 #[forgetest]
 fn can_execute_script_with_args_json(prj: _, cmd: _) {

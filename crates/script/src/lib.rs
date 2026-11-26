@@ -199,6 +199,10 @@ pub struct ScriptArgs {
     #[arg(long)]
     pub skip_simulation: bool,
 
+    /// Uses only cached artifacts, and fails instead of compiling when a source needs compiling.
+    #[arg(long, conflicts_with_all = ["force", "verify"])]
+    pub no_compile: bool,
+
     /// Relative percentage to multiply gas estimates by.
     #[arg(long, short, default_value = "130")]
     pub gas_estimate_multiplier: u64,
@@ -491,8 +495,11 @@ impl ScriptArgs {
                 config.extra_output.push(ContractOutputSelection::StorageLayout);
             }
             // Full build infos keep the sources the compiler saw, which dynamic test linking
-            // rewrites in scripts.
-            if let Err(error) = config.enable_debug_build_info() {
+            // rewrites in scripts. Getting them evicts cache entries, which `--no-compile` must
+            // not write.
+            if !args.no_compile
+                && let Err(error) = config.enable_debug_build_info()
+            {
                 let _ = sh_warn!(
                     "the debugger may show source files that differ from the compiled ones: {error:#}"
                 );

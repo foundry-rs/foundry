@@ -37,6 +37,7 @@ use foundry_compilers::{
     ArtifactId, ProjectCompileOutput,
     artifacts::{BytecodeObject, Libraries},
     compilers::{Language, multi::MultiCompilerLanguage},
+    error::SolcError,
     info::ContractInfo,
     utils::source_files_iter,
 };
@@ -46,6 +47,7 @@ use foundry_evm::{
 };
 use foundry_linking::Linker;
 use foundry_wallets::{MultiWalletOpts, wallet_browser::signer::BrowserSigner};
+use itertools::Itertools;
 use std::{
     path::{Path, PathBuf},
     str::FromStr,
@@ -220,9 +222,25 @@ impl<FEN: FoundryEvmNetwork> PreprocessedState<FEN> {
     /// After compilation, finds exact [ArtifactId] of the target contract.
     pub fn compile(self) -> Result<CompiledState<FEN>> {
         let Self { args, script_config, script_wallets, browser_wallet } = self;
+        // `force` wipes the cache when the project is created.
+        eyre::ensure!(
+            !(args.no_compile && script_config.config.force),
+            "`--no-compile` cannot be used with `force`"
+        );
+        // Decoding external storage compiles verified sources during execution.
+        eyre::ensure!(
+            !(args.no_compile && script_config.config.decode_external_storage),
+            "`--no-compile` cannot be used with `decode_external_storage`"
+        );
         // Setting up the compiler, such as installing solc, fails here.
-        let project =
+        let mut project =
             script_config.config.project().map_err(|err| coded(err.into(), "compiler.error"))?;
+        eyre::ensure!(
+            !args.no_compile || project.cached,
+            "`--no-compile` needs the build cache, which `cache = false`, `--no-cache`, and \
+             `deny = \"warnings\"` disable"
+        );
+        project.no_compile = args.no_compile;
 
         let mut target_name = args.target_contract.clone();
 
@@ -256,7 +274,16 @@ impl<FEN: FoundryEvmNetwork> PreprocessedState<FEN> {
         } else {
             compiler.target_files([target_path.clone()])
         };
-        let output = compiler.compile(&project).map_err(|err| coded(err, "compiler.error"))?;
+        let output = compiler.compile(&project).map_err(|err| {
+            let Some(SolcError::StaleSources(files)) = err.downcast_ref() else {
+                return coded(err, "compiler.error");
+            };
+            let files = files.iter().map(|file| file.strip_prefix(project.root()).unwrap_or(file));
+            eyre::eyre!(
+                "compilation disabled by --no-compile; sources need compiling:\n{}",
+                files.map(|file| file.display()).join("\n")
+            )
+        })?;
 
         let mut target_id: Option<ArtifactId> = None;
 
