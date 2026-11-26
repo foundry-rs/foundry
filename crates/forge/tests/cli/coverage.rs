@@ -2661,8 +2661,10 @@ BRDA:18,4,0,16
     let optimized = ["coverage", "--no-isolate", "--keep-optimizer", "--optimize"];
     assert_lcov(cmd.arg("coverage").arg("--no-isolate"), expected.clone());
     assert_lcov(cmd.forge_fuse().args(optimized), expected.clone());
+    // Optimized Solar elides the final enum comparison and its source mapping, which Solar
+    // treats as best-effort: https://github.com/paradigmxyz/solar/issues/2758
     let solar = prj.ensure_foundry_bin("solar");
-    assert_lcov(cmd.forge_fuse().args(optimized).arg("--use").arg(&solar), expected);
+    assert_lcov(cmd.forge_fuse().args(["coverage", "--no-isolate", "--use"]).arg(&solar), expected);
 }
 
 #[forgetest]
