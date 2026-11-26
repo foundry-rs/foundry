@@ -69,9 +69,9 @@ pub fn read_deployments(
     };
 
     // Switch ".sol" -> ".json" and keep just the file name.
-    let mut filename: PathBuf = contract_file.to_path_buf();
-    filename.set_extension("json");
-    let Some(filename) = filename.file_name().map(PathBuf::from) else { return Vec::new() };
+    let Some(filename) = contract_file.with_extension("json").file_name().map(PathBuf::from) else {
+        return Vec::new();
+    };
 
     let mut out = Vec::new();
     for entry in entries.flatten() {
@@ -88,11 +88,11 @@ pub fn read_deployments(
     }
     // Sort for deterministic output across platforms (fs::read_dir order is unspecified).
     out.sort_by(|a, b| {
-        a.network.as_deref().unwrap_or("").cmp(b.network.as_deref().unwrap_or("")).then_with(|| {
-            let af = format!("{:#x}", a.address);
-            let bf = format!("{:#x}", b.address);
-            af.cmp(&bf)
-        })
+        a.network
+            .as_deref()
+            .unwrap_or("")
+            .cmp(b.network.as_deref().unwrap_or(""))
+            .then_with(|| a.address.cmp(&b.address))
     });
     out
 }
@@ -100,9 +100,8 @@ pub fn read_deployments(
 /// Map a source to its documentation location, retaining the legacy external-library layout.
 pub(crate) fn relative_source_path(root: &Path, source: &Path) -> PathBuf {
     source.strip_prefix(root).map(Path::to_path_buf).unwrap_or_else(|_| {
-        let components = source.components().collect::<Vec<_>>();
-        PathBuf::from("lib")
-            .join(components[components.len().saturating_sub(3)..].iter().collect::<PathBuf>())
+        let skip = source.components().count().saturating_sub(3);
+        PathBuf::from("lib").join(source.components().skip(skip).collect::<PathBuf>())
     })
 }
 

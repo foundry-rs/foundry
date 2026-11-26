@@ -43,12 +43,15 @@ use foundry_common::{
         MappingSlots, PendingMappingHash, capture_hash as capture_mapping_hash,
         record_hash as record_mapping_hash, step as mapping_step,
     },
+    provider::RpcFailure,
 };
 use foundry_evm_core::{
     Breakpoints,
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{LocalForkId, RevertDiagnostic},
-    constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
+    constants::{
+        CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME,
+    },
     evm::{
         BlockEnvFor, EthEvmNetwork, EvmEnvFor, FoundryEvmFor, FoundryEvmNetwork, InterpreterFor,
         MessageFor, MessageResultFor, PersistentWrite, SnapshotRestores, SpecFor,
@@ -751,6 +754,10 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// `char -> (address, pc)`
     pub breakpoints: Breakpoints,
 
+    /// The revert data of each cheatcode error an RPC failure caused, and how it failed, oldest
+    /// first.
+    pub rpc_failures: Vec<(Bytes, RpcFailure)>,
+
     /// Ignored traces.
     pub ignored_traces: IgnoredTraces,
 
@@ -828,12 +835,17 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Depth of a create that a hook ended with a revert without running its frame.
     pub unrun_create_depth: Option<usize>,
 
-    /// Code that issued the CREATE being handed off to a new frame EVM.
+    /// Code that issued the CREATE, or the call into the CREATE2 deployer, being handed off to a
+    /// new frame EVM.
     pub env_handoff_creator: Option<Address>,
 
     /// Automatic CREATE2 redirects: factory call depth, original issuing code, and whether the
     /// original create grants cheatcode access. The grant is resolved after caller overrides.
     pub pending_create2_redirects: Vec<(u16, Option<Address>, bool)>,
+
+    /// Depth of a call into the CREATE2 deployer whose create has not run yet, and whether the
+    /// code that called it grants cheatcode access to the contract the deployer creates.
+    pub create2_deployer_call: Option<(u16, bool)>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -898,6 +910,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             gas_snapshots: Default::default(),
             pc: Default::default(),
             breakpoints: Default::default(),
+            rpc_failures: Default::default(),
             ignored_traces: Default::default(),
             storage_load_hooks: Default::default(),
             storage_store_hooks: Default::default(),
@@ -925,6 +938,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             unrun_create_depth: None,
             env_handoff_creator: None,
             pending_create2_redirects: Vec::new(),
+            create2_deployer_call: None,
         }
     }
 
@@ -1274,30 +1288,40 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     /// Grants cheatcode access for top-level deployments or authorized callers, provided the
     /// code issuing the CREATE also has access while forked.
     ///
+    /// The CREATE2 deployer creates whatever init code it is called with, so its creates are
+    /// authorized by the code that called it, not by the deployer's own access.
+    ///
     /// Constructors need access before the new contract's runtime code has been deployed.
     fn allow_cheatcodes_on_create(
-        &self,
+        &mut self,
         backend: &mut dyn CheatcodesBackend<FEN>,
         depth: usize,
         caller: Address,
         created_address: Address,
         creator: Option<Address>,
     ) {
+        let is_factory_create = |factory_depth: u16| usize::from(factory_depth) + 1 == depth;
+        let deployer_call = self.create2_deployer_call.take();
         let allowed = self
             .pending_create2_redirects
             .last()
-            .filter(|(factory_depth, ..)| usize::from(*factory_depth) + 1 == depth)
-            .map_or_else(
-                || {
-                    Self::can_grant_cheatcodes_on_create(
-                        backend,
-                        depth - self.root_depth,
-                        caller,
-                        creator,
-                    )
-                },
-                |(.., allowed)| *allowed,
-            );
+            .filter(|(factory_depth, ..)| is_factory_create(*factory_depth))
+            .map(|(.., allowed)| *allowed)
+            .or_else(|| {
+                creator.is_some_and(|code| self.is_create2_deployer(code)).then(|| {
+                    deployer_call.is_some_and(|(call_depth, allowed)| {
+                        allowed && is_factory_create(call_depth)
+                    })
+                })
+            })
+            .unwrap_or_else(|| {
+                Self::can_grant_cheatcodes_on_create(
+                    backend,
+                    depth - self.root_depth,
+                    caller,
+                    creator,
+                )
+            });
         if allowed && !backend.backend().has_cheatcode_access(&created_address) {
             backend.backend_mut().allow_cheatcode_access(created_address);
         }
@@ -1325,6 +1349,16 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         {
             self.applied_access_list = Some(access_list.clone());
         }
+    }
+
+    /// ABI-encodes a cheatcode error as revert data, recording the data when an RPC failure
+    /// caused the error.
+    fn revert_data(&mut self, err: Error) -> Bytes {
+        let data = Bytes::from(err.abi_encode());
+        if let Some(rpc) = err.rpc_failure() {
+            self.rpc_failures.push((data.clone(), rpc.clone()));
+        }
+        data
     }
 
     /// Handles a call, accounting for whether the executor will isolate it as a transaction.
@@ -1365,7 +1399,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     return Some(message_result(
                         call,
                         InstrStop::Revert,
-                        Error::from(err).abi_encode().into(),
+                        self.revert_data(err.into()),
                     ));
                 }
             }
@@ -1381,7 +1415,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             let (stop, output) =
                 match self.apply_cheatcode(interp, call, backend, &mut gas, executor) {
                     Ok(retdata) => (InstrStop::Return, retdata.into()),
-                    Err(err) => (InstrStop::Revert, err.abi_encode().into()),
+                    Err(err) => (InstrStop::Revert, self.revert_data(err)),
                 };
             return Some(MessageResultExt { stop, gas, output, ..Default::default() });
         }
@@ -1395,7 +1429,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     let evm = interp.host();
                     let features = evm.version().features;
                     evm.state_mut().rollback(checkpoint, features);
-                    (InstrStop::Revert, err.abi_encode().into())
+                    (InstrStop::Revert, self.revert_data(err))
                 }
             };
             return Some(MessageResultExt { stop, gas, output, ..Default::default() });
@@ -1484,7 +1518,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                         return Some(message_result(
                             call,
                             InstrStop::Revert,
-                            Error::from(err).abi_encode().into(),
+                            self.revert_data(err.into()),
                         ));
                     }
                 }
@@ -1602,7 +1636,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                                 return Some(message_result(
                                     call,
                                     InstrStop::Revert,
-                                    err.abi_encode().into(),
+                                    self.revert_data(err),
                                 ));
                             }
                         }
@@ -1716,6 +1750,23 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 call.caller,
                 *creator,
             );
+        }
+
+        // Code calling the CREATE2 deployer authorizes its create as if it created directly.
+        if self.is_create2_deployer(call.code_address) {
+            // A delegated deployer creates from the calling account.
+            let caller = match call.kind {
+                MessageKind::DelegateCall | MessageKind::CallCode => call.destination,
+                _ => call.caller,
+            };
+            let creator = self.take_create_creator(interp, call);
+            let allowed = Self::can_grant_cheatcodes_on_create(
+                backend,
+                curr_depth - self.root_depth,
+                caller,
+                creator,
+            );
+            self.create2_deployer_call = Some((call.depth, allowed));
         }
 
         None
@@ -2516,7 +2567,11 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             }
         }
 
-        // Handle expected reverts.
+        // Handle expected reverts. A CREATE redirected to the CREATE2 factory ends as this call,
+        // so it settles the expectation like a create.
+        let create2_redirect =
+            self.pending_create2_redirects.last().is_some_and(|(depth, ..)| *depth == call.depth);
+        let caller_depth = self.deploy_code_caller_depth(curr_depth);
         if let Some(expected_revert) = &mut self.expected_revert {
             // Record current reverter address and call scheme before processing the expect revert
             // if call reverted.
@@ -2532,7 +2587,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 }
             }
 
-            if curr_depth <= expected_revert.depth {
+            if caller_depth <= expected_revert.depth {
                 let needs_processing = expected_revert.needs_processing(
                     cheatcode_call,
                     call_failed,
@@ -2546,7 +2601,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                         matches!(expected_revert.kind, ExpectedRevertKind::Default);
                     return match revert_handlers::handle_expect_revert(
                         cheatcode_call,
-                        false,
+                        create2_redirect,
                         self.core.config.internal_expect_revert,
                         &expected_revert,
                         outcome.stop,
@@ -2557,7 +2612,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                             trace!(expected=?expected_revert, ?error, status=?outcome.stop, "Expected revert mismatch");
                             set_revert(outcome, error.abi_encode().into());
                         }
-                        Ok((_, retdata)) => {
+                        Ok((address, retdata)) => {
                             expected_revert.actual_count += 1;
                             if expected_revert.actual_count < expected_revert.count {
                                 self.expected_revert = Some(expected_revert);
@@ -2566,7 +2621,15 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                                 self.gas_metering.last_frame_gas = None;
                             }
                             return_expected_halt_gas(outcome, halted_frame_gas);
-                            set_return(outcome, retdata);
+                            // The factory returns the created address, so only a failed redirect
+                            // returns the dummy address and a successful one keeps its output.
+                            if let Some(address) = address {
+                                if call_failed {
+                                    set_return(outcome, address.to_vec().into());
+                                }
+                            } else {
+                                set_return(outcome, retdata);
+                            }
                         }
                     };
                 }
@@ -2881,10 +2944,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         self.halted_frame_gas = None;
         self.replay_persistent_writes(interp, curr_depth, outcome.is_success());
         // Depth at which the caller resumes and applies the region snapshot correction.
-        let isolated_snapshot_gas_used = self.gas_metering.take_isolated_snapshot_gas_used(
-            self.deploy_code_caller_depth(curr_depth),
-            &outcome.gas,
-        );
+        let caller_depth = self.deploy_code_caller_depth(curr_depth);
+        let isolated_snapshot_gas_used =
+            self.gas_metering.take_isolated_snapshot_gas_used(caller_depth, &outcome.gas);
         let tx_origin = interp.host().tx_env().origin;
 
         self.finish_created_accounts_frame(
@@ -2941,11 +3003,16 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     Some(outcome.created_address.unwrap_or(call.destination));
             }
 
-            if curr_depth <= expected_revert.depth
+            if caller_depth <= expected_revert.depth
                 && matches!(expected_revert.kind, ExpectedRevertKind::Default)
             {
                 let mut expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
-                return match revert_handlers::handle_expect_revert(
+                // The expectation settles a `deployCode` create, so `deployCode` returns its
+                // result rather than the runtime the create could not deposit.
+                self.deploy_code_output = None;
+                // A create that succeeds under a count 0 expectation continues as any create.
+                let succeeded = outcome.is_success();
+                let settled = match revert_handlers::handle_expect_revert(
                     false,
                     true,
                     self.core.config.internal_expect_revert,
@@ -2962,14 +3029,21 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                             self.expected_revert = Some(expected_revert.clone());
                         }
 
-                        set_return(outcome, retdata);
-                        outcome.created_address = address;
-                        self.gas_metering.last_frame_gas = None;
+                        if !succeeded {
+                            set_return(outcome, retdata);
+                            outcome.created_address = address;
+                            self.gas_metering.last_frame_gas = None;
+                        }
+                        !succeeded
                     }
                     Err(err) => {
-                        set_revert(outcome, err.abi_encode().into());
+                        set_revert(outcome, self.revert_data(err));
+                        true
                     }
                 };
+                if settled {
+                    return;
+                }
             }
         }
 
@@ -3075,6 +3149,12 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     /// Returns the CREATE2 deployer address.
     pub fn create2_deployer(&self) -> Address {
         self.core.config.evm_opts.create2_deployer
+    }
+
+    /// Returns whether `address` is the configured CREATE2 deployer, or the default one, which
+    /// Foundry installs locally regardless of the configuration.
+    pub fn is_create2_deployer(&self, address: Address) -> bool {
+        address == self.create2_deployer() || address == DEFAULT_CREATE2_DEPLOYER
     }
 
     /// Preserves the original CREATE authorization before redirecting it to the factory.
@@ -4380,6 +4460,7 @@ mod tests {
                 anonymous: false,
                 found: false,
                 count: 1,
+                matched_logs: 0,
                 mismatch_error: None,
             },
             Default::default(),

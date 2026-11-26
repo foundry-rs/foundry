@@ -137,8 +137,7 @@ impl<'ast> State<'_, 'ast> {
     }
 
     fn print_item(&mut self, item: &'ast ast::Item<'ast>, skip_ws: bool) {
-        let ast::Item { ref docs, span, ref kind } = *item;
-        self.print_docs(docs);
+        let ast::Item { span, ref kind, .. } = *item;
 
         // The comments preceding the item are printed before checking whether it is disabled,
         // because printing a disabled item copies the source verbatim and drops every comment
@@ -532,7 +531,7 @@ impl<'ast> State<'_, 'ast> {
         self.word(" {");
         self.hardbreak_if_nonempty();
         let mut printed = false;
-        for (pos, ident) in variants.iter().delimited() {
+        for (pos, ast::EnumVariant { name: ident, .. }) in variants.iter().delimited() {
             self.print_comments(ident.span.lo(), CommentConfig::default());
             self.print_ident(ident);
             if !pos.is_last {
@@ -2079,8 +2078,7 @@ impl<'ast> State<'_, 'ast> {
 
     /// Prints a statement with a bounded trailing-comment scan.
     fn print_stmt_bound(&mut self, stmt: &'ast ast::Stmt<'ast>, next_pos: Option<BytePos>) {
-        let ast::Stmt { ref docs, span, ref kind } = *stmt;
-        self.print_docs(docs);
+        let ast::Stmt { span, ref kind, .. } = *stmt;
 
         // Handle disabled statements.
         if self.handle_span(span, false) {

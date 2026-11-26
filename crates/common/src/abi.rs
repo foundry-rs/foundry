@@ -51,24 +51,7 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
-    let args: Vec<S> = args.into_iter().collect();
-
-    if func.inputs.len() != args.len() {
-        eyre::bail!(
-            "encode length mismatch: expected {} types, got {}",
-            func.inputs.len(),
-            args.len(),
-        );
-    }
-
-    let params: Vec<Vec<u8>> = std::iter::zip(&func.inputs, args)
-        .map(|(input, arg)| coerce_value(&input.selector_type(), arg.as_ref()))
-        .collect::<Result<Vec<_>>>()?
-        .into_iter()
-        .map(|v| v.abi_encode_packed())
-        .collect();
-
-    Ok(params.concat())
+    Ok(encode_args(&func.inputs, args)?.iter().flat_map(DynSolValue::abi_encode_packed).collect())
 }
 
 /// Decodes the calldata of the function

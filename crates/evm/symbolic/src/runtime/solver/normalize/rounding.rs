@@ -6,7 +6,7 @@
 use super::{
     ConstraintContext, HashMap, MAX_LOCAL_ANALYSIS_NODES, SymBinOp, SymBoolExpr, SymBoolExprKind,
     SymCmpOp, SymExpr, SymExprKind, U256, WordInterval, euclidean_sum_dividend,
-    word_division_operands,
+    rounded_down_dividend,
 };
 
 /// `anchor - below <= rounded <= anchor + above` over mathematical integers.
@@ -146,11 +146,18 @@ impl ConstraintContext {
     /// if `x * y` wraps. With a nonzero `y + z` that cannot wrap, `x * y / (y + z) <= x`, strictly
     /// for nonzero `x` and `z`. The Euclidean sum `(a / d) * d + a % d` is `a`, so each summand is
     /// at most the other's complement. With a nonzero divisor, `a / d <= (a - 1) / d + 1`, also
-    /// when selected by `a != 0`, and `(x * y + c) / d <= x` once `y <= d` and `c < d`.
+    /// when selected by `a != 0`, and `(x * y + c) / d <= x` once `y <= d` and `c < d`, also with
+    /// `x * y` rounded down to a multiple `(x * y / t) * t` and with `x` replaced by a factor
+    /// proved at most `x`.
     /// Another conjunct's cross-multiplied `x * k <= y * l` also decides `x <= y` once `k` is
     /// positive, `l <= k`, and `x * k` cannot wrap.
+    /// A shift `x >> k <= x`, and a shifted product `(x * y) >> k <= x` once `y <= 2**k`, even
+    /// when `x * y` wraps.
     /// The shares `w * a / k + w * b / k <= w` once `a + b <= k`, and `n <= ceil(n / d) * d` for a
-    /// nonzero `d` once the multiple cannot wrap.
+    /// nonzero `d` once the multiple cannot wrap. With a nonzero `d` and an `n + d` that cannot
+    /// wrap, `n / d <= (n + d - 1) / d <= n / d + 1`, and `(n + e) / d <= n / d + 1` for any
+    /// `e <= d` once `n / d + 1` cannot wrap, since a wrapped `n + e` only shrinks the dividend.
+    /// A difference `a - b` is at most `x` once `b <= a` and `a <= x`.
     /// A weighted average `(p * u + q * v) / k` with `u + v <= k` is at most a bound on `p` and
     /// `q`.
     pub(super) fn division_comparison_value(&self, expr: &SymBoolExpr) -> Option<bool> {
@@ -258,6 +265,52 @@ impl ConstraintContext {
         {
             return Some(false);
         }
+        // With `n = q * d + r` and `r < d`, `(n + d - 1) / d` is `q` or `q + 1`, so it lies between
+        // `n / d` and `n / d + 1`. A wrapped `n + d` breaks the lower bound and lets `n / d + 1`
+        // wrap at `n = MAX`, `d = 1`. A zero `d` makes both quotients all ones, which breaks the
+        // upper bound. Any addend `e <= d` keeps `n + e < (q + 2) * d`, so half-up rounding as in
+        // Aave's WadRayMath, `(n + d / 2) / d`, is also at most `n / d + 1` once `n / d + 1` does
+        // not wrap, which needs `d >= 2` or `n < MAX`. A wrapped `n + e` only shrinks the
+        // dividend. `e <= d` comes from equality, another conjunct, or value ranges, and otherwise
+        // from a recursion charged to the budget.
+        let ceiling = match large.kind() {
+            SymExprKind::BinOp(SymBinOp::Add, quotient, one)
+                if one.as_const() == Some(U256::ONE) =>
+            {
+                quotient.udiv_operands().and_then(|(n, d)| {
+                    if ceil_sum_operands(small) == Some((n, d)) {
+                        return Some((n, d, None));
+                    }
+                    let sum = small.udiv_operands().filter(|&(_, x)| x == d)?.0;
+                    let SymExprKind::BinOp(SymBinOp::Add, a, b) = sum.kind() else { return None };
+                    let addend = (a == n).then_some(b).or((b == n).then_some(a))?;
+                    Some((n, d, Some(addend)))
+                })
+            }
+            _ => ceil_sum_operands(large)
+                .filter(|&floor| small.udiv_operands() == Some(floor))
+                .map(|(n, d)| (n, d, None)),
+        };
+        if let Some((n, d, addend)) = ceiling
+            && let Some(range) =
+                self.interval_cached(d, intervals, remaining).filter(|range| !range.min.is_zero())
+            && match addend {
+                None => self.sum_cannot_wrap(n, d, intervals, remaining),
+                Some(e) => {
+                    (range.min >= U256::from(2)
+                        || self
+                            .interval_cached(n, intervals, remaining)
+                            .is_some_and(|n| n.max < U256::MAX))
+                        && (self.factor_within_divisor(e, d, intervals, remaining)
+                            || remaining.checked_sub(1).is_some_and(|left| {
+                                *remaining = left;
+                                self.division_order(e, d, intervals, remaining).is_some()
+                            }))
+                }
+            }
+        {
+            return Some(false);
+        }
         let mut interval = |expr: &SymExpr| self.interval_cached(expr, intervals, remaining);
         let nonzero = |range: Option<WordInterval>| range.is_some_and(|range| !range.min.is_zero());
         match small.kind() {
@@ -295,47 +348,54 @@ impl ConstraintContext {
                     return Some(nonzero(interval(large)) && !rest.min.is_zero());
                 }
                 // Rounding up adds at most `d - 1`, so `(x * y + c) / d <= x` still holds once
-                // `c <= d - 1`; a wrapped product or sum only shrinks the dividend.
+                // `c <= d - 1`; a wrapped product or sum only shrinks the dividend. The quotient is
+                // at most the scaled factor, so the factor may also be one proved at most `x`, like
+                // a fee `x * a / k` split into shares. Each recursion is charged to the budget,
+                // because cached intervals are free and chained products that share factors would
+                // otherwise be walked as a tree. A failed search stops at half the budget.
                 let mut bounded = |dividend: &SymExpr, addend: Option<&SymExpr>| {
                     let SymExprKind::BinOp(SymBinOp::Mul, left, right) = dividend.kind() else {
-                        return false;
+                        return None;
                     };
-                    let other = if left == large {
-                        right
-                    } else if right == large {
-                        left
-                    } else {
-                        return false;
-                    };
-                    let Some(range) = self
+                    let range = self
                         .interval_cached(divisor, intervals, remaining)
-                        .filter(|range| !range.min.is_zero())
-                    else {
-                        return false;
-                    };
-                    addend.is_none_or(|addend| {
+                        .filter(|range| !range.min.is_zero())?;
+                    let addend_fits = addend.is_none_or(|addend| {
                         matches!(addend.kind(), SymExprKind::BinOp(SymBinOp::Sub, value, one)
                             if value == divisor && one.as_const() == Some(U256::ONE))
                             || self
                                 .interval_cached(addend, intervals, remaining)
                                 .is_some_and(|addend| addend.max < range.min)
-                    }) && self.factor_within_divisor(other, divisor, intervals, remaining)
-                };
-                // `round_down(n, t) <= n` (zero when `t == 0`), so dividing the rounded product
-                // is bounded by `n / d`. The EVM `DIV` may still carry its `t == 0` guard.
-                let peeled = match dividend.kind() {
-                    SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
-                        [(left, right), (right, left)].into_iter().find_map(|(quotient, factor)| {
-                            word_division_operands(quotient)
-                                .and_then(|(n, t)| (t == factor).then_some(n))
-                        })
+                    });
+                    if !addend_fits {
+                        return None;
                     }
-                    _ => None,
+                    let factors = [(left, right), (right, left)].map(|(factor, other)| {
+                        self.factor_within_divisor(other, divisor, intervals, remaining)
+                            .then_some(factor)
+                    });
+                    if factors.contains(&Some(large)) {
+                        return Some(false);
+                    }
+                    factors.into_iter().flatten().find_map(|factor| {
+                        if *remaining <= MAX_LOCAL_ANALYSIS_NODES / 2 {
+                            return None;
+                        }
+                        *remaining -= 1;
+                        self.division_order(factor, large, intervals, remaining)
+                    })
+                };
+                // `round_down(n, t) <= n` (zero when `t == 0`), so a rounded product of `x * y`
+                // is bounded as well, as when a share amount rounded down is converted back.
+                let mut bounded = |dividend: &SymExpr, addend: Option<&SymExpr>| {
+                    bounded(dividend, addend).or_else(|| {
+                        rounded_down_dividend(dividend).and_then(|n| bounded(n, addend))
+                    })
                 };
                 let rounded_up = match dividend.kind() {
                     SymExprKind::BinOp(SymBinOp::Add, a, b) => [(a, b), (b, a)]
                         .into_iter()
-                        .any(|(product, addend)| bounded(product, Some(addend))),
+                        .find_map(|(product, addend)| bounded(product, Some(addend))),
                     // `(x * y + d) - 1`. A wrapped sum is smaller, and a sum that wraps to zero
                     // gives `MAX == x * y + d - 1` exactly.
                     SymExprKind::BinOp(SymBinOp::Sub, sum, one)
@@ -346,12 +406,23 @@ impl ConstraintContext {
                     {
                         bounded(product, None)
                     }
-                    _ => false,
+                    _ => None,
                 };
-                (rounded_up
-                    || peeled.is_some_and(|peeled| bounded(peeled, None))
-                    || bounded(dividend, None))
-                .then_some(false)
+                rounded_up.or_else(|| bounded(dividend, None))
+            }
+            // `x >> k <= x`, as for a half `d / 2` added before dividing by `d`.
+            SymExprKind::BinOp(SymBinOp::Shr, value, _) if value == large => Some(false),
+            // `(x * y) >> k` is `x * y / 2**k`, as in Q96 and Q128 fixed-point math, so it is at
+            // most `x` once `y <= 2**k`. A wrapped product only shrinks the dividend.
+            SymExprKind::BinOp(SymBinOp::Shr, value, shift)
+                if let Some(shift) = shift.as_const().filter(|shift| *shift < U256::from(256))
+                    && let SymExprKind::BinOp(SymBinOp::Mul, left, right) = value.kind()
+                    && let Some(other) = [(left, right), (right, left)]
+                        .into_iter()
+                        .find_map(|(x, y)| (x == large).then_some(y)) =>
+            {
+                let scale = U256::ONE << shift.to::<usize>();
+                interval(other).is_some_and(|other| other.max <= scale).then_some(false)
             }
             // `(x / d) * k <= x` once `k <= d`.
             SymExprKind::BinOp(SymBinOp::Mul, left, right) => [(left, right), (right, left)]
@@ -363,6 +434,23 @@ impl ConstraintContext {
                     })
                 })
                 .then_some(false),
+            // A payout minus its fee, `a - b <= a <= large` once `b <= a`, which also keeps the
+            // subtraction from wrapping. Each recursion is charged to the budget, because cached
+            // intervals cost nothing and subtractions that share operands would otherwise be walked
+            // as a tree. A chain of deductions ends at `large` itself.
+            SymExprKind::BinOp(SymBinOp::Sub, a, b) => {
+                let mut order = |small, large| {
+                    if small == large {
+                        return Some(false);
+                    }
+                    *remaining = remaining.checked_sub(1)?;
+                    self.division_order(small, large, intervals, remaining)
+                };
+                if !self.asserts_less_or_equal(b, a) {
+                    order(b, a)?;
+                }
+                order(a, large)
+            }
             _ => None,
         }
     }

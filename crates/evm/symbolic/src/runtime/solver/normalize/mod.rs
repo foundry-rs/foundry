@@ -8,7 +8,8 @@ mod rounding;
 
 use mul_div::{
     checked_product_guard_operands, full_mul_div_operands, mul_high_operands,
-    normalize_mul_high_factor_cmp, normalize_quotient_offset_eq, word_division_operands,
+    normalize_mul_high_factor_cmp, normalize_quotient_offset_eq, rounded_down_dividend,
+    word_division_operands,
 };
 use polynomial::polynomial_identity;
 
@@ -516,6 +517,9 @@ fn normalize_cmp_for_solver(
                 return SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ule, value, U256::MAX / factor);
             }
         }
+        if nested_const_quotient_eq(&left, &right) || nested_const_quotient_eq(&right, &left) {
+            return SymBoolExpr::constant(cx, true);
+        }
         for (quotient, expected) in [(&left, &right), (&right, &left)] {
             // solc's checked `x * c` guard, `(x * c) / x == c` under `x != 0`, holds exactly when
             // the product does not wrap: `x <= MAX / c`. Keep that bound instead of the quotient,
@@ -598,6 +602,8 @@ pub(super) struct ConstraintContext {
     facts: HashSet<SymBoolExpr>,
     /// The words each word is asserted to be at most, by a `<=` or `<` conjunct.
     order_facts: HashMap<SymExpr, Vec<SymExpr>>,
+    /// The `(small, large)` pairs of `order_facts` asserted by a strict `<` conjunct.
+    strict_order_facts: HashSet<(SymExpr, SymExpr)>,
 }
 
 #[derive(Clone, Copy)]
@@ -684,7 +690,11 @@ impl ConstraintContext {
         }
         for fact in &context.facts {
             let (small, large) = match fact.kind() {
-                SymBoolExprKind::Cmp(SymCmpOp::Ult | SymCmpOp::Ule, left, right) => (left, right),
+                SymBoolExprKind::Cmp(SymCmpOp::Ult, left, right) => {
+                    context.strict_order_facts.insert((left.clone(), right.clone()));
+                    (left, right)
+                }
+                SymBoolExprKind::Cmp(SymCmpOp::Ule, left, right) => (left, right),
                 SymBoolExprKind::Not(inner)
                     if let SymBoolExprKind::Cmp(SymCmpOp::Ult, left, right) = inner.kind() =>
                 {
@@ -1631,13 +1641,21 @@ impl ConstraintContext {
                 })
             }
             SymExprKind::BinOp(SymBinOp::Sub, minuend, subtrahend) => {
-                if let Some(interval) =
-                    self.rounding_error_interval(minuend, subtrahend, intervals, remaining)
-                {
-                    return Some(interval);
+                let relation =
+                    self.rounding_error_interval(minuend, subtrahend, intervals, remaining);
+                let left = self.interval_cached(minuend, intervals, remaining);
+                let right = self.interval_cached(subtrahend, intervals, remaining);
+                if let Some(relation) = relation {
+                    // The relation proves that the subtraction does not wrap, so the operand
+                    // ranges still bound the difference.
+                    let Some((left, right)) = left.zip(right) else { return Some(relation) };
+                    return relation.with_bounds(
+                        Some(left.min.saturating_sub(right.max)),
+                        Some(left.max.saturating_sub(right.min)),
+                    );
                 }
-                let left = self.interval_cached(minuend, intervals, remaining)?;
-                let right = self.interval_cached(subtrahend, intervals, remaining)?;
+                let left = left?;
+                let right = right?;
                 if left.max < right.min {
                     // Every subtraction wraps exactly once, so the unsigned image is contiguous.
                     return Some(WordInterval {
@@ -1646,11 +1664,14 @@ impl ConstraintContext {
                     });
                 }
                 if left.min < right.max {
-                    // An asserted `subtrahend <= minuend` rules out wrapping.
-                    return self
-                        .asserted_upper_bounds(subtrahend)
-                        .contains(minuend)
-                        .then(|| WordInterval { min: U256::ZERO, max: left.max - right.min });
+                    // An asserted `subtrahend <= minuend` rules out wrapping, and a strict
+                    // `subtrahend < minuend` also rules out a zero difference.
+                    if !self.asserted_upper_bounds(subtrahend).contains(minuend) {
+                        return None;
+                    }
+                    let strict =
+                        self.strict_order_facts.contains(&(subtrahend.clone(), minuend.clone()));
+                    return WordInterval::new(U256::from(strict), left.max - right.min);
                 }
                 Some(WordInterval {
                     min: left.min.checked_sub(right.max)?,
@@ -1658,17 +1679,28 @@ impl ConstraintContext {
                 })
             }
             SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
+                // `(n / t) * t <= n`, and the product is zero when `t == 0`.
+                let cap = rounded_down_dividend(expr)
+                    .and_then(|dividend| self.interval_cached(dividend, intervals, remaining))
+                    .map(|dividend| dividend.max);
                 let guarded = self.has_non_wrapping_product(left, right);
-                let left = self.interval_cached(left, intervals, remaining)?;
-                let right = self.interval_cached(right, intervals, remaining)?;
-                Some(WordInterval {
-                    min: left.min.checked_mul(right.min)?,
-                    // A retained overflow guard correlates the factors. Their independent
-                    // maxima can overflow even though every feasible product fits.
-                    max: left
-                        .max
-                        .checked_mul(right.max)
-                        .or_else(|| guarded.then_some(U256::MAX))?,
+                let product = self
+                    .interval_cached(left, intervals, remaining)
+                    .zip(self.interval_cached(right, intervals, remaining))
+                    .and_then(|(left, right)| {
+                        Some(WordInterval {
+                            min: left.min.checked_mul(right.min)?,
+                            // A retained overflow guard correlates the factors. Their independent
+                            // maxima can overflow even though every feasible product fits.
+                            max: left
+                                .max
+                                .checked_mul(right.max)
+                                .or_else(|| guarded.then_some(U256::MAX))?,
+                        })
+                    });
+                let Some(cap) = cap else { return product };
+                product.map_or(Some(WordInterval { min: U256::ZERO, max: cap }), |product| {
+                    product.with_bounds(None, Some(cap))
                 })
             }
             SymExprKind::BinOp(SymBinOp::UDiv, numerator_expr, denominator_expr) => {
@@ -1770,6 +1802,24 @@ fn const_side_bound<'a>(left: &'a SymExpr, right: &'a SymExpr) -> Option<(&'a Sy
         .as_const()
         .map(|value| (left, value))
         .or_else(|| left.as_const().map(|value| (right, value)))
+}
+
+/// Returns whether `nested` is `(x u/ a) u/ b` and `single` is `x u/ c` for nonzero constants with
+/// `a * b == c` and no wrapping, since `floor(floor(x / a) / b)` is `floor(x / (a * b))`.
+fn nested_const_quotient_eq(nested: &SymExpr, single: &SymExpr) -> bool {
+    if let Some((quotient, outer)) = nested.udiv_operands()
+        && let Some((dividend, inner)) = quotient.udiv_operands()
+        && let Some((single_dividend, divisor)) = single.udiv_operands()
+        && dividend == single_dividend
+        && let Some(inner) = inner.as_const()
+        && let Some(outer) = outer.as_const()
+        && !inner.is_zero()
+        && !outer.is_zero()
+    {
+        divisor.as_const().is_some_and(|divisor| inner.checked_mul(outer) == Some(divisor))
+    } else {
+        false
+    }
 }
 
 /// Normalizes one word expression into an equivalent, solver-friendlier form.

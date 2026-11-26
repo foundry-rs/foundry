@@ -458,28 +458,34 @@ impl SymbolicExecutor {
             return Ok(StepOutcome::AssumeRejected);
         }
 
+        // Forge settles a `vm.expectRevert` from this frame at the CREATE, as for a native create.
+        let expected_revert = state.expected_revert.clone();
+        let expects_revert = expected_revert.is_some();
         let mut parents = VecDeque::with_capacity(outcomes.len());
         for mut outcome in outcomes {
             // Like a CREATE, a runtime over the code size limit or starting with 0xEF fails the
             // deployment. Forge reverts the cheatcode with that runtime, or with no data when the
-            // CREATE ran as its own transaction.
+            // CREATE ran as its own transaction or settles a `vm.expectRevert`.
             let runtime = &outcome.state.frame.return_data;
-            let rejected_runtime = matches!(outcome.status, CallStatus::Success)
-                && (runtime_exceeds_code_size_limit(
-                    executor.max_code_size,
-                    executor.spec_id,
-                    runtime,
-                ) || runtime_has_rejected_prefix(&mut self.cx, executor.spec_id, runtime)?);
-            if rejected_runtime {
+            let rejected_runtime = if !matches!(outcome.status, CallStatus::Success) {
+                None
+            } else if runtime_exceeds_code_size_limit(
+                executor.max_code_size,
+                executor.spec_id,
+                runtime,
+            ) {
+                Some(InstrStop::CreateContractSizeLimit)
+            } else if runtime_has_rejected_prefix(&mut self.cx, executor.spec_id, runtime)? {
+                Some(InstrStop::CreateContractStartingWithEF)
+            } else {
+                None
+            };
+            if rejected_runtime.is_some() {
                 outcome.status = CallStatus::Revert;
-                if isolated {
+                if isolated || expects_revert {
                     outcome.state.frame.return_data = SymReturnData::empty(&mut self.cx);
                 }
             }
-            // Forge's CREATE runs a frame below the cheatcode call, so a rejected runtime leaves
-            // the caller's `vm.expectRevert` pending for the cheatcode revert.
-            let expected_revert =
-                if rejected_runtime { state.expected_revert.take() } else { None };
             if !matches!(outcome.status, CallStatus::Success)
                 && state.expected_revert.as_ref().is_some_and(ExpectedRevert::repeats_with_reverter)
             {
@@ -487,13 +493,23 @@ impl SymbolicExecutor {
                     "symbolic vm.expectRevert reverter count on CREATE",
                 ));
             }
-            // Forge records a reverting CREATE, and otherwise the failed cheatcode call.
+            // Forge records a reverting CREATE. Otherwise it records no reverter when the CREATE
+            // settles a `vm.expectRevert`, and the failed cheatcode call for an outer one.
             let failed_callee = match outcome.status {
                 CallStatus::Success => None,
-                CallStatus::Revert if !rejected_runtime => Some(created),
+                CallStatus::Revert if rejected_runtime.is_none() => Some(created),
+                _ if expects_revert => None,
                 CallStatus::Revert | CallStatus::ExceptionalHalt | CallStatus::Failure => {
                     Some(CHEATCODE_ADDRESS)
                 }
+            };
+            // The status and data Forge matches against the expectation, when it can tell them.
+            let settled_revert = match outcome.status {
+                CallStatus::Revert => Some((
+                    rejected_runtime.unwrap_or(InstrStop::Revert),
+                    outcome.state.frame.return_data.clone(),
+                )),
+                _ => None,
             };
             // Like Forge, a cheatcode CREATE leaves `vm.assumeNoRevert` for the next call.
             let joined = self.join_call_outcome(
@@ -504,10 +520,48 @@ impl SymbolicExecutor {
                 failed_callee,
                 None,
             );
-            if rejected_runtime {
-                state.expected_revert = expected_revert;
-            }
-            match joined? {
+            let joined = match joined? {
+                // Forge matches the expectation against the status of the failed CREATE, and a
+                // mismatch fails the cheatcode call with a `CheatcodeError` a caller can catch.
+                JoinedCallOutcome::Failure(mut parent)
+                    if let Some(expected) = &expected_revert
+                        && let Some((status, return_data)) = &settled_revert =>
+                {
+                    const REASON: &str = "symbolic vm.expectRevert mismatch data";
+                    if return_data.len_word.as_const().is_none() {
+                        return Err(SymbolicError::Unsupported(REASON));
+                    }
+                    let retdata = return_data.read_concrete(&mut self.cx, REASON)?.into();
+                    let reverter = expected.reverted_by(failed_callee, parent.first_failed_callee);
+                    let no_contracts = None;
+                    let known_contracts = executor
+                        .cheatcodes
+                        .map_or(&no_contracts, |cheats| &cheats.config.available_artifacts);
+                    let mismatch = expected
+                        .mismatch_error(reverter, *status, &retdata, known_contracts)
+                        .ok_or(SymbolicError::Unsupported(REASON))?;
+                    if let Some(error) = mismatch {
+                        parent.expected_revert = None;
+                        let return_data =
+                            SymReturnData::from_concrete_bytes(&mut self.cx, error.abi_encode());
+                        revert_cheatcode_call(
+                            &mut self.cx,
+                            &mut parent,
+                            out_offset.clone(),
+                            out_size,
+                            return_data,
+                        )?;
+                        parents.push_back(parent);
+                        continue;
+                    }
+                    // A reason can match the halt Forge names for a rejected runtime.
+                    let mut expected = expected.clone();
+                    parent.expected_revert = (!expected.consume_one()).then_some(expected);
+                    JoinedCallOutcome::ExpectedRevert(parent)
+                }
+                joined => joined,
+            };
+            match joined {
                 JoinedCallOutcome::Failure(parent)
                 | JoinedCallOutcome::Success { parent, unmet_expected_revert: Some(_), .. } => {
                     *state = parent;
@@ -520,8 +574,10 @@ impl SymbolicExecutor {
                     parents.push_back(parent);
                 }
                 JoinedCallOutcome::ExpectedRevert(mut parent) => {
-                    let zero = SymExpr::zero(&mut self.cx);
-                    let return_data = SymReturnData::from_words(&mut self.cx, vec![zero]);
+                    // Like a native CREATE, an expected revert returns Forge's dummy address.
+                    let address =
+                        SymExpr::constant(&mut self.cx, address_word(DUMMY_CREATE_ADDRESS));
+                    let return_data = SymReturnData::from_words(&mut self.cx, vec![address]);
                     complete_cheatcode_call(
                         &mut self.cx,
                         &mut parent,
@@ -559,7 +615,7 @@ impl SymbolicExecutor {
                     parents.push_back(parent);
                 }
                 JoinedCallOutcome::Revert { mut parent, child } => {
-                    if rejected_runtime {
+                    if rejected_runtime.is_some() {
                         // Like Forge, the failed cheatcode call is the reverter for
                         // `vm.assumeNoRevert` unless a call reverted earlier, also for an
                         // assumption this frame set.
@@ -2103,12 +2159,26 @@ impl SymbolicExecutor {
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
             isPersistentCall::SELECTOR => {
-                let account =
-                    read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 0)?;
-                let exists = SymExpr::constant(
-                    &mut self.cx,
-                    U256::from(state.persistent_accounts.contains(&account)),
-                );
+                let word = read_abi_address_word_arg(&mut self.cx, state, args_offset, 0)?
+                    .address_operand(&mut self.cx);
+                let exists = if let Some(account) = state.world.resolve_address(&word) {
+                    let exists = state.persistent_accounts.contains(&account);
+                    SymExpr::constant(&mut self.cx, U256::from(exists))
+                } else {
+                    // Only reads the address, so a free one takes no alias, which later reads
+                    // would resolve to an empty account.
+                    let mut accounts =
+                        state.persistent_accounts.iter().copied().collect::<Vec<_>>();
+                    accounts.sort_unstable();
+                    let conditions = accounts
+                        .into_iter()
+                        .map(|account| {
+                            state.world.symbolic_address_condition(&mut self.cx, &word, account)
+                        })
+                        .collect();
+                    let exists = SymBoolExpr::or(&mut self.cx, conditions);
+                    SymExpr::bool_word(&mut self.cx, exists)
+                };
                 Ok(CheatcodeOutcome::Continue(vec![exists]))
             }
             activeForkCall::SELECTOR => {
@@ -2186,9 +2256,23 @@ impl SymbolicExecutor {
                     0,
                     "symbolic vm.revertToState snapshot",
                 )?;
+                // Like Forge, persistence survives the restore, so the aliases that name
+                // persistent accounts do too.
+                let persistent_aliases = state
+                    .persistent_accounts
+                    .iter()
+                    .filter_map(|&account| {
+                        state.world.symbolic_word_for_address(account).map(|word| (word, account))
+                    })
+                    .collect::<Vec<_>>();
                 let restored = state.world.restore_snapshot(id);
                 let success = restored.is_some();
                 if let Some((block, gas_price)) = restored {
+                    for (word, account) in persistent_aliases {
+                        if state.world.symbolic_word_for_address(account).is_none() {
+                            state.world.alias_symbolic_address(word, account);
+                        }
+                    }
                     state.block = block;
                     state.gas_price = gas_price;
                     state.persistent_writes.push(PersistentWrite::Restore);

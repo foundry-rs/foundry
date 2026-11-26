@@ -5,7 +5,7 @@ use alloy_network::{AnyNetwork, AnyRpcBlock, Network};
 use alloy_primitives::{B256, BlockNumber, keccak256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::RpcClient;
-use eyre::OptionExt;
+use foundry_common::provider::BlockNotFound;
 use foundry_fork_db::StateBlockId;
 use std::{
     fmt,
@@ -139,7 +139,7 @@ impl Fork {
         let response = provider
             .get_block_by_hash(block.hash)
             .await?
-            .ok_or_eyre("exact fork block is unavailable")?;
+            .ok_or_else(|| BlockNotFound("exact fork block is unavailable".into()))?;
         eyre::ensure!(
             response.header.number() == block.number && response.header.hash == block.hash,
             "exact fork block does not match the requested number and hash"

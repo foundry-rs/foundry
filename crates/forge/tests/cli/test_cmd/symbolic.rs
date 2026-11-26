@@ -7750,6 +7750,41 @@ contract RoundedProductTest {
         assert(rounded <= value);
     }
 
+    function checkNestedConstantQuotient(uint256 value) external pure {
+        assert(value / 1e9 / 1e9 == value / 1e18);
+    }
+
+    // Equality orders two quotients by a stable hash, which puts this nested side on the right.
+    function checkReversedNestedConstantQuotient(uint256 value) external pure {
+        assert(value / 21 == value / 3 / 7);
+    }
+
+    function checkNestedQuotientIsNotFiner(uint256 value) external pure {
+        assert(value / 1e9 / 1e9 == value / 1e17);
+    }
+
+    function checkNestedQuotientOfOtherValue(uint256 value, uint256 other) external pure {
+        assert(value / 1e9 / 1e9 == other / 1e18);
+    }
+
+    // The divisors' product wraps to `2**129 + 1`, which must not stand in for it.
+    function checkWrappedNestedDivisor(uint256 value) external pure {
+        assert(value / (2 ** 128 + 1) / (2 ** 128 + 1) == value / (2 ** 129 + 1));
+    }
+
+    // A fee that is itself a constant division keeps its Euclidean and ceiling relations.
+    function checkNestedFeeEuclideanIdentity(uint128 amount, uint16 bps) external pure {
+        require(bps <= 10000);
+        uint256 fee = uint256(amount) * bps / 10000;
+        assert(fee / 3 * 3 + fee % 3 == fee);
+    }
+
+    function checkNestedFeeCeiling(uint128 amount, uint16 bps) external pure {
+        require(bps <= 10000);
+        uint256 fee = uint256(amount) * bps / 10000;
+        assert((fee + 2) / 3 >= fee / 3);
+    }
+
     function checkBasisPointsFee(uint64 amount, uint16 bps) external pure {
         require(bps <= 10000);
         assert(uint256(amount) * bps / 10000 <= amount);
@@ -7777,15 +7812,6 @@ contract RoundedProductTest {
     );
     for optimized in [false, true] {
         prj.update_config(|config| config.optimizer = Some(optimized));
-        cmd.forge_fuse().args([
-            "test",
-            "--symbolic",
-            "--symbolic-timeout",
-            "30",
-            "--match-test",
-            "check(FloorError|DividendRelation|WrappingDividendRelation|CeilingError|CeilingRoundTrip|SymbolicDivisorFacts|EuclideanIdentities|SymbolicEuclideanIdentity|NarrowFloorError|BasisPointsFee|SlippageMinimum|TransferConservation)",
-        ])
-        .assert_success();
         let output = cmd
             .forge_fuse()
             .args([
@@ -7795,13 +7821,46 @@ contract RoundedProductTest {
                 "--symbolic-timeout",
                 "30",
                 "--match-test",
-                "check(CeilingIsNotExact|WrappingCeiling|ReversedFloorError|MixedEuclideanSum)",
+                "check(FloorError|DividendRelation|WrappingDividendRelation|CeilingError|CeilingRoundTrip|SymbolicDivisorFacts|EuclideanIdentities|SymbolicEuclideanIdentity|NarrowFloorError|NestedConstantQuotient|ReversedNestedConstantQuotient|NestedFeeEuclideanIdentity|NestedFeeCeiling|BasisPointsFee|SlippageMinimum|TransferConservation)",
+            ])
+            .assert_success()
+            .get_output()
+            .stdout
+            .clone();
+        for signature in [
+            "checkNestedConstantQuotient(uint256)",
+            "checkReversedNestedConstantQuotient(uint256)",
+            "checkNestedFeeEuclideanIdentity(uint128,uint16)",
+            "checkNestedFeeCeiling(uint128,uint16)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+                "{signature}, optimized={optimized}: {result}"
+            );
+        }
+        let output = cmd
+            .forge_fuse()
+            .args([
+                "test",
+                "--symbolic",
+                "--json",
+                "--symbolic-timeout",
+                "30",
+                "--match-test",
+                "check(CeilingIsNotExact|WrappingCeiling|ReversedFloorError|NestedQuotientIsNotFiner|NestedQuotientOfOtherValue|WrappedNestedDivisor|MixedEuclideanSum)",
             ])
             .assert_failure()
             .get_output()
             .stdout
             .clone();
-        for test in ["checkCeilingIsNotExact", "checkWrappingCeiling", "checkReversedFloorError"] {
+        for test in [
+            "checkCeilingIsNotExact",
+            "checkWrappingCeiling",
+            "checkReversedFloorError",
+            "checkNestedQuotientIsNotFiner",
+            "checkWrappedNestedDivisor",
+        ] {
             let signature = format!("{test}(uint256)");
             let result = json_test_result(&output, &signature);
             assert_eq!(
@@ -7809,9 +7868,20 @@ contract RoundedProductTest {
                 "{test}, optimized={optimized}"
             );
         }
-        let result = json_test_result(&output, "checkMixedEuclideanSum(uint256,uint256,uint256)");
-        assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
-        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
+        for signature in [
+            "checkMixedEuclideanSum(uint256,uint256,uint256)",
+            "checkNestedQuotientOfOtherValue(uint256,uint256)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "{signature}, optimized={optimized}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "{signature}, optimized={optimized}"
+            );
+        }
     }
 }
 
@@ -9138,14 +9208,18 @@ contract SymbolicWeightedAverage {
 }
 
 // OpenZeppelin's `VestingWallet` (MIT) vests `total * (t - start) / duration` once
-// `start <= t < start + duration`, so the elapsed time stays at most the duration.
+// `start <= t < start + duration`, so the elapsed time stays at most the duration. A stream with an
+// end time bounds `t - start` by `end - start` the same way.
 #[forgetest_init]
 fn symbolic_proves_vesting_schedule_bounded(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_vesting_schedule_bounded");
     prj.add_test(
         "SymbolicVestingSchedule.t.sol",
         r#"
+import {Vm} from "forge-std/Vm.sol";
+
 contract SymbolicVestingSchedule {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
     uint64 private _start;
     uint64 private _duration;
 
@@ -9206,6 +9280,58 @@ contract SymbolicVestingSchedule {
             assert(uint256(t) - s <= type(uint64).max);
         }
     }
+
+    // A Sablier- or LlamaPay-style stream unlocks `deposit * (t - start) / (end - start)` by `end`.
+    function checkStreamedBelowDeposit(uint128 deposit, uint40 start, uint40 end, uint40 t)
+        public
+        pure
+    {
+        if (end <= start || t < start || t > end) return;
+        assert(uint256(deposit) * (t - start) / (end - start) <= deposit);
+    }
+
+    function checkStreamedPastEnd(uint128 deposit, uint40 start, uint40 end, uint40 t)
+        public
+        pure
+    {
+        if (end <= start || t < start) return;
+        assert(uint256(deposit) * (t - start) / (end - start) <= deposit);
+    }
+
+    function checkStreamedBeforeStart(uint128 deposit, uint40 start, uint40 end, uint40 t)
+        public
+        pure
+    {
+        if (end <= start || t > end) return;
+        unchecked {
+            assert(uint256(deposit) * (uint256(t) - start) / (end - start) <= deposit);
+        }
+    }
+
+    function checkStreamedOtherStart(
+        uint128 deposit,
+        uint40 start,
+        uint40 other,
+        uint40 end,
+        uint40 t
+    ) public pure {
+        if (end <= other || t < start || t > end) return;
+        assert(uint256(deposit) * (t - start) / (end - other) <= deposit);
+    }
+
+    // An empty stream, `start == end`, releases nothing, as EVM `div` by zero is zero. Solidity
+    // comparisons reach the solver as `<` or its negation; `vm.assertLe` adds a plain `<=`, which
+    // must not count as strict.
+    function checkEmptyStreamReleased(uint128 deposit, uint40 start, uint40 end) public pure {
+        if (end < start) return;
+        vm.assertLe(start, end);
+        uint256 duration = end - start;
+        uint256 streamed;
+        assembly {
+            streamed := div(mul(deposit, duration), duration)
+        }
+        assert(streamed == deposit);
+    }
 }
 "#,
     );
@@ -9222,15 +9348,26 @@ contract SymbolicVestingSchedule {
         for signature in [
             "checkVestedBelowAllocation(uint64,uint64,uint128,uint64)",
             "checkVestedBelowWideAllocation(uint64,uint64,uint256,uint64)",
+            "checkStreamedBelowDeposit(uint128,uint40,uint40,uint40)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
         }
+        let result =
+            json_test_result(&output, "checkStreamedBelowDeposit(uint128,uint40,uint40,uint40)");
+        assert_eq!(
+            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+            "optimized={optimized}: {result}"
+        );
 
         for signature in [
             "checkVestedPastLongerEnd(uint64,uint32,uint128,uint64)",
             "checkElapsedBeforeStart(uint256,uint256,uint64,uint256)",
             "checkElapsedAgainstOrder(uint64,uint64)",
+            "checkStreamedPastEnd(uint128,uint40,uint40,uint40)",
+            "checkStreamedBeforeStart(uint128,uint40,uint40,uint40)",
+            "checkStreamedOtherStart(uint128,uint40,uint40,uint40,uint40)",
+            "checkEmptyStreamReleased(uint128,uint40,uint40)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(
@@ -9420,6 +9557,311 @@ contract SymbolicDowncastShare {
         {
             let result = json_test_result(&output, signature);
             assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        }
+    }
+}
+
+// A protocol takes a share of a fee, `(amount * a / k) * b / k`, which stays at most the amount
+// once `a <= k` and `b <= k`, also when the share rounds up. A share factor above `k`, or a fee
+// above the amount, proves nothing. Chained products share their factors, so the search must not
+// walk them as a tree.
+#[forgetest_init]
+fn symbolic_proves_chained_share_bounded(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_chained_share_bounded");
+    prj.add_test(
+        "SymbolicChainedShare.t.sol",
+        r#"
+contract SymbolicChainedShare {
+    function checkProtocolCut(uint128 amount, uint16 feeBps, uint16 shareBps) public pure {
+        require(feeBps <= 10000 && shareBps <= 10000);
+        uint256 fee = uint256(amount) * feeBps / 10000;
+        assert(fee * shareBps / 10000 <= amount);
+    }
+
+    function checkProtocolCutRoundedUp(uint128 amount, uint16 feeBps, uint16 shareBps)
+        public
+        pure
+    {
+        require(feeBps <= 10000 && shareBps <= 10000);
+        uint256 fee = uint256(amount) * feeBps / 10000;
+        assert((fee * shareBps + 9999) / 10000 <= amount);
+    }
+
+    function checkProtocolCutRoundedPastWhole(uint128 amount, uint16 feeBps, uint16 shareBps)
+        public
+        pure
+    {
+        require(feeBps <= 10000 && shareBps <= 10000);
+        uint256 fee = uint256(amount) * feeBps / 10000;
+        assert((fee * shareBps + 10000) / 10000 <= amount);
+    }
+
+    function checkShareAboveWhole(uint128 amount, uint16 feeBps, uint16 shareBps) public pure {
+        require(feeBps <= 10000 && shareBps <= 10001);
+        uint256 fee = uint256(amount) * feeBps / 10000;
+        assert(fee * shareBps / 10000 <= amount);
+    }
+
+    function checkFeeAboveAmount(uint128 amount, uint16 feeBps, uint16 shareBps) public pure {
+        require(feeBps <= 10001 && shareBps <= 10000);
+        uint256 fee = uint256(amount) * feeBps / 10000;
+        assert(fee * shareBps / 10000 <= amount);
+    }
+
+    function checkSymbolicDenominator(uint64 amount, uint64 feeBps, uint64 shareBps, uint64 denom)
+        public
+        pure
+    {
+        require(denom > 0 && feeBps <= denom && shareBps <= denom);
+        uint256 fee = uint256(amount) * feeBps / denom;
+        assert(fee * shareBps / denom <= amount);
+    }
+
+    // Guards the search budget rather than the proof: every level shares both factors, so 30
+    // levels would take about 2^30 recursions if each one were not charged.
+    function checkSharedProducts(uint256 x, uint256 y) public pure {
+        require(x < 1e17 && y < 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        assert(x <= 1e18);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicChainedShare"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        for signature in [
+            "checkProtocolCut(uint128,uint16,uint16)",
+            "checkProtocolCutRoundedUp(uint128,uint16,uint16)",
+            "checkSymbolicDenominator(uint64,uint64,uint64,uint64)",
+            "checkSharedProducts(uint256,uint256)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        }
+
+        for signature in [
+            "checkShareAboveWhole(uint128,uint16,uint16)",
+            "checkFeeAboveAmount(uint128,uint16,uint16)",
+            "checkProtocolCutRoundedPastWhole(uint128,uint16,uint16)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "optimized={optimized}: {result}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "optimized={optimized}: {result}"
+            );
+        }
+    }
+}
+
+// Q96 and Q128 fixed-point math scales an amount with `(x * y) >> k`, which is at most `x` once
+// `y <= 2**k`, even when the product wraps. Dividing by `2**k` normalizes to the same shift. A
+// factor one above `2**k`, a strict comparison, or a bound on the other factor proves nothing.
+#[forgetest_init]
+fn symbolic_proves_shifted_product_bounded(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_shifted_product_bounded");
+    prj.add_test(
+        "SymbolicShiftedProduct.t.sol",
+        r#"
+contract SymbolicShiftedProduct {
+    function checkQ96Scale(uint128 amount, uint160 price) public pure {
+        require(price <= 2 ** 96);
+        assert((uint256(amount) * price) >> 96 <= amount);
+    }
+
+    function checkQ128Fees(uint128 liquidity, uint256 growth) public pure {
+        require(growth <= 2 ** 128);
+        assert((uint256(liquidity) * growth) >> 128 <= liquidity);
+    }
+
+    function checkQ96ScaleWrapping(uint256 amount, uint256 price) public pure {
+        require(price <= 2 ** 96);
+        unchecked {
+            assert((amount * price) >> 96 <= amount);
+        }
+    }
+
+    function checkQ96ScaleDivided(uint128 amount, uint160 price) public pure {
+        require(price <= 2 ** 96);
+        assert(uint256(amount) * price / 2 ** 96 <= amount);
+    }
+
+    function checkQ96ScaleAboveOne(uint128 amount, uint160 price) public pure {
+        require(price <= 2 ** 96 + 1);
+        assert((uint256(amount) * price) >> 96 <= amount);
+    }
+
+    function checkQ96ScaleStrict(uint128 amount, uint160 price) public pure {
+        require(price <= 2 ** 96);
+        assert((uint256(amount) * price) >> 96 < amount);
+    }
+
+    function checkQ96ScaleAgainstPrice(uint128 amount, uint160 price) public pure {
+        require(price <= 2 ** 96);
+        assert((uint256(amount) * price) >> 96 <= price);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicShiftedProduct"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+
+        for signature in [
+            "checkQ96Scale(uint128,uint160)",
+            "checkQ128Fees(uint128,uint256)",
+            "checkQ96ScaleWrapping(uint256,uint256)",
+            "checkQ96ScaleDivided(uint128,uint160)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        }
+
+        for signature in [
+            "checkQ96ScaleAboveOne(uint128,uint160)",
+            "checkQ96ScaleStrict(uint128,uint160)",
+            "checkQ96ScaleAgainstPrice(uint128,uint160)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "optimized={optimized}: {result}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "optimized={optimized}: {result}"
+            );
+        }
+    }
+}
+
+// Reward accrual scales the delta `rewardPerToken - paid`, at most the full index once
+// `paid <= rewardPerToken`, so the accrued amount is at most `balance * rewardPerToken / WAD`, as
+// is a delta of an earlier index. A delta of an unrelated index, or one that wraps, is not.
+#[forgetest_init]
+fn symbolic_proves_accrued_delta_bounded(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_accrued_delta_bounded");
+    prj.add_test(
+        "SymbolicAccruedDelta.t.sol",
+        r#"
+contract SymbolicAccruedDelta {
+    uint256 internal constant WAD = 1e18;
+
+    function checkEarnedBelowAccrual(uint128 balance, uint128 rewardPerToken, uint128 paid)
+        public
+        pure
+    {
+        require(paid <= rewardPerToken);
+        uint256 earned = uint256(balance) * (uint256(rewardPerToken) - paid) / WAD;
+        assert(earned <= uint256(balance) * rewardPerToken / WAD);
+    }
+
+    function checkEarnedBelowLaterIndex(
+        uint128 balance,
+        uint128 rewardPerToken,
+        uint128 last,
+        uint128 paid
+    ) public pure {
+        require(paid <= last && last <= rewardPerToken);
+        uint256 earned = uint256(balance) * (uint256(last) - paid) / WAD;
+        assert(earned <= uint256(balance) * rewardPerToken / WAD);
+    }
+
+    function checkOtherIndex(uint128 balance, uint128 rewardPerToken, uint128 other, uint128 paid)
+        public
+        pure
+    {
+        require(paid <= other);
+        uint256 earned = uint256(balance) * (uint256(other) - paid) / WAD;
+        assert(earned <= uint256(balance) * rewardPerToken / WAD);
+    }
+
+    function checkWrappedDelta(uint128 x, uint128 e) public pure {
+        unchecked {
+            assert((uint256(x) - e) / 7 <= uint256(x) / 7);
+        }
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicAccruedDelta"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        for signature in [
+            "checkEarnedBelowAccrual(uint128,uint128,uint128)",
+            "checkEarnedBelowLaterIndex(uint128,uint128,uint128,uint128)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+            assert_eq!(
+                result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+                "optimized={optimized}: {result}"
+            );
+        }
+        for signature in [
+            "checkOtherIndex(uint128,uint128,uint128,uint128)",
+            "checkWrappedDelta(uint128,uint128)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "optimized={optimized}: {result}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "optimized={optimized}: {result}"
+            );
         }
     }
 }
@@ -10191,6 +10633,380 @@ contract SymbolicCollateralRatio {
             assert_eq!(
                 result["symbolic"]["replay"]["status"], "confirmed",
                 "{signature}, optimized={optimized}: {result}"
+            );
+        }
+    }
+}
+
+// Vaults round shares up as `(assets * supply + total - 1) / total` and down as
+// `assets * supply / total`. The ceiling is at least the floor and at most one above it once
+// the sum cannot wrap, from value ranges or a checked addition. Aave's WadRayMath rounds half up
+// as `(a * b + WAD / 2) / WAD` and `(a * RAY + b / 2) / b`, which is also at most one above the
+// floor, as is any addend up to the divisor once `n / d + 1` cannot wrap.
+#[forgetest_init]
+fn symbolic_proves_additive_ceiling_bounds(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_additive_ceiling_bounds");
+    prj.add_test(
+        "SymbolicCeilingBounds.t.sol",
+        r#"
+contract SymbolicCeilingBounds {
+    function sharesDown(uint128 assets, uint128 supply, uint128 total) internal pure returns (uint256) {
+        return uint256(assets) * supply / total;
+    }
+
+    function sharesUp(uint128 assets, uint128 supply, uint128 total) internal pure returns (uint256) {
+        return (uint256(assets) * supply + total - 1) / total;
+    }
+
+    function checkCeilingAboveFloor(uint128 assets, uint128 supply, uint128 total) public pure {
+        require(total != 0);
+        assert(sharesUp(assets, supply, total) >= sharesDown(assets, supply, total));
+    }
+
+    function checkCeilingAtMostFloorPlusOne(uint128 assets, uint128 supply, uint128 total)
+        public
+        pure
+    {
+        require(total != 0);
+        assert(sharesUp(assets, supply, total) <= sharesDown(assets, supply, total) + 1);
+    }
+
+    function checkCheckedCeilingAboveFloor(uint256 n, uint256 d) public pure {
+        require(d != 0);
+        assert((n + d - 1) / d >= n / d);
+    }
+
+    function checkWrappedCeilingAboveFloor(uint256 n, uint256 d) public pure {
+        require(d != 0);
+        unchecked {
+            assert((n + d - 1) / d >= n / d);
+        }
+    }
+
+    function checkWrappedCeilingAtMostFloorPlusOne(uint256 n, uint256 d) public pure {
+        require(d != 0);
+        unchecked {
+            assert((n + d - 1) / d <= n / d + 1);
+        }
+    }
+
+    function checkSmallerOffset(uint128 n, uint128 d) public pure {
+        require(d != 0);
+        assert((uint256(n) + d - 2) / d >= uint256(n) / d);
+    }
+
+    function checkCeilingAtMostFloor(uint128 n, uint128 d) public pure {
+        require(d != 0);
+        assert((uint256(n) + d - 1) / d <= uint256(n) / d);
+    }
+
+    function checkOtherDivisor(uint128 n, uint128 d, uint128 e) public pure {
+        require(d != 0 && e != 0);
+        assert((uint256(n) + d - 1) / d >= uint256(n) / e);
+    }
+
+    function checkOtherDivisorPlusOne(uint128 n, uint128 d, uint128 e) public pure {
+        require(d != 0 && e != 0);
+        assert((uint256(n) + d - 1) / d <= uint256(n) / e + 1);
+    }
+
+    function checkWadMulHalfUp(uint128 a, uint128 b) public pure {
+        assert((uint256(a) * b + 5e17) / 1e18 <= uint256(a) * b / 1e18 + 1);
+    }
+
+    function checkRayDivHalfUp(uint128 a, uint128 b) public pure {
+        require(b != 0);
+        assert((uint256(a) * 1e27 + b / 2) / b <= uint256(a) * 1e27 / b + 1);
+    }
+
+    // A zero `b` reverts in the checked division before the assertion.
+    function checkRayDivHalfUpUnguarded(uint128 a, uint128 b) public pure {
+        assert((uint256(a) * 1e27 + b / 2) / b <= uint256(a) * 1e27 / b + 1);
+    }
+
+    // A wrapped sum only shrinks the dividend, and `n / d + 1` cannot wrap once `d >= 2`.
+    function checkWrappedHalfUpWideDivisor(uint256 n, uint256 d) public pure {
+        require(d >= 2);
+        unchecked {
+            assert((n + d / 2) / d <= n / d + 1);
+        }
+    }
+
+    // A guarded offset up to the divisor, including the divisor itself, is decided from the guard.
+    function checkGuardedHalfUpOffset(uint256 n, uint256 e, uint256 d) public pure {
+        require(d >= 2 && e <= d);
+        unchecked {
+            assert((n + e) / d <= n / d + 1);
+        }
+    }
+
+    function checkDivisorOffset(uint256 n, uint256 d) public pure {
+        require(d >= 2);
+        unchecked {
+            assert((n + d) / d <= n / d + 1);
+        }
+    }
+
+    function checkWrappedHalfUpFloorPlusOne(uint256 n, uint256 d) public pure {
+        require(d != 0);
+        unchecked {
+            assert((n + d / 2) / d <= n / d + 1);
+        }
+    }
+
+    function checkCheckedHalfUpWrappedFloorPlusOne(uint256 n, uint256 d) public pure {
+        require(d != 0);
+        uint256 up = (n + d / 2) / d;
+        unchecked {
+            assert(up <= n / d + 1);
+        }
+    }
+
+    function checkAddendAboveDivisor(uint128 n, uint128 d) public pure {
+        require(d != 0);
+        uint256 e = uint256(d) + 1;
+        assert((uint256(n) + e) / d <= uint256(n) / d + 1);
+    }
+
+    function checkHalfUpOtherDivisor(uint128 a, uint128 b, uint128 c) public pure {
+        require(b != 0 && c != 0);
+        assert((uint256(a) * 1e27 + b / 2) / b <= uint256(a) * 1e27 / c + 1);
+    }
+
+    function checkHalfUpOtherNumerator(uint128 a, uint128 b, uint128 c) public pure {
+        require(b != 0);
+        assert((uint256(a) + b / 2) / b <= uint256(c) / b + 1);
+    }
+
+    function checkHalfOfOtherValue(uint128 n, uint128 c, uint128 d) public pure {
+        require(d != 0);
+        assert((uint256(n) + c / 2) / d <= uint256(n) / d + 1);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicCeilingBounds"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        // Unoptimized, `rayDiv` still queries the solver for its overflow-checked product.
+        let ray_div =
+            ["checkRayDivHalfUp(uint128,uint128)", "checkRayDivHalfUpUnguarded(uint128,uint128)"];
+        let (without_queries, with_queries) =
+            if optimized { (&ray_div[..], &[][..]) } else { (&[][..], &ray_div[..]) };
+        for signature in [
+            "checkCeilingAboveFloor(uint128,uint128,uint128)",
+            "checkCeilingAtMostFloorPlusOne(uint128,uint128,uint128)",
+            "checkWadMulHalfUp(uint128,uint128)",
+            "checkWrappedHalfUpWideDivisor(uint256,uint256)",
+            "checkGuardedHalfUpOffset(uint256,uint256,uint256)",
+            "checkDivisorOffset(uint256,uint256)",
+        ]
+        .into_iter()
+        .chain(without_queries.iter().copied())
+        {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "pass",
+                "{signature}, optimized={optimized}: {result}"
+            );
+            assert_eq!(
+                result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+                "{signature}, optimized={optimized}: {result}"
+            );
+        }
+        // A checked `n + d` leaves its `d <= ~n` guard instead of a bounded range.
+        for signature in ["checkCheckedCeilingAboveFloor(uint256,uint256)"]
+            .into_iter()
+            .chain(with_queries.iter().copied())
+        {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "pass",
+                "{signature}, optimized={optimized}: {result}"
+            );
+        }
+        for signature in [
+            "checkWrappedCeilingAboveFloor(uint256,uint256)",
+            "checkWrappedCeilingAtMostFloorPlusOne(uint256,uint256)",
+            "checkSmallerOffset(uint128,uint128)",
+            "checkCeilingAtMostFloor(uint128,uint128)",
+            "checkOtherDivisor(uint128,uint128,uint128)",
+            "checkOtherDivisorPlusOne(uint128,uint128,uint128)",
+            "checkWrappedHalfUpFloorPlusOne(uint256,uint256)",
+            "checkCheckedHalfUpWrappedFloorPlusOne(uint256,uint256)",
+            "checkAddendAboveDivisor(uint128,uint128)",
+            "checkHalfUpOtherDivisor(uint128,uint128,uint128)",
+            "checkHalfUpOtherNumerator(uint128,uint128,uint128)",
+            "checkHalfOfOtherValue(uint128,uint128,uint128)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "{signature}, optimized={optimized}: {result}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "{signature}, optimized={optimized}: {result}"
+            );
+        }
+    }
+}
+
+// A vault withdrawal pays out `balance * shares / supply` and keeps a fee of `payout * bps /
+// 10000`, so the net payout stays within the balance once `shares <= supply` and `bps <= 10000`.
+// Fees taken again from each net stay within the balance too. The net can equal the balance, and
+// shares above the supply pay out more than it. Unchecked, a fee above the payout or an unrelated
+// deduction wraps past the balance.
+#[forgetest_init]
+fn symbolic_proves_payout_minus_fee_bounded(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_payout_minus_fee_bounded");
+    prj.add_test(
+        "SymbolicPayoutMinusFee.t.sol",
+        r#"
+contract SymbolicPayoutMinusFee {
+    function checkPayoutAfterFee(uint128 balance, uint128 shares, uint128 supply, uint16 bps)
+        public
+        pure
+    {
+        if (supply == 0 || shares > supply || bps > 10000) return;
+        uint256 payout = uint256(balance) * shares / supply;
+        uint256 fee = payout * bps / 10000;
+        assert(payout - fee <= balance);
+    }
+
+    function checkNetBelowBalance(uint128 balance, uint128 shares, uint128 supply, uint16 bps)
+        public
+        pure
+    {
+        if (supply == 0 || shares > supply || bps > 10000) return;
+        uint256 payout = uint256(balance) * shares / supply;
+        uint256 fee = payout * bps / 10000;
+        assert(payout - fee < balance);
+    }
+
+    function checkSharesAboveSupply(uint128 balance, uint128 shares, uint128 supply, uint16 bps)
+        public
+        pure
+    {
+        if (supply == 0 || bps > 10000) return;
+        uint256 payout = uint256(balance) * shares / supply;
+        uint256 fee = payout * bps / 10000;
+        assert(payout - fee <= balance);
+    }
+
+    function checkFeeAboveWhole(uint128 balance, uint128 shares, uint128 supply, uint16 bps)
+        public
+        pure
+    {
+        if (supply == 0 || shares > supply || bps > 10001) return;
+        uint256 payout = uint256(balance) * shares / supply;
+        uint256 fee = payout * bps / 10000;
+        unchecked {
+            assert(payout - fee <= balance);
+        }
+    }
+
+    function checkUnrelatedDeduction(
+        uint128 balance,
+        uint128 shares,
+        uint128 supply,
+        uint256 deduction
+    ) public pure {
+        if (supply == 0 || shares > supply) return;
+        uint256 payout = uint256(balance) * shares / supply;
+        unchecked {
+            assert(payout - deduction <= balance);
+        }
+    }
+
+    // Each fee is taken from the previous net, so every level shares its minuend with its fee and
+    // the bound recurses through the whole chain.
+    function checkRepeatedFees(uint128 balance, uint128 shares, uint128 supply, uint16 bps)
+        public
+        pure
+    {
+        if (supply == 0 || shares > supply || bps > 10000) return;
+        uint256 net = uint256(balance) * shares / supply;
+        net -= net * bps / 10000;
+        net -= net * bps / 10000;
+        net -= net * bps / 10000;
+        net -= net * bps / 10000;
+        assert(net <= balance);
+        uint256 kept = balance;
+        kept -= kept * bps / 10000;
+        kept -= kept * bps / 10000;
+        kept -= kept * bps / 10000;
+        kept -= kept * bps / 10000;
+        assert(kept <= balance);
+    }
+
+    // A rebated fee `fee - fee / 3` is at most `fee`, but the deduction must keep the operand
+    // ranges, so the floor survives.
+    function checkRebatedFeesKeepFloor(uint56 balance, uint8 bps) public pure {
+        unchecked {
+            uint256 x = 1 ether + uint256(balance);
+            for (uint256 i; i < 4; ++i) {
+                uint256 fee = x * bps / 10000;
+                x -= fee - fee / 3;
+            }
+            assert(x > 0);
+        }
+    }
+
+    // Each step rechecks the fee multiply on the previous result, so that check must share the
+    // caller's interval cache instead of walking the chain again.
+    function checkRebatedFeesStayBounded(uint56 balance, uint8 bps) public pure {
+        unchecked {
+            uint256 x = 1 ether + uint256(balance);
+            for (uint256 i; i < 30; ++i) {
+                uint256 fee = x * bps / 10000;
+                x -= fee - fee / 3;
+            }
+            assert(x <= 1 ether + type(uint56).max);
+        }
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicPayoutMinusFee"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        for signature in [
+            "checkPayoutAfterFee(uint128,uint128,uint128,uint16)",
+            "checkRepeatedFees(uint128,uint128,uint128,uint16)",
+            "checkRebatedFeesKeepFloor(uint56,uint8)",
+            "checkRebatedFeesStayBounded(uint56,uint8)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        }
+
+        for signature in [
+            "checkNetBelowBalance(uint128,uint128,uint128,uint16)",
+            "checkSharesAboveSupply(uint128,uint128,uint128,uint16)",
+            "checkFeeAboveWhole(uint128,uint128,uint128,uint16)",
+            "checkUnrelatedDeduction(uint128,uint128,uint128,uint256)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "optimized={optimized}: {result}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "optimized={optimized}: {result}"
             );
         }
     }
@@ -11607,6 +12423,34 @@ contract SymbolicBoundedComplementTest {
         uint256 shares = assets * supply / total;
         assert(shares * total / other <= assets);
     }
+
+    // Converting back rounding up, as with Morpho Blue's `mulDivUp` (GPL-2.0-or-later), still
+    // cannot create assets: the rounded product is at most `assets * supply`, so the checked
+    // `shares * total + (supply - 1)` cannot overflow.
+    function checkVaultRoundTripUp(uint128 assets, uint128 supply, uint128 total) public pure {
+        if (supply == 0 || total == 0) return;
+        uint256 shares = uint256(assets) * supply / total;
+        assert((shares * total + (supply - 1)) / supply <= assets);
+    }
+
+    function checkVaultRoundTripUpLeftAssociated(uint128 assets, uint128 supply, uint128 total)
+        public
+        pure
+    {
+        if (supply == 0 || total == 0) return;
+        uint256 shares = uint256(assets) * supply / total;
+        assert((shares * total + supply - 1) / supply <= assets);
+    }
+
+    // Rounding up by another divisor can create assets.
+    function checkVaultOtherDivisorUp(uint128 assets, uint128 supply, uint128 total, uint128 other)
+        public
+        pure
+    {
+        if (total == 0 || other == 0) return;
+        uint256 shares = uint256(assets) * supply / total;
+        assert((shares * total + (other - 1)) / other <= assets);
+    }
 }
 "#,
     );
@@ -11695,6 +12539,23 @@ contract SymbolicBoundedComplementTest {
 
         let result =
             json_test_result(&output, "checkVaultOtherDivisor(uint256,uint256,uint256,uint256)");
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
+        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
+
+        for test in [
+            "checkVaultRoundTripUp(uint128,uint128,uint128)",
+            "checkVaultRoundTripUpLeftAssociated(uint128,uint128,uint128)",
+        ] {
+            let result = json_test_result(&output, test);
+            assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+            assert_eq!(
+                result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+                "optimized={optimized}: {test}"
+            );
+        }
+
+        let result =
+            json_test_result(&output, "checkVaultOtherDivisorUp(uint128,uint128,uint128,uint128)");
         assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
         assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
     }
