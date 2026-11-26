@@ -9424,6 +9424,138 @@ contract SymbolicDowncastShare {
     }
 }
 
+// A protocol takes a share of a fee, `(amount * a / k) * b / k`, which stays at most the amount
+// once `a <= k` and `b <= k`, also when the share rounds up. A share factor above `k`, or a fee
+// above the amount, proves nothing. Chained products share their factors, so the search must not
+// walk them as a tree.
+#[forgetest_init]
+fn symbolic_proves_chained_share_bounded(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_chained_share_bounded");
+    prj.add_test(
+        "SymbolicChainedShare.t.sol",
+        r#"
+contract SymbolicChainedShare {
+    function checkProtocolCut(uint128 amount, uint16 feeBps, uint16 shareBps) public pure {
+        require(feeBps <= 10000 && shareBps <= 10000);
+        uint256 fee = uint256(amount) * feeBps / 10000;
+        assert(fee * shareBps / 10000 <= amount);
+    }
+
+    function checkProtocolCutRoundedUp(uint128 amount, uint16 feeBps, uint16 shareBps)
+        public
+        pure
+    {
+        require(feeBps <= 10000 && shareBps <= 10000);
+        uint256 fee = uint256(amount) * feeBps / 10000;
+        assert((fee * shareBps + 9999) / 10000 <= amount);
+    }
+
+    function checkProtocolCutRoundedPastWhole(uint128 amount, uint16 feeBps, uint16 shareBps)
+        public
+        pure
+    {
+        require(feeBps <= 10000 && shareBps <= 10000);
+        uint256 fee = uint256(amount) * feeBps / 10000;
+        assert((fee * shareBps + 10000) / 10000 <= amount);
+    }
+
+    function checkShareAboveWhole(uint128 amount, uint16 feeBps, uint16 shareBps) public pure {
+        require(feeBps <= 10000 && shareBps <= 10001);
+        uint256 fee = uint256(amount) * feeBps / 10000;
+        assert(fee * shareBps / 10000 <= amount);
+    }
+
+    function checkFeeAboveAmount(uint128 amount, uint16 feeBps, uint16 shareBps) public pure {
+        require(feeBps <= 10001 && shareBps <= 10000);
+        uint256 fee = uint256(amount) * feeBps / 10000;
+        assert(fee * shareBps / 10000 <= amount);
+    }
+
+    function checkSymbolicDenominator(uint64 amount, uint64 feeBps, uint64 shareBps, uint64 denom)
+        public
+        pure
+    {
+        require(denom > 0 && feeBps <= denom && shareBps <= denom);
+        uint256 fee = uint256(amount) * feeBps / denom;
+        assert(fee * shareBps / denom <= amount);
+    }
+
+    // Guards the search budget rather than the proof: every level shares both factors, so 30
+    // levels would take about 2^30 recursions if each one were not charged.
+    function checkSharedProducts(uint256 x, uint256 y) public pure {
+        require(x < 1e17 && y < 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        (x, y) = (x * y / 1e18, x * y / 1e17);
+        assert(x <= 1e18);
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicChainedShare"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        for signature in [
+            "checkProtocolCut(uint128,uint16,uint16)",
+            "checkProtocolCutRoundedUp(uint128,uint16,uint16)",
+            "checkSymbolicDenominator(uint64,uint64,uint64,uint64)",
+            "checkSharedProducts(uint256,uint256)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        }
+
+        for signature in [
+            "checkShareAboveWhole(uint128,uint16,uint16)",
+            "checkFeeAboveAmount(uint128,uint16,uint16)",
+            "checkProtocolCutRoundedPastWhole(uint128,uint16,uint16)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "optimized={optimized}: {result}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "optimized={optimized}: {result}"
+            );
+        }
+    }
+}
+
 // Q96 and Q128 fixed-point math scales an amount with `(x * y) >> k`, which is at most `x` once
 // `y <= 2**k`, even when the product wraps. Dividing by `2**k` normalizes to the same shift. A
 // factor one above `2**k`, a strict comparison, or a bound on the other factor proves nothing.
@@ -9497,6 +9629,92 @@ contract SymbolicShiftedProduct {
             "checkQ96ScaleAboveOne(uint128,uint160)",
             "checkQ96ScaleStrict(uint128,uint160)",
             "checkQ96ScaleAgainstPrice(uint128,uint160)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "optimized={optimized}: {result}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "optimized={optimized}: {result}"
+            );
+        }
+    }
+}
+
+// Reward accrual scales the delta `rewardPerToken - paid`, at most the full index once
+// `paid <= rewardPerToken`, so the accrued amount is at most `balance * rewardPerToken / WAD`, as
+// is a delta of an earlier index. A delta of an unrelated index, or one that wraps, is not.
+#[forgetest_init]
+fn symbolic_proves_accrued_delta_bounded(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_accrued_delta_bounded");
+    prj.add_test(
+        "SymbolicAccruedDelta.t.sol",
+        r#"
+contract SymbolicAccruedDelta {
+    uint256 internal constant WAD = 1e18;
+
+    function checkEarnedBelowAccrual(uint128 balance, uint128 rewardPerToken, uint128 paid)
+        public
+        pure
+    {
+        require(paid <= rewardPerToken);
+        uint256 earned = uint256(balance) * (uint256(rewardPerToken) - paid) / WAD;
+        assert(earned <= uint256(balance) * rewardPerToken / WAD);
+    }
+
+    function checkEarnedBelowLaterIndex(
+        uint128 balance,
+        uint128 rewardPerToken,
+        uint128 last,
+        uint128 paid
+    ) public pure {
+        require(paid <= last && last <= rewardPerToken);
+        uint256 earned = uint256(balance) * (uint256(last) - paid) / WAD;
+        assert(earned <= uint256(balance) * rewardPerToken / WAD);
+    }
+
+    function checkOtherIndex(uint128 balance, uint128 rewardPerToken, uint128 other, uint128 paid)
+        public
+        pure
+    {
+        require(paid <= other);
+        uint256 earned = uint256(balance) * (uint256(other) - paid) / WAD;
+        assert(earned <= uint256(balance) * rewardPerToken / WAD);
+    }
+
+    function checkWrappedDelta(uint128 x, uint128 e) public pure {
+        unchecked {
+            assert((uint256(x) - e) / 7 <= uint256(x) / 7);
+        }
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicAccruedDelta"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        for signature in [
+            "checkEarnedBelowAccrual(uint128,uint128,uint128)",
+            "checkEarnedBelowLaterIndex(uint128,uint128,uint128,uint128)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+            assert_eq!(
+                result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+                "optimized={optimized}: {result}"
+            );
+        }
+        for signature in [
+            "checkOtherIndex(uint128,uint128,uint128,uint128)",
+            "checkWrappedDelta(uint128,uint128)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(
@@ -10401,6 +10619,160 @@ contract SymbolicCeilingBounds {
             assert_eq!(
                 result["symbolic"]["replay"]["status"], "confirmed",
                 "{signature}, optimized={optimized}: {result}"
+            );
+        }
+    }
+}
+
+// A vault withdrawal pays out `balance * shares / supply` and keeps a fee of `payout * bps /
+// 10000`, so the net payout stays within the balance once `shares <= supply` and `bps <= 10000`.
+// Fees taken again from each net stay within the balance too. The net can equal the balance, and
+// shares above the supply pay out more than it. Unchecked, a fee above the payout or an unrelated
+// deduction wraps past the balance.
+#[forgetest_init]
+fn symbolic_proves_payout_minus_fee_bounded(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_proves_payout_minus_fee_bounded");
+    prj.add_test(
+        "SymbolicPayoutMinusFee.t.sol",
+        r#"
+contract SymbolicPayoutMinusFee {
+    function checkPayoutAfterFee(uint128 balance, uint128 shares, uint128 supply, uint16 bps)
+        public
+        pure
+    {
+        if (supply == 0 || shares > supply || bps > 10000) return;
+        uint256 payout = uint256(balance) * shares / supply;
+        uint256 fee = payout * bps / 10000;
+        assert(payout - fee <= balance);
+    }
+
+    function checkNetBelowBalance(uint128 balance, uint128 shares, uint128 supply, uint16 bps)
+        public
+        pure
+    {
+        if (supply == 0 || shares > supply || bps > 10000) return;
+        uint256 payout = uint256(balance) * shares / supply;
+        uint256 fee = payout * bps / 10000;
+        assert(payout - fee < balance);
+    }
+
+    function checkSharesAboveSupply(uint128 balance, uint128 shares, uint128 supply, uint16 bps)
+        public
+        pure
+    {
+        if (supply == 0 || bps > 10000) return;
+        uint256 payout = uint256(balance) * shares / supply;
+        uint256 fee = payout * bps / 10000;
+        assert(payout - fee <= balance);
+    }
+
+    function checkFeeAboveWhole(uint128 balance, uint128 shares, uint128 supply, uint16 bps)
+        public
+        pure
+    {
+        if (supply == 0 || shares > supply || bps > 10001) return;
+        uint256 payout = uint256(balance) * shares / supply;
+        uint256 fee = payout * bps / 10000;
+        unchecked {
+            assert(payout - fee <= balance);
+        }
+    }
+
+    function checkUnrelatedDeduction(
+        uint128 balance,
+        uint128 shares,
+        uint128 supply,
+        uint256 deduction
+    ) public pure {
+        if (supply == 0 || shares > supply) return;
+        uint256 payout = uint256(balance) * shares / supply;
+        unchecked {
+            assert(payout - deduction <= balance);
+        }
+    }
+
+    // Each fee is taken from the previous net, so every level shares its minuend with its fee and
+    // the bound recurses through the whole chain.
+    function checkRepeatedFees(uint128 balance, uint128 shares, uint128 supply, uint16 bps)
+        public
+        pure
+    {
+        if (supply == 0 || shares > supply || bps > 10000) return;
+        uint256 net = uint256(balance) * shares / supply;
+        net -= net * bps / 10000;
+        net -= net * bps / 10000;
+        net -= net * bps / 10000;
+        net -= net * bps / 10000;
+        assert(net <= balance);
+        uint256 kept = balance;
+        kept -= kept * bps / 10000;
+        kept -= kept * bps / 10000;
+        kept -= kept * bps / 10000;
+        kept -= kept * bps / 10000;
+        assert(kept <= balance);
+    }
+
+    // A rebated fee `fee - fee / 3` is at most `fee`, but the deduction must keep the operand
+    // ranges, so the floor survives.
+    function checkRebatedFeesKeepFloor(uint56 balance, uint8 bps) public pure {
+        unchecked {
+            uint256 x = 1 ether + uint256(balance);
+            for (uint256 i; i < 4; ++i) {
+                uint256 fee = x * bps / 10000;
+                x -= fee - fee / 3;
+            }
+            assert(x > 0);
+        }
+    }
+
+    // Each step rechecks the fee multiply on the previous result, so that check must share the
+    // caller's interval cache instead of walking the chain again.
+    function checkRebatedFeesStayBounded(uint56 balance, uint8 bps) public pure {
+        unchecked {
+            uint256 x = 1 ether + uint256(balance);
+            for (uint256 i; i < 30; ++i) {
+                uint256 fee = x * bps / 10000;
+                x -= fee - fee / 3;
+            }
+            assert(x <= 1 ether + type(uint56).max);
+        }
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicPayoutMinusFee"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        for signature in [
+            "checkPayoutAfterFee(uint128,uint128,uint128,uint16)",
+            "checkRepeatedFees(uint128,uint128,uint128,uint16)",
+            "checkRebatedFeesKeepFloor(uint56,uint8)",
+            "checkRebatedFeesStayBounded(uint56,uint8)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        }
+
+        for signature in [
+            "checkNetBelowBalance(uint128,uint128,uint128,uint16)",
+            "checkSharesAboveSupply(uint128,uint128,uint128,uint16)",
+            "checkFeeAboveWhole(uint128,uint128,uint128,uint16)",
+            "checkUnrelatedDeduction(uint128,uint128,uint128,uint256)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "optimized={optimized}: {result}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "optimized={optimized}: {result}"
             );
         }
     }
