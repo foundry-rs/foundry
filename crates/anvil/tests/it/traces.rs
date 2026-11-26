@@ -2536,6 +2536,47 @@ async fn test_trace_get_rejects_integer_indices() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_trace_filter_safe_and_finalized_tags() {
+    // With one slot per epoch, safe is one block behind the head and finalized two.
+    let (api, handle) = spawn(NodeConfig::test().with_slots_in_an_epoch(1)).await;
+    let provider = handle.ws_provider();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let (from, to) = (accounts[0].address(), accounts[1].address());
+    for i in 0..6 {
+        let tx = TransactionRequest::default().to(to).value(U256::from(i)).from(from);
+        provider
+            .send_transaction(WithOtherFields::new(tx))
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+    }
+    let latest = provider.get_block_number().await.unwrap();
+
+    for (from_block, to_block, expected) in [
+        (BlockNumberOrTag::Safe, BlockNumberOrTag::Safe, vec![latest - 1]),
+        (BlockNumberOrTag::Finalized, BlockNumberOrTag::Finalized, vec![latest - 2]),
+        (
+            BlockNumberOrTag::Finalized,
+            BlockNumberOrTag::Latest,
+            vec![latest - 2, latest - 1, latest],
+        ),
+    ] {
+        let traces = api
+            .trace_filter(TraceFilter {
+                from_block: Some(from_block),
+                to_block: Some(to_block),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let blocks = traces.iter().map(|trace| trace.block_number.unwrap()).collect::<Vec<_>>();
+        assert_eq!(blocks, expected, "{from_block}..{to_block}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_trace_filter() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.ws_provider();
