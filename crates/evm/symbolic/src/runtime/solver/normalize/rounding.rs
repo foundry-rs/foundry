@@ -155,7 +155,8 @@ impl ConstraintContext {
     /// The shares `w * a / k + w * b / k <= w` once `a + b <= k`, and `n <= ceil(n / d) * d` for a
     /// nonzero `d` once the multiple cannot wrap. With a nonzero `d` and an `n + d` that cannot
     /// wrap, `n / d <= (n + d - 1) / d <= n / d + 1`. A difference `a - b` is at most `x` once
-    /// `b <= a` and `a <= x`.
+    /// `b <= a` and `a <= x`. A decay `s - (s - e) * t / d` is at least `e` once `e <= s` and the
+    /// quotient is at most `s - e`.
     /// A weighted average `(p * u + q * v) / k` with `u + v <= k` is at most a bound on `p` and
     /// `q`.
     pub(super) fn division_comparison_value(&self, expr: &SymBoolExpr) -> Option<bool> {
@@ -282,6 +283,29 @@ impl ConstraintContext {
             && self.sum_cannot_wrap(n, d, intervals, remaining)
         {
             return Some(false);
+        }
+        // Linear decay `e <= s - (s - e) * t / d`, as in a Dutch auction price or a descending
+        // ramp, once `e <= s` and the quotient is at most `s - e`. Then `s - e <= s`, so the outer
+        // difference cannot wrap and stays at least `s - (s - e) = e`. The quotient's own rule
+        // decides whether a wrapped product still keeps it below `s - e`. Each recursion is charged
+        // to the budget, as for a difference below.
+        if let SymExprKind::BinOp(SymBinOp::Sub, start, quotient) = large.kind()
+            && let Some((product, _)) = quotient.udiv_operands()
+            && let SymExprKind::BinOp(SymBinOp::Mul, left, right) = product.kind()
+            && let Some(span) = [left, right].into_iter().find(|factor| {
+                matches!(factor.kind(), SymExprKind::BinOp(SymBinOp::Sub, s, e)
+                    if s == start && e == small)
+            })
+        {
+            let mut order = |small, large| {
+                *remaining = remaining.checked_sub(1)?;
+                self.division_order(small, large, intervals, remaining)
+            };
+            if order(quotient, span).is_some()
+                && (self.asserts_less_or_equal(small, start) || order(small, start).is_some())
+            {
+                return Some(false);
+            }
         }
         let mut interval = |expr: &SymExpr| self.interval_cached(expr, intervals, remaining);
         let nonzero = |range: Option<WordInterval>| range.is_some_and(|range| !range.min.is_zero());
