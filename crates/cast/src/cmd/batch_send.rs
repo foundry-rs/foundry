@@ -23,6 +23,7 @@ use foundry_cli::{
     opts::TransactionOpts,
     utils::{self, resolve_lane},
 };
+use foundry_common::provider::set_chain_poll_interval;
 use tempo_alloy::TempoNetwork;
 
 /// CLI arguments for `cast batch-send`.
@@ -76,6 +77,9 @@ impl BatchSendArgs {
         apply_poll_interval(&provider, send_tx.poll_interval);
 
         let chain = utils::get_chain(config.chain, &provider).await?;
+        if send_tx.poll_interval.is_none() {
+            set_chain_poll_interval(&provider, chain.id());
+        }
         let (mut signer, tempo_access_key) =
             tempo::resolve_session_or_wallet_signer(&tx.tempo, &send_tx.eth.wallet, chain.id())
                 .await?;

@@ -22,7 +22,7 @@ use foundry_cli::{
 use foundry_common::{
     FoundryTransactionBuilder,
     fmt::{UIfmt, UIfmtReceiptExt},
-    provider::ProviderBuilder,
+    provider::{ProviderBuilder, set_chain_poll_interval},
     tempo::{configurable_account::ConfigurableAccountSigner, maybe_print_fee_token},
 };
 use foundry_config::Config;
@@ -335,6 +335,9 @@ impl SendTxArgs {
             .await?
             .with_blob_data(blob_data)?;
         let chain = builder.chain();
+        if send_tx.poll_interval.is_none() {
+            set_chain_poll_interval(&provider, chain.id());
+        }
         if let Some(account) = &configurable_account {
             account.prepare_request::<N>(builder.tx_mut());
         }

@@ -9,11 +9,11 @@ use crate::{
     ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT,
     provider::{curl_transport::CurlTransport, runtime_transport::RuntimeTransportBuilder},
 };
-use alloy_chains::NamedChain;
+use alloy_chains::{Chain, NamedChain};
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_network::{Network, NetworkWallet};
 use alloy_provider::{
-    Identity, ProviderBuilder as AlloyProviderBuilder, RootProvider,
+    Identity, Provider, ProviderBuilder as AlloyProviderBuilder, RootProvider,
     fillers::{FillProvider, JoinFill, RecommendedFillers, WalletFiller},
     network::{AnyNetwork, EthereumWallet},
 };
@@ -410,15 +410,7 @@ impl<N: Network> ProviderBuilder<N> {
         let client = ClientBuilder::default().layer(retry_layer).transport(transport, is_local);
 
         if !is_local {
-            client.set_poll_interval(
-                chain
-                    .average_blocktime_hint()
-                    // we cap the poll interval because if not provided, chain would default to
-                    // mainnet
-                    .map(|hint| hint.min(DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME))
-                    .unwrap_or(DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME)
-                    .mul_f32(POLL_INTERVAL_BLOCK_TIME_SCALE_FACTOR),
-            );
+            client.set_poll_interval(remote_poll_interval(chain.into()));
         }
 
         Ok(client)
@@ -481,13 +473,7 @@ impl<N: Network> ProviderBuilder<N> {
         let client = ClientBuilder::default().layer(retry_layer).transport(round_robin, is_local);
 
         if !is_local {
-            client.set_poll_interval(
-                chain
-                    .average_blocktime_hint()
-                    .map(|hint| hint.min(DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME))
-                    .unwrap_or(DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME)
-                    .mul_f32(POLL_INTERVAL_BLOCK_TIME_SCALE_FACTOR),
-            );
+            client.set_poll_interval(remote_poll_interval(chain.into()));
         }
 
         let provider =
@@ -652,6 +638,29 @@ pub fn get_http_provider(builder: impl AsRef<str>) -> RetryProvider {
 #[inline]
 pub fn try_get_http_provider(builder: impl AsRef<str>) -> Result<RetryProvider> {
     ProviderBuilder::new(builder.as_ref()).build()
+}
+
+/// Sets a remote `provider`'s receipt and block polling interval for `chain_id`.
+///
+/// [`ProviderBuilder`] picks the interval from the configured chain, which is mainnet when the
+/// config names none, so a provider for a faster chain polls too slowly until this runs. Call it
+/// once the chain ID is known, unless the user chose an interval. Local endpoints keep Alloy's
+/// default.
+pub fn set_chain_poll_interval<N: Network>(provider: &impl Provider<N>, chain_id: u64) {
+    let client = provider.client();
+    if !client.is_local() {
+        client.set_poll_interval(remote_poll_interval(Chain::from_id(chain_id)));
+    }
+}
+
+/// Returns 60% of `chain`'s average block time, capped at 3 seconds before scaling, which is also
+/// used for chains without a block time hint.
+fn remote_poll_interval(chain: Chain) -> Duration {
+    chain
+        .average_blocktime_hint()
+        .map(|hint| hint.min(DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME))
+        .unwrap_or(DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME)
+        .mul_f32(POLL_INTERVAL_BLOCK_TIME_SCALE_FACTOR)
 }
 
 #[cfg(not(windows))]
@@ -819,5 +828,18 @@ mod tests {
         assert_eq!(builder.url.unwrap().as_str(), "http://sequence.example/");
         assert_eq!(builder.timeout, Duration::from_secs(7));
         assert_eq!(builder.chain, NamedChain::Mainnet);
+    }
+
+    #[test]
+    fn chain_poll_interval_follows_the_detected_chain() {
+        let remote = ProviderBuilder::<AnyNetwork>::new("https://rpc.example").build().unwrap();
+        assert!(remote.client().poll_interval() > Duration::from_secs(1));
+        set_chain_poll_interval(&remote, NamedChain::Tempo as u64);
+        assert!(remote.client().poll_interval() < Duration::from_millis(500));
+
+        let local = ProviderBuilder::<AnyNetwork>::new("http://localhost:8545").build().unwrap();
+        let default = local.client().poll_interval();
+        set_chain_poll_interval(&local, NamedChain::Tempo as u64);
+        assert_eq!(local.client().poll_interval(), default);
     }
 }
