@@ -178,6 +178,7 @@ When `forge script --json` fails, its last stdout line is a `JsonEnvelope` with
 | `rpc.error`      | an RPC endpoint answered with an error, or without a block that must exist | `code` (JSON-RPC code) and `status` (HTTP), when known |
 | `rpc.transport`  | an RPC request got no answer: connection failure, timeout, or an HTTP error without a JSON-RPC error | `status` (HTTP), when known |
 | `compiler.error` | the compiler could not be set up, or compilation failed         | none                                                  |
+| `compiler.stale` | `--no-compile` found sources that need compiling                | `files` (paths, relative to the project root when inside it) |
 | `config.error`   | the configuration could not be loaded                           | none                                                  |
 | `script.error`   | any other failure, such as an invalid opcode or out-of-gas halt  | none                                                  |
 
