@@ -157,7 +157,9 @@ impl ConstraintContext {
     /// nonzero `d` once the multiple cannot wrap. With a nonzero `d` and an `n + d` that cannot
     /// wrap, `n / d <= (n + d - 1) / d <= n / d + 1`, and `(n + e) / d <= n / d + 1` for any
     /// `e <= d` once `n / d + 1` cannot wrap, since a wrapped `n + e` only shrinks the dividend.
-    /// A difference `a - b` is at most `x` once `b <= a` and `a <= x`.
+    /// A difference `a - b` is at most `x` once `b <= a` and `a <= x`. An interpolation
+    /// `a + (c - a) * t / d` is at most `c`, and a decay `c - (c - a) * t / d` is at least `a`,
+    /// once `a <= c` and the quotient is at most `c - a`.
     /// A weighted average `(p * u + q * v) / k` with `u + v <= k` is at most a bound on `p` and
     /// `q`.
     pub(super) fn division_comparison_value(&self, expr: &SymBoolExpr) -> Option<bool> {
@@ -311,6 +313,13 @@ impl ConstraintContext {
         {
             return Some(false);
         }
+        // Linear decay `e <= s - (s - e) * t / d`, as in a Dutch auction price or a descending
+        // ramp.
+        if let SymExprKind::BinOp(SymBinOp::Sub, start, quotient) = large.kind()
+            && self.offset_within_span(small, start, quotient, intervals, remaining)
+        {
+            return Some(false);
+        }
         let mut interval = |expr: &SymExpr| self.interval_cached(expr, intervals, remaining);
         let nonzero = |range: Option<WordInterval>| range.is_some_and(|range| !range.min.is_zero());
         match small.kind() {
@@ -432,6 +441,14 @@ impl ConstraintContext {
                         dividend == large
                             && self.factor_within_divisor(factor, divisor, intervals, remaining)
                     })
+                })
+                .then_some(false),
+            // Linear interpolation `a + (c - a) * t / d <= c`, as in a lerp, a price ramp, or a fee
+            // `x + (cap - x) * bps / k`.
+            SymExprKind::BinOp(SymBinOp::Add, x, y) => [(x, y), (y, x)]
+                .into_iter()
+                .any(|(a, quotient)| {
+                    self.offset_within_span(a, large, quotient, intervals, remaining)
                 })
                 .then_some(false),
             // A payout minus its fee, `a - b <= a <= large` once `b <= a`, which also keeps the
@@ -716,6 +733,35 @@ impl ConstraintContext {
             return Some(WordInterval { min: U256::ZERO, max: left.max });
         }
         None
+    }
+
+    /// Returns whether a quotient `q` of `(c - a) * t / d` fits in the span from `a` to `c`, so
+    /// `a + q <= c` and `a <= c - q`: once `a <= c`, `c - a` cannot wrap, and once `q <= c - a`,
+    /// neither can `a + q` nor `c - q`. The order prover decides `q <= c - a`, including whether a
+    /// wrapped product still keeps the quotient below the span. Each recursion is charged to the
+    /// budget, as for a difference in `division_order`.
+    fn offset_within_span(
+        &self,
+        a: &SymExpr,
+        c: &SymExpr,
+        quotient: &SymExpr,
+        intervals: &mut HashMap<SymExpr, Option<WordInterval>>,
+        remaining: &mut usize,
+    ) -> bool {
+        let Some((product, _)) = quotient.udiv_operands() else { return false };
+        let SymExprKind::BinOp(SymBinOp::Mul, left, right) = product.kind() else { return false };
+        let Some(span) = [left, right].into_iter().find(|factor| {
+            matches!(factor.kind(), SymExprKind::BinOp(SymBinOp::Sub, end, start)
+                if end == c && start == a)
+        }) else {
+            return false;
+        };
+        let mut order = |small, large| {
+            let Some(rest) = remaining.checked_sub(1) else { return false };
+            *remaining = rest;
+            self.division_order(small, large, intervals, remaining).is_some()
+        };
+        order(quotient, span) && (a == c || self.asserts_less_or_equal(a, c) || order(a, c))
     }
 }
 
