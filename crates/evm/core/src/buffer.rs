@@ -56,7 +56,7 @@ pub struct BufferAccesses {
 /// The return value is a tuple about accessed buffer region by the given opcode:
 ///    (read buffer, buffer read offset, buffer read len, write memory offset, write memory len)
 pub fn get_buffer_accesses(op: u8, stack: &[U256]) -> Option<BufferAccesses> {
-    let buffer_access = match op {
+    let (read, write) = match op {
         opcode::KECCAK256 | opcode::RETURN | opcode::REVERT => {
             (Some((BufferKind::Memory, 1, 2)), None)
         }
@@ -75,29 +75,50 @@ pub fn get_buffer_accesses(op: u8, stack: &[U256]) -> Option<BufferAccesses> {
         opcode::CALL | opcode::CALLCODE => (Some((BufferKind::Memory, 4, 5)), None),
         opcode::DELEGATECALL | opcode::STATICCALL => (Some((BufferKind::Memory, 3, 4)), None),
         opcode::MCOPY => (Some((BufferKind::Memory, 2, 3)), Some((1, 3))),
-        _ => Default::default(),
+        _ => return None,
     };
 
-    let stack_len = stack.len();
     let get_size = |stack_index| match stack_index {
         -2 => Some(1),
         -1 => Some(32),
         0 => None,
-        1.. => ((stack_index as usize) <= stack_len)
-            .then(|| stack[stack_len - stack_index as usize].saturating_to()),
+        1.. => stack.iter().rev().nth(stack_index as usize - 1).map(|word| word.saturating_to()),
         _ => panic!("invalid stack index"),
     };
 
-    (buffer_access.0.is_some() || buffer_access.1.is_some()).then(|| {
-        let (read, write) = buffer_access;
-        let read_access = read.and_then(|b| {
-            let (buffer, offset, len) = b;
-            Some((buffer, BufferAccess { offset: get_size(offset)?, len: get_size(len)? }))
-        });
-        let write_access = write.and_then(|b| {
-            let (offset, len) = b;
-            Some(BufferAccess { offset: get_size(offset)?, len: get_size(len)? })
-        });
-        BufferAccesses { read: read_access, write: write_access }
-    })
+    let read = read.and_then(|(buffer, offset, len)| {
+        Some((buffer, BufferAccess { offset: get_size(offset)?, len: get_size(len)? }))
+    });
+    let write = write.and_then(|(offset, len)| {
+        Some(BufferAccess { offset: get_size(offset)?, len: get_size(len)? })
+    });
+    Some(BufferAccesses { read, write })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn buffer_accesses_read_the_stack_from_the_top() {
+        // The top of the stack is the last item: `MCOPY(dest = 7, src = 5, len = 3)`.
+        let stack = [3, 5, 7].map(U256::from);
+        let accesses = get_buffer_accesses(opcode::MCOPY, &stack).unwrap();
+        let (kind, read) = accesses.read.unwrap();
+        assert_eq!((kind, read.offset, read.len), (BufferKind::Memory, 5, 3));
+        let write = accesses.write.unwrap();
+        assert_eq!((write.offset, write.len), (7, 3));
+
+        // `MSTORE8` writes one byte at the top of the stack.
+        let write = get_buffer_accesses(opcode::MSTORE8, &stack).unwrap().write.unwrap();
+        assert_eq!((write.offset, write.len), (7, 1));
+    }
+
+    #[test]
+    fn buffer_accesses_drop_what_the_stack_cannot_give() {
+        // A short stack leaves the accesses empty, and other opcodes have none.
+        let accesses = get_buffer_accesses(opcode::MCOPY, &[U256::from(1)]).unwrap();
+        assert!(accesses.read.is_none() && accesses.write.is_none());
+        assert!(get_buffer_accesses(opcode::ADD, &[U256::from(1), U256::from(2)]).is_none());
+    }
 }

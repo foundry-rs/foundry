@@ -1,10 +1,10 @@
 //! Source map decoding and PC mapping utilities.
 
 use alloy_primitives::Bytes;
+use evm2::{SpecId, bytecode::InstructionMap};
 use foundry_compilers::{
     ProjectCompileOutput, artifacts::sourcemap::SourceMap, buildinfo::SourceEdit,
 };
-use foundry_evm_core::ic::IcPcMap;
 use std::{
     path::{Path, PathBuf},
     sync::OnceLock,
@@ -25,7 +25,7 @@ pub struct SourceData {
 /// Maps program counters to source locations.
 pub struct PcSourceMapper<'a> {
     /// Mapping from instruction counter to program counter.
-    ic_pc_map: IcPcMap,
+    ic_pc_map: InstructionMap,
     /// Source data consists of the source_map and the deployed bytecode
     source_data: SourceData,
     /// Source files i.e source path, content, and preprocessor edits (indexed by source_id).
@@ -38,7 +38,7 @@ impl<'a> PcSourceMapper<'a> {
     /// Creates a new PC to source mapper.
     pub fn new(source_data: SourceData, sources: &'a [BuildSource]) -> Self {
         // Build instruction counter to program counter mapping
-        let ic_pc_map = IcPcMap::new(source_data.bytecode.as_ref());
+        let ic_pc_map = InstructionMap::new(source_data.bytecode.as_ref(), SpecId::NEXT);
 
         let line_offsets = sources.iter().map(|_| OnceLock::new()).collect();
 
@@ -54,15 +54,10 @@ impl<'a> PcSourceMapper<'a> {
         let element = self.source_data.source_map.get(ic)?;
 
         // Get the source file index - returns None if index is -1
-        let source_idx_opt = element.index();
-
-        let source_idx = source_idx_opt? as usize;
-        if source_idx >= self.sources.len() {
-            return None;
-        }
+        let source_idx = element.index()? as usize;
 
         // Get the source file info
-        let (file_path, content, edits) = &self.sources[source_idx];
+        let (file_path, content, edits) = self.sources.get(source_idx)?;
 
         // Convert byte offset to line and column. Offsets refer to the compiled source, which
         // differs from the file on disk when it was preprocessed.
@@ -90,20 +85,9 @@ impl<'a> PcSourceMapper<'a> {
 
     /// Finds the instruction counter for a given program counter.
     fn find_instruction_counter(&self, pc: usize) -> Option<usize> {
-        // The IcPcMap maps IC -> PC, we need the reverse
+        // The instruction map maps IC -> PC, we need the reverse
         // We find the highest IC that has a PC <= our target PC
-        let mut best_ic = None;
-        let mut best_pc = 0;
-
-        for (ic, mapped_pc) in self.ic_pc_map.iter() {
-            let mapped_pc = *mapped_pc as usize;
-            if mapped_pc <= pc && mapped_pc >= best_pc {
-                best_pc = mapped_pc;
-                best_ic = Some(*ic as usize);
-            }
-        }
-
-        best_ic
+        self.ic_pc_map.iter().take_while(|&(_, mapped_pc)| mapped_pc <= pc).last().map(|(ic, _)| ic)
     }
 }
 /// Represents a location in source code.
@@ -150,8 +134,7 @@ pub fn load_build_sources(
     for (source_id, source_path) in &build_ctx.source_id_to_path {
         let idx = *source_id as usize;
 
-        let full_path =
-            if source_path.is_absolute() { source_path.clone() } else { root.join(source_path) };
+        let full_path = root.join(source_path);
         let mut source_content = foundry_common::fs::read_to_string(&full_path).unwrap_or_default();
 
         // Normalize line endings for windows

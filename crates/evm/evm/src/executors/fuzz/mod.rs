@@ -930,7 +930,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         final_sync: Option<&CorpusSyncCoordinator>,
     ) -> Result<WorkerState<FEN>> {
         // Prepare
-        let fuzz_seed = shared_state.state.fork();
+        let fuzz_seed = shared_state.state.clone();
         let generator = TxGenerator::stateless(
             fuzz_seed.clone(),
             fuzz_fixtures.clone(),

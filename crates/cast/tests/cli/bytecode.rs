@@ -74,12 +74,30 @@ async fn codehash_empty(cmd: _) {
 fn disassemble_incomplete_sequence(cmd: _) {
     cmd.cast_fuse().args(["disassemble", "60"]).assert_success().stdout_eq("00000000: PUSH1\n\n");
     cmd.cast_fuse()
+        .args(["disassemble", "e6"])
+        .assert_success()
+        .stdout_eq("00000000: DUPN 145\n\n");
+    cmd.cast_fuse()
         .args(["disassemble", "6000"])
         .assert_success()
         .stdout_eq("00000000: PUSH1 0x00\n\n");
     cmd.cast_fuse()
         .args(["disassemble", "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"])
         .assert_success()
-        .stdout_eq("00000000: PUSH32\n\n");
+        .stdout_eq(format!("00000000: PUSH32 0x{}\n\n", "ff".repeat(31)));
     cmd.cast_fuse().args(["disassemble", "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"]).assert_success().stdout_eq("00000000: PUSH32 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\n\n");
+}
+
+// EIP-8024 immediates are decoded, and opcode names follow the latest spec.
+#[casttest]
+fn disassemble_spec_names(cmd: _) {
+    cmd.args(["disassemble", "44e600e780e88e00"]).assert_success().stdout_eq(str![[r#"
+00000000: PREVRANDAO
+00000001: DUPN 145
+00000003: SWAPN 17
+00000005: EXCHANGE 1, 2
+00000007: STOP
+
+
+"#]]);
 }

@@ -14,6 +14,7 @@
 //! and ERC-7201 roots, stay fixed slots.
 
 use super::*;
+use evm2::bytecode::Instructions;
 use foundry_common::slot_identifier::{ENCODING_INPLACE, ENCODING_MAPPING};
 use foundry_compilers::artifacts::{Storage, StorageLayout, StorageType};
 
@@ -65,7 +66,9 @@ impl FoldedSlots {
                     known_contracts.find_by_deployed_code_exact(code.original_byte_slice())
                 && let Some(layout) = &contract.storage_layout
             {
-                let constants = push_immediates(code.original_byte_slice()).collect::<HashSet<_>>();
+                let constants = Instructions::new(code.original_byte_slice(), SpecId::NEXT)
+                    .filter_map(|inst| inst.push_value())
+                    .collect::<HashSet<_>>();
                 let mut keys = literals.clone();
                 keys.extend(constants.iter().copied());
                 let mut keys = keys.into_iter().collect::<Vec<_>>();
@@ -168,23 +171,6 @@ fn past_deadline(deadline: Option<Instant>) -> bool {
     deadline.is_some_and(|deadline| Instant::now() >= deadline)
 }
 
-/// Returns the right-aligned values of the `PUSH` immediates in `code`.
-fn push_immediates(code: &[u8]) -> impl Iterator<Item = U256> {
-    let mut pc = 0;
-    std::iter::from_fn(move || {
-        while let Some(&op) = code.get(pc) {
-            pc += 1;
-            if let opcode::PUSH1..=opcode::PUSH32 = op {
-                let len = usize::from(op - opcode::PUSH1 + 1);
-                let data = &code[pc..code.len().min(pc + len)];
-                pc += len;
-                return Some(U256::from_be_slice(data));
-            }
-        }
-        None
-    })
-}
-
 /// Calls `hash` for every candidate key that fits the key type of the mapping at `slot`, descending
 /// into struct members and `levels - 1` nested mapping levels through the returned hash. Returns
 /// `false` when `hash` stopped the walk.
@@ -214,10 +200,8 @@ fn walk_mapping_slots(
             }
         }
     } else if ty.encoding == ENCODING_INPLACE
-        && let Some(members) = ty
-            .other
-            .get("members")
-            .and_then(|members| serde_json::from_value::<Vec<Storage>>(members.clone()).ok())
+        && let Some(members) =
+            ty.other.get("members").and_then(|members| Vec::<Storage>::deserialize(members).ok())
     {
         for member in &members {
             if let Ok(offset) = member.slot.parse::<U256>() {
@@ -250,10 +234,8 @@ fn key_fits(ty: &StorageType, key: U256) -> bool {
 
 /// Returns `keccak(key . slot)` and its 64-byte preimage.
 fn mapping_preimage(key: U256, slot: U256) -> (U256, [u8; 64]) {
-    let mut bytes = [0u8; 64];
-    bytes[..32].copy_from_slice(B256::from(key).as_slice());
-    bytes[32..].copy_from_slice(B256::from(slot).as_slice());
-    (keccak256(bytes).into(), bytes)
+    let bytes = B256::from(key).concat_const::<32, 64>(B256::from(slot));
+    (keccak256(bytes).into(), bytes.0)
 }
 
 /// Records `keccak(key . slot)` with its preimage and returns the hash.

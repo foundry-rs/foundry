@@ -15,6 +15,7 @@ use alloy_primitives::{
     map::{HashMap, HashSet},
 };
 use clap::{Parser, ValueHint};
+use evm2::{SpecId, bytecode::InstructionMap};
 use eyre::Result;
 use foundry_cli::utils::{FoundryPathExt, LoadConfig, STATIC_FUZZ_SEED};
 use foundry_common::{
@@ -40,7 +41,7 @@ use foundry_compilers::{
 use foundry_config::{
     Config, CoverageConfig, CoverageReportKind, InlineConfig, parse_lcov_version,
 };
-use foundry_evm::{core::ic::IcPcMap, opts::EvmOpts};
+use foundry_evm::opts::EvmOpts;
 use globset::{Glob, GlobSetBuilder};
 use rayon::prelude::*;
 use semver::Version;
@@ -904,12 +905,12 @@ pub struct BytecodeData {
     ///
     /// Since our line coverage inspector collects hit data using program counters, the anchors
     /// also need to be based on program counters.
-    ic_pc_map: IcPcMap,
+    ic_pc_map: InstructionMap,
 }
 
 impl BytecodeData {
     fn new(source_map: SourceMap, bytecode: Bytes) -> Self {
-        let ic_pc_map = IcPcMap::new(&bytecode);
+        let ic_pc_map = InstructionMap::new(&bytecode, SpecId::NEXT);
         Self { source_map, bytecode, ic_pc_map }
     }
 

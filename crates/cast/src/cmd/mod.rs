@@ -9,6 +9,7 @@ use alloy_network::Network;
 use alloy_primitives::{Address, Bytes, map::AddressHashMap};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
+use evm2::{SpecId, bytecode::Instructions};
 use eyre::Result;
 use foundry_cli::{
     json::print_scalar,
@@ -17,7 +18,7 @@ use foundry_cli::{
 };
 use foundry_common::{provider::RetryProvider, shell};
 use foundry_config::{Config, figment::Figment};
-use foundry_evm::{core::bytecode::InstIter, opts::EvmOpts};
+use foundry_evm::opts::EvmOpts;
 use foundry_evm_networks::NetworkVariant;
 use futures::StreamExt;
 use serde::Serialize;
@@ -185,8 +186,8 @@ pub(crate) async fn resolve_transaction_network(
 
 pub(crate) fn disassemble(code: &[u8]) -> Result<String> {
     let mut output = String::new();
-    for (pc, inst) in InstIter::new(code).with_pc() {
-        writeln!(output, "{pc:08x}: {inst}")?;
+    for inst in Instructions::new(code, SpecId::NEXT) {
+        writeln!(output, "{:08x}: {}", inst.pc, inst.display(SpecId::NEXT))?;
     }
     Ok(output)
 }

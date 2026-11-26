@@ -1,3 +1,4 @@
+use evm2::{SpecId, bytecode::InstructionMap};
 use eyre::{Context, Result};
 use foundry_common::{
     compact_to_contract, external_compiler::is_external_artifact, is_deploy_helper_path,
@@ -12,7 +13,6 @@ use foundry_compilers::{
     multi::MultiCompilerLanguage,
 };
 use foundry_config::read_build_info_input;
-use foundry_evm_core::ic::PcIcMap;
 use foundry_linking::Linker;
 use rayon::prelude::*;
 use serde::Deserialize;
@@ -94,8 +94,8 @@ fn span_to_range(
 pub struct ArtifactData {
     pub source_map: Option<SourceMap>,
     pub source_map_runtime: Option<SourceMap>,
-    pub pc_ic_map: Option<PcIcMap>,
-    pub pc_ic_map_runtime: Option<PcIcMap>,
+    pub pc_ic_map: Option<InstructionMap>,
+    pub pc_ic_map_runtime: Option<InstructionMap>,
     pub build_id: String,
     pub file_id: u32,
     /// Whether the contract was compiled through the via-IR pipeline, if the metadata says.
@@ -120,8 +120,9 @@ impl ArtifactData {
             };
 
             // Only parse bytecode if it's not empty, stripping placeholders if necessary.
-            let pc_ic_map = strip_bytecode_placeholders(&b.object)
-                .and_then(|bytes| (!bytes.is_empty()).then(|| PcIcMap::new(bytes.as_ref())));
+            let pc_ic_map = strip_bytecode_placeholders(&b.object).and_then(|bytes| {
+                (!bytes.is_empty()).then(|| InstructionMap::new(bytes.as_ref(), SpecId::NEXT))
+            });
 
             source_map.map(|source_map| (source_map, pc_ic_map))
         };
@@ -182,29 +183,26 @@ impl ContractSources {
             .collect::<Vec<_>>()
             .par_iter()
             .map(|(id, artifact)| {
-                let mut new_artifact = None;
-                if let Some(file_id) = artifact.id {
-                    // Solc records `viaIR` in the metadata settings only when it is enabled.
-                    let via_ir = artifact
-                        .metadata
-                        .as_ref()
-                        .map(|metadata| metadata.settings.via_ir.unwrap_or_default());
-                    let artifact = if let Some((linker, libraries)) = link_data.as_ref() {
-                        linker.link(id, libraries)?
-                    } else {
-                        artifact.get_contract_bytecode()
-                    };
-                    let bytecode = compact_to_contract(artifact.into_contract_bytecode())?;
-
-                    new_artifact = Some((
-                        id.name.clone(),
-                        ArtifactData::new(bytecode, id.build_id.clone(), file_id, via_ir)?,
-                    ));
-                } else {
+                let Some(file_id) = artifact.id else {
                     warn!(id = id.identifier(), "source not found");
+                    return Ok(None);
                 };
+                // Solc records `viaIR` in the metadata settings only when it is enabled.
+                let via_ir = artifact
+                    .metadata
+                    .as_ref()
+                    .map(|metadata| metadata.settings.via_ir.unwrap_or_default());
+                let artifact = if let Some((linker, libraries)) = link_data.as_ref() {
+                    linker.link(id, libraries)?
+                } else {
+                    artifact.get_contract_bytecode()
+                };
+                let bytecode = compact_to_contract(artifact.into_contract_bytecode())?;
 
-                Ok(new_artifact)
+                Ok(Some((
+                    id.name.clone(),
+                    ArtifactData::new(bytecode, id.build_id.clone(), file_id, via_ir)?,
+                )))
             })
             .collect::<Result<Vec<_>>>()?;
 
@@ -287,8 +285,7 @@ impl ContractSources {
                 if let Some(compiled) = input.sources.remove(&source.path)
                     && compiled.content != source.source
                 {
-                    *source =
-                        Arc::new(SourceData { source: compiled.content, ..(**source).clone() });
+                    Arc::make_mut(source).source = compiled.content;
                 }
             }
         }
@@ -308,22 +305,22 @@ impl ContractSources {
         name: &str,
     ) -> Option<impl Iterator<Item = (&ArtifactData, &SourceData)>> {
         self.artifacts_by_name.get(name).map(|artifacts| {
-            artifacts.iter().filter_map(|artifact| {
-                let source =
-                    self.sources_by_id.get(artifact.build_id.as_str())?.get(&artifact.file_id)?;
-                Some((artifact, source.as_ref()))
-            })
+            artifacts.iter().filter_map(|artifact| Some((artifact, self.source_of(artifact)?)))
         })
+    }
+
+    /// Returns the source file of `artifact`.
+    fn source_of(&self, artifact: &ArtifactData) -> Option<&SourceData> {
+        let source = self.sources_by_id.get(artifact.build_id.as_str())?.get(&artifact.file_id)?;
+        Some(source.as_ref())
     }
 
     /// Returns all (name, bytecode, source) sets.
     pub fn entries(&self) -> impl Iterator<Item = (&str, &ArtifactData, &SourceData)> {
         self.artifacts_by_name.iter().flat_map(|(name, artifacts)| {
-            artifacts.iter().filter_map(|artifact| {
-                let source =
-                    self.sources_by_id.get(artifact.build_id.as_str())?.get(&artifact.file_id)?;
-                Some((name.as_str(), artifact, source.as_ref()))
-            })
+            artifacts
+                .iter()
+                .filter_map(|artifact| Some((name.as_str(), artifact, self.source_of(artifact)?)))
         })
     }
 
@@ -348,26 +345,22 @@ impl ContractSources {
                 } else {
                     artifact.pc_ic_map_runtime.as_ref()
                 }?;
-                let ic = pc_ic_map.get(pc)?;
+                let ic = pc_ic_map.ic(pc as usize)?;
 
-                source_map.get(ic as usize)
+                source_map.get(ic)
             } else {
                 source_map.get(pc as usize)
             }?;
             // if the source element has an index, find the sourcemap for that index
-            source_element
-                .index()
+            let index = source_element.index()?;
+            let source = if index == artifact.file_id {
                 // if index matches current file_id, return current source code
-                .and_then(|index| {
-                    (index == artifact.file_id).then(|| (source_element.clone(), source))
-                })
-                .or_else(|| {
-                    // otherwise find the source code for the element's index
-                    self.sources_by_id
-                        .get(&artifact.build_id)?
-                        .get(&source_element.index()?)
-                        .map(|source| (source_element.clone(), source.as_ref()))
-                })
+                source
+            } else {
+                // otherwise find the source code for the element's index
+                self.sources_by_id.get(&artifact.build_id)?.get(&index)?.as_ref()
+            };
+            Some((source_element.clone(), source))
         })
     }
 }
