@@ -646,6 +646,16 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
                             stmt.span,
                         )
                         .anchor_loc = anchor_loc;
+                    } else {
+                        // The implicit false branch skips the body.
+                        self.push_item_kind(
+                            CoverageItemKind::Branch {
+                                branch_id,
+                                path_id: 1,
+                                is_first_opcode: false,
+                            },
+                            stmt.span,
+                        );
                     }
                     self.branch_kinds.push((branch_id, BranchKind::If(arms)));
                 }

@@ -94,6 +94,13 @@ pub fn find_anchors(
                 && let Some(BranchKind::If(arms)) =
                     analysis.branch_kind(item.loc.source_id as u32, branch_id)
             {
+                // The implicit false branch counts the evaluations that skip the body.
+                if path_id == 1
+                    && arms.else_arm.is_none()
+                    && let Some(anchor) = index.skipped_body(item_id, &item.loc, &arms.then_arm)
+                {
+                    return Some(anchor);
+                }
                 let arm = if path_id == 0 { Some(&arms.then_arm) } else { arms.else_arm.as_ref() };
                 // The first instruction of an arm with code anchors it. Without code, only the
                 // jump's edge can count it, and when that is ambiguous the arm stays unanchored
@@ -727,6 +734,33 @@ impl<'a> AnchorIndex<'a> {
             }
         }
         own.or(anchors).ok_or_else(|| eyre::eyre!("Could not detect branches in source: {}", loc))
+    }
+
+    /// Finds the anchor that counts the evaluations of an `if` without `else` that skip its body:
+    /// the entries into the statement minus the entries into the body. A condition with several
+    /// jumps, such as `a && b`, has no single edge that skips the body.
+    fn skipped_body(
+        &self,
+        item_id: u32,
+        loc: &SourceLocation,
+        body: &SourceLocation,
+    ) -> Option<EdgeAnchor> {
+        if !self.has_own_code(body) {
+            return None;
+        }
+        let statement = self.simple(item_id, loc).ok()?;
+        let body = self.simple(item_id, body).ok()?;
+        // A body that starts with a loop head runs it once per iteration, not per entry.
+        let ic = self.pcs.binary_search(&body.instruction).ok()?;
+        let start = self.address_pushes.partition_point(|&(target, _)| target < body.instruction);
+        if self.address_pushes[start..]
+            .iter()
+            .take_while(|&&(target, _)| target == body.instruction)
+            .any(|&(_, push)| push >= ic)
+        {
+            return None;
+        }
+        Some((statement, None, vec![(body.instruction, false)]))
     }
 
     /// Finds the anchor that counts the entries into an arm of an `if` that has no code of its
