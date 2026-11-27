@@ -204,3 +204,34 @@ contract UsesBindings {
 
     cmd.forge_fuse().args(["build", "--ignored-error-codes", "3805"]).assert_success();
 }
+
+// The bindings placeholder has no version pragma, so it must not get a compiler group of its own
+// that wins over the project's pinned versions.
+#[forgetest]
+fn test_bind_json_mixed_versions_placeholder(prj: _, cmd: _) {
+    prj.add_source(
+        "Old",
+        r#"
+pragma solidity =0.8.20;
+
+struct OldPoint {
+    uint256 x;
+}
+"#,
+    );
+    prj.add_source(
+        "New",
+        r#"
+pragma solidity =0.8.26;
+
+struct NewPoint {
+    uint256 y;
+}
+"#,
+    );
+
+    cmd.args(["bind-json", "a/JsonBindings.sol"]).assert_success();
+
+    let bindings = std::fs::read_to_string(prj.root().join("a/JsonBindings.sol")).unwrap();
+    assert!(bindings.contains("schema_NewPoint"), "{bindings}");
+}

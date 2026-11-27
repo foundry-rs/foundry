@@ -69,9 +69,12 @@ impl BindJsonArgs {
             .ok_or_else(|| eyre::eyre!("no Solidity sources"))?
             .1
             .into_iter()
+            // The placeholder has no version pragma, so it can end up in a group of its own. Only
+            // groups with real sources may supply the structs.
+            .filter(|(_, sources, _)| sources.keys().any(|path| *path != target_path))
             // For now, we are always picking the latest version.
             .max_by(|(v1, _, _), (v2, _, _)| v1.cmp(v2))
-            .unwrap();
+            .ok_or_else(|| eyre::eyre!("no Solidity sources"))?;
 
         // Step 2: Preprocess sources to handle potentially invalid bindings
         self.preprocess_sources(&mut sources)?;
