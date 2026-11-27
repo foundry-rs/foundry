@@ -1903,7 +1903,7 @@ deny_warnings = true
 "#,
     );
     cmd.forge_fuse().arg("lint").assert_failure().stderr_eq(str![[r#"
-Warning: Key `deny_warnings` is being deprecated in favor of `deny = warnings`. It will be removed in future versions.
+Warning: Key `deny_warnings` is being deprecated in favor of `deny = "warnings"`. It will be removed in future versions.
 ...
 
 "#]]);

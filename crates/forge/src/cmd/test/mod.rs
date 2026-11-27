@@ -20,7 +20,7 @@ use crate::{
     },
     traces::{
         CallTraceDecoder, CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
-        debug::{ContractSources, DebugTraceIdentifier},
+        debug::{ContractSources, DebugTraceIdentifier, lower_sources},
         decode_trace_arena, folded_stack_trace,
         identifier::SignaturesIdentifier,
         render_trace_arena_inner, speedscope,
@@ -1251,6 +1251,15 @@ impl TestArgs {
         {
             config.extra_output.push(ContractOutputSelection::StorageLayout);
         }
+        // The debugger decodes internal calls from compiler sources itself.
+        let decode_internal = config.tracing.decode_internal
+            || self.tracing.decode_internal
+            || self.flamegraph
+            || self.flamechart
+            || self.evm_profile.is_some();
+        if decode_internal && !self.debug {
+            config.enable_internal_call_artifacts();
+        }
         if self.debug {
             // Full build infos keep the sources the compiler saw, which dynamic test linking
             // rewrites in test files.
@@ -1901,6 +1910,18 @@ impl TestArgs {
             Some(inline_config) => inline_config,
             None => Arc::new(InlineConfig::new_parsed(&output, &config)?),
         };
+
+        // The types of the internal functions come from Solar's lowering of the sources.
+        let mut output = output;
+        if config.tracing.decode_internal
+            || self.tracing.decode_internal
+            || self.flamegraph
+            || self.flamechart
+            || self.evm_profile.is_some()
+            || self.debug
+        {
+            lower_sources(&mut output);
+        }
 
         Ok(CompiledTestProject {
             project_root,

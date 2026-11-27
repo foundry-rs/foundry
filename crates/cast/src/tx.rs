@@ -14,13 +14,19 @@ use clap::Args;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::{CliAuthorizationList, EthereumOpts, TempoOpts, TransactionOpts},
-    utils::{self, apply_gas_estimate_multiplier, parse_ether_value, parse_function_args},
+    utils::{
+        self, apply_gas_estimate_multiplier, gas_cap_hardfork, parse_ether_value,
+        parse_function_args,
+    },
 };
 use foundry_common::{
     FoundryTransactionBuilder, TransactionReceiptWithRevertReason,
     fmt::*,
     get_pretty_receipt_w_reason_attr,
-    provider::fee::{estimate_eip1559_fees, resolve_broadcast_eip1559_fees},
+    provider::{
+        fee::{estimate_eip1559_fees, resolve_broadcast_eip1559_fees},
+        set_chain_poll_interval,
+    },
     shell,
     tempo::{
         ensure_expiring_nonce_discriminator_active, is_tempo_hardfork_active,
@@ -68,10 +74,16 @@ pub struct SendTxOpts {
     pub browser: BrowserWalletOpts,
 }
 
-/// Applies the `--poll-interval` (in seconds) to a provider's receipt polling when one was given.
-pub(crate) fn apply_poll_interval<N: Network>(provider: &impl Provider<N>, interval: Option<u64>) {
-    if let Some(interval) = interval {
-        provider.client().set_poll_interval(Duration::from_secs(interval));
+/// Sets a provider's receipt polling to `--poll-interval` (in seconds) when one was given, and
+/// otherwise to the block time of `chain_id`.
+pub(crate) fn apply_poll_interval<N: Network>(
+    provider: &impl Provider<N>,
+    interval: Option<u64>,
+    chain_id: u64,
+) {
+    match interval {
+        Some(interval) => provider.client().set_poll_interval(Duration::from_secs(interval)),
+        None => set_chain_poll_interval(provider, chain_id),
     }
 }
 
@@ -982,12 +994,20 @@ where
         multiplier: Option<u64>,
         sponsored: bool,
     ) -> Result<u64> {
-        if sponsored {
-            mark_sponsored_gas_estimation(provider, &mut request).await;
-        }
+        let resolved = if sponsored {
+            mark_sponsored_gas_estimation(provider, &mut request).await
+        } else {
+            None
+        };
         let chain_id = request.chain_id();
-        let err = match provider.estimate_gas(request).await {
-            Ok(estimated) => return apply_gas_estimate_multiplier(estimated, multiplier, chain_id),
+        let estimate = async { provider.estimate_gas(request).await };
+        let cap_hardfork =
+            async { Ok(gas_cap_hardfork(provider, chain_id, multiplier, resolved).await) };
+        // The hardfork only caps a successful estimate, so a failed one returns without it.
+        let err = match tokio::try_join!(estimate, cap_hardfork) {
+            Ok((estimated, hardfork)) => {
+                return apply_gas_estimate_multiplier(estimated, multiplier, chain_id, hardfork);
+            }
             Err(err) => err,
         };
         // If execution reverted with code 3 during provider gas estimation then try to decode
@@ -1081,6 +1101,7 @@ pub(crate) async fn decode_custom_error(data: &[u8]) -> Result<Option<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_chains::NamedChain;
     use alloy_json_rpc::{RequestPacket, ResponsePacket};
     use alloy_network::{AnyNetwork, Ethereum, NetworkTransactionBuilder};
     use alloy_provider::{ProviderBuilder, mock::Asserter};
@@ -1508,6 +1529,72 @@ mod tests {
         assert_eq!(tx.fee_token, Some(token));
     }
 
+    // A sponsored estimate on a chain without a known schedule reads the hardfork once, for both
+    // the fee payer marker and the gas cap, so a failure of a second lookup cannot drop the cap.
+    #[tokio::test]
+    async fn sponsored_estimate_caps_gas_with_the_marker_hardfork() {
+        let asserter = Asserter::new();
+        asserter.push_success(&serde_json::json!({ "active": "T14", "schedule": [] }));
+        asserter.push_success(&U64::from(24_461_632));
+        let provider = ProviderBuilder::new_with_network::<TempoNetwork>()
+            .connect_mocked_client(asserter.clone());
+        let mut request = <TempoNetwork as Network>::TransactionRequest::default();
+        request.set_chain_id(31337);
+
+        let gas =
+            TxBuilderInner::<TempoNetwork, _>::estimate_gas(&provider, request, Some(130), true)
+                .await
+                .unwrap();
+
+        assert_eq!(gas, 30_000_000);
+        assert!(asserter.read_q().is_empty());
+    }
+
+    // The gas cap only applies to a successful estimate, so an estimation error must not wait for
+    // the hardfork lookup that runs alongside it.
+    #[tokio::test]
+    async fn failed_estimate_does_not_wait_for_gas_cap_hardfork() {
+        #[derive(Clone)]
+        struct StalledForkSchedule(MockTransport);
+
+        impl Service<RequestPacket> for StalledForkSchedule {
+            type Response = ResponsePacket;
+            type Error = TransportError;
+            type Future = TransportFut<'static>;
+
+            fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+                self.0.poll_ready(cx)
+            }
+
+            fn call(&mut self, req: RequestPacket) -> Self::Future {
+                match &req {
+                    RequestPacket::Single(req) if req.method() == "tempo_forkSchedule" => {
+                        Box::pin(std::future::pending())
+                    }
+                    _ => self.0.call(req),
+                }
+            }
+        }
+
+        let asserter = Asserter::new();
+        asserter.push_failure_msg("execution reverted");
+        let provider = ProviderBuilder::new_with_network::<TempoNetwork>().connect_client(
+            RpcClient::new(StalledForkSchedule(MockTransport::new(asserter)), true),
+        );
+        let mut request = <TempoNetwork as Network>::TransactionRequest::default();
+        request.set_chain_id(31337);
+
+        let err = timeout(
+            Duration::from_secs(1),
+            TxBuilderInner::<TempoNetwork, _>::estimate_gas(&provider, request, Some(130), false),
+        )
+        .await
+        .expect("the estimation error waited for the hardfork lookup")
+        .unwrap_err();
+
+        assert!(err.to_string().starts_with("Failed to estimate gas: "), "{err}");
+    }
+
     #[tokio::test]
     async fn raw_build_skips_nonce_request() {
         // No responses are queued, so any RPC request would fail this test. In particular, this
@@ -1560,5 +1647,20 @@ mod tests {
             .unwrap();
         assert_eq!(cli.tx.gas_price, Some(U256::from(100)));
         assert_eq!(cli.tx.priority_gas_price, Some(U256::from(2)));
+    }
+
+    #[test]
+    fn poll_interval_flag_overrides_chain_block_time() {
+        let provider =
+            foundry_common::provider::ProviderBuilder::<AnyNetwork>::new("https://rpc.example")
+                .build()
+                .unwrap();
+        let tempo = NamedChain::Tempo as u64;
+
+        apply_poll_interval(&provider, Some(5), tempo);
+        assert_eq!(provider.client().poll_interval(), Duration::from_secs(5));
+
+        apply_poll_interval(&provider, None, tempo);
+        assert_eq!(provider.client().poll_interval(), Duration::from_millis(300));
     }
 }

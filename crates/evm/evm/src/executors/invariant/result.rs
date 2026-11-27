@@ -263,6 +263,8 @@ pub(crate) struct ContinueOutcome {
 ///
 /// `handler_target` / `handler_selector` identify the just-executed call, used to
 /// attribute handler-side assertion failures.
+///
+/// `should_check` is true when `check_interval` puts a check on this call.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
     invariant_contract: &InvariantContract<'a>,
@@ -274,6 +276,7 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
     handler_target: Address,
     handler_selector: Selector,
     assertion_failure: bool,
+    should_check: bool,
     pre_merge_edges_hash: Option<B256>,
 ) -> Result<ContinueOutcome> {
     let is_optimization = invariant_contract.is_optimization();
@@ -430,6 +433,28 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
             // Delay-enabled campaigns keep reverted calls so their warp/roll contribution can be
             // replayed.
             invariant_run.inputs.pop();
+        }
+
+        // A reverted call changes nothing that an invariant can read, unless the campaign has
+        // delays: then its warp/roll stays. So with `check_interval = 1` and no delay, the check
+        // after the last successful call still covers it. In every other case the state since
+        // the last check is unchecked, so a revert on a check must not skip it.
+        if reverted
+            && should_check
+            && !is_optimization
+            && (invariant_config.check_interval != 1 || invariant_config.has_delay())
+        {
+            let (_, cancelled) = assert_invariants(
+                invariant_contract,
+                invariant_config,
+                &invariant_test.targeted_contracts,
+                &invariant_run.executor,
+                &invariant_run.inputs,
+                &mut invariant_test.test_data.failures,
+            )?;
+            if cancelled {
+                return Ok(ContinueOutcome { continues: true, cancelled: true });
+            }
         }
     }
 

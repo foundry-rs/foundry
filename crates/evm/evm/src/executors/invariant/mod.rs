@@ -1399,6 +1399,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                     handler_target,
                                     handler_selector,
                                     assertion_failure,
+                                    should_check,
                                     pre_merge_edges_hash,
                                 )
                                 .map_err(|error| eyre!(error.to_string()))?;

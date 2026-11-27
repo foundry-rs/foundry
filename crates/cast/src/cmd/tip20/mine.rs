@@ -139,8 +139,8 @@ pub(crate) async fn register_virtual_master(
         "virtual master registration requires a Tempo T3-capable AddressRegistry RPC",
     )
     .await?;
-    apply_poll_interval(&provider, send_tx.poll_interval);
     let chain = get_chain(config.chain, &provider).await?;
+    apply_poll_interval(&provider, send_tx.poll_interval, chain.id());
     tempo::ensure_session_not_browser(&tx_opts.tempo, send_tx.browser.browser)?;
     let (signer, access_key) =
         tempo::resolve_session_or_wallet_signer(&tx_opts.tempo, &send_tx.eth.wallet, chain.id())

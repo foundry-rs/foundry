@@ -1,0 +1,43 @@
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 3 tests for test/Params.t.sol:ParamsTest
+[PASS] test_calldata_bytes_and_string() ([GAS])
+Traces:
+  [..] ParamsTest::test_calldata_bytes_and_string()
+    ├─ [..] → new Params@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 1784 bytes of code
+    ├─ [..] Params::runBytes(0x6162, "cde") [staticcall]
+    │   ├─ [..] Params::size(bytes,string,uint256)(0x6162, "cde", 7)
+    │   │   └─ ← 12
+    │   └─ ← [Return] 12
+    └─ ← [Return]
+
+[PASS] test_calldata_struct_array() ([GAS])
+Traces:
+  [..] ParamsTest::test_calldata_struct_array()
+    ├─ [..] → new Params@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 1784 bytes of code
+    ├─ [..] Params::runItems([Item({ id: 3 }), Item({ id: 4 })]) [staticcall]
+    │   ├─ [..] Params::total(<unknown>, 5)
+    │   │   └─ ← 12
+    │   └─ ← [Return] 12
+    └─ ← [Return]
+
+[PASS] test_external_function_type() ([GAS])
+Traces:
+  [..] ParamsTest::test_external_function_type()
+    ├─ [..] → new Params@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 1784 bytes of code
+    ├─ [..] Params::runFunction(21) [staticcall]
+    │   ├─ [..] Params::invoke(<unknown>, 21)
+    │   │   ├─ [..] Params::twice(21) [staticcall]
+    │   │   │   └─ ← [Return] 42
+    │   │   └─ ← 42
+    │   └─ ← [Return] 42
+    └─ ← [Return]
+
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)

@@ -141,7 +141,6 @@ pub(crate) async fn send_keychain_tx_as_configurable_account(
          sign for them"
     );
     let (config, provider) = tempo_provider(&send_tx.eth)?;
-    apply_poll_interval(&provider, send_tx.poll_interval);
 
     // `--from` may name the account, so the wallet's own key is resolved without it.
     let mut key_wallet = send_tx.eth.wallet.clone();
@@ -169,6 +168,7 @@ pub(crate) async fn send_keychain_tx_as_configurable_account(
         .await?
         .with_code_sig_and_args(None, Some(hex::encode_prefixed(&calldata)), vec![])
         .await?;
+    apply_poll_interval(&provider, send_tx.poll_interval, builder.chain().id());
     account.prepare_request::<TempoNetwork>(builder.tx_mut());
     let Some(mut request) =
         confirm_and_build(builder, account.account(), force, resolved_lane.as_ref(), false).await?

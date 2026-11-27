@@ -301,8 +301,6 @@ impl SendTxArgs {
         let resolved_lane = resolve_lane(&mut tx.tempo, &config.root)?;
         let lane = resolved_lane.as_ref();
 
-        apply_poll_interval(&provider, send_tx.poll_interval);
-
         let mut chain = chain.or(config.chain);
         if has_session || access_key.is_some() {
             let chain = *chain.insert(get_chain(chain, &provider).await?);
@@ -355,6 +353,7 @@ impl SendTxArgs {
         if build_resolves_fee_token {
             builder = builder.with_fee_token_resolution();
         }
+        apply_poll_interval(&provider, send_tx.poll_interval, chain.id());
         if let Some(account) = &configurable_account {
             account.prepare_request::<N>(builder.tx_mut());
         }

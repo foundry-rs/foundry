@@ -1884,6 +1884,137 @@ end_of_record
     );
 }
 
+#[forgetest]
+fn solar_shared_revert_and_storage_alias_lcov(prj: _, cmd: _) {
+    // Separate sources exercise the item ID offsets when their hints are merged.
+    prj.add_source(
+        "SharedReverts.sol",
+        r#"
+pragma solidity ^0.8.28;
+
+contract SharedReverts {
+    error Denied();
+
+    function check(uint256 amount, uint256 scale) external pure returns (uint256) {
+        if (amount == 0) revert Denied();
+        uint256 result = amount / scale;
+        if (result == 0) revert Denied();
+        return result;
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "StorageAlias.sol",
+        r#"
+pragma solidity ^0.8.28;
+
+contract StorageAlias {
+    struct State {
+        uint256 value;
+    }
+    bytes32 private constant SLOT = keccak256("coverage.storage.alias");
+
+    function _state() private pure returns (State storage s) {
+        bytes32 slot = SLOT;
+        assembly { s.slot := slot }
+    }
+
+    function set(uint256 value) external {
+        _state().value = value;
+    }
+
+    function get() external view returns (uint256) {
+        return _state().value;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "SharedPaths.t.sol",
+        r#"
+pragma solidity ^0.8.28;
+
+import {SharedReverts} from "../src/SharedReverts.sol";
+import {StorageAlias} from "../src/StorageAlias.sol";
+
+contract SharedPathsTest {
+    function testStorageAlias() public {
+        StorageAlias store = new StorageAlias();
+        store.set(42);
+        assert(store.get() == 42);
+    }
+
+    function testSharedReverts() public {
+        SharedReverts guard = new SharedReverts();
+        reject(guard, 0, 1);
+        reject(guard, 0, 2);
+        reject(guard, 1, 2);
+        assert(guard.check(4, 2) == 2);
+    }
+
+    function reject(SharedReverts guard, uint256 amount, uint256 scale) private {
+        (bool ok, bytes memory data) =
+            address(guard).staticcall(abi.encodeCall(guard.check, (amount, scale)));
+        assert(!ok);
+        assert(data.length == 4);
+        assert(bytes4(data) == SharedReverts.Denied.selector);
+    }
+}
+"#,
+    );
+
+    // The guards share a revert stub but must count distinct edges (two hits and one).
+    // The alias statements have no own instructions and count the helper's two returns.
+    let solar = prj.ensure_foundry_bin("solar");
+    assert_lcov(
+        cmd.arg("coverage").arg("--use").arg(solar),
+        str![[r#"
+TN:
+SF:src/SharedReverts.sol
+DA:8,4
+FN:8,SharedReverts.check
+FNDA:4,SharedReverts.check
+DA:9,4
+BRDA:9,0,0,2
+DA:10,2
+DA:11,2
+BRDA:11,1,0,1
+DA:12,1
+FNF:1
+FNH:1
+LF:5
+LH:5
+BRF:2
+BRH:2
+end_of_record
+TN:
+SF:src/StorageAlias.sol
+DA:11,2
+FN:11,StorageAlias._state
+FNDA:2,StorageAlias._state
+DA:12,2
+DA:13,2
+DA:16,1
+FN:16,StorageAlias.set
+FNDA:1,StorageAlias.set
+DA:17,1
+DA:20,1
+FN:20,StorageAlias.get
+FNDA:1,StorageAlias.get
+DA:21,1
+FNF:3
+FNH:3
+LF:7
+LH:7
+BRF:0
+BRH:0
+end_of_record
+
+"#]],
+    );
+}
+
 // https://github.com/foundry-rs/foundry/issues/8604
 #[forgetest]
 fn branch_with_calldata_reads(prj: _, cmd: _) {
