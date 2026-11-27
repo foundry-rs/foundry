@@ -12187,7 +12187,7 @@ async fn script_json_rpc_failure_codes_fork(prj: _, cmd: _) {
 {"success":true,"...":"{...}"}
 {"chain":31337,"...":"{...}"}
 {"status":"success","transactions":"[..]/broadcast/Failures.s.sol/31337/run-latest.json","sensitive":"[..]/cache/Failures.s.sol/31337/run-latest.json"}
-{"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"rpc.error","message":"Failed to send transaction: server returned an error response: error code -32000: rejected","details":{"code":-32000}}],"warnings":[]}
+{"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"rpc.error","message":"Failed to send transaction; server returned an error response: error code -32000: rejected","details":{"code":-32000}}],"warnings":[]}
 
 "#]]
         .is_jsonlines(),
@@ -12488,4 +12488,20 @@ Script ran successfully.
 [GAS]
 
 "#]]);
+}
+
+// A pool may reject a transaction until an earlier one of the same batch is mined, such as reth's
+// in-flight limit for an EIP-7702 delegated sender, so such a rejection is retried.
+#[forgetest]
+async fn script_retries_rejection_behind_pending_transaction_fork(prj: _, cmd: _) {
+    prj.add_script("Failures.s.sol", JSON_FAILURE_SCRIPT);
+    let (api, handle) =
+        spawn(NodeConfig::test().with_blocktime(Some(Duration::from_secs(1)))).await;
+    let (proxy, rejections) =
+        rpc::spawn_rpc_proxy_one_pooled_transaction(handle.http_endpoint()).await;
+
+    cmd.args(["script", "BroadcastsTwice", "--fork-url", &proxy, "--broadcast"]).assert_success();
+    let sender = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+    assert_eq!(api.transaction_count(sender, None).await.unwrap(), U256::from(2));
+    assert!(rejections.load(Ordering::Relaxed) > 0);
 }
