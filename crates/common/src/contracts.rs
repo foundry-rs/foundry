@@ -1,6 +1,9 @@
 //! Commonly used contract types and functions.
 
-use crate::{compile::PathOrContractInfo, find_metadata_start, strip_bytecode_placeholders};
+use crate::{
+    compile::PathOrContractInfo, find_metadata_start, metadata_hash_offsets,
+    strip_bytecode_placeholders,
+};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::{Event, Function, JsonAbi};
 use alloy_primitives::{Address, B256, Bytes, Selector, address, hex};
@@ -15,6 +18,7 @@ use foundry_compilers::{
     utils::canonicalized,
 };
 use std::{
+    cmp::Ordering,
     collections::BTreeMap,
     ops::Deref,
     path::{Path, PathBuf},
@@ -85,6 +89,38 @@ fn normalize_offsets(offsets: &mut Vec<Offsets>) {
         merged.push(offset);
     }
     *offsets = merged;
+}
+
+/// Compares `a` and `b`, skipping the `ignored` ranges.
+/// Both have the same length. The ranges are sorted and merged.
+fn matches_outside(a: &[u8], b: &[u8], ignored: &[Offsets]) -> bool {
+    let mut left = 0;
+    for offset in ignored {
+        let right = (offset.start as usize).min(a.len());
+        if a[left..right] != b[left..right] {
+            return false;
+        }
+        left = (right + offset.length as usize).min(a.len()).max(left);
+    }
+    a[left..] == b[left..]
+}
+
+/// Returns whether `a` and `b` are the same contract. A file compiled under several profiles or
+/// compiler versions has one artifact per build, named with a `.<profile>` or `.<version>` suffix.
+fn is_same_contract(a: &ArtifactId, b: &ArtifactId) -> bool {
+    a.source == b.source && a.name.split('.').next() == b.name.split('.').next()
+}
+
+/// How deployed-code lookups handle exact matches of several contracts.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ExactTies {
+    /// Takes the first preferred match, else the first match.
+    First,
+    /// Returns nothing if more than one contract matches.
+    Unique,
+    /// Reports ambiguity if several preferred contracts match, or none is preferred and several
+    /// match.
+    Reject,
 }
 
 impl From<CompactBytecode> for BytecodeData {
@@ -262,6 +298,69 @@ impl ContractsByArtifact {
         })
     }
 
+    /// Finds the artifact whose creation code starts the init code `code`, which may be followed
+    /// by constructor arguments.
+    /// Library addresses are skipped, so unlinked artifacts match. The longest creation code wins,
+    /// and nothing is returned if several contracts share it.
+    /// If nothing matches, metadata hashes are skipped too, and only one contract may match.
+    pub fn find_by_creation_code_prefix_unlinked(
+        &self,
+        code: &[u8],
+    ) -> Option<ArtifactWithContractRef<'_>> {
+        // Artifacts that fit in `code`, with their library address ranges.
+        let candidates = || {
+            self.iter().filter_map(move |(id, contract)| {
+                let bytecode = contract.bytecode.as_ref()?;
+                let object = bytecode.object.as_ref()?;
+                let len = match object {
+                    BytecodeObject::Bytecode(bytes) => bytes.len(),
+                    BytecodeObject::Unlinked(hex) => hex.len() / 2,
+                };
+                let code = code.get(..len).filter(|code| !code.is_empty())?;
+                let creation = strip_bytecode_placeholders(object)?;
+                let mut ignored = bytecode
+                    .link_references
+                    .values()
+                    .flat_map(|libraries| libraries.values())
+                    .flatten()
+                    .cloned()
+                    .collect::<Vec<_>>();
+                normalize_offsets(&mut ignored);
+                Some(((id, contract), code, creation, ignored))
+            })
+        };
+
+        // Skips library addresses only. A shorter match would take part of the init code as
+        // constructor arguments.
+        let mut longest = Vec::new();
+        for (artifact, code, creation, ignored) in candidates() {
+            if !matches_outside(&creation, code, &ignored) {
+                continue;
+            }
+            match longest.first().map(|(_, len)| code.len().cmp(len)) {
+                Some(Ordering::Less) => {}
+                Some(Ordering::Equal) => longest.push((artifact, code.len())),
+                _ => longest = vec![(artifact, code.len())],
+            }
+        }
+        if let Some(&(artifact, _)) = longest.first() {
+            return longest
+                .iter()
+                .all(|((id, _), _)| is_same_contract(id, artifact.0))
+                .then_some(artifact);
+        }
+
+        // Skips library addresses and metadata hashes.
+        // Finding the hashes reads the whole code, so this runs last.
+        let mut partial = candidates().filter_map(|(artifact, code, creation, mut ignored)| {
+            ignored.extend(metadata_hash_offsets(&creation));
+            normalize_offsets(&mut ignored);
+            matches_outside(&creation, code, &ignored).then_some(artifact)
+        });
+        let artifact = partial.next()?;
+        partial.all(|(id, _)| is_same_contract(id, artifact.0)).then_some(artifact)
+    }
+
     /// Finds a contract which has a similar deployed bytecode as `code`.
     pub fn find_by_deployed_code(&self, code: &[u8]) -> Option<ArtifactWithContractRef<'_>> {
         self.find_by_code(code, 0.15, false, ContractData::deployed_bytecode)
@@ -303,17 +402,8 @@ impl ContractsByArtifact {
     /// Finds a contract which deployed bytecode exactly matches the given code. Accounts for link
     /// references and immutables.
     pub fn find_by_deployed_code_exact(&self, code: &[u8]) -> Option<ArtifactWithContractRef<'_>> {
-        self.find_by_deployed_code_exact_preferred(code, |_| true)
-    }
-
-    /// Same as [`Self::find_by_deployed_code_exact`], preferring artifacts matching `preferred`
-    /// only among equally strong matches. Metadata-exact matches always take precedence.
-    pub fn find_by_deployed_code_exact_preferred(
-        &self,
-        code: &[u8],
-        preferred: impl Fn(&ArtifactId) -> bool,
-    ) -> Option<ArtifactWithContractRef<'_>> {
-        let (exact, partial, _) = self.find_by_deployed_code_exact_inner(code, false, preferred);
+        let (exact, partial, _) =
+            self.find_by_deployed_code_exact_inner(code, ExactTies::First, |_| true);
         exact.or(partial)
     }
 
@@ -322,18 +412,34 @@ impl ContractsByArtifact {
         &self,
         code: &[u8],
     ) -> Option<ArtifactWithContractRef<'_>> {
-        self.find_by_deployed_code_exact_inner(code, true, |_| false).0
+        self.find_by_deployed_code_exact_inner(code, ExactTies::Unique, |_| false).0
     }
 
     /// Finds a deployed-code match, preferring exact metadata matches and rejecting ambiguous
-    /// partial metadata matches. A single partial match is accepted.
+    /// exact or partial metadata matches. A single partial match is accepted.
     pub fn find_by_deployed_code_exact_unambiguous(
         &self,
         code: &[u8],
     ) -> Result<Option<ArtifactWithContractRef<'_>>> {
-        let (exact, partial, ambiguous_partial) =
-            self.find_by_deployed_code_exact_inner(code, false, |_| true);
-        if ambiguous_partial {
+        self.find_by_deployed_code_exact_unambiguous_preferred(code, |_| true)
+    }
+
+    /// Same as [`Self::find_by_deployed_code_exact_unambiguous`], preferring artifacts matching
+    /// `preferred` only among equally strong matches. Matches are ambiguous only if several are
+    /// preferred, or none is and several match.
+    pub fn find_by_deployed_code_exact_unambiguous_preferred(
+        &self,
+        code: &[u8],
+        preferred: impl Fn(&ArtifactId) -> bool,
+    ) -> Result<Option<ArtifactWithContractRef<'_>>> {
+        let (exact, partial, ambiguous) =
+            self.find_by_deployed_code_exact_inner(code, ExactTies::Reject, preferred);
+        if ambiguous && exact.is_some() {
+            eyre::bail!(
+                "Multiple local contracts match the deployed bytecode exactly. Specify the contract as <path>:<contract>"
+            );
+        }
+        if ambiguous {
             eyre::bail!(
                 "Multiple local contracts match the deployed bytecode with different metadata. Specify the contract as <path>:<contract>"
             );
@@ -348,13 +454,15 @@ impl ContractsByArtifact {
         &self,
         code: &[u8],
     ) -> Option<ArtifactWithContractRef<'_>> {
-        self.find_by_deployed_code_exact_inner(code, false, |_| true).0
+        self.find_by_deployed_code_exact_inner(code, ExactTies::First, |_| true).0
     }
 
+    /// Returns the exact match, the partial match, and whether the matches are ambiguous. Only
+    /// [`ExactTies::Reject`] reports ambiguity.
     fn find_by_deployed_code_exact_inner(
         &self,
         code: &[u8],
-        unique: bool,
+        ties: ExactTies,
         preferred: impl Fn(&ArtifactId) -> bool,
     ) -> (Option<ArtifactWithContractRef<'_>>, Option<ArtifactWithContractRef<'_>>, bool) {
         // Immediately return None if the code is empty.
@@ -364,8 +472,12 @@ impl ContractsByArtifact {
 
         let mut partial_match = None;
         let mut exact_match = None;
-        let mut ambiguous_partial = false;
-        'contracts: for (id, contract) in self.iter() {
+        // Matching artifacts, and the preferred ones among them.
+        let mut exacts = Vec::new();
+        let mut preferred_exacts = Vec::new();
+        let mut partials = Vec::new();
+        let mut preferred_partials = Vec::new();
+        for (id, contract) in self.iter() {
             let Some(deployed_bytecode) = &contract.deployed_bytecode else {
                 continue;
             };
@@ -423,73 +535,52 @@ impl ContractsByArtifact {
             // Merge ranges from independent sources before slicing between them.
             normalize_offsets(&mut ignored);
 
-            let mut left = 0;
-            for offset in ignored {
-                let right = offset.start as usize;
-
-                let matched = match deployed_code {
-                    BytecodeObject::Bytecode(bytes) => bytes[left..right] == code[left..right],
-                    BytecodeObject::Unlinked(bytes) => {
-                        if let Ok(bytes) = Bytes::from_str(&bytes[left * 2..right * 2]) {
-                            bytes == code[left..right]
-                        } else {
-                            false
-                        }
-                    }
-                };
-
-                if !matched {
-                    continue 'contracts;
-                }
-
-                left = right + offset.length as usize;
-            }
-
-            let is_partial = if left < code.len() {
-                match deployed_code {
-                    BytecodeObject::Bytecode(bytes) => bytes[left..] == code[left..],
-                    BytecodeObject::Unlinked(bytes) => {
-                        if let Ok(bytes) = Bytes::from_str(&bytes[left * 2..]) {
-                            bytes == code[left..]
-                        } else {
-                            false
-                        }
-                    }
-                }
-            } else {
-                true
-            };
-
-            if !is_partial {
+            let Some(deployed_code) = strip_bytecode_placeholders(deployed_code) else { continue };
+            if !matches_outside(&deployed_code, code, &ignored) {
                 continue;
             }
 
-            let matches_metadata = metadata_start.is_none_or(|metadata| match deployed_code {
-                BytecodeObject::Bytecode(bytes) => bytes[metadata..] == code[metadata..],
-                BytecodeObject::Unlinked(bytes) => Bytes::from_str(&bytes[metadata * 2..])
-                    .is_ok_and(|bytes| bytes == code[metadata..]),
-            });
+            let matches_metadata =
+                metadata_start.is_none_or(|metadata| deployed_code[metadata..] == code[metadata..]);
 
+            let is_preferred = preferred(id);
             if matches_metadata {
-                if unique && exact_match.is_some() {
+                if ties == ExactTies::Unique
+                    && exact_match.is_some_and(|(first, _)| !is_same_contract(first, id))
+                {
                     return (None, None, false);
                 }
-                if exact_match.is_none() || preferred(id) {
+                if exact_match.is_none() || is_preferred && preferred_exacts.is_empty() {
                     exact_match = Some((id, contract));
                 }
-                if !unique && preferred(id) {
+                if ties == ExactTies::First && is_preferred {
                     return (exact_match, None, false);
                 }
+                exacts.push(id);
+                if is_preferred {
+                    preferred_exacts.push(id);
+                }
             } else {
-                ambiguous_partial |= partial_match.is_some();
-                if preferred(id) || partial_match.is_none_or(|(id, _)| !preferred(id)) {
+                partials.push(id);
+                if is_preferred {
+                    preferred_partials.push(id);
+                }
+                if is_preferred || partial_match.is_none_or(|(id, _)| !preferred(id)) {
                     partial_match = Some((id, contract));
                 }
             }
         }
 
-        let ambiguous_partial = exact_match.is_none() && ambiguous_partial;
-        (exact_match, partial_match, ambiguous_partial)
+        // Exact matches beat partial ones, and preferred matches, if any, are the only candidates.
+        let (matches, preferred_matches) = if exact_match.is_some() {
+            (exacts, preferred_exacts)
+        } else {
+            (partials, preferred_partials)
+        };
+        let candidates = if preferred_matches.is_empty() { matches } else { preferred_matches };
+        let ambiguous = ties == ExactTies::Reject
+            && candidates.iter().any(|id| !is_same_contract(id, candidates[0]));
+        (exact_match, partial_match, ambiguous)
     }
 
     /// Finds a contract which has the same contract name or identifier as `id`. If more than one is
@@ -803,6 +894,23 @@ mod tests {
         )
     }
 
+    fn creation_artifact(
+        name: &str,
+        object: BytecodeObject,
+        link_references: BTreeMap<String, BTreeMap<String, Vec<Offsets>>>,
+    ) -> (ArtifactId, CompactContractBytecode) {
+        let (id, mut artifact) = deployed_artifact(name, Bytes::new());
+        artifact.bytecode = Some(CompactBytecode { object, source_map: None, link_references });
+        (id, artifact)
+    }
+
+    /// `PUSH1 0`, then CBOR metadata. The IPFS hash is `hash` repeated 34 times.
+    fn creation_with_metadata(hash: u8) -> Bytes {
+        [&[0x60, 0x00, 0xa2, 0x64][..], b"ipfs", &[0x58, 0x22], &[hash; 34], &[0x00, 0x2a]]
+            .concat()
+            .into()
+    }
+
     #[test]
     fn exact_creation_match_requires_canonical_constructor_suffix() {
         let abi = JsonAbi::parse(["constructor(uint256 value)"]).unwrap();
@@ -916,6 +1024,18 @@ mod tests {
                     .to_string(),
                 "Multiple local contracts match the deployed bytecode with different metadata. Specify the contract as <path>:<contract>"
             );
+            // A single preferred partial match isn't ambiguous.
+            assert_eq!(
+                contracts
+                    .find_by_deployed_code_exact_unambiguous_preferred(&deployed_code, |id| {
+                        id.name == "C"
+                    })
+                    .unwrap()
+                    .unwrap()
+                    .0
+                    .name,
+                "C"
+            );
 
             let contracts = ContractsByArtifact::new([
                 deployed_artifact(exact_name, deployed_code.clone()),
@@ -932,6 +1052,41 @@ mod tests {
                 exact_name
             );
         }
+    }
+
+    // Contracts that differ only in constructors share a runtime with `bytecode_hash = "none"`.
+    #[test]
+    fn find_by_deployed_code_exact_unambiguous_rejects_exact_ties() {
+        let code = Bytes::from_static(&[0x60, 0x00, 0xf6, 0x00, 0x01]);
+        let contracts = ContractsByArtifact::new([
+            deployed_artifact("A", code.clone()),
+            deployed_artifact("B", code.clone()),
+        ]);
+        assert_eq!(contracts.find_by_deployed_code_exact(&code).unwrap().0.name, "A");
+        assert!(contracts.find_by_deployed_code_exact_unique(&code).is_none());
+        let exact_tie = "Multiple local contracts match the deployed bytecode exactly. Specify the contract as <path>:<contract>";
+        assert_eq!(
+            contracts.find_by_deployed_code_exact_unambiguous(&code).unwrap_err().to_string(),
+            exact_tie
+        );
+        // A single preferred match settles the tie.
+        assert_eq!(
+            contracts
+                .find_by_deployed_code_exact_unambiguous_preferred(&code, |id| id.name == "B")
+                .unwrap()
+                .unwrap()
+                .0
+                .name,
+            "B"
+        );
+        // Several preferred matches don't.
+        assert_eq!(
+            contracts
+                .find_by_deployed_code_exact_unambiguous_preferred(&code, |_| true)
+                .unwrap_err()
+                .to_string(),
+            exact_tie
+        );
     }
 
     /// Tests an immutable reference within a library call-protection prefix.
@@ -1012,5 +1167,130 @@ mod tests {
             offsets,
             vec![Offsets { start: 1, length: 5 }, Offsets { start: 10, length: 5 }]
         );
+    }
+
+    #[test]
+    fn find_by_creation_code_prefix_unlinked_ignores_link_references() {
+        let placeholder = "__$cd0f7ab2619b21d3f308b141f54cff3989$__";
+        let object = BytecodeObject::Unlinked(format!("600073{placeholder}6001"));
+        let link_references = BTreeMap::from([(
+            "src/A.sol".to_string(),
+            BTreeMap::from([("Lib".to_string(), vec![Offsets { start: 3, length: 20 }])]),
+        )]);
+        let contracts = ContractsByArtifact::new([
+            creation_artifact("A", object, link_references),
+            creation_artifact(
+                "B",
+                BytecodeObject::Bytecode(Bytes::from_static(&[0x60, 0x01])),
+                Default::default(),
+            ),
+        ]);
+
+        let linked = [&[0x60, 0x00, 0x73][..], &[0xab; 20], &[0x60, 0x01]].concat();
+        assert_eq!(contracts.find_by_creation_code_prefix_unlinked(&linked).unwrap().0.name, "A");
+        // Constructor arguments follow the creation code.
+        let with_args = [&linked[..], &[0xff; 32]].concat();
+        assert_eq!(
+            contracts.find_by_creation_code_prefix_unlinked(&with_args).unwrap().0.name,
+            "A"
+        );
+        // Only the linked address may differ.
+        let mut changed = linked.clone();
+        changed[24] = 0x02;
+        assert!(contracts.find_by_creation_code_prefix_unlinked(&changed).is_none());
+        assert!(
+            contracts.find_by_creation_code_prefix_unlinked(&linked[..linked.len() - 1]).is_none()
+        );
+    }
+
+    #[test]
+    fn find_by_creation_code_prefix_unlinked_accepts_only_unique_metadata_mismatch() {
+        let artifact = |name, hash| {
+            creation_artifact(
+                name,
+                BytecodeObject::Bytecode(creation_with_metadata(hash)),
+                Default::default(),
+            )
+        };
+        let code = creation_with_metadata(0x22);
+
+        let contracts = ContractsByArtifact::new([artifact("A", 0x11)]);
+        assert_eq!(contracts.find_by_creation_code_prefix_unlinked(&code).unwrap().0.name, "A");
+
+        let contracts = ContractsByArtifact::new([artifact("A", 0x11), artifact("B", 0x33)]);
+        assert!(contracts.find_by_creation_code_prefix_unlinked(&code).is_none());
+
+        let contracts = ContractsByArtifact::new([
+            artifact("A", 0x11),
+            artifact("B", 0x33),
+            artifact("C", 0x22),
+        ]);
+        assert_eq!(contracts.find_by_creation_code_prefix_unlinked(&code).unwrap().0.name, "C");
+    }
+
+    // Contracts with the same body share their creation code under `bytecode_hash = "none"`.
+    #[test]
+    fn find_by_creation_code_prefix_unlinked_rejects_ties_and_prefers_longest() {
+        let artifact = |name, code| {
+            creation_artifact(name, BytecodeObject::Bytecode(code), Default::default())
+        };
+        let short = Bytes::from_static(&[0x60, 0x01]);
+        let long = Bytes::from_static(&[0x60, 0x01, 0x60, 0x02]);
+
+        // `A` would take `0x6002` as constructor arguments.
+        let contracts =
+            ContractsByArtifact::new([artifact("A", short), artifact("B", long.clone())]);
+        assert_eq!(contracts.find_by_creation_code_prefix_unlinked(&long).unwrap().0.name, "B");
+
+        let contracts =
+            ContractsByArtifact::new([artifact("A", long.clone()), artifact("B", long.clone())]);
+        assert!(contracts.find_by_creation_code_prefix_unlinked(&long).is_none());
+    }
+
+    // A file compiled under two profiles can give identical artifacts, which are one contract.
+    #[test]
+    fn same_contract_in_several_profiles_is_one_match() {
+        let code = Bytes::from_static(&[0x60, 0x00, 0xf6, 0x00, 0x01]);
+        let (id, mut artifact) =
+            creation_artifact("A", BytecodeObject::Bytecode(code.clone()), Default::default());
+        artifact.deployed_bytecode = deployed_artifact("A", code.clone()).1.deployed_bytecode;
+        // The artifact name carries the profile, as in `out/A.sol/A.cancun.json`.
+        let other_profile = ArtifactId {
+            path: "out/A.cancun.json".into(),
+            name: "A.cancun".to_owned(),
+            profile: "cancun".to_owned(),
+            ..id.clone()
+        };
+        let contracts =
+            ContractsByArtifact::new([(id, artifact.clone()), (other_profile, artifact)]);
+
+        // Either artifact is fine, since both describe `src/A.sol:A`.
+        assert!(contracts.find_by_creation_code_prefix_unlinked(&code).is_some());
+        assert!(contracts.find_by_deployed_code_exact_unique(&code).is_some());
+        assert!(contracts.find_by_deployed_code_exact_unambiguous(&code).unwrap().is_some());
+        // Only the metadata differs.
+        let edited = Bytes::from_static(&[0x60, 0x00, 0xa0, 0x00, 0x01]);
+        assert!(contracts.find_by_deployed_code_exact_unambiguous(&edited).unwrap().is_some());
+    }
+
+    // Before solc 0.5, placeholders hold the library name instead of its hash.
+    #[test]
+    fn find_by_deployed_code_exact_ignores_pre_0_5_link_placeholders() {
+        let (id, mut artifact) = deployed_artifact("A", Bytes::new());
+        artifact.deployed_bytecode = Some(CompactDeployedBytecode {
+            bytecode: Some(CompactBytecode {
+                object: BytecodeObject::Unlinked(format!("600073{:_<38}__6001", "__src/A.sol:Lib")),
+                source_map: None,
+                link_references: BTreeMap::from([(
+                    "src/A.sol".to_string(),
+                    BTreeMap::from([("Lib".to_string(), vec![Offsets { start: 3, length: 20 }])]),
+                )]),
+            }),
+            immutable_references: Default::default(),
+        });
+        let contracts = ContractsByArtifact::new([(id, artifact)]);
+
+        let linked = [&[0x60, 0x00, 0x73][..], &[0xab; 20], &[0x60, 0x01]].concat();
+        assert_eq!(contracts.find_by_deployed_code_exact(&linked).unwrap().0.name, "A");
     }
 }

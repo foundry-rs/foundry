@@ -1,5 +1,5 @@
 use alloy_primitives::U256;
-use foundry_compilers::artifacts::output_selection::ContractOutputSelection;
+use foundry_compilers::artifacts::{BytecodeHash, output_selection::ContractOutputSelection};
 use foundry_test_utils::util::OutputExt;
 use itertools::Itertools;
 use std::path::Path;
@@ -641,6 +641,219 @@ contract VariantTest {
         bundle_programs(&mapping, "0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f"),
         ["Variant", "Variant"]
     );
+}
+
+// A contract named `Token`. Its state variable tells it apart from the others of that name.
+fn same_name_token(variable: &str) -> String {
+    format!(
+        r#"
+contract Token {{
+    uint256 public {variable};
+
+    constructor(uint256 value) {{
+        require(value != 0, "zero");
+        {variable} = value;
+    }}
+
+    function set(uint256 value) external {{
+        {variable} = value;
+    }}
+}}
+"#
+    )
+}
+
+// Contracts that share a name keep their own sources and storage layouts, in creation and runtime
+// frames, whichever of them is first among the artifacts of that name.
+#[forgetest]
+fn debugger_soldb_same_contract_name(prj: _, cmd: _) {
+    prj.add_source("a/Token.sol", &same_name_token("alpha"));
+    prj.add_source("b/Token.sol", &same_name_token("beta"));
+    // The path of this contract also ends with the path of the next one.
+    prj.add_lib("x/src/Token.sol", &same_name_token("longPath"));
+    prj.add_source("Token.sol", &same_name_token("shortPath"));
+    prj.add_test(
+        "SameName.t.sol",
+        r#"
+import {Token as TokenA} from "../src/a/Token.sol";
+import {Token as TokenB} from "../src/b/Token.sol";
+import {Token as TokenLong} from "../lib/x/src/Token.sol";
+import {Token as TokenShort} from "../src/Token.sol";
+
+contract SameNameTest {
+    function test_all() public {
+        new TokenA(1).set(2);
+        new TokenB(1).set(2);
+        new TokenLong(1).set(2);
+        new TokenShort(1).set(2);
+    }
+}
+"#,
+    );
+
+    let tokens = [
+        ("src/a/Token.sol", "alpha"),
+        ("src/b/Token.sol", "beta"),
+        ("lib/x/src/Token.sol", "longPath"),
+        ("src/Token.sol", "shortPath"),
+    ];
+    // soldb matches breakpoint files by file name, so these break in every `Token.sol`.
+    let mut stdin = "break src/a/Token.sol:9\nbreak src/a/Token.sol:13\n".to_string();
+    let mut stdout = "...\n".to_string();
+    for (file, variable) in tokens {
+        stdin += &format!("continue\ncontinue\nprint {variable}\n");
+        stdout += &format!(
+            "Breakpoint #1 hit at step [..]
+{file}:9 in constructor  (step [..])
+    9 |         {variable} = value;
+Breakpoint #2 hit at step [..]
+{file}:13 in set  (step [..])
+   13 |         {variable} = value;
+...
+uint256 {variable} = 1 [slot 0x0]
+"
+        );
+    }
+    stdin += "quit\n";
+    stdout += "Exiting debugger.\n";
+    cmd.args(["test", "--debug", "--mt", "^test_all\\("])
+        .stdin(stdin)
+        .assert_success()
+        .stdout_eq(stdout);
+
+    // The bundle pairs each contract's code with its own source map.
+    let dump_dir = prj.root().join("soldb");
+    cmd.forge_fuse()
+        .args(["test", "--debug", "--mt", "^test_all\\(", "--dump"])
+        .arg(&dump_dir)
+        .assert_success();
+    let mapping = serde_json::from_slice::<serde_json::Value>(
+        &std::fs::read(dump_dir.join("contracts.json")).unwrap(),
+    )
+    .unwrap();
+    let mut identifiers = mapping["contracts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|entry| entry["name"] == "Token")
+        .flat_map(|entry| {
+            let combined = serde_json::from_slice::<serde_json::Value>(
+                &std::fs::read(
+                    dump_dir.join(entry["debug_dir"].as_str().unwrap()).join("combined.json"),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            combined["contracts"].as_object().unwrap().keys().cloned().collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    identifiers.sort();
+    assert_eq!(
+        identifiers,
+        [
+            "lib/x/src/Token.sol:Token",
+            "src/Token.sol:Token",
+            "src/a/Token.sol:Token",
+            "src/b/Token.sol:Token"
+        ]
+    );
+}
+
+// A creation that reverts has no deployed code to compare, so only its init code tells apart
+// contracts that share a name.
+#[forgetest]
+fn debugger_soldb_same_contract_name_failed_creation(prj: _, cmd: _) {
+    prj.add_source("a/Token.sol", &same_name_token("alpha"));
+    prj.add_source("b/Token.sol", &same_name_token("beta"));
+    prj.add_test(
+        "SameName.t.sol",
+        r#"
+import {Token as TokenB} from "../src/b/Token.sol";
+
+contract SameNameTest {
+    function test_failed_b() public {
+        try new TokenB(0) returns (TokenB) {
+            revert("unreachable");
+        } catch {}
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--debug", "--mt", "^test_failed_b\\("])
+        .stdin("break src/b/Token.sol:8\ncontinue\nquit\n")
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Breakpoint #1 set at src/b/Token.sol:8
+Breakpoint #1 hit at step [..], src/b/Token.sol:8
+src/b/Token.sol:8 in constructor  (step [..])
+    8 |         require(value != 0, "zero");
+Exiting debugger.
+
+"#]]);
+}
+
+// Without a metadata hash, contracts that differ only in their constructors share a runtime, so
+// each runtime frame shows the contract that created its address.
+#[forgetest]
+fn debugger_soldb_identical_runtimes(prj: _, cmd: _) {
+    prj.update_config(|config| config.bytecode_hash = BytecodeHash::None);
+    let contract = |name: &str, value: u32| {
+        format!(
+            r#"
+contract {name} {{
+    uint256 public stored;
+
+    constructor() {{
+        stored = {value};
+    }}
+
+    function set(uint256 value) external {{
+        stored = value;
+    }}
+}}
+"#
+        )
+    };
+    prj.add_source("A.sol", &contract("A", 1));
+    prj.add_source("B.sol", &contract("B", 2));
+    // Shares the name of `src/A.sol:A` too.
+    prj.add_source("b/A.sol", &contract("A", 3));
+    prj.add_test(
+        "IdenticalRuntimes.t.sol",
+        r#"
+import {A} from "../src/A.sol";
+import {B} from "../src/B.sol";
+import {A as OtherA} from "../src/b/A.sol";
+
+contract IdenticalRuntimesTest {
+    function test_runtimes() public {
+        new A().set(4);
+        new B().set(5);
+        new OtherA().set(6);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--debug", "--mt", "^test_runtimes\\("])
+        .stdin("break src/A.sol:12\nbreak src/B.sol:12\ncontinue\ncontinue\ncontinue\nquit\n")
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Breakpoint #1 hit at step [..]
+src/A.sol:12 in set  (step [..])
+   12 |         stored = value;
+Breakpoint #2 hit at step [..]
+src/B.sol:12 in set  (step [..])
+   12 |         stored = value;
+Breakpoint #1 hit at step [..]
+src/b/A.sol:12 in set  (step [..])
+   12 |         stored = value;
+Exiting debugger.
+
+"#]]);
 }
 
 // With dynamic test linking, `new Child()` runs as a `vm.deployCode` call around the creation, and

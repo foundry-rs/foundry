@@ -3,15 +3,17 @@
 use alloy_primitives::{B256, Bytes, U256, hex, keccak256};
 use foundry_compilers::{
     Project,
-    artifacts::{BytecodeObject, SolcLanguage},
+    artifacts::{BytecodeObject, Offsets, SolcLanguage},
     error::SolcError,
     flatten::{Flattener, FlattenerError},
 };
 use regex::Regex;
 use std::{path::Path, sync::LazyLock};
 
+/// Library placeholders: `__$<hash>$__`, or before solc 0.5 `__<path>:<library>__` with the name
+/// cut or padded with `_` to 36 characters. Both are 40 characters, and hex has no `_`.
 static BYTECODE_PLACEHOLDER_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"__\$.{34}\$__").expect("invalid regex"));
+    LazyLock::new(|| Regex::new(r"__.{36}__").expect("invalid regex"));
 
 /// Block on a future using the current tokio runtime on the current thread.
 pub fn block_on<F: std::future::Future>(future: F) -> F::Output {
@@ -86,7 +88,30 @@ pub fn has_metadata_hash(bytecode: &[u8]) -> bool {
     entries.iter().any(|(key, _)| matches!(key.as_text(), Some("ipfs" | "bzzr0" | "bzzr1")))
 }
 
-/// Strips all __$xxx$__ placeholders from the bytecode if it's an unlinked bytecode.
+/// Returns the byte ranges of all solc or solar metadata hashes in `bytecode`.
+/// Creation code can hold several: its runtime's and those of contracts it deploys.
+pub fn metadata_hash_offsets(bytecode: &[u8]) -> Vec<Offsets> {
+    // Each key starts with its CBOR length byte. See
+    // <https://docs.soliditylang.org/en/latest/metadata.html#encoding-of-the-metadata-hash-in-the-bytecode>
+    const KEYS: [&[u8]; 3] = [b"\x64ipfs", b"\x65bzzr0", b"\x65bzzr1"];
+    let mut offsets = Vec::new();
+    for key in KEYS {
+        let mut start = 0;
+        while let Some(found) = bytecode[start..].windows(key.len()).position(|w| w == key) {
+            let header = start + found + key.len();
+            // `0x58` marks bytes with a one-byte length. Then come the length and the hash.
+            if let [0x58, len, ..] = bytecode[header..]
+                && header + 2 + len as usize <= bytecode.len()
+            {
+                offsets.push(Offsets { start: (header + 2) as u32, length: len as u32 });
+            }
+            start = header;
+        }
+    }
+    offsets
+}
+
+/// Strips all library placeholders from the bytecode if it's an unlinked bytecode.
 /// by replacing them with 20 zero bytes.
 /// This is useful for matching bytecodes to a contract source, and for the source map,
 /// in which the actual address of the placeholder isn't important.
