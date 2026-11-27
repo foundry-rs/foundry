@@ -9,6 +9,7 @@ use super::{
     },
     preserve_simulation_request_fields,
     tempo_consensus::{TempoCertifiedBlock, TempoConsensusState},
+    tempo_simulate::TempoSimulateV1Response,
 };
 use crate::{
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
@@ -2799,6 +2800,9 @@ impl EthApi<FoundryNetwork> {
             EthRequest::TempoCreateToken(request) => {
                 self.anvil_tempo_create_token(request).await.to_rpc_result()
             }
+            EthRequest::TempoSimulateV1(simulation, block) => {
+                self.tempo_simulate_v1(simulation, block).await.to_rpc_result()
+            }
         }
     }
 
@@ -3748,12 +3752,29 @@ impl EthApi<FoundryNetwork> {
 
     pub(crate) async fn simulate_v1_raw(
         &self,
-        mut request: SimulatePayload<WithOtherFields<TransactionRequest>>,
+        request: SimulatePayload<WithOtherFields<TransactionRequest>>,
         block_number: Option<BlockId>,
     ) -> Result<Vec<SimulatedBlock<AnyRpcBlock>>> {
-        const DEFAULT_BLOCK_INTERVAL_SECS: u64 = 12;
-
         node_info!("eth_simulateV1");
+        match self.simulation_base(request, block_number).await? {
+            SimulationBase::Fork { fork, request, block } => {
+                Ok(fork.simulate_v1(&request, Some(block)).await?)
+            }
+            SimulationBase::Local { request, block_request } => {
+                self.simulate_locally(request, block_request).await
+            }
+        }
+    }
+
+    /// Validates a simulation and resolves the block it builds on.
+    ///
+    /// A block that predates the fork has no local state, so its simulation runs on the fork's
+    /// upstream with calls sanitized for this node's block interval.
+    async fn simulation_base(
+        &self,
+        mut request: SimulatePayload<WithOtherFields<TransactionRequest>>,
+        block_number: Option<BlockId>,
+    ) -> Result<SimulationBase> {
         if request.block_state_calls.is_empty() {
             return Err(BlockchainError::RpcError(RpcError::invalid_params("empty input")));
         }
@@ -3776,17 +3797,6 @@ impl EthApi<FoundryNetwork> {
                 }
                 error => error,
             })?;
-        let block_interval = self.backend.time().block_timestamp_interval().unwrap_or_else(|| {
-            self.miner
-                .block_interval()
-                .map(|duration| {
-                    duration
-                        .as_secs()
-                        .saturating_add(u64::from(duration.subsec_nanos() != 0))
-                        .max(1)
-                })
-                .unwrap_or(DEFAULT_BLOCK_INTERVAL_SECS)
-        });
 
         // check if the number predates the fork, if in fork mode
         if let BlockRequest::Number(number) = block_request
@@ -3808,11 +3818,42 @@ impl EthApi<FoundryNetwork> {
                 request.block_state_calls,
                 base_block.header.number(),
                 base_block.header.timestamp(),
-                block_interval,
+                self.simulation_block_interval(),
             )?;
-            return Ok(fork.simulate_v1(&request, Some(base_block.header.hash.into())).await?);
+            return Ok(SimulationBase::Fork {
+                fork,
+                request,
+                block: base_block.header.hash.into(),
+            });
         }
 
+        Ok(SimulationBase::Local { request, block_request })
+    }
+
+    /// Returns the seconds between simulated blocks that do not override their time.
+    fn simulation_block_interval(&self) -> u64 {
+        const DEFAULT_BLOCK_INTERVAL_SECS: u64 = 12;
+
+        self.backend.time().block_timestamp_interval().unwrap_or_else(|| {
+            self.miner
+                .block_interval()
+                .map(|duration| {
+                    duration
+                        .as_secs()
+                        .saturating_add(u64::from(duration.subsec_nanos() != 0))
+                        .max(1)
+                })
+                .unwrap_or(DEFAULT_BLOCK_INTERVAL_SECS)
+        })
+    }
+
+    /// Simulates `request` on a block with local state.
+    async fn simulate_locally(
+        &self,
+        request: SimulatePayload<WithOtherFields<TransactionRequest>>,
+        block_request: BlockRequest<FoundryTxEnvelope>,
+    ) -> Result<Vec<SimulatedBlock<AnyRpcBlock>>> {
+        let block_interval = self.simulation_block_interval();
         // this can be blocking for a bit, especially in forking mode
         // <https://github.com/foundry-rs/foundry/issues/6036>
         self.on_blocking_task(|this| async move {
@@ -5876,6 +5917,35 @@ impl EthApi<FoundryNetwork> {
         let _mining = self.backend.lock_mining().await;
         self.backend.create_tempo_token(request).await
     }
+
+    /// Simulates like `eth_simulateV1` and adds the metadata of each TIP-20 token that is called,
+    /// used as a fee token, or emits a `Transfer` log, like a Tempo node.
+    ///
+    /// Metadata comes from the simulation's base block, so tokens deployed only by the simulation
+    /// or after that block are left out. A base block that predates the fork is simulated by the
+    /// fork's upstream.
+    ///
+    /// Handler for `tempo_simulateV1`; unavailable on non-Tempo networks.
+    pub async fn tempo_simulate_v1(
+        &self,
+        request: SimulatePayload<WithOtherFields<TransactionRequest>>,
+        block: Option<BlockId>,
+    ) -> Result<TempoSimulateV1Response> {
+        node_info!("tempo_simulateV1");
+        self.ensure_tempo_mode()?;
+        match self.simulation_base(request, block).await? {
+            SimulationBase::Fork { fork, request, block } => {
+                Ok(fork.tempo_simulate_v1(&request, block).await?)
+            }
+            SimulationBase::Local { request, block_request } => {
+                let block_interval = self.simulation_block_interval();
+                self.on_blocking_task(|this| async move {
+                    this.backend.tempo_simulate_raw(request, block_request, block_interval).await
+                })
+                .await
+            }
+        }
+    }
 }
 
 fn is_simple_transfer_request(request: &TransactionRequest) -> bool {
@@ -6082,6 +6152,21 @@ fn merge_pre_fork_fee_history(
 fn reward_at_percentile(rewards: &[u128], percentile: f64) -> u128 {
     let index = (percentile * REWARD_PERCENTILE_RESOLUTION).round() as usize;
     rewards.get(index).copied().unwrap_or_default()
+}
+
+/// The block a simulation builds on.
+enum SimulationBase {
+    /// A block that predates the fork, simulated by the fork's upstream.
+    Fork {
+        fork: ClientFork,
+        request: SimulatePayload<WithOtherFields<TransactionRequest>>,
+        block: BlockId,
+    },
+    /// A block with local state.
+    Local {
+        request: SimulatePayload<WithOtherFields<TransactionRequest>>,
+        block_request: BlockRequest<FoundryTxEnvelope>,
+    },
 }
 
 #[cfg(test)]
