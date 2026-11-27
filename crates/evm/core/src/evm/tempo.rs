@@ -18,7 +18,9 @@ use alloy_network::{
 use alloy_primitives::{Address, Bytes};
 use evm2::{
     Evm, EvmConfig, ExecutionConfig, OpcodeConfig, SpecId, TxResult, Version,
-    evm::precompile::PrecompileProvider, registry::TxRegistry,
+    bytecode::Bytecode,
+    evm::{AccountInfo, precompile::PrecompileProvider},
+    registry::TxRegistry,
 };
 use foundry_evm_networks::TEMPO_PRECOMPILE_ADDRESSES;
 use std::sync::Arc;
@@ -177,18 +179,26 @@ impl FoundryEvmFactory for TempoEvmFactory {
     }
 
     fn initialize_evm(&self, evm: &mut Evm<'_, TempoEvmTypes>, is_forked: bool) {
-        let result = StorageCtx::enter_evm(evm, || {
-            if is_forked {
-                let mut ctx = StorageCtx;
-                // Precompiles have no on-chain bytecode; seed sentinels so forks do not refetch
-                // them. Failed loads are retried, and surface, on later access.
-                for address in TEMPO_PRECOMPILE_ADDRESSES.iter().chain([&PATH_USD_ADDRESS]) {
-                    let _ = ctx.set_code(*address, Bytes::from_static(SYSTEM_PRECOMPILE_STUB));
+        if is_forked {
+            // On Tempo networks these accounts hold only the sentinel code, with no balance or
+            // nonce (Anvil's Tempo genesis sets nonce 1, which execution does not read), so they
+            // are seeded without fetching each one from the fork; their storage still reads from
+            // the fork. PathUSD is in every Tempo genesis, unlike later tokens.
+            let sentinel = Bytecode::new_legacy(Bytes::from_static(SYSTEM_PRECOMPILE_STUB));
+            let db = evm.overlay_db_mut();
+            for address in TEMPO_PRECOMPILE_ADDRESSES.iter().chain([&PATH_USD_ADDRESS]) {
+                // An account cached as absent is seeded too, so the precompile has code.
+                if !matches!(db.cache.accounts.get(address), Some(Some(_))) {
+                    db.insert_account_info(
+                        address,
+                        AccountInfo::default().with_code(sentinel.clone()),
+                    );
                 }
-                Ok(())
-            } else {
-                initialize_tempo_test_genesis_inner(TEST_CONTRACT_ADDRESS, CALLER)
             }
+            return;
+        }
+        let result = StorageCtx::enter_evm(evm, || {
+            initialize_tempo_test_genesis_inner(TEST_CONTRACT_ADDRESS, CALLER)
         });
         result.expect("tempo genesis initialization failed");
         evm.state_mut().commit_transaction();
