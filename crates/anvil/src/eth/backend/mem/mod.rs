@@ -2064,8 +2064,12 @@ impl<N: Network> Backend<N> {
     ///
     /// Under EIP-8037 the cap only bounds regular gas, and gas above it becomes the state gas
     /// reservoir, so the gas limit itself is not capped.
-    fn enforced_tx_gas_limit_cap(&self, evm_env: &EvmEnv) -> Option<u64> {
-        if evm_env.cfg_env.tx_gas_limit_cap.is_some() || evm_env.cfg_env.spec >= SpecId::AMSTERDAM {
+    /// Returns the per-transaction gas limit cap that applies, or `None` if it is lifted with
+    /// `u64::MAX` or replaced by EIP-8037's regular gas cap.
+    pub(crate) fn enforced_tx_gas_limit_cap(&self, evm_env: &EvmEnv) -> Option<u64> {
+        if evm_env.cfg_env.tx_gas_limit_cap == Some(u64::MAX)
+            || evm_env.cfg_env.spec >= SpecId::AMSTERDAM
+        {
             return None;
         }
         #[cfg(feature = "monad")]
@@ -5675,7 +5679,7 @@ impl<N: Network> Backend<N> {
             if preserve_live_base_fee { staged_fees.base_fee() } else { local_base_fee };
 
         let mut staged_cfg = CfgEnv::default();
-        staged_config.set_cfg_spec(&mut staged_cfg, local_spec);
+        staged_config.set_cfg_spec(&mut staged_cfg, local_hardfork);
         staged_cfg.chain_id = local_chain_id;
         staged_cfg.limit_contract_code_size = staged_config.code_size_limit;
         staged_cfg.disable_eip3607 = true;

@@ -2107,6 +2107,10 @@ impl EthApi<FoundryNetwork> {
         // get the highest possible gas limit, either the request's set value or the currently
         // configured gas limit
         let mut highest_gas_limit = inner.gas.map_or(block_env.gas_limit.into(), |g| g as u128);
+        // A limit above the per-transaction cap, such as Tempo's, is rejected when sent.
+        if let Some(cap) = self.backend.enforced_tx_gas_limit_cap(&self.backend.evm_env().read()) {
+            highest_gas_limit = highest_gas_limit.min(cap.into());
+        }
 
         // Tempo AA transactions pay fees in ERC-20 tokens, not ETH. Only treat requests as
         // Tempo AA in Tempo mode, otherwise `feeToken` should not bypass ETH funds checks.

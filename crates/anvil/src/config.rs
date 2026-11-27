@@ -758,17 +758,18 @@ impl NodeConfig {
         }
     }
 
-    /// Sets the execution spec and the transaction gas limit cap.
+    /// Sets the execution spec of `hardfork` and its transaction gas limit cap.
     ///
     /// The EIP-7825 cap is lifted unless `enable_tx_gas_limit` is set, except under EIP-8037, where
     /// the cap divides a transaction's gas into regular gas and the state gas reservoir instead of
     /// limiting it. Tempo always applies its own cap, 30M from T1A, which decides whether a
     /// deployment fits.
-    pub(crate) fn set_cfg_spec(&self, cfg: &mut CfgEnv, spec: SpecId) {
+    pub(crate) fn set_cfg_spec(&self, cfg: &mut CfgEnv, hardfork: FoundryHardfork) {
+        let spec = SpecId::from(hardfork);
         cfg.spec = spec;
         let is_amsterdam = spec >= SpecId::AMSTERDAM;
         cfg.tx_gas_limit_cap = if self.networks.is_tempo() {
-            TempoHardfork::from(self.get_hardfork()).tx_gas_limit_cap()
+            TempoHardfork::from(hardfork).tx_gas_limit_cap()
         } else {
             (!self.enable_tx_gas_limit && !is_amsterdam).then_some(u64::MAX)
         };
@@ -1537,7 +1538,7 @@ impl NodeConfig {
         // configure the revm environment
 
         let mut cfg = CfgEnv::default();
-        self.set_cfg_spec(&mut cfg, self.get_hardfork().into());
+        self.set_cfg_spec(&mut cfg, self.get_hardfork());
 
         cfg.chain_id = self.get_chain_id();
         cfg.limit_contract_code_size = self.code_size_limit;
@@ -2311,7 +2312,7 @@ latest block number: {latest_block}"
         let fork_hardfork = self.hardfork.or(inferred_hardfork);
         let effective_hardfork = fork_hardfork.unwrap_or_else(|| self.get_hardfork());
         let effective_spec = SpecId::from(effective_hardfork);
-        self.set_cfg_spec(&mut evm_env.cfg_env, effective_spec);
+        self.set_cfg_spec(&mut evm_env.cfg_env, effective_hardfork);
         fees.set_execution_rules(
             effective_spec,
             self.networks.base_fee_params(block.header.timestamp()),

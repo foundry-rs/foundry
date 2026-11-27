@@ -9554,8 +9554,60 @@ async fn test_tempo_genesis_matches_tempo_limits_and_tokens() {
     let err = provider.send_transaction(tx(30_000_001)).await.unwrap_err();
     assert_eq!(
         err.to_string(),
-        "server returned an error response: error code -32003: Transaction gas limit is greater \
-         than the block gas limit, gas_limit: 30000001, cap: 30000000"
+        "server returned an error response: error code -32000: intrinsic gas too high -- \
+         tx.gas_limit > resolved tx gas limit cap"
+    );
+}
+
+// Gas estimation and the gas limit of a transaction sent without one stay within Tempo's 30M cap.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_gas_bounds_stay_within_tx_cap() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    // Stores to a new slot in an endless loop, so no gas limit is enough.
+    let endless = Address::repeat_byte(0x51);
+    api.anvil_set_code(endless, bytes!("60005b600101808055600256")).await.unwrap();
+    let reverts = Address::repeat_byte(0x52);
+    api.anvil_set_code(reverts, bytes!("60006000fd")).await.unwrap();
+    let call = |to| WithOtherFields::new(TransactionRequest::default().from(sender).to(to));
+
+    let err = provider.estimate_gas(call(endless)).await.unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "server returned an error response: error code -32003: Out of gas: gas required exceeds \
+         allowance: 30000000"
+    );
+
+    let reverting_call = WithOtherFields::new(
+        TransactionRequest::default().from(sender).to(reverts).input(bytes!("01").into()),
+    );
+    let receipt = provider.send_transaction(reverting_call).await.unwrap().get_receipt().await;
+    let receipt = receipt.unwrap();
+    assert!(!receipt.status());
+}
+
+// A fork applies the cap of the forked chain's hardfork: EIP-7825's before T1A.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_fork_applies_source_hardfork_tx_cap() {
+    let (_source_api, source_handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T0.into()))).await;
+    let (_api, handle) =
+        spawn(NodeConfig::test_tempo().with_eth_rpc_url(Some(source_handle.http_endpoint()))).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    let tx = WithOtherFields::new(
+        TransactionRequest::default()
+            .from(sender)
+            .to(Address::repeat_byte(0x42))
+            .gas_limit(20_000_000),
+    );
+
+    let err = provider.send_transaction(tx).await.unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "server returned an error response: error code -32000: intrinsic gas too high -- \
+         tx.gas_limit > resolved tx gas limit cap"
     );
 }
 
