@@ -10,6 +10,8 @@ use std::fs;
 
 mod geiger;
 
+const SKIPPED_LINTS_WARNING: &str = "Warning: test and script files are only checked by `unsafe-cheatcode` and `environment-read-across-mutation`; all other lints are skipped for files under the configured `test` and `script` directories\n";
+
 const CONTRACT: &str = r#"
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
@@ -557,8 +559,7 @@ contract EnvironmentCapture {
 #[forgetest]
 fn block_environment_lints_tests_and_scripts(prj: _, cmd: _) {
     prj.add_test("EnvironmentCapture.t.sol", BLOCK_ENVIRONMENT_CAPTURE);
-    let expected = str![[r#"
-warning[environment-read-across-mutation]: `block.number` may be reused across `vm.roll`
+    let expected = r#"warning[environment-read-across-mutation]: `block.number` may be reused across `vm.roll`
    [FILE]:11:26
    │
 11 │         uint256 height = block.number;
@@ -582,13 +583,16 @@ warning[environment-read-across-mutation]: `block.timestamp` may be reused acros
    ├ help: capture it with `vm.getBlockTimestamp()` instead
    ╰ help: https://getfoundry.sh/forge/linting/environment-read-across-mutation
 
-
-"#]];
-    cmd.arg("lint").assert_success().stderr_eq(expected.clone());
+"#;
+    cmd.arg("lint").assert_success().stderr_eq(expected);
     cmd.forge_fuse().args(["lint", "--deny", "warnings"]).assert_failure();
 
     let script = prj.add_script("EnvironmentCapture.s.sol", BLOCK_ENVIRONMENT_CAPTURE);
-    cmd.forge_fuse().arg("lint").arg(script).assert_success().stderr_eq(expected);
+    cmd.forge_fuse()
+        .arg("lint")
+        .arg(script)
+        .assert_success()
+        .stderr_eq(format!("{SKIPPED_LINTS_WARNING}{expected}"));
 
     prj.update_config(|config| {
         config.lint.exclude_lints = vec!["environment-read-across-mutation".into()];
@@ -781,18 +785,14 @@ fn warns_when_named_path_is_test_or_script(prj: _, cmd: _) {
     let script = prj.add_script("ContractWithLints", CONTRACT);
     let source = prj.add_source("ContractWithLints", CONTRACT);
 
-    let warning = str![[r#"
-Warning: test and script files are only checked by `unsafe-cheatcode` and `environment-read-across-mutation`; all other lints are skipped for files under the configured `test` and `script` directories
-
-"#]];
-    cmd.arg("lint").arg(&test).assert_success().stderr_eq(warning.clone());
-    cmd.forge_fuse().arg("lint").arg(&script).assert_success().stderr_eq(warning.clone());
+    cmd.arg("lint").arg(&test).assert_success().stderr_eq(SKIPPED_LINTS_WARNING);
+    cmd.forge_fuse().arg("lint").arg(&script).assert_success().stderr_eq(SKIPPED_LINTS_WARNING);
     cmd.forge_fuse()
         .arg("lint")
         .arg(prj.root().join("script"))
         .args(["--only-lint", "incorrect-shift"])
         .assert_success()
-        .stderr_eq(warning);
+        .stderr_eq(SKIPPED_LINTS_WARNING);
 
     // Nothing is skipped when only lints that apply to tests and scripts are selected.
     cmd.forge_fuse()
@@ -2466,7 +2466,7 @@ contract NoActiveLints {
         "--report-unused-suppressions",
     ])
     .assert_success()
-    .stderr_eq("");
+    .stderr_eq(SKIPPED_LINTS_WARNING);
 }
 
 // Only suppressions for rules active in the current run are assessed, while import diagnostics
