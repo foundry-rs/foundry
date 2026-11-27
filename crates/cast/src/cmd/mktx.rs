@@ -83,7 +83,7 @@ pub struct MakeTxArgs {
     ///
     /// Gas estimation models the largest owner quorum the account accepts (at most eight
     /// approvals), each a maximum-size WebAuthn signature. An account that is not registered yet
-    /// needs `--gas-limit`, since only its owners know its configuration.
+    /// needs `--tempo.config` to estimate registration gas, or an explicit `--gas-limit`.
     #[arg(long = "tempo.digest", requires_all = ["raw_unsigned", "from"])]
     tempo_digest: bool,
 
@@ -305,9 +305,7 @@ impl MakeTxArgs {
             // Use zero address as placeholder for unsigned transactions
             let from = eth.wallet.from.unwrap_or(Address::ZERO);
             let digest_version = if tempo_digest {
-                let (version, spec) =
-                    configurable_account::digest_context(&eth, from, tx.gas_limit.is_some())
-                        .await?;
+                let (version, spec) = configurable_account::digest_context(&eth, from, &tx).await?;
                 // A `0x05` signature only signs Tempo transactions.
                 if tx_builder.tx_mut().nonce_key().is_none() {
                     tx_builder.tx_mut().set_nonce_key(U256::ZERO);

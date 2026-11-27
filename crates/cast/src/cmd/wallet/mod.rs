@@ -22,8 +22,8 @@ use foundry_common::{
     fs::canonicalize_path,
     sh_println, shell,
     tempo::configurable_account::{
-        LINKED_ACCOUNT_SUFFIX, ca_error, ensure_link_available, link_keystore, parse_p256_key,
-        sign_p256, unlink_keystore,
+        LINKED_ACCOUNT_SUFFIX, ca_error, ensure_link_available, link_keystore, parse_config,
+        parse_p256_key, sign_p256, unlink_keystore,
     },
 };
 use foundry_config::Config;
@@ -35,6 +35,7 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
+use tempo_primitives::transaction::ConfigurableAccountConfig;
 use yansi::Paint;
 
 pub mod vanity;
@@ -158,12 +159,22 @@ pub enum WalletSubcommands {
     #[command(visible_alias = "va")]
     Vanity(VanityArgs),
 
-    /// Convert a private key to an address.
+    /// Derive the address of a wallet or a Tempo configurable account.
     #[command(visible_aliases = &["a", "addr"])]
     Address {
         /// If provided, the address will be derived from the specified private key.
         #[arg(value_name = "PRIVATE_KEY")]
         private_key_override: Option<String>,
+
+        /// Use a version-zero Tempo configuration (JSON or file) to derive the address offline.
+        /// This uses only the public configuration, even when a signing wallet is configured.
+        #[arg(
+            long = "tempo.config",
+            value_name = "CONFIG",
+            value_parser = parse_config,
+            conflicts_with = "private_key_override"
+        )]
+        config: Option<ConfigurableAccountConfig>,
 
         #[command(flatten)]
         wallet: WalletOpts,
@@ -383,6 +394,7 @@ pub enum WalletSubcommands {
     /// Combine owner signatures into a signed Tempo configurable account transaction.
     ///
     /// Owners on other machines sign the digest from `cast mktx --raw-unsigned --tempo.digest`.
+    /// For a new multisig, pass the same initial `--tempo.config` to both commands.
     /// Prints the signed raw transaction for `cast publish`.
     ///
     /// Examples:
@@ -597,8 +609,14 @@ impl WalletSubcommands {
             Self::Vanity(cmd) => {
                 cmd.run()?;
             }
-            Self::Address { wallet, browser, private_key_override } => {
-                let addr = if let Some(pk) = private_key_override {
+            Self::Address { wallet, browser, private_key_override, config } => {
+                let addr = if let Some(config) = config {
+                    eyre::ensure!(
+                        config.version == 0,
+                        "address derivation requires a version-zero configuration"
+                    );
+                    config.derive_account().map_err(ca_error)?
+                } else if let Some(pk) = private_key_override {
                     raw_wallet(RawWalletOpts { private_key: Some(pk), ..Default::default() })
                         .signer()
                         .await?

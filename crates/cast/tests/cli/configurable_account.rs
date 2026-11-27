@@ -282,7 +282,7 @@ Error: [..] is not a registered configurable account. An account registers on it
         .args(["--rpc-url", &rpc, "--tempo.fee-token", &fee_token])
         .assert_failure()
         .stderr_eq(str![[r#"
-Error: [..] is not registered yet, so its owners and the gas of its registration are unknown. Send its first transaction with `cast wallet owners`, or pass --gas-limit
+Error: [..] is not registered yet. Pass --tempo.config to estimate its registration gas, or set --gas-limit
 
 "#]]);
 
@@ -625,6 +625,102 @@ fn two_of_three() -> (Address, String, [PrivateKeySigner; 3]) {
 
 fn private_key(key: &PrivateKeySigner) -> String {
     hex::encode_prefixed(key.to_bytes())
+}
+
+/// Two owners independently approve the first transaction of a 2-of-3 account. The public
+/// configuration suffices to derive its address, estimate registration gas and assemble it.
+#[casttest]
+async fn tempo_t14_wallet_assemble_first_two_of_three(prj: _, cmd: _) {
+    let (api, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let (account, config, keys) = two_of_three();
+    let path = prj.root().join("config.json");
+    std::fs::write(&path, &config).unwrap();
+    let address = cmd
+        .cast_fuse()
+        .args(["wallet", "address", "--tempo.config"])
+        .arg(&path)
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let address = address.trim();
+    assert_eq!(address, account.to_checksum(None));
+
+    api.anvil_deal_tip20(account, ALPHA_USD_ADDRESS, U256::from(1_000_000_000_000u64))
+        .await
+        .unwrap();
+    let target = Address::repeat_byte(0x73).to_string();
+    let fee_token = ALPHA_USD_ADDRESS.to_string();
+    let options = ["--from", address, "--rpc-url", &rpc, "--tempo.fee-token", &fee_token];
+    let other = keys[1].address();
+    cmd.cast_fuse()
+        .args(["mktx", &target, "--raw-unsigned", "--tempo.digest", "--tempo.config", &config])
+        .args(["--from", &other.to_string(), "--rpc-url", &rpc, "--gas-limit", "1000000"])
+        .assert_failure()
+        .stderr_eq(format!(
+            "Error: the given configuration does not derive {other}, which has no registered configuration\n"
+        ));
+    let estimate = cmd
+        .cast_fuse()
+        .args(["estimate", &target, "--tempo.config", &config])
+        .args(options)
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let prepared = cmd
+        .cast_fuse()
+        .args(["mktx", &target, "--raw-unsigned", "--tempo.digest", "--tempo.config"])
+        .arg(&path)
+        .args(options)
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let (unsigned, digest) = prepared.trim().split_once('\t').unwrap();
+    let [first, second] = [&keys[2], &keys[0]].map(|key| {
+        cmd.cast_fuse()
+            .args(["wallet", "sign", "--no-hash", digest, "--private-key", &private_key(key)])
+            .assert_success()
+            .get_output()
+            .stdout_lossy()
+    });
+    let assemble = ["wallet", "assemble", unsigned, "--from", address, "--rpc-url", &rpc];
+    cmd.cast_fuse()
+        .args(assemble)
+        .args(["--tempo.config", &config, first.trim()])
+        .assert_failure()
+        .stderr_eq(format!("Error: the approvals reach weight 1, but {account} requires 2\n"));
+    let raw = cmd
+        .cast_fuse()
+        .args(assemble)
+        .args(["--tempo.config", &config, first.trim(), second.trim()])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    cmd.cast_fuse().args(["publish", raw.trim(), "--rpc-url", &rpc]).assert_success();
+
+    let (limit, used) = last_tx_gas(&provider).await;
+    assert_eq!(limit, estimate.trim().parse::<u64>().unwrap());
+    assert!(used < limit, "the estimate covers two maximum-size WebAuthn approvals");
+    assert_eq!(provider.get_transaction_count(account).await.unwrap(), 1);
+    cmd.cast_fuse().args(["wallet", "owners", address, "--rpc-url", &rpc]).assert_success();
+
+    let mut changed = serde_json::from_str::<serde_json::Value>(&config).unwrap();
+    changed["version"] = 1.into();
+    let changed = changed.to_string();
+    cmd.cast_fuse()
+        .args(["wallet", "address", "--tempo.config", &changed])
+        .assert_failure()
+        .stderr_eq("Error: address derivation requires a version-zero configuration\n");
+    cmd.cast_fuse()
+        .args(assemble)
+        .args(["--tempo.config", &changed, first.trim(), second.trim()])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: the given configuration does not match the configuration commitment [..] of [..]
+
+"#]]);
 }
 
 /// Returns the receipt of the last transaction in the latest block, as JSON.
