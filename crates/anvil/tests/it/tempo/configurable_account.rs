@@ -4,7 +4,6 @@
 //! quorum with placeholder `0x05` approvals, as a Tempo node does for `eth_estimateGas`.
 
 use super::*;
-use alloy_provider::PendingTransactionBuilder;
 
 /// A configuration over `owners`, given as keys and their weights.
 fn weighted_config(

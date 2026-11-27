@@ -2110,11 +2110,10 @@ impl EthApi<FoundryNetwork> {
         // Tempo AA transactions pay fees in ERC-20 tokens, not ETH. Only treat requests as
         // Tempo AA in Tempo mode, otherwise `feeToken` should not bypass ETH funds checks.
         let is_tempo_aa_tx = self.backend.is_tempo() && request.is_tempo();
-        let is_tempo_keychain = matches!(
-            &request,
-            FoundryTransactionRequest::Tempo(request) if request.key_id.is_some()
-        );
-        let disable_fee_charge = is_tempo_keychain || inner.from.is_none();
+        // Like a Tempo node, a Tempo AA estimate charges no fee: charging the sender warms and
+        // dirties its fee token balance, which a sponsored transaction leaves cold. The fee
+        // payer's fee token balance caps the gas instead, below.
+        let disable_fee_charge = is_tempo_aa_tx || inner.from.is_none();
 
         // Requests without a sender historically estimate value transfers without requiring the
         // default caller to hold ETH. Fund only the simulation overlay so the execution probe
@@ -2167,6 +2166,17 @@ impl EthApi<FoundryNetwork> {
                     available_funds.checked_div(U256::from(gas_price)).unwrap_or_default();
                 highest_gas_limit = std::cmp::min(highest_gas_limit, allowance.saturating_to());
             }
+        }
+        if is_tempo_aa_tx
+            && inner.from.is_some()
+            && let Some(allowance) = self.backend.tempo_fee_payer_gas_allowance(
+                state,
+                request.clone(),
+                fees.clone(),
+                block_env.clone(),
+            )?
+        {
+            highest_gas_limit = highest_gas_limit.min(u128::from(allowance));
         }
 
         // If the request is a simple native token transfer we can optimize

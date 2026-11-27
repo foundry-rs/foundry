@@ -20,7 +20,7 @@ use alloy_primitives::{
     keccak256,
 };
 use alloy_provider::{
-    Provider,
+    PendingTransactionBuilder, Provider,
     ext::{DebugApi, TraceApi, TxPoolApi},
 };
 use alloy_rlp::Decodable;
@@ -2371,8 +2371,8 @@ async fn test_tempo_eip7702_replay_signature_override() {
 
 /// The pool admits a Tempo transaction only once the fee payer can cover the maximum fee,
 /// rounded up to a whole fee token unit like the execution precharge: one unit short is rejected,
-/// the exact amount is admitted and mined. Calls, estimates and simulations report the shortfall
-/// as missing funds.
+/// the exact amount is admitted and mined. Calls and simulations report the shortfall as missing
+/// funds, while an estimate, like a Tempo node's, is capped by the gas the balance pays for.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_tempo_pool_requires_max_fee_rounded_up_in_fee_token() {
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
@@ -2416,8 +2416,8 @@ async fn test_tempo_pool_requires_max_fee_rounded_up_in_fee_token() {
         format!("insufficient fee token balance: have {}, need {required}", required - U256::ONE)
     );
 
-    // Only pool admission names the fee token balance; calls, estimates and simulations report
-    // the shortfall as missing funds.
+    // Only pool admission names the fee token balance; calls and simulations report the
+    // shortfall as missing funds.
     let mut request = WithOtherFields::new(
         TransactionRequest::default()
             .with_from(sender)
@@ -2427,14 +2427,11 @@ async fn test_tempo_pool_requires_max_fee_rounded_up_in_fee_token() {
             .with_max_priority_fee_per_gas(gas_price / 10),
     );
     request.other.insert("feeToken".into(), serde_json::to_value(PATH_USD).unwrap());
-    for err in [
-        provider.call(request.clone()).await.unwrap_err(),
-        provider.estimate_gas(request.clone()).await.unwrap_err(),
-    ] {
-        let err = err.as_error_resp().unwrap();
-        assert_eq!(err.code, -32003);
-        assert_eq!(err.message, "Insufficient funds for gas * price + value");
-    }
+    let err = provider.call(request.clone()).await.unwrap_err();
+    let err = err.as_error_resp().unwrap();
+    assert_eq!(err.code, -32003);
+    assert_eq!(err.message, "Insufficient funds for gas * price + value");
+    assert!(provider.estimate_gas(request.clone()).await.unwrap() < gas_limit);
     let err = provider
         .raw_request::<_, serde_json::Value>(
             "eth_simulateV1".into(),
@@ -7249,6 +7246,75 @@ async fn test_tempo_t14_sponsored_estimate_stays_within_block_gas_limit() {
     assert_eq!(estimate(Some(sponsored), true).await.unwrap(), sponsored);
     // Enough block gas only for the unsponsored transaction.
     assert!(estimate(Some(unsponsored), true).await.is_err());
+}
+
+// A sponsored transaction pays no fee from the sender, so the sender's fee token balance stays
+// cold until its calls read it. A priced estimate must not warm it by charging the sender, and is
+// capped by what the fee payer's balance pays for, like a Tempo node.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_sponsored_fee_token_transfer_succeeds_with_its_estimate() {
+    let (_api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let provider = handle.http_provider();
+    let accounts = handle.dev_accounts().collect::<Vec<_>>();
+    let (from, recipient) = (accounts[0], accounts[2]);
+    let gas_price = provider.get_gas_price().await.unwrap();
+    let mut tx = TempoTransaction {
+        chain_id: provider.get_chain_id().await.unwrap(),
+        fee_token: Some(PATH_USD),
+        max_priority_fee_per_gas: gas_price / 10,
+        max_fee_per_gas: gas_price * 2,
+        calls: vec![tempo_transfer(recipient, U256::from(1000))],
+        nonce: provider.get_transaction_count(from).await.unwrap(),
+        ..Default::default()
+    };
+    let request = |tx: &TempoTransaction, fee_payer_signature: Signature| {
+        serde_json::json!({
+            "from": from,
+            "type": "0x76",
+            "chainId": tx.chain_id,
+            "feeToken": tx.fee_token,
+            "maxPriorityFeePerGas": tx.max_priority_fee_per_gas,
+            "maxFeePerGas": tx.max_fee_per_gas,
+            "gas": tx.gas_limit,
+            "calls": tx.calls,
+            "nonceKey": tx.nonce_key,
+            "nonce": tx.nonce,
+            "feePayerSignature": fee_payer_signature,
+        })
+    };
+
+    let mut estimate_request = request(&tx, FEE_PAYER_SIGNATURE_MARKER);
+    estimate_request.as_object_mut().unwrap().remove("gas");
+    tx.gas_limit = provider
+        .raw_request::<_, U256>("eth_estimateGas".into(), (estimate_request.clone(),))
+        .await
+        .unwrap()
+        .to();
+    tx.fee_payer_signature = Some(FEE_PAYER_SIGNATURE_MARKER);
+    let fee_payer_signature =
+        dev_key(1).sign_hash(&tx.fee_payer_signature_hash(from)).await.unwrap();
+    let hash = provider
+        .raw_request::<_, B256>("eth_sendTransaction".into(), (request(&tx, fee_payer_signature),))
+        .await
+        .unwrap();
+    let receipt = PendingTransactionBuilder::new(provider.root().clone(), hash)
+        .with_timeout(Some(Duration::from_secs(10)))
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(receipt.status(), "sponsored transfer ran out of its estimated {} gas", tx.gas_limit);
+
+    // The estimate is capped by the fee payer's fee token balance, here the sender's since the
+    // marker leaves the fee payer unknown.
+    let unfunded = Address::random();
+    estimate_request["from"] = serde_json::json!(unfunded);
+    estimate_request["nonce"] = serde_json::json!(0);
+    let err = provider
+        .raw_request::<_, U256>("eth_estimateGas".into(), (estimate_request,))
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("gas required exceeds allowance: 0"), "{err}");
 }
 
 // ============================================================================
