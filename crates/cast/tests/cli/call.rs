@@ -1,7 +1,7 @@
 //! CLI tests for call commands.
 
 use super::*;
-use alloy_primitives::bytes;
+use alloy_primitives::{bytes, fixed_bytes};
 
 #[forgetest_init]
 async fn cast_call_custom_override(prj: _, cmd: _) {
@@ -887,19 +887,38 @@ Context:
 
 // <https://github.com/foundry-rs/foundry/issues/10705>
 #[casttest]
-fn cast_call_return_array_of_tuples(cmd: _) {
-    cmd.args([
-        "call",
-        "0x198FC70Dfe05E755C81e54bd67Bff3F729344B9b",
-        "facets() returns ((address,bytes4[])[])",
-        "--rpc-url",
-        "https://rpc.viction.xyz",
-    ])
-    .assert_success()
-    .stdout_eq(str![[r#"
-[[..]]
+async fn cast_call_return_array_of_tuples(cmd: _) {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let (endpoint, calls) =
+        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_call").await;
+
+    let facets = vec![
+        (Address::with_last_byte(1), vec![fixed_bytes!("1f931c1c")]),
+        (Address::with_last_byte(2), vec![fixed_bytes!("7a0ed627"), fixed_bytes!("adfca15e")]),
+    ];
+    let output = (facets,).abi_encode_params();
+
+    // Copy the ABI-encoded result appended at byte 12 into memory and return it.
+    let [len_hi, len_lo] = u16::try_from(output.len()).unwrap().to_be_bytes();
+    let mut runtime =
+        vec![0x61, len_hi, len_lo, 0x60, 0x0c, 0x5f, 0x39, 0x61, len_hi, len_lo, 0x5f, 0xf3];
+    runtime.extend(output);
+    let target = "0x00000000000000000000000000000000000000d1";
+    api.anvil_set_code(target.parse().unwrap(), runtime.into()).await.unwrap();
+
+    cmd.args(["call", target, "facets() returns ((address,bytes4[])[])", "--rpc-url", &endpoint])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[(0x0000000000000000000000000000000000000001, [0x1f931c1c]), (0x0000000000000000000000000000000000000002, [0x7a0ed627, 0xadfca15e])]
 
 "#]]);
+
+    // Some nodes reject a third eth_call parameter when no overrides were requested.
+    let calls = calls.lock().unwrap();
+    assert!(
+        !calls.is_empty() && calls.iter().all(|params| params.as_array().unwrap().len() == 2),
+        "{calls:?}"
+    );
 }
 
 // <https://github.com/foundry-rs/foundry/issues/7541>
