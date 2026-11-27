@@ -140,6 +140,10 @@ fn resolve_entry(
         Choice::Ambiguous(function) => {
             FunctionInfo::untyped(function.name.clone(), function.is_entry)
         }
+        // Without the source of the function there is nothing to confirm that the entry is a
+        // function of the code, and not one that the compiler generated, such as the helper that
+        // encodes the constructor arguments of a deployment.
+        Choice::KeyName if source.is_none() => return None,
         Choice::KeyName => {
             FunctionInfo::untyped(without_number(entry.name.as_deref()?).to_string(), false)
         }

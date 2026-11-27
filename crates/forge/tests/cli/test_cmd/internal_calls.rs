@@ -548,3 +548,44 @@ Traces:
 "#]],
     );
 }
+
+// With dynamic test linking, the test contract calls a helper that encodes the constructor
+// arguments of a deployment. The compiler generated it, and its source is not loaded, so it is no
+// internal call.
+#[forgetest]
+fn deploy_helper_is_not_an_internal_call(prj: _, cmd: _) {
+    prj.add_source(
+        "Counter.sol",
+        "contract Counter { uint256 public n; constructor(uint256 x) { n = x; } }",
+    );
+    for (via_ir, optimize) in [(false, false), (false, true), (true, false), (true, true)] {
+        assert_internal_calls(
+            &prj,
+            cmd.forge_fuse(),
+            (
+                "Deploy.t.sol",
+                r#"
+import {Counter} from "../src/Counter.sol";
+
+contract DeployTest {
+    function test_deploy() public {
+        new Counter(12);
+    }
+}
+"#,
+            ),
+            (via_ir, optimize),
+            str![[r#"
+...
+Traces:
+  [..] DeployTest::test_deploy()
+    ├─ [..] VM::deployCode("src/Counter.sol:Counter", 0x000000000000000000000000000000000000000000000000000000000000000c)
+    │   ├─ [..] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   │   └─ ← [Return] [..] bytes of code
+    │   └─ ← [Return] Counter: [0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f]
+    └─ ← [..]
+...
+"#]],
+        );
+    }
+}
