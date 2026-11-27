@@ -10376,14 +10376,22 @@ contract SymbolicPreviewMint {
 
 // Utilization and remaining-share ratios scale `(total - used) * WAD / total`, which stays at
 // most `WAD` once `used <= total`. A remainder of an unrelated amount, or one that wraps, is not
-// bounded by the total.
+// bounded by the total. An ERC4626 round trip through Solmate's `mulDivDown` passes its overflow
+// guard on a quotient whose product cannot overflow without querying SMT. A quotient by another
+// divisor, a smaller guard numerator, or a factor that may be zero can still fail the guard, and a
+// non-strict `MAX / y <= x` still holds at `x == MAX / y`.
 #[forgetest_init]
 fn symbolic_proves_remaining_ratio_bounded(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_remaining_ratio_bounded");
     prj.add_test(
         "SymbolicRemainingRatio.t.sol",
         r#"
+interface Vm {
+    function assertLe(uint256 left, uint256 right) external pure;
+}
+
 contract SymbolicRemainingRatio {
+    Vm internal constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
     uint256 internal constant WAD = 1e18;
 
     // Solmate's `FixedPointMathLib.mulDivDown` (MIT).
@@ -10411,6 +10419,47 @@ contract SymbolicRemainingRatio {
         }
         assert(mulDivDown(remaining, WAD, total) <= WAD);
     }
+
+    function checkSharesRoundTrip(uint128 assets, uint128 supply, uint128 total) public pure {
+        if (supply == 0 || total == 0) return;
+        assert(mulDivDown(mulDivDown(assets, supply, total), total, supply) <= assets);
+    }
+
+    function checkOtherDivisorGuard(uint128 assets, uint128 supply, uint128 other, uint128 total)
+        public
+        pure
+    {
+        if (supply == 0 || other == 0 || total == 0) return;
+        uint256 shares = mulDivDown(assets, supply, other);
+        assert(!(shares > type(uint256).max / total));
+    }
+
+    function checkSmallNumeratorGuard(uint128 assets, uint128 supply, uint128 total) public pure {
+        if (supply == 0 || total == 0) return;
+        uint256 shares = mulDivDown(assets, supply, total);
+        assert(!(shares > 1000 / total));
+    }
+
+    function checkZeroFactorGuard(uint128 assets, uint128 supply, uint128 total, uint256 y)
+        public
+        pure
+    {
+        if (supply == 0 || total == 0) return;
+        uint256 shares = mulDivDown(assets, supply, total);
+        uint256 overflows;
+        assembly {
+            overflows := gt(shares, div(not(0), y))
+        }
+        assert(overflows == 0);
+    }
+
+    function checkQuotientAtGuardLimit(uint256 n, uint256 y) public pure {
+        if (y == 0) return;
+        uint256 x = n / y;
+        if (x < type(uint256).max / y) return;
+        vm.assertLe(type(uint256).max / y, x);
+        assert(x != type(uint256).max / y);
+    }
 }
 "#,
     );
@@ -10425,9 +10474,19 @@ contract SymbolicRemainingRatio {
             .clone();
         let result = json_test_result(&output, "checkRemainingRatio(uint256,uint256)");
         assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        let result = json_test_result(&output, "checkSharesRoundTrip(uint128,uint128,uint128)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        assert_eq!(
+            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+            "optimized={optimized}: {result}"
+        );
         for signature in [
             "checkUnrelatedRemainder(uint256,uint256,uint256)",
             "checkWrappedRemainder(uint256,uint256)",
+            "checkOtherDivisorGuard(uint128,uint128,uint128,uint128)",
+            "checkSmallNumeratorGuard(uint128,uint128,uint128)",
+            "checkZeroFactorGuard(uint128,uint128,uint128,uint256)",
+            "checkQuotientAtGuardLimit(uint256,uint256)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(
