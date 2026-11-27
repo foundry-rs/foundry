@@ -117,6 +117,21 @@ fn rpc_raw_params_stdin(cmd: _) {
 "#]]);
 }
 
+#[casttest]
+fn rpc_raw_params_stdin_rejects_trailing_json(cmd: _) {
+    cmd.args(["rpc", "eth_blockNumber", "--raw", "--curl", "--rpc-url", "http://127.0.0.1:1"])
+        .stdin(b"[]\n[]\n")
+        .assert_failure()
+        .stdout_eq("")
+        .stderr_eq(str![[r#"
+Error: invalid raw JSON parameters
+
+Context:
+- trailing characters at line 2 column 1
+
+"#]]);
+}
+
 // tests that the --curl flag outputs a valid curl command for cast rpc
 #[casttest]
 fn curl_rpc(cmd: _) {

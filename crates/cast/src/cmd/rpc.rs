@@ -27,7 +27,7 @@ pub struct RpcArgs {
     /// Send raw JSON parameters
     ///
     /// The first param will be interpreted as a raw JSON array of params.
-    /// If no params are given, stdin will be used. For example:
+    /// If no params are given, read a single JSON value from stdin until EOF. For example:
     ///
     /// cast rpc eth_getBlockByNumber '["0x123", false]' --raw
     ///     => {"method": "eth_getBlockByNumber", "params": ["0x123", false] ... }
@@ -52,11 +52,8 @@ impl RpcArgs {
                     .collect(),
             )
         } else if params.is_empty() {
-            serde_json::Deserializer::from_reader(std::io::stdin())
-                .into_iter()
-                .next()
-                .transpose()?
-                .ok_or_else(|| eyre::format_err!("Empty JSON parameters"))?
+            serde_json::from_reader(std::io::stdin().lock())
+                .wrap_err("invalid raw JSON parameters")?
         } else {
             serde_json::from_str(&params.join(" ")).wrap_err("invalid raw JSON parameters")?
         };
