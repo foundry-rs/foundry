@@ -9,6 +9,7 @@ use super::{
     },
     preserve_simulation_request_fields,
     tempo_consensus::{TempoCertifiedBlock, TempoConsensusState},
+    tempo_simulate::{TempoSimulateV1Response, tip20_targets, transferred_tip20s},
 };
 use crate::{
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
@@ -2798,6 +2799,9 @@ impl EthApi<FoundryNetwork> {
             }
             EthRequest::TempoCreateToken(request) => {
                 self.anvil_tempo_create_token(request).await.to_rpc_result()
+            }
+            EthRequest::TempoSimulateV1(simulation, block) => {
+                self.tempo_simulate_v1(simulation, block).await.to_rpc_result()
             }
         }
     }
@@ -5875,6 +5879,27 @@ impl EthApi<FoundryNetwork> {
         self.ensure_tempo_mode()?;
         let _mining = self.backend.lock_mining().await;
         self.backend.create_tempo_token(request).await
+    }
+
+    /// Simulates like `eth_simulateV1` and adds the metadata of each deployed TIP-20 token that is
+    /// called, used as a fee token, or emits a `Transfer` log, like a Tempo node.
+    ///
+    /// Metadata is read from the current state rather than the simulated block's: it is written
+    /// once when a token is created.
+    ///
+    /// Handler for `tempo_simulateV1`; unavailable on non-Tempo networks.
+    pub async fn tempo_simulate_v1(
+        &self,
+        request: SimulatePayload<WithOtherFields<TransactionRequest>>,
+        block: Option<BlockId>,
+    ) -> Result<TempoSimulateV1Response> {
+        node_info!("tempo_simulateV1");
+        self.ensure_tempo_mode()?;
+        let mut tokens = tip20_targets(&request);
+        let blocks = self.simulate_v1_raw(request, block).await?;
+        tokens.extend(transferred_tip20s(&blocks));
+        let token_metadata = self.backend.tempo_token_metadata(tokens).await;
+        Ok(TempoSimulateV1Response { blocks, token_metadata })
     }
 }
 

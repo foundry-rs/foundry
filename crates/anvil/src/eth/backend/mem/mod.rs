@@ -162,7 +162,7 @@ use foundry_primitives::{
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fmt::{self, Debug},
     io::{Read, Write},
     ops::Mul,
@@ -184,7 +184,7 @@ use tempo_precompiles::{
     nonce::NonceManager,
     storage::{Handler, account_config_commitment},
     tip_fee_manager::{IFeeManager, TipFeeManager},
-    tip20::{ITIP20, TIP20Token},
+    tip20::{ITIP20, TIP20Token, Tip20TokenMetadata},
     tip20_factory::TIP20Factory,
 };
 use tempo_primitives::{
@@ -10540,6 +10540,16 @@ impl Backend<FoundryNetwork> {
                 }
             })
         })
+    }
+
+    /// Returns the metadata of the deployed TIP-20 tokens among `tokens` in the current state
+    /// (Tempo-only).
+    pub async fn tempo_token_metadata(
+        &self,
+        tokens: BTreeSet<Address>,
+    ) -> BTreeMap<Address, Tip20TokenMetadata> {
+        let db = self.db.read().await;
+        crate::eth::backend::tempo::tip20_metadata(&**db, self.tempo_hardfork(), tokens)
     }
 
     /// Runs `f` inside a Tempo storage context initialized from the current state and writes

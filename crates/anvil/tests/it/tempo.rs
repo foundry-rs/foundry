@@ -44,7 +44,7 @@ use anvil::{
 };
 use anvil_core::{
     eth::block::Block,
-    types::{ReorgOptions, TempoCreateTokenRequest},
+    types::{ReorgOptions, TempoCreateTokenRequest, TempoTokenMint},
 };
 use axum::{Json, Router, routing::post};
 use commonware_codec::{DecodeExt, Encode, ReadExt, varint::UInt};
@@ -74,6 +74,7 @@ use foundry_test_utils::rpc::{
 use futures::StreamExt;
 use serde::Deserialize;
 use std::{
+    collections::BTreeMap,
     num::NonZeroU64,
     sync::{Arc, atomic::Ordering},
     time::Duration,
@@ -3722,6 +3723,96 @@ async fn test_tempo_simulate_executes_and_returns_the_same_batch() {
         Receipt { status: Eip658Value::Eip658(true), cumulative_gas_used, logs }.with_bloom(),
     );
     assert_eq!(response[0]["receiptsRoot"], serde_json::json!(calculate_receipt_root(&[receipt])));
+}
+
+/// `tempo_simulateV1` adds the metadata of each deployed TIP-20 token a simulation calls, pays fees
+/// with, or moves through a contract, like a Tempo node.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_simulate_v1_reports_token_metadata() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let mut accounts = handle.dev_accounts();
+    let (from, ousd_payer) = (accounts.next().unwrap(), accounts.next().unwrap());
+    api.anvil_tempo_create_token(TempoCreateTokenRequest {
+        address: OUSD_ADDRESS,
+        name: "Open USD".into(),
+        symbol: "OUSD".into(),
+        currency: "USD".into(),
+        quote_token: PATH_USD,
+        admin: from,
+        mint: vec![TempoTokenMint { to: ousd_payer, amount: U256::from(10u64.pow(12)) }],
+    })
+    .await
+    .unwrap();
+    // Forwards its calldata to PathUSD and reverts if that call fails.
+    let forwarder = Address::random();
+    let forwarder_code = [
+        &bytes!("365f5f375f5f365f5f73")[..],
+        PATH_USD.as_slice(),
+        &bytes!("5af115602557005b5f5ffd"),
+    ]
+    .concat();
+    let balance_of = IERC20::balanceOfCall { account: from }.abi_encode();
+    let transfer = IERC20::transferCall { to: Address::random(), amount: U256::ZERO }.abi_encode();
+    let undeployed_tip20 = address!("0x20C000000000000000000000ffffffffffffffff");
+    let payload = serde_json::json!({
+        "blockStateCalls": [{
+            "stateOverrides": { (forwarder.to_string()): { "code": Bytes::from(forwarder_code) } },
+            "calls": [
+                { "from": from, "to": THETA_USD, "input": Bytes::from(balance_of.clone()) },
+                tempo_call_request(from, [Call {
+                    to: TxKind::Call(BETA_USD),
+                    value: U256::ZERO,
+                    input: balance_of.into(),
+                }]),
+                { "from": ousd_payer, "to": Address::random(), "feeToken": OUSD_ADDRESS },
+                // The PathUSD transfer is only visible through its `Transfer` log.
+                { "from": from, "to": forwarder, "input": Bytes::from(transfer) },
+                { "from": from, "to": undeployed_tip20 },
+            ],
+        }],
+    });
+
+    let response = provider
+        .raw_request::<_, serde_json::Value>("tempo_simulateV1".into(), (payload,))
+        .await
+        .unwrap();
+
+    let calls = response["blocks"][0]["calls"].as_array().unwrap();
+    assert!(calls[..4].iter().all(|call| call["status"] == "0x1"), "{calls:#?}");
+    assert_eq!(calls[3]["logs"][0]["address"], serde_json::json!(PATH_USD));
+    let metadata = serde_json::from_value::<BTreeMap<Address, serde_json::Value>>(
+        response["tokenMetadata"].clone(),
+    )
+    .unwrap();
+    let usd = |name: &str, symbol: &str| serde_json::json!({ "name": name, "symbol": symbol, "currency": "USD" });
+    assert_eq!(
+        metadata,
+        BTreeMap::from([
+            (PATH_USD, usd("PathUSD", "PathUSD")),
+            (BETA_USD, usd("BetaUSD", "BetaUSD")),
+            (THETA_USD, usd("ThetaUSD", "ThetaUSD")),
+            (OUSD_ADDRESS, usd("Open USD", "OUSD")),
+        ])
+    );
+}
+
+/// `tempo_simulateV1` is unavailable outside Tempo mode.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_simulate_v1_rejects_non_tempo() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let payload = serde_json::json!({ "blockStateCalls": [{ "calls": [{}] }] });
+
+    let error = handle
+        .http_provider()
+        .raw_request::<_, serde_json::Value>("tempo_simulateV1".into(), (payload,))
+        .await
+        .unwrap_err();
+
+    assert_eq!(
+        serde_json::to_value(error.as_error_resp().unwrap()).unwrap(),
+        serde_json::json!({ "code": -32603, "message": "Not implemented", "data": null }),
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
