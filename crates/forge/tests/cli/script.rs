@@ -12331,6 +12331,20 @@ Script ran successfully.
 "#]],
     );
 
+    // Decoding internal calls does not request outputs the cache lacks, which would compile.
+    cmd.forge_fuse()
+        .arg("script")
+        .arg(&script)
+        .args(["--no-compile", "--decode-internal", "-vvvv"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+No files changed, compilation skipped
+Traces:
+...
+Script ran successfully.
+...
+"#]]);
+
     prj.add_source("Foo", "contract Demo { function run() external pure {} }");
     cmd.forge_fuse()
         .arg("script")

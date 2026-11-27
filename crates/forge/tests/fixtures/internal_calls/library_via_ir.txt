@@ -1,0 +1,55 @@
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/Library.t.sol:LibraryTest
+[PASS] test_library_functions() ([GAS])
+Traces:
+  [..] LibraryTest::test_library_functions()
+    ├─ [..] → new User@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 2998 bytes of code
+    ├─ [..] User::run()
+    │   ├─ [..] Lib::28654891(00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005) [delegatecall]
+    │   │   └─ ← [Return]
+    │   ├─ [..] Lib::a38fe94b(00000000000000000000000000000000000000000000000000000000000000005615deb798bb3e4dfa0139dfa1b3d433cc23b72f275ff7a000000000000000000000000000000000000000000000000000000000000000000000000000000003) [delegatecall]
+    │   │   ├─ [..] User::cb(3)
+    │   │   │   └─ ← [Return] 4
+    │   │   └─ ← [Return]
+    │   ├─ [..] Lib::ea13f58b(00000000000000000000000000000000000000000000000000000000000000030000000000000000000000000000000000000000000000000000000000000004) [delegatecall]
+    │   │   └─ ← [Return]
+    │   ├─ [..] Store::d8557d40(0000000000000000000000000000000000000000000000000000000000000001) [delegatecall]
+    │   │   ├─ [..] Store::h(<unknown>)
+    │   │   │   ├─ [..] Store::h(<unknown>)
+    │   │   │   │   └─ ← 1
+    │   │   │   └─ ← 2
+    │   │   └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000000002
+    │   ├─ [..] Lib::kind(1, 5) [delegatecall]
+    │   │   └─ ← [Return] 6
+    │   ├─ [..] Lib::plain(7) [delegatecall]
+    │   │   └─ ← [Return] 8
+    │   ├─ [..] Lib::f(3) [delegatecall]
+    │   │   ├─ [..] Lib::f(int256)(3)
+    │   │   │   ├─ [..] Lib::f(int256)(2)
+    │   │   │   │   ├─ [..] Lib::f(int256)(1)
+    │   │   │   │   │   ├─ [..] Lib::f(int256)(0)
+    │   │   │   │   │   │   └─ ← 1
+    │   │   │   │   │   └─ ← 2
+    │   │   │   │   └─ ← 3
+    │   │   │   └─ ← 4
+    │   │   └─ ← [Return] 4
+    │   ├─ [..] Lib::8722af9a(0000000000000000000000000000000000000000000000000000000000000003) [delegatecall]
+    │   │   ├─ [..] Lib::g(<unknown>)
+    │   │   │   ├─ [..] Lib::g(<unknown>)
+    │   │   │   │   ├─ [..] Lib::g(<unknown>)
+    │   │   │   │   │   ├─ [..] Lib::g(<unknown>)
+    │   │   │   │   │   │   └─ ← 1
+    │   │   │   │   │   └─ ← 2
+    │   │   │   │   └─ ← 3
+    │   │   │   └─ ← 4
+    │   │   └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000000004
+    │   └─ ← [Return] 26
+    └─ ← [Return]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)

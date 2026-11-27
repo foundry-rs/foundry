@@ -44,7 +44,10 @@ use foundry_compilers::{
 };
 use foundry_evm::{
     core::evm::FoundryEvmNetwork,
-    traces::{CallTraceDecoder, debug::ContractSources},
+    traces::{
+        CallTraceDecoder,
+        debug::{ContractSources, lower_sources},
+    },
 };
 use foundry_linking::Linker;
 use foundry_wallets::{MultiWalletOpts, wallet_browser::signer::BrowserSigner};
@@ -181,6 +184,7 @@ impl LinkedBuildData {
         predeploy_libraries: ScriptPredeployLibraries,
         mut build_data: BuildData,
     ) -> Result<Self> {
+        lower_sources(&mut build_data.output);
         let sources = ContractSources::from_project_output(
             &build_data.output,
             &build_data.project_root,

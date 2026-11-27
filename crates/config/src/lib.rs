@@ -24,7 +24,10 @@ use foundry_compilers::{
         BytecodeHash, Contract, DebuggingSettings, EvmVersion, Libraries, ModelCheckerSettings,
         ModelCheckerTarget, Optimizer, OptimizerDetails, RevertStrings, Settings, SettingsMetadata,
         Severity,
-        output_selection::{ContractOutputSelection, OutputSelection},
+        output_selection::{
+            BytecodeOutputSelection, ContractOutputSelection, DeployedBytecodeOutputSelection,
+            EvmOutputSelection, OutputSelection,
+        },
         remappings::{RelativeRemapping, Remapping},
         serde_helpers,
     },
@@ -2008,6 +2011,17 @@ pub const STANDALONE_FALLBACK_SECTIONS: &[(&str, &str)] = &[("invariant", "fuzz"
 pub const DEPRECATIONS: &[(&str, &str)] =
     &[("cancun", "evm_version = \"cancun\""), ("deny_warnings", "deny = \"warnings\"")];
 
+/// The compiler outputs that internal call decoding reads: the `functionDebugData` of the creation
+/// and the runtime code.
+pub const INTERNAL_CALL_OUTPUT: [ContractOutputSelection; 2] = [
+    ContractOutputSelection::Evm(EvmOutputSelection::ByteCode(
+        BytecodeOutputSelection::FunctionDebugData,
+    )),
+    ContractOutputSelection::Evm(EvmOutputSelection::DeployedByteCode(
+        DeployedBytecodeOutputSelection::FunctionDebugData,
+    )),
+];
+
 impl Config {
     /// The default profile: "default"
     pub const DEFAULT_PROFILE: Profile = Profile::Default;
@@ -3537,6 +3551,19 @@ impl Config {
             CliSettings { extra_args: self.extra_args.clone(), ..Default::default() };
 
         Ok(SolcSettings { settings, cli_settings })
+    }
+
+    /// Requests what internal call decoding reads from the artifacts: the `functionDebugData` of
+    /// the creation and the runtime code, which lists the functions.
+    ///
+    /// The tables are small, but they change the compiler output selection, so the first run
+    /// that needs them compiles the files it runs again.
+    pub fn enable_internal_call_artifacts(&mut self) {
+        for selection in INTERNAL_CALL_OUTPUT {
+            if !self.extra_output.contains(&selection) {
+                self.extra_output.push(selection);
+            }
+        }
     }
 
     /// Enables build infos for a debug run, which reads the compiled sources from them. Unless
@@ -7827,6 +7854,28 @@ mod tests {
         let mut config = Config { build_info: true, ..Config::default() };
         config.enable_debug_build_info().unwrap();
         assert!(requests_ast(&config));
+    }
+
+    #[test]
+    fn internal_call_artifacts_request_both_function_tables_only() {
+        let requested = |config: &Config| {
+            let settings = config.solc_settings().unwrap().settings;
+            let outputs = &settings.output_selection.as_ref()["*"];
+            (
+                outputs.contains_key(""),
+                outputs["*"].iter().any(|output| output == "evm.bytecode.functionDebugData"),
+                outputs["*"]
+                    .iter()
+                    .any(|output| output == "evm.deployedBytecode.functionDebugData"),
+            )
+        };
+
+        let mut config = Config::default();
+        assert_eq!(requested(&config), (false, false, false));
+        config.enable_internal_call_artifacts();
+        config.enable_internal_call_artifacts();
+        assert_eq!(requested(&config), (false, true, true));
+        assert_eq!(config.extra_output.len(), 2);
     }
 
     #[test]
