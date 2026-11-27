@@ -1001,8 +1001,8 @@ pub struct Config {
     ///
     /// Declare them in a `[profile.<name>.fuzz]` table, or in a standalone `[fuzz]` table that
     /// applies to every profile; a profile's own table takes precedence. Individual tests can
-    /// override them with inline `forge-config` comments. The `invariant` section falls back to
-    /// these values for the settings both sections share.
+    /// override them with inline `forge-config` comments. Keys in the standalone `[fuzz]` table
+    /// also apply to `[invariant]` unless the standalone `[invariant]` table sets them.
     pub fuzz: FuzzConfig,
     /// Settings for invariant tests, which check `invariant_*` functions after random call
     /// sequences.

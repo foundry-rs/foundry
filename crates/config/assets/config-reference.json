@@ -766,7 +766,7 @@
       "type": "table",
       "table": true,
       "default": null,
-      "description": "Settings for fuzz tests, which run test functions that take parameters with generated\ninputs.\n\nDeclare them in a `[profile.<name>.fuzz]` table, or in a standalone `[fuzz]` table that\napplies to every profile; a profile's own table takes precedence. Individual tests can\noverride them with inline `forge-config` comments. The `invariant` section falls back to\nthese values for the settings both sections share."
+      "description": "Settings for fuzz tests, which run test functions that take parameters with generated\ninputs.\n\nDeclare them in a `[profile.<name>.fuzz]` table, or in a standalone `[fuzz]` table that\napplies to every profile; a profile's own table takes precedence. Individual tests can\noverride them with inline `forge-config` comments. Keys in the standalone `[fuzz]` table\nalso apply to `[invariant]` unless the standalone `[invariant]` table sets them."
     },
     {
       "key": "fuzz.runs",
