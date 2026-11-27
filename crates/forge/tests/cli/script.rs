@@ -8801,6 +8801,102 @@ contract TempoResume is Script {
     assert_eq!(provider.get_storage_at(target, U256::ZERO).await.unwrap(), U256::from(7));
 }
 
+// A Tempo node's rejection of a batched transaction stops the batch: the sender's later
+// transactions are neither signed nor sent, so none waits behind the nonce gap, and `--resume`
+// retries the rejected one and sends them.
+#[forgetest_init]
+async fn tempo_script_stops_batch_at_rejected_transaction(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "TempoRejected.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract TempoRejectedTarget {
+    uint256 public value;
+
+    function set(uint256 newValue) external {
+        value = newValue;
+    }
+}
+
+contract TempoRejected is Script {
+    function run() external {
+        vm.startBroadcast();
+        TempoRejectedTarget target = new TempoRejectedTarget();
+        for (uint256 i = 1; i <= 4; i++) {
+            target.set(i);
+        }
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let (rejecting_rpc, rejecting) = rpc::spawn_rpc_proxy_method_error_after_when_enabled(
+        handle.http_endpoint(),
+        "eth_sendRawTransaction",
+        2,
+        -32003,
+        "fee token rejected",
+    )
+    .await;
+    let (rpc, submissions) =
+        spawn_rpc_proxy_recording_method(rejecting_rpc, "eth_sendRawTransaction").await;
+    let sender = handle.dev_accounts().next().unwrap();
+    let args = [
+        "--tc",
+        "TempoRejected",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+        "--network",
+        "tempo",
+    ];
+
+    cmd.arg("script").arg(&script).args(args).assert_failure().stderr_eq(str![[r#"
+Paying gas in AlphaUSD (0x20C0000000000000000000000000000000000001)
+Paying gas in AlphaUSD (0x20C0000000000000000000000000000000000001)
+Warning: Transactions 3, 4 on chain 31337 were not sent after transaction 2 failed. Add `--resume` to your command to retry transaction 2 and send them.
+Error: Failed to send transaction after 4 attempts Err(server returned an error response: error code -32003: fee token rejected)
+
+"#]]);
+    // The rejected transaction is resent, but nothing after it is submitted.
+    let mut payloads =
+        submissions.lock().unwrap().iter().map(|params| params[0].clone()).collect::<Vec<_>>();
+    payloads.dedup();
+    assert_eq!(payloads.len(), 3);
+    let sequence: Value =
+        foundry_common::fs::read_json_file(&latest_broadcast_path(prj.root())).unwrap();
+    let transactions = sequence["transactions"].as_array().unwrap();
+    assert_eq!(transactions.len(), 5);
+    assert!(transactions[..2].iter().all(|tx| tx["hash"].is_string()));
+    assert!(transactions[2..].iter().all(|tx| tx["hash"].is_null()));
+    let recovery_path = foundry_common::fs::json_files(&prj.root().join("cache"))
+        .find(|path| path.to_string_lossy().ends_with(".recovery.json"))
+        .unwrap();
+    let recovery: Value = foundry_common::fs::read_json_file(&recovery_path).unwrap();
+    assert_eq!(recovery["deployments"][0]["attempts"].as_array().unwrap().len(), 3);
+    let provider = handle.http_provider();
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 2);
+
+    rejecting.store(false, Ordering::SeqCst);
+    cmd.forge_fuse().arg("script").arg(&script).args(args).arg("--resume").assert_success();
+    let sequence: Value =
+        foundry_common::fs::read_json_file(&latest_broadcast_path(prj.root())).unwrap();
+    let receipts = sequence["receipts"].as_array().unwrap();
+    assert_eq!(receipts.len(), 5);
+    assert!(receipts.iter().all(|receipt| receipt["status"] == "0x1"), "{receipts:?}");
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 5);
+    let target = sequence["transactions"][0]["contractAddress"]
+        .as_str()
+        .unwrap()
+        .parse::<Address>()
+        .unwrap();
+    assert_eq!(provider.get_storage_at(target, U256::ZERO).await.unwrap(), U256::from(4));
+}
+
 #[forgetest_init]
 async fn tempo_aa_script_broadcasts_with_local_sponsor(prj: _, cmd: _) {
     let script = prj.add_script(

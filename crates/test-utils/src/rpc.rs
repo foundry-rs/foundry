@@ -446,6 +446,28 @@ pub async fn spawn_rpc_proxy_method_error(
     .await
 }
 
+/// Spawns an RPC proxy that forwards `successful_calls` requests to `method`, then answers later
+/// requests with the JSON-RPC error `code` and `message` while the returned switch is enabled.
+pub async fn spawn_rpc_proxy_method_error_after_when_enabled(
+    endpoint: String,
+    method: &'static str,
+    successful_calls: usize,
+    code: i64,
+    message: &'static str,
+) -> (String, Arc<AtomicBool>) {
+    let enabled = Arc::new(AtomicBool::new(true));
+    let proxy = spawn_rpc_proxy_rejecting_method(
+        endpoint,
+        method,
+        RpcMethodRejection::AfterWhenEnabled(successful_calls, enabled.clone()),
+        StatusCode::OK,
+        code,
+        message,
+    )
+    .await;
+    (proxy, enabled)
+}
+
 /// Spawns an RPC proxy that answers `method` with `result` instead of forwarding it upstream.
 ///
 /// All other methods are forwarded. The returned counter tracks how many `method` calls reached the
