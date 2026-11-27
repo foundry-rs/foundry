@@ -1016,8 +1016,8 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 eyre::bail!(message);
             }
 
-            // An owner key that a configurable account holds cannot also send on its own. An
-            // upgraded EOA that owns itself sends only as the configurable account.
+            // An owner key that a configurable account holds cannot also sign as a plain wallet
+            // for a sender, which `for_sender` picks for a scope without another signer.
             let mut eth_wallets = AddressHashMap::<EthereumWallet>::default();
             for signer in wallet_signers {
                 let address = signer.address();
@@ -1027,6 +1027,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     }
                     None if remaining_transactions.iter().any(|scope| {
                         scope.sender == address
+                            && !access_keys.contains_key(scope)
                             && !configurable_accounts.contains_key(scope)
                             && !offline_owners.contains_key(scope)
                     }) =>
