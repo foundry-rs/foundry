@@ -373,7 +373,7 @@ impl BindJsonArgs {
     fn write_bindings(
         &self,
         structs_to_write: &[StructToWrite],
-        target_path: &PathBuf,
+        target_path: &Path,
         version: &Version,
     ) -> Result<()> {
         let mut result = String::new();
@@ -464,19 +464,81 @@ library JsonBindings {
         result.push_str("}\n");
 
         // Write to file
-        if let Some(parent) = target_path.parent() {
+        let destination = bindings_destination(target_path)?;
+        if let Some(parent) = destination.parent() {
             fs::create_dir_all(parent)?;
         }
-        // Write next to the target and rename, so the old bindings are only replaced once the new
-        // ones are complete.
-        let tmp_path = target_path.with_extension("sol.tmp");
-        fs::write(&tmp_path, &result)?;
-        std::fs::rename(&tmp_path, target_path)?;
+        publish_bindings(&destination, &result)?;
 
         sh_status!("Bindings written to {}", target_path.display())?;
 
         Ok(())
     }
+}
+
+/// Returns the file the bindings are written to: `target_path`, or the file it links to, so a
+/// symlinked bindings file is updated through its link.
+fn bindings_destination(target_path: &Path) -> Result<PathBuf> {
+    let mut path = target_path.to_path_buf();
+    // Bounded like the OS does, so a symlink loop fails instead of hanging.
+    for _ in 0..40 {
+        let Ok(link) = std::fs::read_link(&path) else { return Ok(path) };
+        path = match path.parent() {
+            Some(parent) => parent.join(link),
+            None => link,
+        };
+    }
+    eyre::bail!("failed to write to {}: too many levels of symbolic links", target_path.display())
+}
+
+/// Writes `contents` to `destination` through a uniquely named temporary file beside it, so the
+/// old file is only replaced once the new one is complete and no other file is overwritten.
+fn publish_bindings(destination: &Path, contents: &str) -> Result<()> {
+    if destination.exists() {
+        // Fail like a plain write would for a file we may not write to, without changing it.
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(destination)
+            .map_err(|err| eyre::eyre!("failed to write to {}: {err}", destination.display()))?;
+        // A rename would detach a hard-linked file from its other links, so write those in place.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if std::fs::metadata(destination)?.nlink() > 1 {
+                fs::write(destination, contents)?;
+                return Ok(());
+            }
+        }
+    }
+
+    let dir =
+        destination.parent().filter(|dir| !dir.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let prefix = format!(
+        ".{}.",
+        destination.file_name().map(|name| name.to_string_lossy()).unwrap_or_default()
+    );
+    let mut tmp = match tempfile::Builder::new().prefix(&prefix).suffix(".tmp").tempfile_in(dir) {
+        Ok(tmp) => tmp,
+        // The directory may not allow new files while the bindings file itself is writable.
+        Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied && destination.exists() => {
+            fs::write(destination, contents)?;
+            return Ok(());
+        }
+        Err(err) => return Err(err.into()),
+    };
+    std::io::Write::write_all(&mut tmp, contents.as_bytes())?;
+    // Temporary files are private, so give the new file the old one's permissions.
+    if let Ok(metadata) = std::fs::metadata(destination) {
+        tmp.as_file().set_permissions(metadata.permissions())?;
+    } else {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            tmp.as_file().set_permissions(std::fs::Permissions::from_mode(0o644))?;
+        }
+    }
+    tmp.persist(destination).map_err(|err| err.error)?;
+    Ok(())
 }
 
 /// Returns the pragma lines of the generated bindings file for the given solc version.

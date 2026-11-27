@@ -338,3 +338,114 @@ contract Uses {
     let bindings = std::fs::read_to_string(prj.root().join("utils/JsonBindings.sol")).unwrap();
     assert!(bindings.contains("schema_Point"), "{bindings}");
 }
+
+// Publishing the bindings must not overwrite other files beside them, such as one named like a
+// staging file.
+#[forgetest]
+fn test_bind_json_keeps_sibling_files(prj: _, cmd: _) {
+    prj.add_source("Structs", "struct Point {\n    uint256 x;\n}\n");
+    let sibling = prj.root().join("utils/JsonBindings.sol.tmp");
+    std::fs::create_dir_all(sibling.parent().unwrap()).unwrap();
+    std::fs::write(&sibling, "unrelated data\n").unwrap();
+
+    cmd.arg("bind-json").assert_success();
+
+    assert_eq!(std::fs::read_to_string(&sibling).unwrap(), "unrelated data\n");
+    let bindings = std::fs::read_to_string(prj.root().join("utils/JsonBindings.sol")).unwrap();
+    assert!(bindings.contains("schema_Point"), "{bindings}");
+    let leftovers = std::fs::read_dir(prj.root().join("utils"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with(".JsonBindings.sol."))
+        .collect::<Vec<_>>();
+    assert!(leftovers.is_empty(), "{leftovers:?}");
+}
+
+// A symlinked bindings file is updated through its link, and the link is kept.
+#[cfg(unix)]
+#[forgetest]
+fn test_bind_json_updates_symlinked_bindings(prj: _, cmd: _) {
+    prj.add_source("Structs", "struct Point {\n    uint256 x;\n}\n");
+    let utils = prj.root().join("utils");
+    std::fs::create_dir_all(&utils).unwrap();
+    std::fs::write(utils.join("Shared.sol"), "library JsonBindings {}\n").unwrap();
+    std::os::unix::fs::symlink("Shared.sol", utils.join("JsonBindings.sol")).unwrap();
+
+    cmd.arg("bind-json").assert_success();
+
+    let link = utils.join("JsonBindings.sol");
+    assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+    assert_eq!(std::fs::read_link(&link).unwrap(), std::path::Path::new("Shared.sol"));
+    let shared = std::fs::read_to_string(utils.join("Shared.sol")).unwrap();
+    assert!(shared.contains("schema_Point"), "{shared}");
+}
+
+// Bindings that are hard-linked are updated in place, so every link sees the new bindings.
+#[cfg(unix)]
+#[forgetest]
+fn test_bind_json_updates_hardlinked_bindings(prj: _, cmd: _) {
+    prj.add_source("Structs", "struct Point {\n    uint256 x;\n}\n");
+    let utils = prj.root().join("utils");
+    std::fs::create_dir_all(&utils).unwrap();
+    std::fs::write(utils.join("Other.sol"), "library JsonBindings {}\n").unwrap();
+    std::fs::hard_link(utils.join("Other.sol"), utils.join("JsonBindings.sol")).unwrap();
+
+    cmd.arg("bind-json").assert_success();
+
+    let other = std::fs::read_to_string(utils.join("Other.sol")).unwrap();
+    assert!(other.contains("schema_Point"), "{other}");
+}
+
+// A read-only bindings file is left alone and reported, as a plain write would.
+#[cfg(unix)]
+#[forgetest]
+fn test_bind_json_keeps_readonly_bindings(prj: _, cmd: _) {
+    use std::os::unix::fs::PermissionsExt;
+
+    prj.add_source("Structs", "struct Point {\n    uint256 x;\n}\n");
+    let bindings_path = prj.root().join("utils/JsonBindings.sol");
+    std::fs::create_dir_all(bindings_path.parent().unwrap()).unwrap();
+    std::fs::write(&bindings_path, "library JsonBindings {}\n").unwrap();
+    std::fs::set_permissions(&bindings_path, std::fs::Permissions::from_mode(0o444)).unwrap();
+
+    cmd.arg("bind-json").assert_failure();
+
+    assert_eq!(std::fs::read_to_string(&bindings_path).unwrap(), "library JsonBindings {}\n");
+}
+
+// A symlink loop at the output path fails without replacing any of the links.
+#[cfg(unix)]
+#[forgetest]
+fn test_bind_json_symlink_loop_fails(prj: _, cmd: _) {
+    prj.add_source("Structs", "struct Point {\n    uint256 x;\n}\n");
+    let utils = prj.root().join("utils");
+    std::fs::create_dir_all(&utils).unwrap();
+    std::os::unix::fs::symlink("B.sol", utils.join("JsonBindings.sol")).unwrap();
+    std::os::unix::fs::symlink("JsonBindings.sol", utils.join("B.sol")).unwrap();
+
+    cmd.arg("bind-json").assert_failure();
+
+    for name in ["JsonBindings.sol", "B.sol"] {
+        assert!(std::fs::symlink_metadata(utils.join(name)).unwrap().file_type().is_symlink());
+    }
+}
+
+// Bindings in a directory that doesn't allow new files are still updated in place.
+#[cfg(unix)]
+#[forgetest]
+fn test_bind_json_readonly_dir(prj: _, cmd: _) {
+    use std::os::unix::fs::PermissionsExt;
+
+    prj.add_source("Structs", "struct Point {\n    uint256 x;\n}\n");
+    let utils = prj.root().join("utils");
+    std::fs::create_dir_all(&utils).unwrap();
+    std::fs::write(utils.join("JsonBindings.sol"), "library JsonBindings {}\n").unwrap();
+    std::fs::set_permissions(&utils, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+    let result = cmd.arg("bind-json").assert_success();
+    std::fs::set_permissions(&utils, std::fs::Permissions::from_mode(0o755)).unwrap();
+    drop(result);
+
+    let bindings = std::fs::read_to_string(utils.join("JsonBindings.sol")).unwrap();
+    assert!(bindings.contains("schema_Point"), "{bindings}");
+}
