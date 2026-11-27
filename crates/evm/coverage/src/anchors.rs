@@ -853,6 +853,14 @@ impl<'a> AnchorIndex<'a> {
                     && self.source_map[ic].offset() < callee.bytes.end
             })
             .collect::<Vec<_>>();
+        // The overflow check's failure stub can follow the run. A function that only fails has
+        // nothing but the stub, which is then its run.
+        let live = body
+            .iter()
+            .copied()
+            .filter(|&ic| !in_reverting_run(&self.reverting_runs, ic))
+            .collect::<Vec<_>>();
+        let body = if live.is_empty() { body } else { live };
         let (&first, &last) = (body.iter().min()?, body.iter().max()?);
         // Code between the first and last instruction that is mapped elsewhere belongs to another
         // copy or a nested call.
@@ -863,15 +871,30 @@ impl<'a> AnchorIndex<'a> {
         }) {
             return None;
         }
-        // The run is entered by falling into it. A first instruction that something jumps to, such
-        // as a loop header, runs more often than the arm, even behind unmapped `JUMPDEST`s.
+        // The run is entered once per arm. A first instruction that a later jump returns to, such
+        // as a loop header, runs more often than the arm, even behind unmapped `JUMPDEST`s. A jump
+        // from before it only enters the run when it is the dispatcher's, which is mapped to no
+        // source or to the whole contract, and not another function's call or a merged copy.
+        let enters = |push: usize| {
+            self.source_map.get(push).is_some_and(|element| {
+                element.index().is_none()
+                    || (element.index() == Some(arm.source_id as u32)
+                        && element.offset() <= arm.bytes.start
+                        && element.offset() + element.length() >= arm.bytes.end)
+            })
+        };
         let mut ic = first;
         loop {
             let pc = *self.pcs.get(ic)?;
-            if self.bytecode.get(pc as usize) == Some(&opcode::JUMPDEST)
-                && self.address_pushes.binary_search_by_key(&pc, |&(target, _)| target).is_ok()
-            {
-                return None;
+            if self.bytecode.get(pc as usize) == Some(&opcode::JUMPDEST) {
+                let start = self.address_pushes.partition_point(|&(target, _)| target < pc);
+                if self.address_pushes[start..]
+                    .iter()
+                    .take_while(|&&(target, _)| target == pc)
+                    .any(|&(_, push)| push >= ic || !enters(push))
+                {
+                    return None;
+                }
             }
             match ic.checked_sub(1) {
                 Some(prev)
@@ -2597,10 +2620,40 @@ mod tests {
                 hits: 0,
             })
             .collect();
-        let analysis = SourceAnalysis::for_test(items, vec![(0, BranchKind::If(arms))]);
+        let callees =
+            arms.then_callees.iter().chain(&arms.else_callees).cloned().collect::<Vec<_>>();
+        let mut analysis = SourceAnalysis::for_test(items, vec![(0, BranchKind::If(arms))]);
+        for callee in &callees {
+            analysis = analysis.with_callee_calls(callee, 1);
+        }
         let source_map = sourcemap::parse(source_map).unwrap();
         let ic_pc_map = IcPcMap::new(bytecode);
         find_anchors(bytecode, &source_map, &ic_pc_map, &analysis)
+    }
+
+    #[test]
+    fn if_arm_without_a_jump_counts_the_run_of_its_function() {
+        // The condition has no jump, and the then arm calls the function at 100..110, which the
+        // compiler inlined, so its run is the arm's. The first instruction of the run anchors it.
+        let anchors = |bytecode: &[u8], source_map| {
+            let anchors =
+                find_if_anchors_calling(bytecode, source_map, false, false, Some(100..110), None);
+            (0..anchors.anchors.len()).map(|i| anchors.anchors[i].instruction).collect::<Vec<_>>()
+        };
+        // A failure stub after the run, as with an overflow check's panic, is not the run. The
+        // `STOP` that ends the run is mapped to the enclosing function at 92..171.
+        let run_then_stub = [
+            opcode::PUSH0,
+            opcode::POP,
+            opcode::STOP,
+            opcode::PUSH0,
+            opcode::PUSH0,
+            opcode::REVERT,
+        ];
+        assert_eq!(anchors(&run_then_stub, "102:3:0;;92:79:0;102:3:0;;"), [0]);
+        // A function that only fails has nothing but the stub, which is then its run.
+        let only_stub = [opcode::PUSH0, opcode::PUSH0, opcode::REVERT];
+        assert_eq!(anchors(&only_stub, "102:3:0;;"), [0]);
     }
 
     #[test]

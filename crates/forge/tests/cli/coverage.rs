@@ -3519,6 +3519,230 @@ BRDA:157,17,0,-
     );
 }
 
+// An arm whose only code is a call to an internal function that the optimizer inlines has no code
+// of its own, so it counts the inlined run of the function. Solar places the overflow check's panic
+// stub of the function after the run, and enters the run from the dispatcher's jump.
+#[forgetest]
+fn if_arm_whose_only_code_is_a_call_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Gate.sol",
+        r#"
+contract Gate {
+    uint256 public total;
+
+    function bump() internal {
+        total += 1;
+    }
+
+    function live() external {
+        if (true) {
+            bump();
+        }
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Gate.t.sol",
+        r#"
+import "../src/Gate.sol";
+
+contract GateTest {
+    function testLive() public {
+        Gate gate = new Gate();
+        for (uint256 i = 0; i < 3; i++) gate.live();
+    }
+}
+"#,
+    );
+
+    let optimized = ["coverage", "--no-isolate", "--keep-optimizer", "--optimize"];
+    let expected = str![[r#"
+...
+BRDA:12,0,0,3
+...
+"#]];
+    assert_lcov(cmd.args(optimized), expected.clone());
+    prj.update_config(|config| config.via_ir = true);
+    assert_lcov(cmd.forge_fuse().args(optimized), expected.clone());
+    prj.update_config(|config| config.via_ir = false);
+    let solar = prj.ensure_foundry_bin("solar");
+    assert_lcov(cmd.forge_fuse().args(optimized).arg("--use").arg(&solar), expected);
+}
+
+// Member accesses count against the function that type checking resolves them to, so a member of
+// another name space that is also called `bump` does not keep the live arm from counting.
+#[forgetest]
+fn if_arm_counts_when_other_members_share_its_function_name_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Names.sol",
+        r#"
+contract Other {
+    function bump() external {}
+}
+
+contract Names {
+    struct Slot {
+        uint256 bump;
+    }
+
+    uint256 public total;
+    Slot slot;
+
+    function bump() internal {
+        total += 1;
+    }
+
+    function live() external {
+        slot.bump = 1;
+        new Other().bump();
+        if (true) {
+            bump();
+        }
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Names.t.sol",
+        r#"
+import "../src/Names.sol";
+
+contract NamesTest {
+    function testLive() public {
+        Names names = new Names();
+        for (uint256 i = 0; i < 3; i++) names.live();
+    }
+}
+"#,
+    );
+
+    let optimized = ["coverage", "--no-isolate", "--keep-optimizer", "--optimize"];
+    let expected = str![[r#"
+...
+BRDA:23,0,0,3
+...
+"#]];
+    assert_lcov(cmd.args(optimized), expected.clone());
+    let solar = prj.ensure_foundry_bin("solar");
+    assert_lcov(cmd.forge_fuse().args(optimized).arg("--use").arg(&solar), expected);
+}
+
+// `super` dispatches along the linearization of the most derived contract, so type checking cannot
+// say which function it runs: `Right` resolves `super.bump()` to `Root.bump`, but `Final.other()`
+// runs `Left.bump`. A dead arm that calls `Left.bump` must not borrow that run.
+#[forgetest]
+fn if_arm_with_super_call_in_derived_contract_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Super.sol",
+        r#"
+contract Root {
+    uint256 public total;
+    function bump() internal virtual { total += 10; }
+}
+contract Left is Root {
+    function bump() internal virtual override { total += 1; }
+    function neverCalled() internal { if (true) { bump(); } }
+}
+contract Right is Root {
+    function other() external { super.bump(); }
+}
+contract Final is Left, Right {
+    function bump() internal override(Left, Root) { total += 100; }
+}
+"#,
+    );
+    prj.add_test(
+        "Super.t.sol",
+        r#"
+import "../src/Super.sol";
+
+contract SuperTest {
+    function testOther() public {
+        Final f = new Final();
+        for (uint256 i = 0; i < 3; i++) f.other();
+    }
+}
+"#,
+    );
+
+    let optimized = ["coverage", "--no-isolate", "--keep-optimizer", "--optimize"];
+    let expected = str![[r#"
+...
+BRDA:10,0,0,-
+...
+"#]];
+    assert_lcov(cmd.args(optimized), expected.clone());
+    let solar = prj.ensure_foundry_bin("solar");
+    assert_lcov(cmd.forge_fuse().args(optimized).arg("--use").arg(&solar), expected);
+}
+
+// The run of an inlined function is the arm's only when nothing else enters it: a loop in the
+// function, a function with the same body, which the optimizer can merge, and a dead arm next to a
+// live function with the same body must not change the arm's count.
+#[forgetest]
+fn if_arm_run_is_not_shared_with_loops_or_equal_bodies_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Shared.sol",
+        r#"
+contract Looped {
+    uint256 public t;
+    function loopy() internal { for (uint256 i; i < 3; i++) { t += 1; } }
+    function live() external { if (true) { loopy(); } }
+}
+contract Equal {
+    uint256 public t;
+    function a() internal { t += 1; }
+    function b() internal { t += 1; }
+    function live() external { if (true) { a(); } }
+    function other() external { b(); }
+}
+contract Dead {
+    uint256 public t;
+    function a() internal { t += 1; }
+    function b() internal { t += 1; }
+    function never() internal { if (true) { a(); } }
+    function other() external { b(); }
+}
+"#,
+    );
+    prj.add_test(
+        "Shared.t.sol",
+        r#"
+import "../src/Shared.sol";
+
+contract SharedTest {
+    function testAll() public {
+        Looped looped = new Looped();
+        Equal equal = new Equal();
+        Dead dead = new Dead();
+        for (uint256 i = 0; i < 3; i++) {
+            looped.live();
+            equal.live();
+        }
+        for (uint256 i = 0; i < 5; i++) {
+            equal.other();
+            dead.other();
+        }
+    }
+}
+"#,
+    );
+
+    assert_lcov(
+        cmd.args(["coverage", "--no-isolate", "--keep-optimizer", "--optimize"]),
+        str![[r#"
+...
+BRDA:7,0,0,3
+...
+BRDA:13,1,0,3
+...
+BRDA:20,2,0,-
+...
+"#]],
+    );
+}
+
 #[forgetest]
 fn identical_bytecodes(prj: _, cmd: _) {
     prj.insert_ds_test();

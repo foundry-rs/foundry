@@ -10,7 +10,7 @@ use solar::{
         map::{FxHashMap, FxHashSet},
     },
     interface::{RelativeBytePos, Span, sym},
-    sema::{Gcx, hir},
+    sema::{Gcx, builtins::Builtin, hir},
 };
 use std::{
     ops::{ControlFlow, Range},
@@ -55,8 +55,8 @@ struct SourceVisitor<'gcx> {
     /// function, with the function's name. A function that outside callers can reach counts twice
     /// per call, so it never counts as called once.
     callee_calls: HashMap<(usize, u32, u32), (u32, Arc<str>)>,
-    /// How many member accesses, such as `super.f` in a call, name each function. They resolve
-    /// statically, so they count against every function with that name.
+    /// How many member accesses that type checking did not resolve, such as `super.f` in a call,
+    /// name each function. They count against every function with that name.
     member_calls: HashMap<Arc<str>, u32>,
     /// How many references to each function are not the callee of a call, such as a function
     /// pointer's value, by [`callee_key`]. The pointer can run the function from elsewhere.
@@ -828,8 +828,25 @@ impl<'gcx> hir::Visit<'gcx> for SourceVisitor<'gcx> {
 
     fn visit_expr(&mut self, expr: &'gcx hir::Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
         match &expr.kind {
-            hir::ExprKind::Member(_, member) => {
-                *self.member_calls.entry(Arc::from(member.as_str())).or_default() += 1;
+            hir::ExprKind::Member(base, member) => {
+                // `super` dispatches along the linearization of the most derived contract, which
+                // can run another function than the one type checking resolves in this contract.
+                let is_super = matches!(
+                    base.peel_parens().kind,
+                    hir::ExprKind::Ident([hir::Res::Builtin(Builtin::Super)])
+                );
+                match self.gcx.resolved_expr(expr) {
+                    // Type checking selected the function that the access names.
+                    Some(hir::Res::Item(hir::ItemId::Function(id))) if !is_super => {
+                        if let Some(key) = self.function_key(self.gcx.hir.function(id)) {
+                            *self.value_refs.entry(key).or_default() += 1;
+                        }
+                    }
+                    Some(_) if !is_super => {}
+                    _ => {
+                        *self.member_calls.entry(Arc::from(member.as_str())).or_default() += 1;
+                    }
+                }
             }
             hir::ExprKind::Ident(res) if !self.callee_idents.contains(&expr.span) => {
                 for res in *res {
@@ -964,7 +981,7 @@ pub struct SourceAnalysis {
     branch_kinds: HashMap<(u32, u32), BranchKind>,
     /// How many calls by name resolve to each function, by [`callee_key`], with its name.
     callee_calls: HashMap<(usize, u32, u32), (u32, Arc<str>)>,
-    /// How many member accesses name each function.
+    /// How many member accesses that type checking did not resolve name each function.
     member_calls: HashMap<Arc<str>, u32>,
     /// How many references to each function are not the callee of a call, by [`callee_key`].
     value_refs: HashMap<(usize, u32, u32), u32>,
@@ -995,6 +1012,11 @@ impl SourceAnalysis {
         let mut resolved_empty_special_functions = Vec::new();
         let mut excluded_counts = Vec::new();
         let mut sourced_items = output.parser().solc().compiler().enter(|compiler| {
+            // Type checking resolves member accesses and overrides, which the walk counts by
+            // function. Without it they count by name, which is coarser.
+            if !compiler.gcx().has_typeck_results() {
+                let _ = compiler.analysis();
+            }
             let hir_source_ids = Arc::new(
                 data.sources
                     .iter()
@@ -1246,6 +1268,13 @@ impl SourceAnalysis {
             branch_kinds: branch_kinds.into_iter().map(|(id, kind)| ((0, id), kind)).collect(),
             ..Default::default()
         }
+    }
+
+    /// Sets how many calls by name resolve to the function at `loc`.
+    #[cfg(test)]
+    pub(crate) fn with_callee_calls(mut self, loc: &SourceLocation, calls: u32) -> Self {
+        self.callee_calls.insert(callee_key(loc), (calls, Arc::from("")));
+        self
     }
 }
 
