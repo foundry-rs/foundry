@@ -11069,8 +11069,11 @@ contract SymbolicSignedPrice {
 
 // Synthetix and MasterChef reward accrual scale a staked balance by a per-token rate
 // `reward * 1e18 / supply`. With the balance at most the supply, `balance * rate` cannot overflow
-// and stays within `reward * 1e18`. A balance one above the supply, or a rate over another
-// supply, breaks the bound, and the latter product can overflow.
+// and stays within `reward * 1e18`, so the earned amount `balance * rate / 1e18` stays within
+// `reward`. A balance one above the supply, or a rate over another supply, breaks the bound, and
+// the latter product can overflow. The earned amount reaches `reward` at a balance equal to the
+// supply when the division is exact, and a rate over another reward is not bounded by `reward`. A
+// scale that can be zero breaks the strict bound.
 #[forgetest_init]
 fn symbolic_proves_balance_times_per_token_rate(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_balance_times_per_token_rate");
@@ -11117,6 +11120,43 @@ contract SymbolicRewardAccrual {
         if (other == 0 || balance > supply) return;
         try this.earned(balance, other, reward) {} catch { assert(false); }
     }
+
+    function checkEarnedWithinReward(uint128 balance, uint128 supply, uint128 reward) public pure {
+        if (supply == 0 || balance > supply) return;
+        assert(uint256(balance) * rewardPerToken(reward, supply) / 1e18 <= reward);
+    }
+
+    function checkPendingWithinReward(uint128 amount, uint128 supply, uint128 reward) public pure {
+        if (supply == 0 || amount > supply) return;
+        uint256 accPerShare = uint256(reward) * 1e12 / supply;
+        assert(uint256(amount) * accPerShare / 1e12 <= reward);
+    }
+
+    function checkEarnedAboveSupply(uint128 balance, uint128 supply, uint128 reward) public pure {
+        if (supply == 0 || balance > uint256(supply) + 1) return;
+        assert(uint256(balance) * rewardPerToken(reward, supply) / 1e18 <= reward);
+    }
+
+    function checkEarnedBelowReward(uint128 balance, uint128 supply, uint128 reward) public pure {
+        if (supply == 0 || balance > supply || reward == 0) return;
+        assert(uint256(balance) * rewardPerToken(reward, supply) / 1e18 < reward);
+    }
+
+    function checkEarnedOtherReward(uint128 balance, uint128 supply, uint128 other, uint128 reward)
+        public
+        pure
+    {
+        if (supply == 0 || balance > supply) return;
+        assert(uint256(balance) * rewardPerToken(other, supply) / 1e18 <= reward);
+    }
+
+    function checkEarnedZeroScale(uint128 balance, uint128 supply, uint128 x, uint128 k)
+        public
+        pure
+    {
+        if (supply == 0 || balance > supply) return;
+        assert(uint256(balance) * (uint256(x) * k / supply) < (uint256(x) + 1) * k);
+    }
 }
 "#,
     );
@@ -11132,9 +11172,31 @@ contract SymbolicRewardAccrual {
         let result = json_test_result(&output, "checkAccruedWithinReward(uint128,uint128,uint128)");
         assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
         for signature in [
+            "checkEarnedWithinReward(uint128,uint128,uint128)",
+            "checkPendingWithinReward(uint128,uint128,uint128)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "pass",
+                "{signature}, optimized={optimized}: {result}"
+            );
+            // Without the optimizer, solc's `reward * 1e18` overflow guard, an OR of
+            // complementary bool words, still reaches the solver.
+            if optimized {
+                assert_eq!(
+                    result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+                    "{signature}: {result}"
+                );
+            }
+        }
+        for signature in [
             "checkBalanceAboveSupply(uint128,uint128,uint128)",
             "checkOtherSupply(uint128,uint128,uint128,uint128)",
             "checkEarnedOverflowsOverOtherSupply(uint128,uint128,uint128,uint128)",
+            "checkEarnedAboveSupply(uint128,uint128,uint128)",
+            "checkEarnedBelowReward(uint128,uint128,uint128)",
+            "checkEarnedOtherReward(uint128,uint128,uint128,uint128)",
+            "checkEarnedZeroScale(uint128,uint128,uint128,uint128)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(
