@@ -9232,6 +9232,45 @@ Warning: Simulated with Foundry's default sender, so addresses and nonces may no
 "#]]);
 }
 
+// Tempo caps transactions at 30M gas. Foundry knows no hardfork schedule for a local Tempo chain,
+// so the cap that keeps the default 130% gas estimate margin sendable comes from the node.
+#[forgetest_init]
+async fn tempo_script_caps_gas_margin_on_unscheduled_chain(prj: _, cmd: _) {
+    const TEMPO_TX_GAS_LIMIT_CAP: u64 = 30_000_000;
+    write_large_runtime_deploy_script(&prj, 24_000);
+    // Only the transaction cap limits the deployment, whatever Anvil's default block gas limit.
+    let (_api, handle) = spawn(NodeConfig::test_tempo().with_gas_limit(Some(500_000_000))).await;
+    let rpc = handle.http_endpoint();
+    let args = [
+        "DeployLarge",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    ];
+    let gas = |value: &Value| u64::from_str_radix(&value.as_str().unwrap()[2..], 16).unwrap();
+
+    cmd.arg("script").args(args).assert_success();
+    let dry_run = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+        .find(|path| path.ends_with("dry-run/run-latest.json"))
+        .expect("no dry-run broadcast artifact");
+    let sequence: Value = foundry_common::fs::read_json_file(&dry_run).unwrap();
+    assert_eq!(gas(&sequence["transactions"][0]["transaction"]["gas"]), TEMPO_TX_GAS_LIMIT_CAP);
+
+    cmd.forge_fuse().arg("script").args(args).arg("--broadcast").assert_success();
+    let sequence: Value =
+        foundry_common::fs::read_json_file(&latest_broadcast_path(prj.root())).unwrap();
+    let receipt = &sequence["receipts"][0];
+    assert_eq!(receipt["status"], "0x1");
+    assert!(gas(&receipt["gasUsed"]) * 130 / 100 > TEMPO_TX_GAS_LIMIT_CAP);
+    let tx = handle
+        .http_provider()
+        .raw_request::<_, Value>("eth_getTransactionByHash".into(), (&receipt["transactionHash"],))
+        .await
+        .unwrap();
+    assert_eq!(gas(&tx["gas"]), TEMPO_TX_GAS_LIMIT_CAP);
+}
+
 // Regression test for https://github.com/foundry-rs/foundry/issues/15207: the broadcast simulation
 // must observe an `anvil_setBalance` done via `vm.rpc` earlier in the same script.
 #[forgetest_init]

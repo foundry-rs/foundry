@@ -9,7 +9,10 @@ use foundry_cli::utils::apply_gas_estimate_multiplier;
 use foundry_common::{
     ContractData, ContractsByArtifact, SELECTOR_LEN, TransactionMaybeSigned, fmt::format_token_raw,
 };
-use foundry_evm::traces::{CallKind, CallTraceDecoder};
+use foundry_evm::{
+    hardforks::FoundryHardfork,
+    traces::{CallKind, CallTraceDecoder},
+};
 use itertools::Itertools;
 use std::collections::BTreeMap;
 
@@ -165,12 +168,14 @@ impl<N: Network> ScriptTransactionBuilder<N> {
         Ok(())
     }
 
-    /// Populates additional data from the transaction execution result.
+    /// Populates additional data from the transaction execution result, simulated under
+    /// `hardfork` on `chain_id`.
     pub fn with_execution_result(
         mut self,
         result: &ScriptResult<N>,
         gas_estimate_multiplier: u64,
         chain_id: Option<u64>,
+        hardfork: Option<FoundryHardfork>,
         linked_build_data: &LinkedBuildData,
     ) -> Result<Self> {
         let mut created_contracts =
@@ -194,6 +199,7 @@ impl<N: Network> ScriptTransactionBuilder<N> {
                 result.gas_used,
                 Some(gas_estimate_multiplier),
                 chain_id,
+                hardfork,
             )?);
         }
 

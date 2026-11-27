@@ -2,8 +2,9 @@ use alloy_json_abi::JsonAbi;
 use alloy_primitives::{Address, U256, map::HashMap};
 use alloy_provider::{Network, Provider, RootProvider, network::AnyNetwork};
 use eyre::{ContextCompat, Result, WrapErr};
-use foundry_common::{provider::ProviderBuilder, shell};
+use foundry_common::{provider::ProviderBuilder, shell, tempo::active_tempo_hardfork};
 use foundry_config::{Chain, Config};
+use foundry_evm::hardforks::FoundryHardfork;
 use itertools::Itertools;
 use path_slash::PathExt;
 use regex::Regex;
@@ -50,15 +51,17 @@ pub const STATIC_FUZZ_SEED: [u8; 32] = [
 ///
 /// The margin never raises the gas limit above the chain's per-transaction cap, such as
 /// EIP-7825's on Ethereum or Tempo's, so an estimate the chain accepts stays sendable. It never
-/// lowers the estimate itself either.
+/// lowers the estimate itself either. A chain whose hardfork schedule this build does not know
+/// takes the cap of `hardfork`, the hardfork its node reports or the transaction was simulated
+/// under, if any.
 pub fn apply_gas_estimate_multiplier(
     estimate: u64,
     multiplier: Option<u64>,
     chain_id: Option<u64>,
+    hardfork: Option<FoundryHardfork>,
 ) -> Result<u64> {
     let cap = chain_id.and_then(|chain_id| {
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(u64::MAX, |d| d.as_secs());
-        foundry_evm::core::evm::tx_gas_limit_cap(chain_id, now)
+        foundry_evm::core::evm::tx_gas_limit_cap(chain_id, unix_timestamp(), hardfork)
     });
     apply_capped_gas_estimate_multiplier(estimate, multiplier, cap)
 }
@@ -74,6 +77,30 @@ fn apply_capped_gas_estimate_multiplier(
         adjusted = adjusted.min(u128::from(cap)).max(u128::from(estimate));
     }
     adjusted.try_into().map_err(|_| eyre::eyre!("multiplied gas estimate exceeds u64"))
+}
+
+/// Returns the hardfork the node behind `provider` reports, for [`apply_gas_estimate_multiplier`]
+/// to cap the margin of `multiplier` with on `chain_id`.
+///
+/// Queries the node only when there is a margin and this build knows no hardfork schedule for the
+/// chain, such as a local or development Tempo node. Only Tempo nodes report their hardfork, so
+/// this returns `None` for other chains.
+pub async fn gas_cap_hardfork<N: Network, P: Provider<N>>(
+    provider: &P,
+    chain_id: Option<u64>,
+    multiplier: Option<u64>,
+) -> Option<FoundryHardfork> {
+    let chain_id = chain_id?;
+    if multiplier.is_none()
+        || FoundryHardfork::from_chain_and_timestamp(chain_id, unix_timestamp()).is_some()
+    {
+        return None;
+    }
+    active_tempo_hardfork(provider).await.ok().map(Into::into)
+}
+
+fn unix_timestamp() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(u64::MAX, |d| d.as_secs())
 }
 
 /// Regex used to parse `git submodule status` output.
@@ -1311,6 +1338,7 @@ impl<'a> IntoIterator for &'a Submodules {
 mod tests {
     use super::*;
     use foundry_common::fs;
+    use foundry_evm::hardforks::TempoHardfork;
     use std::{env, fs::File, io::Write};
     use tempfile::tempdir;
 
@@ -1319,13 +1347,13 @@ mod tests {
 
     #[test]
     fn applies_gas_estimate_multiplier() {
-        assert_eq!(apply_gas_estimate_multiplier(21_000, None, None).unwrap(), 21_000);
-        assert_eq!(apply_gas_estimate_multiplier(21_000, Some(150), None).unwrap(), 31_500);
+        assert_eq!(apply_gas_estimate_multiplier(21_000, None, None, None).unwrap(), 21_000);
+        assert_eq!(apply_gas_estimate_multiplier(21_000, Some(150), None, None).unwrap(), 31_500);
         assert_eq!(
-            apply_gas_estimate_multiplier(21_000, Some(1_000_000_000_000_000), None).unwrap(),
+            apply_gas_estimate_multiplier(21_000, Some(1_000_000_000_000_000), None, None).unwrap(),
             210_000_000_000_000_000
         );
-        assert!(apply_gas_estimate_multiplier(u64::MAX, Some(101), None).is_err());
+        assert!(apply_gas_estimate_multiplier(u64::MAX, Some(101), None, None).is_err());
     }
 
     #[test]
@@ -1355,19 +1383,32 @@ mod tests {
 
         // Tempo mainnet and Moderato cap transactions at 30M, Ethereum mainnet at 2^24.
         assert_eq!(
-            apply_gas_estimate_multiplier(25_000_000, Some(130), Some(4217)).unwrap(),
+            apply_gas_estimate_multiplier(25_000_000, Some(130), Some(4217), None).unwrap(),
             30_000_000
         );
         assert_eq!(
-            apply_gas_estimate_multiplier(25_000_000, Some(130), Some(42431)).unwrap(),
+            apply_gas_estimate_multiplier(25_000_000, Some(130), Some(42431), None).unwrap(),
             30_000_000
         );
-        assert_eq!(apply_gas_estimate_multiplier(15_000_000, Some(130), Some(1)).unwrap(), 1 << 24);
+        assert_eq!(
+            apply_gas_estimate_multiplier(15_000_000, Some(130), Some(1), None).unwrap(),
+            1 << 24
+        );
         // Chains without a known cap keep the whole margin.
         assert_eq!(
-            apply_gas_estimate_multiplier(25_000_000, Some(130), Some(31337)).unwrap(),
+            apply_gas_estimate_multiplier(25_000_000, Some(130), Some(31337), None).unwrap(),
             32_500_000
         );
+
+        // A chain without a known schedule takes the cap of the hardfork its node reports, and a
+        // known schedule wins over a reported hardfork.
+        let tempo = |hardfork: TempoHardfork| Some(FoundryHardfork::from(hardfork));
+        let apply = |estimate, chain_id, hardfork| {
+            apply_gas_estimate_multiplier(estimate, Some(130), Some(chain_id), hardfork).unwrap()
+        };
+        assert_eq!(apply(25_000_000, 31337, tempo(TempoHardfork::T1A)), 30_000_000);
+        assert_eq!(apply(15_000_000, 31337, tempo(TempoHardfork::T1)), 1 << 24);
+        assert_eq!(apply(15_000_000, 42431, tempo(TempoHardfork::T1)), 19_500_000);
     }
 
     #[test]

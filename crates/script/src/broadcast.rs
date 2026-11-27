@@ -41,7 +41,9 @@ use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
 use foundry_cheatcodes::Wallets;
 use foundry_cli::{
     opts::TempoOpts,
-    utils::{apply_gas_estimate_multiplier, has_batch_support, has_different_gas_calc},
+    utils::{
+        apply_gas_estimate_multiplier, gas_cap_hardfork, has_batch_support, has_different_gas_calc,
+    },
 };
 use foundry_common::{
     FoundryTransactionBuilder, TransactionMaybeSigned,
@@ -64,6 +66,7 @@ use foundry_evm::{
         constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
         evm::{FoundryEvmNetwork, TempoEvmNetwork},
     },
+    hardforks::FoundryHardfork,
     traces::CallKind,
 };
 use foundry_wallets::wallet_browser::{error::BrowserWalletError, signer::BrowserSigner};
@@ -111,6 +114,7 @@ where
         is_fixed_gas_limit: bool,
         estimate_via_rpc: bool,
         estimate_multiplier: u64,
+        hardfork: Option<FoundryHardfork>,
         tempo_sponsor: Option<&TempoSponsor>,
     ) -> Result<()> {
         let browser = matches!(self, Self::Browser(..));
@@ -180,8 +184,15 @@ where
         // Chains which use `eth_estimateGas` are being sent sequentially and require their
         // gas to be re-estimated right before broadcasting.
         if !is_fixed_gas_limit && estimate_via_rpc {
-            estimate_gas(tx, provider, estimate_multiplier, browser, tempo_sponsor.is_some())
-                .await?;
+            estimate_gas(
+                tx,
+                provider,
+                estimate_multiplier,
+                hardfork,
+                browser,
+                tempo_sponsor.is_some(),
+            )
+            .await?;
         }
 
         if let Some(sponsor) = tempo_sponsor {
@@ -202,6 +213,7 @@ where
         is_fixed_gas_limit: bool,
         estimate_via_rpc: bool,
         estimate_multiplier: u64,
+        hardfork: Option<FoundryHardfork>,
         tempo_sponsor: Option<&TempoSponsor>,
     ) -> Result<PreparedTransaction<'a, N>> {
         self.prepare(
@@ -210,6 +222,7 @@ where
             is_fixed_gas_limit,
             estimate_via_rpc,
             estimate_multiplier,
+            hardfork,
             tempo_sponsor,
         )
         .await?;
@@ -1205,6 +1218,9 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     };
                     let expiring_nonce_discriminators = self.script_config.tempo.expiring_nonce
                         && tempo_hardfork.is_some_and(|fork| fork >= TempoHardfork::T12);
+                    // The hardfork also caps gas estimate margins on chains whose schedule is
+                    // unknown, such as local and development Tempo nodes.
+                    let reported_hardfork = tempo_hardfork.map(FoundryHardfork::from);
 
                     // Iterate through transactions, matching the `from` field with the associated
                     // wallet. Then send the transaction. Panics if we find a unknown `from`
@@ -1268,6 +1284,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                         &provider,
                         &transactions,
                         self.args.gas_estimate_multiplier,
+                        reported_hardfork,
                     )
                     .await?;
                     sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
@@ -1332,6 +1349,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                     *is_fixed_gas_limit,
                                     estimate_via_rpc,
                                     self.args.gas_estimate_multiplier,
+                                    reported_hardfork,
                                     tempo_sponsor.as_deref(),
                                 )
                                 .await?;
@@ -1985,10 +2003,13 @@ impl BundledState<TempoEvmNetwork> {
         }
 
         // Estimate gas for the batch transaction
+        let multiplier = self.args.gas_estimate_multiplier;
+        let hardfork = gas_cap_hardfork(provider.as_ref(), Some(chain_id), Some(multiplier)).await;
         estimate_gas(
             &mut batch_tx,
             provider.as_ref(),
-            self.args.gas_estimate_multiplier,
+            multiplier,
+            hardfork,
             false,
             tempo_sponsor.is_some(),
         )
@@ -2227,11 +2248,13 @@ async fn wait_for_batch_receipt<N: Network>(
 }
 
 /// Estimates and sets the gas limit of `tx`, which a Tempo fee payer signs afterwards when
-/// `sponsored`.
+/// `sponsored`. The margin is capped as [`apply_gas_estimate_multiplier`] does, with `hardfork`,
+/// the one the node reports, for chains whose hardfork schedule is unknown.
 pub async fn estimate_gas<N: Network, P: Provider<N>>(
     tx: &mut N::TransactionRequest,
     provider: &P,
     estimate_multiplier: u64,
+    hardfork: Option<FoundryHardfork>,
     browser: bool,
     sponsored: bool,
 ) -> Result<()>
@@ -2252,6 +2275,7 @@ where
         estimate,
         Some(estimate_multiplier),
         tx.chain_id(),
+        hardfork,
     )?);
     Ok(())
 }
@@ -2757,7 +2781,7 @@ mod tests {
         let provider =
             RootProvider::<TempoNetwork>::new_http("http://localhost:8545".parse().unwrap());
 
-        sender.prepare(&provider, false, true, false, 100, None).await.unwrap();
+        sender.prepare(&provider, false, true, false, 100, None, None).await.unwrap();
 
         match sender {
             SendTransactionKind::AccessKey(tx, _) => {
@@ -3074,7 +3098,7 @@ mod tests {
             SendTransactionKind::PreparedRaw(Bytes::from_static(SIGNED_TX), hash),
         ] {
             let prepared = input
-                .prepare_for_durable_send(&provider, true, false, true, 130, None)
+                .prepare_for_durable_send(&provider, true, false, true, 130, None, None)
                 .await
                 .unwrap();
             let PreparedTransaction::Raw(payload, prepared_hash) = prepared else {
@@ -3096,7 +3120,7 @@ mod tests {
             asserter.push_success(&alloy_primitives::U64::from(estimate));
             let mut tx = alloy_rpc_types::TransactionRequest::default();
 
-            let result = estimate_gas(&mut tx, &provider, multiplier, false, false).await;
+            let result = estimate_gas(&mut tx, &provider, multiplier, None, false, false).await;
 
             assert_eq!(result.is_ok(), expected.is_some());
             assert_eq!(tx.gas, expected);

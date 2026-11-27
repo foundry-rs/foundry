@@ -14,7 +14,10 @@ use clap::Args;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::{CliAuthorizationList, EthereumOpts, TempoOpts, TransactionOpts},
-    utils::{self, apply_gas_estimate_multiplier, parse_ether_value, parse_function_args},
+    utils::{
+        self, apply_gas_estimate_multiplier, gas_cap_hardfork, parse_ether_value,
+        parse_function_args,
+    },
 };
 use foundry_common::{
     FoundryTransactionBuilder, TransactionReceiptWithRevertReason,
@@ -944,8 +947,14 @@ where
             mark_sponsored_gas_estimation(provider, &mut request).await;
         }
         let chain_id = request.chain_id();
-        let err = match provider.estimate_gas(request).await {
-            Ok(estimated) => return apply_gas_estimate_multiplier(estimated, multiplier, chain_id),
+        let (estimated, hardfork) = tokio::join!(
+            async { provider.estimate_gas(request).await },
+            gas_cap_hardfork(provider, chain_id, multiplier),
+        );
+        let err = match estimated {
+            Ok(estimated) => {
+                return apply_gas_estimate_multiplier(estimated, multiplier, chain_id, hardfork);
+            }
             Err(err) => err,
         };
         // If execution reverted with code 3 during provider gas estimation then try to decode
