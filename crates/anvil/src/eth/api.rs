@@ -4220,6 +4220,12 @@ impl EthApi<FoundryNetwork> {
             {
                 vec![]
             }
+            // Like an omitted `fromBlock`, `latest` only matches newly mined logs.
+            Some(BlockNumber::Latest)
+                if filter.block_option.get_to_block().is_none_or(|to| to.is_latest()) =>
+            {
+                vec![]
+            }
             Some(_) => self.backend.logs(filter.clone()).await?,
             None => vec![],
         };
