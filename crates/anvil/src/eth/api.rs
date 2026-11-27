@@ -116,7 +116,10 @@ use parking_lot::{Mutex, RwLock};
 use std::{sync::Arc, time::Duration};
 use tempo_evm::account_access_gas;
 use tempo_hardfork::{TempoHardfork, gas_params};
-use tempo_primitives::{AASigned, TEMPO_TX_TYPE_ID, transaction::FEE_PAYER_SIGNATURE_MARKER};
+use tempo_primitives::{
+    AASigned, TEMPO_TX_TYPE_ID,
+    transaction::{FEE_PAYER_SIGNATURE_MARKER, calc_gas_balance_spending},
+};
 use tokio::{
     sync::mpsc::{self, UnboundedReceiver, unbounded_channel},
     try_join,
@@ -3598,7 +3601,8 @@ impl EthApi<FoundryNetwork> {
         // service encoding omits the sender's fee token preference, letting the sponsor pick the
         // token it pays with.
         if tx.fee_token.is_none() {
-            tx.fee_token = Some(self.backend.tempo_user_fee_token(sponsor).await?);
+            let max_fee = calc_gas_balance_spending(tx.gas_limit, tx.max_fee_per_gas);
+            tx.fee_token = Some(self.backend.tempo_fee_payer_token(sponsor, max_fee).await?);
         }
         let digest = tx.fee_payer_signature_hash(sender);
         tx.fee_payer_signature = Some(signer.sign_hash(sponsor, digest).await?);

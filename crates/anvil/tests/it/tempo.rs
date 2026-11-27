@@ -3153,6 +3153,79 @@ async fn test_tempo_sign_raw_transaction_sponsors_transaction() {
     );
 }
 
+/// A sponsor without a fee token preference pays with the protocol's fallback: from T13 the first
+/// of PathUSD and OUSD that covers the fee, before T13 always PathUSD.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_sponsor_without_preference_uses_fallback_fee_tokens() {
+    for (hardfork, expected) in [(TempoHardfork::T12, PATH_USD), (TempoHardfork::T13, OUSD_ADDRESS)]
+    {
+        let (api, handle) =
+            spawn(NodeConfig::test_tempo().with_hardfork(Some(hardfork.into()))).await;
+        let provider = handle.http_provider();
+        let accounts: Vec<Address> = handle.dev_accounts().collect();
+        let sponsor = *accounts.last().unwrap();
+        api.anvil_tempo_create_token(TempoCreateTokenRequest {
+            address: OUSD_ADDRESS,
+            name: "OUSD".into(),
+            symbol: "OUSD".into(),
+            currency: "USD".into(),
+            quote_token: PATH_USD,
+            admin: accounts[0],
+            mint: vec![],
+        })
+        .await
+        .unwrap();
+        let slot = TipFeeManager::new().user_tokens[sponsor].slot();
+        api.anvil_set_storage_at(TIP_FEE_MANAGER_ADDRESS, slot, B256::ZERO).await.unwrap();
+        // PathUSD comes first but cannot cover the fee.
+        api.anvil_deal_tip20(sponsor, PATH_USD, U256::ONE).await.unwrap();
+        let ousd_funded = U256::from(u64::MAX);
+        api.anvil_deal_tip20(sponsor, OUSD_ADDRESS, ousd_funded).await.unwrap();
+        api.anvil_set_fee_amm_liquidity(OUSD_ADDRESS, PATH_USD, U256::from(10u64.pow(10)))
+            .await
+            .unwrap();
+
+        let chain_id = provider.get_chain_id().await.unwrap();
+        let gas_price = provider.get_gas_price().await.unwrap();
+        let unsigned = sponsorship_requested_transfer(
+            chain_id,
+            gas_price,
+            0,
+            Address::random(),
+            U256::ONE,
+            None,
+            0,
+        )
+        .await;
+        let signed_raw = provider
+            .raw_request::<_, Bytes>(
+                "eth_signRawTransaction".into(),
+                (fee_payer_service_encoded(&unsigned),),
+            )
+            .await
+            .unwrap();
+        let TempoTxEnvelope::AA(signed) =
+            TempoTxEnvelope::decode_2718(&mut signed_raw.as_ref()).unwrap()
+        else {
+            panic!("expected a Tempo AA transaction");
+        };
+        assert_eq!(signed.tx().fee_token, Some(expected), "{hardfork:?}");
+
+        if expected == OUSD_ADDRESS {
+            let receipt = provider
+                .send_raw_transaction(&signed_raw)
+                .await
+                .unwrap()
+                .get_receipt()
+                .await
+                .unwrap();
+            assert!(receipt.status(), "sponsored transaction should succeed");
+            let ousd = IERC20::new(OUSD_ADDRESS, &provider);
+            assert!(ousd.balanceOf(sponsor).call().await.unwrap() < ousd_funded);
+        }
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_tempo_send_raw_transaction_auto_sponsors_placeholder() {
     let sponsor = dev_key(1).address();

@@ -179,8 +179,8 @@ use tempo_contracts::precompiles::IConfigurableAccount;
 use tempo_evm::{FeePaymentError, TempoInvalidTransaction};
 use tempo_hardfork::TempoHardfork;
 use tempo_precompiles::{
-    CONFIGURABLE_ACCOUNT_ADDRESS, NONCE_PRECOMPILE_ADDRESS, TIP_FEE_MANAGER_ADDRESS,
-    configurable_account,
+    CONFIGURABLE_ACCOUNT_ADDRESS, DEFAULT_FEE_TOKEN, NONCE_PRECOMPILE_ADDRESS,
+    TIP_FEE_MANAGER_ADDRESS, configurable_account,
     nonce::NonceManager,
     storage::{Handler, account_config_commitment},
     tip_fee_manager::{IFeeManager, TipFeeManager},
@@ -7249,32 +7249,70 @@ where
         self.node_config.read().await.tempo_fee_payer_address()
     }
 
-    /// Returns the fee token an account pays with, as stored in the Tempo fee manager.
+    /// Returns the fee token Tempo charges `fee_payer` for a transaction that names none and
+    /// costs at most `max_fee`.
     ///
-    /// Falls back to PathUSD when the account has no stored preference or the lookup fails.
-    pub async fn tempo_user_fee_token(&self, account: Address) -> Result<Address, BlockchainError> {
-        let calldata = IFeeManager::userTokensCall { user: account }.abi_encode();
+    /// This is the payer's preference stored in the fee manager. Without one, from T13 it is the
+    /// first fallback fee token whose balance covers `max_fee`, or else the one the payer holds
+    /// the most of, so validation reports the shortfall the protocol would. Before T13, or for a
+    /// zero `max_fee`, it is PathUSD. A failed lookup reads as no preference or a zero balance.
+    pub async fn tempo_fee_payer_token(
+        &self,
+        fee_payer: Address,
+        max_fee: U256,
+    ) -> Result<Address, BlockchainError> {
+        let preferred = self
+            .tempo_view_call(
+                TIP_FEE_MANAGER_ADDRESS,
+                IFeeManager::userTokensCall { user: fee_payer },
+            )
+            .await?
+            .unwrap_or_default();
+        if !preferred.is_zero() {
+            return Ok(preferred);
+        }
 
+        let hardfork = self.tempo_hardfork();
+        if !hardfork.is_t13() || max_fee.is_zero() {
+            return Ok(DEFAULT_FEE_TOKEN);
+        }
+
+        let (mut richest, mut highest_balance) = (DEFAULT_FEE_TOKEN, U256::ZERO);
+        for &token in hardfork.fallback_fee_tokens() {
+            // A token missing from this chain's genesis, like OUSD on a devnet, reads as a zero
+            // balance.
+            let balance = self
+                .tempo_view_call(token, ITIP20::balanceOfCall { account: fee_payer })
+                .await?
+                .unwrap_or_default();
+            if balance >= max_fee {
+                return Ok(token);
+            }
+            if balance > highest_balance {
+                (richest, highest_balance) = (token, balance);
+            }
+        }
+        Ok(richest)
+    }
+
+    /// Calls `to` with `call` on the latest state, returning `None` if it does not return or its
+    /// output does not decode.
+    async fn tempo_view_call<C: SolCall>(
+        &self,
+        to: Address,
+        call: C,
+    ) -> Result<Option<C::Return>, BlockchainError> {
         let request = WithOtherFields::new(TransactionRequest {
             from: Some(Address::ZERO),
-            to: Some(TxKind::Call(TIP_FEE_MANAGER_ADDRESS)),
-            input: calldata.into(),
+            to: Some(TxKind::Call(to)),
+            input: call.abi_encode().into(),
             ..Default::default()
         });
-
         let outcome = self.call(request, FeeDetails::zero(), None, Default::default()).await?;
-
-        let token = if outcome.exit == InstrStop::Return {
-            IFeeManager::userTokensCall::abi_decode_returns(&outcome.output)
-                .unwrap_or(Address::ZERO)
-        } else {
-            Address::ZERO
-        };
-
-        if token.is_zero() {
-            return Ok(foundry_evm_core::tempo::PATH_USD_ADDRESS);
+        if outcome.exit != InstrStop::Return {
+            return Ok(None);
         }
-        Ok(token)
+        Ok(C::abi_decode_returns(&outcome.output).ok())
     }
 
     /// Executes the [TransactionRequest] without writing to the DB
