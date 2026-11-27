@@ -4,7 +4,7 @@ use alloy_provider::{Network, Provider, RootProvider, network::AnyNetwork};
 use eyre::{ContextCompat, Result, WrapErr};
 use foundry_common::{provider::ProviderBuilder, shell, tempo::active_tempo_hardfork};
 use foundry_config::{Chain, Config};
-use foundry_evm::hardforks::FoundryHardfork;
+use foundry_evm::hardforks::{FoundryHardfork, TempoHardfork};
 use itertools::Itertools;
 use path_slash::PathExt;
 use regex::Regex;
@@ -82,19 +82,27 @@ fn apply_capped_gas_estimate_multiplier(
 /// Returns the hardfork the node behind `provider` reports, for [`apply_gas_estimate_multiplier`]
 /// to cap the margin of `multiplier` with on `chain_id`.
 ///
-/// Queries the node only when there is a margin and this build knows no hardfork schedule for the
-/// chain, such as a local or development Tempo node. Only Tempo nodes report their hardfork, so
-/// this returns `None` for other chains.
+/// Queries the node only when the multiplier changes the estimate and this build knows no
+/// hardfork schedule for the chain, such as a local or development Tempo node. Only Tempo nodes
+/// report their hardfork, so this returns `None` for other chains. `resolved` is a hardfork the
+/// caller already read from the node, such as [`mark_sponsored_gas_estimation`]'s, which is used
+/// without querying again.
+///
+/// [`mark_sponsored_gas_estimation`]: foundry_common::tempo::mark_sponsored_gas_estimation
 pub async fn gas_cap_hardfork<N: Network, P: Provider<N>>(
     provider: &P,
     chain_id: Option<u64>,
     multiplier: Option<u64>,
+    resolved: Option<TempoHardfork>,
 ) -> Option<FoundryHardfork> {
     let chain_id = chain_id?;
-    if multiplier.is_none()
+    if matches!(multiplier, None | Some(100))
         || FoundryHardfork::from_chain_and_timestamp(chain_id, unix_timestamp()).is_some()
     {
         return None;
+    }
+    if let Some(resolved) = resolved {
+        return Some(resolved.into());
     }
     active_tempo_hardfork(provider).await.ok().map(Into::into)
 }
@@ -1340,7 +1348,6 @@ mod tests {
     use alloy_provider::ProviderBuilder;
     use alloy_transport::mock::Asserter;
     use foundry_common::fs;
-    use foundry_evm::hardforks::TempoHardfork;
     use std::{env, fs::File, io::Write};
     use tempfile::tempdir;
 
@@ -1420,12 +1427,18 @@ mod tests {
         let provider =
             ProviderBuilder::<_, _, AnyNetwork>::default().connect_mocked_client(asserter.clone());
 
-        // Neither a known schedule nor a missing margin consumes the queued response.
-        assert_eq!(gas_cap_hardfork(&provider, Some(4217), Some(130)).await, None);
-        assert_eq!(gas_cap_hardfork(&provider, Some(31337), None).await, None);
-        assert_eq!(gas_cap_hardfork(&provider, None, Some(130)).await, None);
+        // Neither a known schedule, a multiplier that leaves the estimate unchanged, nor a hardfork
+        // the caller already read consumes the queued response.
+        assert_eq!(gas_cap_hardfork(&provider, Some(4217), Some(130), None).await, None);
+        assert_eq!(gas_cap_hardfork(&provider, Some(31337), None, None).await, None);
+        assert_eq!(gas_cap_hardfork(&provider, Some(31337), Some(100), None).await, None);
+        assert_eq!(gas_cap_hardfork(&provider, None, Some(130), None).await, None);
         assert_eq!(
-            gas_cap_hardfork(&provider, Some(31337), Some(130)).await,
+            gas_cap_hardfork(&provider, Some(31337), Some(130), Some(TempoHardfork::T1)).await,
+            Some(TempoHardfork::T1.into())
+        );
+        assert_eq!(
+            gas_cap_hardfork(&provider, Some(31337), Some(130), None).await,
             Some(TempoHardfork::T1A.into())
         );
         assert!(asserter.read_q().is_empty());

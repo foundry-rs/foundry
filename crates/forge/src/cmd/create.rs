@@ -636,15 +636,25 @@ impl CreateArgs {
             } else {
                 deployer.tx.clone()
             };
-            if self.tx.tempo.is_sponsored() {
-                mark_sponsored_gas_estimation(&provider, &mut request).await;
-            }
-            let (estimated, hardfork) = tokio::join!(
-                async { provider.estimate_gas(request).await },
-                gas_cap_hardfork(provider.as_ref(), Some(chain.id()), self.gas_estimate_multiplier),
-            );
+            let resolved = if self.tx.tempo.is_sponsored() {
+                mark_sponsored_gas_estimation(&provider, &mut request).await
+            } else {
+                None
+            };
+            let estimate = async { provider.estimate_gas(request).await };
+            let cap_hardfork = async {
+                Ok(gas_cap_hardfork(
+                    provider.as_ref(),
+                    Some(chain.id()),
+                    self.gas_estimate_multiplier,
+                    resolved,
+                )
+                .await)
+            };
+            // The hardfork only caps a successful estimate, so a failed one returns without it.
+            let (estimated, hardfork) = tokio::try_join!(estimate, cap_hardfork)?;
             deployer.tx.set_gas_limit(apply_gas_estimate_multiplier(
-                estimated?,
+                estimated,
                 self.gas_estimate_multiplier,
                 Some(chain.id()),
                 hardfork,
