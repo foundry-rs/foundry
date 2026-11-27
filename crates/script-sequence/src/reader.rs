@@ -87,19 +87,22 @@ impl BroadcastReader {
 
             if path.is_file() && path.extension().is_some_and(|ext| ext == "json") {
                 // Ignore -latest to avoid duplicating broadcast entries
-                if !include_latest
-                    && path
-                        .components()
-                        .any(|c| c.as_os_str().to_string_lossy().contains("-latest"))
-                {
+                let is_latest =
+                    path.components().any(|c| c.as_os_str().to_string_lossy().contains("-latest"));
+                if is_latest && !include_latest {
                     continue;
                 }
+                // Forge rewrites -latest in place, so an interrupted write can leave it
+                // incomplete; skip it rather than fail on it.
+                let broadcast = match fs::read_json_file::<Value>(path) {
+                    Ok(broadcast) => broadcast,
+                    Err(_) if is_latest => continue,
+                    Err(err) => return Err(err.into()),
+                };
 
                 // Detect Multichain broadcasts using "multi" in the path
                 if path.components().any(|c| c == Component::Normal("multi".as_ref())) {
                     // Parse as MultiScriptSequence
-
-                    let broadcast = fs::read_json_file::<Value>(path)?;
                     let multichain_deployments = broadcast
                         .get("deployments")
                         .and_then(Value::as_array)
@@ -122,8 +125,13 @@ impl BroadcastReader {
                     continue;
                 }
 
-                let broadcast: ScriptSequence<N> = parse_sequence(fs::read_json_file(path)?)
-                    .map_err(|source| FsPathError::ReadJson { source, path: path.into() })?;
+                let broadcast: ScriptSequence<N> = match parse_sequence(broadcast) {
+                    Ok(broadcast) => broadcast,
+                    Err(_) if is_latest => continue,
+                    Err(source) => {
+                        return Err(FsPathError::ReadJson { source, path: path.into() }.into());
+                    }
+                };
                 broadcasts.push((broadcast.timestamp, vec![broadcast]));
             }
         }
@@ -502,6 +510,18 @@ mod tests {
                  0x0000000000000000000000000000000000000011"
                 .to_string())
         );
+
+        // A checkpoint cut off mid-write is skipped, single-chain or multichain.
+        let chain_two = root.join("Counter.s.sol").join("2");
+        std::fs::create_dir_all(&chain_two).unwrap();
+        std::fs::write(chain_two.join("run-latest.json"), r#"{"transactions": [{"#).unwrap();
+        let multi_latest = root.join("multi").join("Pools.s.sol-latest");
+        std::fs::create_dir_all(&multi_latest).unwrap();
+        std::fs::write(multi_latest.join("run.json"), r#"{"deployments": ["#).unwrap();
+        assert_eq!(lookup("WethPool"), Ok(address(0x12)));
+        // An incomplete archived run still fails loudly.
+        std::fs::write(dir.join("run-9.json"), "{").unwrap();
+        assert!(lookup("WethPool").is_err());
 
         std::fs::remove_dir_all(root).unwrap();
     }
