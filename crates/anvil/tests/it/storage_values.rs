@@ -170,3 +170,23 @@ async fn storage_values_defaults_to_latest_block() {
         provider.client().request("eth_getStorageValues", (requests,)).await.unwrap();
     assert_eq!(values[&Address::repeat_byte(0x07)], vec![B256::ZERO]);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn storage_values_accepts_short_keys() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let address = Address::repeat_byte(0x08);
+    api.anvil_set_storage_at(address, U256::ZERO, B256::with_last_byte(0x11)).await.unwrap();
+    api.anvil_set_storage_at(address, U256::ONE, B256::with_last_byte(0x22)).await.unwrap();
+
+    let requests = HashMap::<Address, Vec<&str>>::from_iter([(address, vec!["0x1", "0x", "0x01"])]);
+    let values: HashMap<Address, Vec<B256>> = provider
+        .client()
+        .request("eth_getStorageValues", (requests, BlockId::latest()))
+        .await
+        .unwrap();
+    assert_eq!(
+        values[&address],
+        vec![B256::with_last_byte(0x22), B256::with_last_byte(0x11), B256::with_last_byte(0x22)]
+    );
+}
