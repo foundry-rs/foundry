@@ -50,6 +50,7 @@ use foundry_common::{
     provider::{
         ProviderBuilder,
         fee::{estimate_eip1559_fees, resolve_broadcast_eip1559_fees},
+        set_chain_poll_interval,
     },
     shell,
     tempo::{
@@ -773,6 +774,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 let rpc_url = &rpc_urls[sequence_idx];
                 let provider =
                     Arc::new(ProviderBuilder::from_config_with_url(config, rpc_url)?.build()?);
+                set_chain_poll_interval(&*provider, sequence.chain);
                 progress_ref
                     .wait_for_pending(
                         sequence_idx,
@@ -1150,6 +1152,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     ProviderBuilder::from_config_with_url(&self.script_config.config, &rpc_url)?
                         .build()?,
                 );
+                set_chain_poll_interval(&*provider, sequence.chain);
                 let unlocked_submission_provider = Arc::new(
                     ProviderBuilder::from_config_with_url(&self.script_config.config, &rpc_url)?
                         .max_retry(0)

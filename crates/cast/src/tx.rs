@@ -23,7 +23,10 @@ use foundry_common::{
     FoundryTransactionBuilder, TransactionReceiptWithRevertReason,
     fmt::*,
     get_pretty_receipt_w_reason_attr,
-    provider::fee::{estimate_eip1559_fees, resolve_broadcast_eip1559_fees},
+    provider::{
+        fee::{estimate_eip1559_fees, resolve_broadcast_eip1559_fees},
+        set_chain_poll_interval,
+    },
     shell,
     tempo::{
         ensure_expiring_nonce_discriminator_active, is_tempo_hardfork_active,
@@ -71,10 +74,16 @@ pub struct SendTxOpts {
     pub browser: BrowserWalletOpts,
 }
 
-/// Applies the `--poll-interval` (in seconds) to a provider's receipt polling when one was given.
-pub(crate) fn apply_poll_interval<N: Network>(provider: &impl Provider<N>, interval: Option<u64>) {
-    if let Some(interval) = interval {
-        provider.client().set_poll_interval(Duration::from_secs(interval));
+/// Sets a provider's receipt polling to `--poll-interval` (in seconds) when one was given, and
+/// otherwise to the block time of `chain_id`.
+pub(crate) fn apply_poll_interval<N: Network>(
+    provider: &impl Provider<N>,
+    interval: Option<u64>,
+    chain_id: u64,
+) {
+    match interval {
+        Some(interval) => provider.client().set_poll_interval(Duration::from_secs(interval)),
+        None => set_chain_poll_interval(provider, chain_id),
     }
 }
 
@@ -1045,6 +1054,7 @@ pub(crate) async fn decode_custom_error(data: &[u8]) -> Result<Option<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_chains::NamedChain;
     use alloy_json_rpc::{RequestPacket, ResponsePacket};
     use alloy_network::{AnyNetwork, Ethereum, NetworkTransactionBuilder};
     use alloy_provider::{ProviderBuilder, mock::Asserter};
@@ -1416,5 +1426,20 @@ mod tests {
             .unwrap();
         assert_eq!(cli.tx.gas_price, Some(U256::from(100)));
         assert_eq!(cli.tx.priority_gas_price, Some(U256::from(2)));
+    }
+
+    #[test]
+    fn poll_interval_flag_overrides_chain_block_time() {
+        let provider =
+            foundry_common::provider::ProviderBuilder::<AnyNetwork>::new("https://rpc.example")
+                .build()
+                .unwrap();
+        let tempo = NamedChain::Tempo as u64;
+
+        apply_poll_interval(&provider, Some(5), tempo);
+        assert_eq!(provider.client().poll_interval(), Duration::from_secs(5));
+
+        apply_poll_interval(&provider, None, tempo);
+        assert_eq!(provider.client().poll_interval(), Duration::from_millis(300));
     }
 }
