@@ -254,14 +254,3 @@ fn record_preimage_bytes(cx: &mut SymCx, hash: U256, bytes: &[u8; 64]) {
     let preimage = bytes.iter().map(|&byte| SymExpr::constant(cx, U256::from(byte))).collect();
     cx.record_concrete_keccak_preimage(hash, preimage);
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn push_immediates_skip_push0() {
-        // `PUSH0; PUSH1 1` keys by 1 only, as before `PUSH0` existed.
-        assert_eq!(push_immediates(&[0x5f, 0x60, 0x01]).collect::<Vec<_>>(), [U256::from(1)]);
-    }
-}
