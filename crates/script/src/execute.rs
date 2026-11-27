@@ -26,6 +26,7 @@ use foundry_debugger::DebuggerBuilder;
 use foundry_evm::{
     core::evm::FoundryEvmNetwork,
     decode::{RevertDecoder, decode_console_logs},
+    hardforks::FoundryHardfork,
     inspectors::cheatcodes::BroadcastableTransactions,
     traces::{
         CallTraceDecoder, CallTraceDecoderBuilder, DebugTraceIdentifier, TraceKind,
@@ -256,6 +257,10 @@ pub struct RpcData {
     pub missing_rpc: bool,
     /// Chain IDs already fetched for each RPC URL.
     pub(crate) chain_ids: HashMap<String, u64>,
+    /// Hardfork that each RPC URL's transactions were simulated under, for the specs that report
+    /// one: Tempo, Base, and Monad, but not Ethereum or Optimism. Caps gas estimate margins on
+    /// chains whose hardfork schedule is unknown.
+    pub(crate) hardforks: HashMap<String, FoundryHardfork>,
 }
 
 impl RpcData {
@@ -264,7 +269,12 @@ impl RpcData {
         let missing_rpc = txs.iter().any(|tx| tx.rpc.is_none());
         let total_rpcs = txs.iter().filter_map(|tx| tx.rpc.clone()).collect::<HashSet<_>>();
 
-        Self { total_rpcs, missing_rpc, chain_ids: HashMap::default() }
+        Self {
+            total_rpcs,
+            missing_rpc,
+            chain_ids: HashMap::default(),
+            hardforks: HashMap::default(),
+        }
     }
 
     /// Returns true if script might be multi-chain.

@@ -1,11 +1,11 @@
 //! Tempo precompile and contract initialization for Foundry.
 //!
 //! This module provides the core initialization logic for Tempo-specific precompiles,
-//! fee tokens (PathUSD, AlphaUSD, BetaUSD, ThetaUSD), and standard contracts.
+//! fee tokens (PathUSD, AlphaUSD, BetaUSD, ThetaUSD, OUSD), and standard contracts.
 //!
 //! It includes the shared genesis initialization function used by both anvil and forge.
 
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, B256, Bytes, U256, address, b256};
 use tempo_contracts::{
     ARACHNID_CREATE2_FACTORY_ADDRESS, CREATEX_ADDRESS, CreateX, MULTICALL3_ADDRESS, Multicall3,
     PERMIT2_ADDRESS, Permit2, SAFE_DEPLOYER_ADDRESS, SafeDeployer,
@@ -16,14 +16,14 @@ use tempo_precompiles::{
     error::TempoPrecompileError,
     storage::StorageCtx,
     tip20::{ITIP20, TIP20Token},
-    tip20_factory::TIP20Factory,
+    tip20_factory::{TIP20Factory, createTokenCall},
     validator_config,
 };
 
 use crate::constants::SYSTEM_PRECOMPILE_STUB;
 
 pub use foundry_common::tempo::{
-    ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
+    ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, OUSD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
 };
 pub use foundry_evm_networks::{
     TEMPO_PRECOMPILE_ADDRESSES, active_tempo_precompile_addresses, is_tempo_precompile_active_at,
@@ -44,8 +44,15 @@ pub use tempo_precompiles::{
     tip20_channel_reserve::TIP20ChannelReserve,
 };
 
+/// The creator and salt with which the TIP-20 factory puts OUSD at [`OUSD_ADDRESS`], its mainnet
+/// and Moderato address, as in Tempo's localnet genesis.
+const OUSD_CREATOR: Address = address!("0x22c01F26b74c808C89bbBaBDC31A4f03bDD4A020");
+const OUSD_SALT: B256 = b256!("0xf33dc2a859c2e7b057c1b3c1d2c3dd002405b1afab213e14d51cf86bd941e73b");
+
 /// All well-known TIP20 fee token addresses on Tempo networks.
-pub const TEMPO_TIP20_TOKENS: &[Address] = &[PATH_USD_ADDRESS];
+///
+/// Not every genesis creates OUSD, so its address may have no code.
+pub const TEMPO_TIP20_TOKENS: &[Address] = &[PATH_USD_ADDRESS, OUSD_ADDRESS];
 
 /// Inner genesis initialization logic. Must be called within a [`StorageCtx`] scope
 /// (either via [`StorageCtx::enter`] or [`StorageCtx::enter_evm`]).
@@ -147,6 +154,22 @@ fn initialize_tempo_genesis_inner_with_precompiles(
     // Initialize ValidatorConfig with admin as owner
     ctx.sstore(VALIDATOR_CONFIG_ADDRESS, validator_config::slots::OWNER, admin.into_word().into())?;
 
+    // Create OUSD at its mainnet and Moderato address, as Tempo's localnet genesis does. From
+    // T13 it is the second fallback fee token.
+    let ousd_token_address = TIP20Factory::new().create_token(
+        OUSD_CREATOR,
+        createTokenCall {
+            name: "OpenUSD".into(),
+            symbol: "OUSD".into(),
+            currency: "USD".into(),
+            quoteToken: path_usd_token_address,
+            salt: OUSD_SALT,
+            admin,
+        },
+    )?;
+    debug_assert_eq!(ousd_token_address, OUSD_ADDRESS);
+    mint_genesis_token(ousd_token_address, admin, recipient, U256::from(u64::MAX))?;
+
     // Set bytecode for standard contracts.
     for (address, code) in tempo_genesis_contracts() {
         ctx.set_code(address, code)?;
@@ -178,14 +201,25 @@ fn create_and_mint_token(
         admin,
     )?;
 
+    mint_genesis_token(token_address, admin, recipient, mint_amount)?;
+    Ok(token_address)
+}
+
+/// Grants `admin` the issuer role of a genesis token and mints `mint_amount` to `recipient` and
+/// `admin`.
+fn mint_genesis_token(
+    token_address: Address,
+    admin: Address,
+    recipient: Address,
+    mint_amount: U256,
+) -> Result<(), TempoPrecompileError> {
     let mut token = TIP20Token::from_address(token_address)?;
     token.grant_role_internal(admin, TIP20Token::issuer_role())?;
     token.mint(admin, ITIP20::mintCall { to: recipient, amount: mint_amount })?;
     if admin != recipient {
         token.mint(admin, ITIP20::mintCall { to: admin, amount: mint_amount })?;
     }
-
-    Ok(token_address)
+    Ok(())
 }
 
 /// Standard contracts and their runtime bytecode installed by Tempo genesis initialization.

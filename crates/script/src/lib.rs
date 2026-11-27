@@ -490,6 +490,10 @@ impl ScriptArgs {
         if shell::is_json() {
             config.live_logs = false;
         }
+        // A cached run keeps the build it has: new outputs would make its sources stale.
+        if config.tracing.decode_internal && !args.debug && !args.no_compile {
+            config.enable_internal_call_artifacts();
+        }
         if args.debug {
             if !config.extra_output.contains(&ContractOutputSelection::StorageLayout) {
                 config.extra_output.push(ContractOutputSelection::StorageLayout);

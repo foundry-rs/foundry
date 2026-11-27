@@ -100,7 +100,7 @@ impl PermitArgs {
             config.chain.is_none_or(|chain| chain.id() == rpc_chain_id),
             "Configured chain does not match the RPC chain"
         );
-        let (network, signer, access_key) =
+        let (network, _, signer, access_key) =
             tempo::resolve_transaction_network_and_signer(&self.tx.tempo, &self.send_tx.eth)
                 .await?;
         ensure!(

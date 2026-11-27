@@ -446,6 +446,48 @@ pub async fn spawn_rpc_proxy_method_error(
     .await
 }
 
+/// Spawns an RPC proxy that answers only the request to `method` numbered `rejected_call`, counting
+/// from zero, with the JSON-RPC error `code` and `message`, and forwards all other requests.
+pub async fn spawn_rpc_proxy_method_error_once(
+    endpoint: String,
+    method: &'static str,
+    rejected_call: usize,
+    code: i64,
+    message: &'static str,
+) -> String {
+    spawn_rpc_proxy_rejecting_method(
+        endpoint,
+        method,
+        RpcMethodRejection::Only(rejected_call),
+        StatusCode::OK,
+        code,
+        message,
+    )
+    .await
+}
+
+/// Spawns an RPC proxy that forwards `successful_calls` requests to `method`, then answers later
+/// requests with the JSON-RPC error `code` and `message` while the returned switch is enabled.
+pub async fn spawn_rpc_proxy_method_error_after_when_enabled(
+    endpoint: String,
+    method: &'static str,
+    successful_calls: usize,
+    code: i64,
+    message: &'static str,
+) -> (String, Arc<AtomicBool>) {
+    let enabled = Arc::new(AtomicBool::new(true));
+    let proxy = spawn_rpc_proxy_rejecting_method(
+        endpoint,
+        method,
+        RpcMethodRejection::AfterWhenEnabled(successful_calls, enabled.clone()),
+        StatusCode::OK,
+        code,
+        message,
+    )
+    .await;
+    (proxy, enabled)
+}
+
 /// Spawns an RPC proxy that answers `method` with `result` instead of forwarding it upstream.
 ///
 /// All other methods are forwarded. The returned counter tracks how many `method` calls reached the
@@ -788,12 +830,86 @@ pub async fn spawn_rpc_proxy_failing_account(endpoint: String, account: Address)
     format!("http://{address}")
 }
 
+/// Spawns an RPC proxy in front of anvil whose pool, like reth's for an EIP-7702 delegated sender,
+/// holds one transaction at a time.
+///
+/// `eth_sendRawTransaction` is rejected with a JSON-RPC error while the pool holds a transaction,
+/// and a transaction that would wait behind a nonce gap is dropped and rejected. All other requests
+/// are forwarded. The returned counter tracks the rejections.
+pub async fn spawn_rpc_proxy_one_pooled_transaction(
+    endpoint: String,
+) -> (String, Arc<AtomicUsize>) {
+    let client = reqwest::Client::new();
+    let submissions = Arc::new(tokio::sync::Mutex::new(()));
+    let rejections = Arc::new(AtomicUsize::new(0));
+    let proxy_rejections = rejections.clone();
+    let router = Router::new().route(
+        "/",
+        post(move |Json(request): Json<Value>| {
+            let client = client.clone();
+            let endpoint = endpoint.clone();
+            let submissions = submissions.clone();
+            let rejections = proxy_rejections.clone();
+            async move {
+                let send = async |request: &Value| {
+                    client
+                        .post(&endpoint)
+                        .json(request)
+                        .send()
+                        .await
+                        .unwrap()
+                        .json::<Value>()
+                        .await
+                        .unwrap()
+                };
+                let call = async |method: &str, params: Value| {
+                    send(&json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params }))
+                        .await
+                };
+                let pooled = async |queue: &str| {
+                    let content = call("txpool_content", json!([])).await;
+                    !content["result"][queue].as_object().unwrap().is_empty()
+                };
+                let reject = |message: &str| {
+                    rejections.fetch_add(1, Ordering::Relaxed);
+                    Json(json!({
+                        "jsonrpc": "2.0",
+                        "id": request.get("id").cloned().unwrap_or(Value::Null),
+                        "error": { "code": -32000, "message": message },
+                    }))
+                };
+
+                if request.get("method").and_then(Value::as_str) != Some("eth_sendRawTransaction") {
+                    return Json(send(&request).await);
+                }
+                let _submission = submissions.lock().await;
+                if pooled("pending").await || pooled("queued").await {
+                    return reject("in-flight transaction limit reached for delegated accounts");
+                }
+                let response = send(&request).await;
+                if let Some(hash) = response.get("result")
+                    && pooled("queued").await
+                {
+                    call("anvil_dropTransaction", json!([hash])).await;
+                    return reject("gapped-nonce tx from delegated accounts");
+                }
+                Json(response)
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    (format!("http://{address}"), rejections)
+}
+
 #[derive(Clone)]
 enum RpcMethodRejection {
     Before(usize),
     After(usize),
     Enabled(Arc<AtomicBool>),
     AfterWhenEnabled(usize, Arc<AtomicBool>),
+    Only(usize),
 }
 
 impl RpcMethodRejection {
@@ -805,6 +921,7 @@ impl RpcMethodRejection {
             Self::AfterWhenEnabled(successful_calls, enabled) => {
                 call >= *successful_calls && enabled.load(Ordering::SeqCst)
             }
+            Self::Only(rejected_call) => call == *rejected_call,
         }
     }
 }

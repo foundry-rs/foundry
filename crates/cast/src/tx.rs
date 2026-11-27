@@ -14,17 +14,23 @@ use clap::Args;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::{CliAuthorizationList, EthereumOpts, TempoOpts, TransactionOpts},
-    utils::{self, apply_gas_estimate_multiplier, parse_ether_value, parse_function_args},
+    utils::{
+        self, apply_gas_estimate_multiplier, gas_cap_hardfork, parse_ether_value,
+        parse_function_args,
+    },
 };
 use foundry_common::{
     FoundryTransactionBuilder, TransactionReceiptWithRevertReason,
     fmt::*,
     get_pretty_receipt_w_reason_attr,
-    provider::fee::{estimate_eip1559_fees, resolve_broadcast_eip1559_fees},
+    provider::{
+        fee::{estimate_eip1559_fees, resolve_broadcast_eip1559_fees},
+        set_chain_poll_interval,
+    },
     shell,
     tempo::{
         ensure_expiring_nonce_discriminator_active, is_tempo_hardfork_active,
-        mark_sponsored_gas_estimation,
+        mark_sponsored_gas_estimation, resolve_and_set_fee_token,
     },
 };
 use foundry_config::{Chain, Config, Eip1559FeeEstimatePreset};
@@ -68,10 +74,16 @@ pub struct SendTxOpts {
     pub browser: BrowserWalletOpts,
 }
 
-/// Applies the `--poll-interval` (in seconds) to a provider's receipt polling when one was given.
-pub(crate) fn apply_poll_interval<N: Network>(provider: &impl Provider<N>, interval: Option<u64>) {
-    if let Some(interval) = interval {
-        provider.client().set_poll_interval(Duration::from_secs(interval));
+/// Sets a provider's receipt polling to `--poll-interval` (in seconds) when one was given, and
+/// otherwise to the block time of `chain_id`.
+pub(crate) fn apply_poll_interval<N: Network>(
+    provider: &impl Provider<N>,
+    interval: Option<u64>,
+    chain_id: u64,
+) {
+    match interval {
+        Some(interval) => provider.client().set_poll_interval(Duration::from_secs(interval)),
+        None => set_chain_poll_interval(provider, chain_id),
     }
 }
 
@@ -494,6 +506,9 @@ struct TxBuilderInner<N: Network, P> {
     gas_estimate_multiplier: Option<u64>,
     /// Whether a Tempo fee payer will sponsor the transaction.
     sponsored: bool,
+    /// Whether to resolve the sender's Tempo fee token while filling, see
+    /// [`CastTxBuilder::with_fee_token_resolution`].
+    resolve_fee_token: bool,
     auth: Vec<CliAuthorizationList>,
     chain: Chain,
     etherscan_api_key: Option<String>,
@@ -529,6 +544,16 @@ impl<N: Network, P, S> CastTxBuilder<N, P, S> {
         self
     }
 
+    /// Resolves the Tempo fee token the sender pays with while filling, as sending an unsponsored
+    /// transaction does, so that callers do not resolve it again. The lookup runs alongside the
+    /// nonce and fee requests when those are concurrent, and a fee token it resolves is only set
+    /// after gas estimation. Ignored for sponsored transactions, whose fee payer selects the fee
+    /// token.
+    pub const fn with_fee_token_resolution(mut self) -> Self {
+        self.inner.resolve_fee_token = true;
+        self
+    }
+
     /// Returns whether this builder contains any EIP-7702 authorizations.
     pub(crate) const fn has_auth(&self) -> bool {
         !self.inner.auth.is_empty()
@@ -561,9 +586,20 @@ where
     /// Creates a new instance of [CastTxBuilder] filling transaction with fields present in
     /// provided [TransactionOpts].
     pub async fn new(provider: P, tx_opts: TransactionOpts, config: &Config) -> Result<Self> {
+        let chain = utils::get_chain(config.chain, &provider).await?;
+        Self::for_chain(provider, tx_opts, config, chain).await
+    }
+
+    /// Creates a builder like [`Self::new`] for a `chain` the caller already resolved from
+    /// `config` or the provider, without requesting the chain ID again.
+    pub async fn for_chain(
+        provider: P,
+        tx_opts: TransactionOpts,
+        config: &Config,
+        chain: Chain,
+    ) -> Result<Self> {
         let mut tx = N::TransactionRequest::default();
 
-        let chain = utils::get_chain(config.chain, &provider).await?;
         let etherscan_config = config.get_etherscan_config_with_chain(Some(chain)).ok().flatten();
         let etherscan_api_key = etherscan_config.as_ref().map(|c| c.key.clone());
         let etherscan_api_url = etherscan_config.map(|c| c.api_url);
@@ -589,6 +625,7 @@ where
                 eip1559_fee_estimate: config.eip1559_fee_estimate,
                 gas_estimate_multiplier: None,
                 sponsored: tx_opts.tempo.is_sponsored(),
+                resolve_fee_token: false,
                 chain,
                 etherscan_api_key,
                 etherscan_api_url,
@@ -741,9 +778,9 @@ where
 
         // Read-only calls do not need a nonce unless it is required to sign an authorization.
         // Avoid an otherwise unused `eth_getTransactionCount` request for raw transactions.
-        let resolve_in_parallel =
-            fill && self.auth.is_empty() && tempo_wallet.is_none() && !self.chain.is_tempo();
-        let tx_nonce = if resolve_in_parallel {
+        let resolve_in_parallel = fill && self.auth.is_empty() && tempo_wallet.is_none();
+        let resolve_fee_token = fill && self.resolve_fee_token && !self.sponsored;
+        let (tx_nonce, fee_token) = if resolve_in_parallel {
             let fees_are_complete = if self.legacy {
                 self.tx.gas_price().is_some()
             } else {
@@ -752,9 +789,18 @@ where
                     (Some(max_fee), Some(priority_fee)) if priority_fee <= max_fee
                 )
             } && (!self.blob || self.tx.max_fee_per_blob_gas().is_some());
-            let gas_request =
-                (fees_are_complete && self.access_list.is_none() && self.tx.gas_limit().is_none())
-                    .then(|| self.tx.clone());
+            // Without a given nonce, the concurrent estimate leaves it to the node, which fills the
+            // sender's protocol nonce, while a Tempo nonce lane's intrinsic gas depends on the
+            // lane's own nonce.
+            let gas_request = (fees_are_complete
+                && self.access_list.is_none()
+                && self.tx.gas_limit().is_none()
+                && (self.tx.nonce().is_some()
+                    || self.tx.nonce_key().is_none_or(|key| key.is_zero())))
+            .then(|| self.gas_estimation_request());
+            // The fee token only depends on fields that are final before filling, since this path
+            // requires no EIP-7702 authorizations and no Tempo wallet key authorization.
+            let fee_token_request = resolve_fee_token.then(|| self.tx.clone());
             let (blob, legacy, browser, eip1559_fee_estimate, gas_estimate_multiplier, sponsored) = (
                 self.blob,
                 self.legacy,
@@ -765,7 +811,7 @@ where
             );
             let Self { provider, tx, .. } = &mut self;
             let provider = &*provider;
-            let (tx_nonce, (), gas_limit) = tokio::try_join!(
+            let (tx_nonce, (), gas_limit, fee_token) = tokio::try_join!(
                 Self::resolve_nonce(provider, from, tx.nonce(), tx.nonce_key()),
                 Self::fill_fees(provider, tx, blob, legacy, browser, eip1559_fee_estimate),
                 async {
@@ -781,18 +827,23 @@ where
                         None => Ok(None),
                     }
                 },
+                async {
+                    let Some(mut request) = fee_token_request else { return Ok(None) };
+                    let provider = provider as &dyn Provider<N>;
+                    resolve_and_set_fee_token(Some(provider), &mut request, None).await
+                },
             )?;
             if let Some(gas_limit) = gas_limit {
                 self.tx.set_gas_limit(gas_limit);
             }
-            Some(tx_nonce)
+            (Some(tx_nonce), fee_token)
         } else if fill || !self.auth.is_empty() {
-            Some(
+            let tx_nonce =
                 Self::resolve_nonce(&self.provider, from, self.tx.nonce(), self.tx.nonce_key())
-                    .await?,
-            )
+                    .await?;
+            (Some(tx_nonce), None)
         } else {
-            None
+            (None, None)
         };
         if let Some(tx_nonce) = tx_nonce {
             if fill {
@@ -824,19 +875,22 @@ where
             self.tx.set_access_list(access_list);
         }
         if fill && self.tx.gas_limit().is_none() {
-            let request = if self.browser {
-                self.tx.browser_wallet_gas_estimation_request()
-            } else {
-                self.tx.clone()
-            };
             let estimated = Self::estimate_gas(
                 &self.provider,
-                request,
+                self.gas_estimation_request(),
                 self.gas_estimate_multiplier,
                 self.sponsored,
             )
             .await?;
             self.tx.set_gas_limit(estimated);
+        }
+        // A resolved fee token can make the request a Tempo AA transaction, so it is only set once
+        // the gas was estimated, as when sending resolves it.
+        if let Some(fee_token) = fee_token {
+            self.tx.set_fee_token(fee_token);
+        } else if resolve_fee_token && !resolve_in_parallel {
+            let provider = &self.provider as &dyn Provider<N>;
+            resolve_and_set_fee_token(Some(provider), &mut self.tx, None).await?;
         }
 
         Ok((self.tx, state.func))
@@ -940,12 +994,20 @@ where
         multiplier: Option<u64>,
         sponsored: bool,
     ) -> Result<u64> {
-        if sponsored {
-            mark_sponsored_gas_estimation(provider, &mut request).await;
-        }
+        let resolved = if sponsored {
+            mark_sponsored_gas_estimation(provider, &mut request).await
+        } else {
+            None
+        };
         let chain_id = request.chain_id();
-        let err = match provider.estimate_gas(request).await {
-            Ok(estimated) => return apply_gas_estimate_multiplier(estimated, multiplier, chain_id),
+        let estimate = async { provider.estimate_gas(request).await };
+        let cap_hardfork =
+            async { Ok(gas_cap_hardfork(provider, chain_id, multiplier, resolved).await) };
+        // The hardfork only caps a successful estimate, so a failed one returns without it.
+        let err = match tokio::try_join!(estimate, cap_hardfork) {
+            Ok((estimated, hardfork)) => {
+                return apply_gas_estimate_multiplier(estimated, multiplier, chain_id, hardfork);
+            }
             Err(err) => err,
         };
         // If execution reverted with code 3 during provider gas estimation then try to decode
@@ -959,6 +1021,11 @@ where
             eyre::bail!("Failed to estimate gas: {err}: {decoded_error}");
         }
         eyre::bail!("Failed to estimate gas: {err}");
+    }
+
+    /// Returns the request to estimate gas with, which models a browser wallet's signature.
+    fn gas_estimation_request(&self) -> N::TransactionRequest {
+        if self.browser { self.tx.browser_wallet_gas_estimation_request() } else { self.tx.clone() }
     }
 }
 
@@ -1034,6 +1101,7 @@ pub(crate) async fn decode_custom_error(data: &[u8]) -> Result<Option<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_chains::NamedChain;
     use alloy_json_rpc::{RequestPacket, ResponsePacket};
     use alloy_network::{AnyNetwork, Ethereum, NetworkTransactionBuilder};
     use alloy_provider::{ProviderBuilder, mock::Asserter};
@@ -1041,8 +1109,8 @@ mod tests {
     use alloy_sol_types::SolValue;
     use alloy_transport::{TransportFut, mock::MockTransport};
     use clap::Parser;
-    use foundry_common::tempo::resolve_and_set_fee_token;
     use std::{
+        collections::HashMap,
         sync::{Arc, Mutex},
         task::{Context, Poll},
     };
@@ -1050,11 +1118,38 @@ mod tests {
     use tokio::{sync::Barrier, time::timeout};
     use tower::Service;
 
+    /// Answers each request with the next response queued for its method, holding requests to
+    /// `barrier_methods` until all of them are in flight together.
     #[derive(Clone)]
     struct BarrierTransport {
-        inner: MockTransport,
+        responses: Arc<HashMap<&'static str, MockTransport>>,
+        barrier_methods: &'static [&'static str],
         barrier: Arc<Barrier>,
-        fill_methods: Arc<Mutex<Vec<String>>>,
+        /// The method and params of every request, in the order they were made.
+        requests: Arc<Mutex<Vec<(String, serde_json::Value)>>>,
+    }
+
+    impl BarrierTransport {
+        fn new(
+            responses: &[(&'static str, serde_json::Value)],
+            barrier_methods: &'static [&'static str],
+        ) -> Self {
+            let mut queues = HashMap::new();
+            for (method, response) in responses {
+                queues.entry(*method).or_insert_with(Asserter::new).push_success(response);
+            }
+            Self {
+                responses: Arc::new(
+                    queues
+                        .into_iter()
+                        .map(|(method, queue)| (method, MockTransport::new(queue)))
+                        .collect(),
+                ),
+                barrier_methods,
+                barrier: Arc::new(Barrier::new(barrier_methods.len())),
+                requests: Default::default(),
+            }
+        }
     }
 
     impl Service<RequestPacket> for BarrierTransport {
@@ -1062,31 +1157,27 @@ mod tests {
         type Error = TransportError;
         type Future = TransportFut<'static>;
 
-        fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-            self.inner.poll_ready(cx)
+        fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
         }
 
         fn call(&mut self, req: RequestPacket) -> Self::Future {
-            let fill_method = match &req {
-                RequestPacket::Single(req)
-                    if matches!(
-                        req.method(),
-                        "eth_getTransactionCount" | "eth_gasPrice" | "eth_estimateGas"
-                    ) =>
-                {
-                    Some(req.method().to_string())
-                }
-                _ => None,
-            };
-            let Some(fill_method) = fill_method else {
-                return self.inner.call(req);
-            };
-            self.fill_methods.lock().unwrap().push(fill_method);
-
-            let barrier = self.barrier.clone();
-            let mut inner = self.inner.clone();
+            let RequestPacket::Single(request) = &req else { panic!("unexpected batch request") };
+            let method = request.method();
+            let params = request.params().map_or(serde_json::Value::Null, |params| {
+                serde_json::from_str(params.get()).unwrap()
+            });
+            self.requests.lock().unwrap().push((method.to_string(), params));
+            let barrier = self.barrier_methods.contains(&method).then(|| self.barrier.clone());
+            let mut inner = self
+                .responses
+                .get(method)
+                .unwrap_or_else(|| panic!("unexpected {method} request"))
+                .clone();
             Box::pin(async move {
-                barrier.wait().await;
+                if let Some(barrier) = barrier {
+                    barrier.wait().await;
+                }
                 inner.call(req).await
             })
         }
@@ -1215,16 +1306,14 @@ mod tests {
 
     #[tokio::test]
     async fn filled_build_applies_multiplier_to_concurrent_gas_estimate() {
-        let asserter = Asserter::new();
-        for _ in 0..2 {
-            asserter.push_success(&U64::from(100));
-        }
-        let fill_methods = Arc::new(Mutex::new(Vec::new()));
-        let transport = BarrierTransport {
-            inner: MockTransport::new(asserter),
-            barrier: Arc::new(Barrier::new(2)),
-            fill_methods: fill_methods.clone(),
-        };
+        let transport = BarrierTransport::new(
+            &[
+                ("eth_getTransactionCount", serde_json::json!(U64::from(100))),
+                ("eth_estimateGas", serde_json::json!(U64::from(100))),
+            ],
+            &["eth_getTransactionCount", "eth_estimateGas"],
+        );
+        let requests = transport.requests.clone();
         let provider = ProviderBuilder::new_with_network::<Ethereum>()
             .connect_client(RpcClient::new(transport, true));
 
@@ -1239,9 +1328,162 @@ mod tests {
         assert_eq!(tx.nonce, Some(100));
         assert_eq!(tx.gas_price, Some(1));
         assert_eq!(tx.gas, Some(150));
-        let mut fill_methods = fill_methods.lock().unwrap().clone();
-        fill_methods.sort();
-        assert_eq!(fill_methods, ["eth_estimateGas", "eth_getTransactionCount"]);
+        let mut methods =
+            requests.lock().unwrap().iter().map(|(method, _)| method.clone()).collect::<Vec<_>>();
+        methods.sort();
+        assert_eq!(methods, ["eth_estimateGas", "eth_getTransactionCount"]);
+    }
+
+    /// Builds a transaction to [`TO`] on Tempo mainnet from the given `cast send` style arguments.
+    async fn tempo_builder<P: Provider<TempoNetwork>>(
+        provider: P,
+        args: &[&str],
+    ) -> CastTxBuilder<TempoNetwork, P, InputState> {
+        let config = Config { chain: Some(Chain::from_id(4217)), ..Default::default() };
+        let opts = TransactionOpts::parse_from([&["test"], args].concat());
+        CastTxBuilder::new(provider, opts, &config)
+            .await
+            .unwrap()
+            .with_to(Some(TO.into()))
+            .await
+            .unwrap()
+            .with_code_sig_and_args(None, None, Vec::new())
+            .await
+            .unwrap()
+    }
+
+    /// On a Tempo chain the nonce, the fees and the sender's fee token are requested together, and
+    /// the fee token is only set after gas was estimated without it, as when sending resolves it.
+    #[tokio::test]
+    async fn tempo_build_resolves_fee_token_with_nonce_and_fees() {
+        let token = Address::repeat_byte(0x42);
+        let fee_history = serde_json::json!({
+            "oldestBlock": "0x1",
+            "baseFeePerGas": ["0x4a817c800", "0x4a817c800"],
+            "gasUsedRatio": [0.5],
+            "reward": [["0x1"]],
+        });
+        let transport = BarrierTransport::new(
+            &[
+                ("eth_getTransactionCount", serde_json::json!("0x5")),
+                ("eth_feeHistory", fee_history),
+                ("eth_call", serde_json::json!(Bytes::from(token.abi_encode()))),
+                ("eth_estimateGas", serde_json::json!("0x5208")),
+            ],
+            &["eth_getTransactionCount", "eth_feeHistory", "eth_call"],
+        );
+        let requests = transport.requests.clone();
+        let provider = ProviderBuilder::new_with_network::<TempoNetwork>()
+            .connect_client(RpcClient::new(transport, true));
+
+        let builder = tempo_builder(&provider, &[]).await.with_fee_token_resolution();
+        let (tx, _) = timeout(Duration::from_secs(1), builder.build(Address::repeat_byte(0x22)))
+            .await
+            .expect("nonce, fee and fee token requests were not in flight together")
+            .unwrap();
+
+        assert_eq!(tx.nonce(), Some(5));
+        assert_eq!(tx.gas_limit(), Some(21_000));
+        assert_eq!(tx.fee_token, Some(token));
+        let requests = requests.lock().unwrap();
+        let (_, estimate) =
+            requests.iter().find(|(method, _)| method == "eth_estimateGas").unwrap();
+        assert!(estimate[0]["feeToken"].is_null());
+    }
+
+    /// A browser wallet send estimates gas with the WebAuthn signature it will carry, also when its
+    /// fees are given and the estimate runs alongside the nonce lookup.
+    #[tokio::test]
+    async fn tempo_browser_concurrent_estimate_models_webauthn() {
+        let transport = BarrierTransport::new(
+            &[
+                ("eth_getTransactionCount", serde_json::json!("0x5")),
+                ("eth_estimateGas", serde_json::json!("0x5208")),
+            ],
+            &["eth_getTransactionCount", "eth_estimateGas"],
+        );
+        let requests = transport.requests.clone();
+        let provider = ProviderBuilder::new_with_network::<TempoNetwork>()
+            .connect_client(RpcClient::new(transport, true));
+
+        let args = ["--gas-price", "1", "--priority-gas-price", "1"];
+        let builder = tempo_builder(&provider, &args).await.with_browser_wallet();
+        timeout(Duration::from_secs(1), builder.build(Address::repeat_byte(0x22)))
+            .await
+            .expect("nonce and gas requests were not in flight together")
+            .unwrap();
+
+        let requests = requests.lock().unwrap();
+        let (_, estimate) =
+            requests.iter().find(|(method, _)| method == "eth_estimateGas").unwrap();
+        assert_eq!(estimate[0]["keyType"], "webAuthn");
+    }
+
+    /// A Tempo nonce lane transaction estimates its gas with the lane's nonce, even when its fees
+    /// are given and the estimate could otherwise run alongside the nonce lookup.
+    #[tokio::test]
+    async fn tempo_nonce_lane_estimate_uses_lane_nonce() {
+        let transport = BarrierTransport::new(
+            &[
+                ("eth_call", serde_json::json!(Bytes::from(7u64.abi_encode()))),
+                ("eth_estimateGas", serde_json::json!("0x5208")),
+            ],
+            &[],
+        );
+        let requests = transport.requests.clone();
+        let provider = ProviderBuilder::new_with_network::<TempoNetwork>()
+            .connect_client(RpcClient::new(transport, true));
+
+        let args = ["--tempo.nonce-key", "42", "--gas-price", "1", "--priority-gas-price", "1"];
+        let (tx, _) =
+            tempo_builder(&provider, &args).await.build(Address::repeat_byte(0x22)).await.unwrap();
+
+        assert_eq!(tx.nonce(), Some(7));
+        let requests = requests.lock().unwrap();
+        let methods = requests.iter().map(|(method, _)| method.as_str()).collect::<Vec<_>>();
+        assert_eq!(methods, ["eth_call", "eth_estimateGas"]);
+        assert_eq!(requests[1].1[0]["nonce"], "0x7");
+    }
+
+    /// A nonce lane transaction with a given nonce estimates its gas with that nonce, alongside the
+    /// fee token lookup.
+    #[tokio::test]
+    async fn tempo_nonce_lane_with_nonce_estimates_concurrently() {
+        let token = Address::repeat_byte(0x42);
+        let transport = BarrierTransport::new(
+            &[
+                ("eth_call", serde_json::json!(Bytes::from(token.abi_encode()))),
+                ("eth_estimateGas", serde_json::json!("0x5208")),
+            ],
+            &["eth_call", "eth_estimateGas"],
+        );
+        let requests = transport.requests.clone();
+        let provider = ProviderBuilder::new_with_network::<TempoNetwork>()
+            .connect_client(RpcClient::new(transport, true));
+
+        let args = [
+            "--tempo.nonce-key",
+            "42",
+            "--nonce",
+            "3",
+            "--gas-price",
+            "1",
+            "--priority-gas-price",
+            "1",
+        ];
+        let builder = tempo_builder(&provider, &args).await.with_fee_token_resolution();
+        let (tx, _) = timeout(Duration::from_secs(1), builder.build(Address::repeat_byte(0x22)))
+            .await
+            .expect("fee token and gas requests were not in flight together")
+            .unwrap();
+
+        assert_eq!(tx.nonce(), Some(3));
+        assert_eq!(tx.fee_token, Some(token));
+        let requests = requests.lock().unwrap();
+        let (_, estimate) =
+            requests.iter().find(|(method, _)| method == "eth_estimateGas").unwrap();
+        assert_eq!(estimate[0]["nonce"], "0x3");
+        assert!(estimate[0]["feeToken"].is_null());
     }
 
     #[tokio::test]
@@ -1285,6 +1527,72 @@ mod tests {
         tx.prep_for_submission();
         assert_eq!(tx.inner.transaction_type, Some(0x76));
         assert_eq!(tx.fee_token, Some(token));
+    }
+
+    // A sponsored estimate on a chain without a known schedule reads the hardfork once, for both
+    // the fee payer marker and the gas cap, so a failure of a second lookup cannot drop the cap.
+    #[tokio::test]
+    async fn sponsored_estimate_caps_gas_with_the_marker_hardfork() {
+        let asserter = Asserter::new();
+        asserter.push_success(&serde_json::json!({ "active": "T14", "schedule": [] }));
+        asserter.push_success(&U64::from(24_461_632));
+        let provider = ProviderBuilder::new_with_network::<TempoNetwork>()
+            .connect_mocked_client(asserter.clone());
+        let mut request = <TempoNetwork as Network>::TransactionRequest::default();
+        request.set_chain_id(31337);
+
+        let gas =
+            TxBuilderInner::<TempoNetwork, _>::estimate_gas(&provider, request, Some(130), true)
+                .await
+                .unwrap();
+
+        assert_eq!(gas, 30_000_000);
+        assert!(asserter.read_q().is_empty());
+    }
+
+    // The gas cap only applies to a successful estimate, so an estimation error must not wait for
+    // the hardfork lookup that runs alongside it.
+    #[tokio::test]
+    async fn failed_estimate_does_not_wait_for_gas_cap_hardfork() {
+        #[derive(Clone)]
+        struct StalledForkSchedule(MockTransport);
+
+        impl Service<RequestPacket> for StalledForkSchedule {
+            type Response = ResponsePacket;
+            type Error = TransportError;
+            type Future = TransportFut<'static>;
+
+            fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+                self.0.poll_ready(cx)
+            }
+
+            fn call(&mut self, req: RequestPacket) -> Self::Future {
+                match &req {
+                    RequestPacket::Single(req) if req.method() == "tempo_forkSchedule" => {
+                        Box::pin(std::future::pending())
+                    }
+                    _ => self.0.call(req),
+                }
+            }
+        }
+
+        let asserter = Asserter::new();
+        asserter.push_failure_msg("execution reverted");
+        let provider = ProviderBuilder::new_with_network::<TempoNetwork>().connect_client(
+            RpcClient::new(StalledForkSchedule(MockTransport::new(asserter)), true),
+        );
+        let mut request = <TempoNetwork as Network>::TransactionRequest::default();
+        request.set_chain_id(31337);
+
+        let err = timeout(
+            Duration::from_secs(1),
+            TxBuilderInner::<TempoNetwork, _>::estimate_gas(&provider, request, Some(130), false),
+        )
+        .await
+        .expect("the estimation error waited for the hardfork lookup")
+        .unwrap_err();
+
+        assert!(err.to_string().starts_with("Failed to estimate gas: "), "{err}");
     }
 
     #[tokio::test]
@@ -1339,5 +1647,20 @@ mod tests {
             .unwrap();
         assert_eq!(cli.tx.gas_price, Some(U256::from(100)));
         assert_eq!(cli.tx.priority_gas_price, Some(U256::from(2)));
+    }
+
+    #[test]
+    fn poll_interval_flag_overrides_chain_block_time() {
+        let provider =
+            foundry_common::provider::ProviderBuilder::<AnyNetwork>::new("https://rpc.example")
+                .build()
+                .unwrap();
+        let tempo = NamedChain::Tempo as u64;
+
+        apply_poll_interval(&provider, Some(5), tempo);
+        assert_eq!(provider.client().poll_interval(), Duration::from_secs(5));
+
+        apply_poll_interval(&provider, None, tempo);
+        assert_eq!(provider.client().poll_interval(), Duration::from_millis(300));
     }
 }

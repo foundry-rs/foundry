@@ -49,7 +49,8 @@ use tempo_contracts::precompiles::{
         self, CallScope, KeyInfo, KeyRestrictions, LegacyTokenLimit, SelectorRule, SignatureType,
         TokenLimit,
     },
-    ISignatureVerifier, ITIP20, PATH_USD_ADDRESS, SIGNATURE_VERIFIER_ADDRESS,
+    IFeeManager, ISignatureVerifier, ITIP20, OUSD_ADDRESS, PATH_USD_ADDRESS,
+    SIGNATURE_VERIFIER_ADDRESS, TIP_FEE_MANAGER_ADDRESS,
     account_keychain::{
         authorizeAdminKeyCall, authorizeKeyCall, authorizeKeyWithWitnessCall,
         legacyAuthorizeKeyCall,
@@ -130,7 +131,10 @@ pub enum KeychainSubcommand {
         #[arg(long, value_name = "ADDRESS", requires = "selector")]
         recipient: Option<Address>,
 
-        /// Fee token to check the root account balance for. Defaults to PathUSD.
+        /// Fee token to check the fee payer's balance and the key's spending limit for.
+        ///
+        /// Defaults to the fee token Tempo charges the fee payer: its stored preference, else
+        /// PathUSD, or from T13 OUSD when the payer holds no PathUSD but some OUSD.
         #[arg(
             id = "doctor_fee_token",
             long = "fee-token",
@@ -752,7 +756,7 @@ impl KeychainSubcommand {
                 mut tempo,
                 rpc,
             } => {
-                let fee_token = fee_token.or(tempo.fee_token).unwrap_or(DEFAULT_FEE_TOKEN);
+                let fee_token = fee_token.or(tempo.fee_token);
                 let mut doctor = Doctor::new(root_account, key_address, fee_token);
                 doctor
                     .run(key_address, root_account, to, selector, recipient, &mut tempo, rpc)
@@ -1395,16 +1399,23 @@ enum AllowedCallMatch {
 struct Doctor {
     steps: Vec<DoctorStep>,
     context: DoctorContext,
+    /// Whether the fee token was passed in. Otherwise `context.fee_token` starts as PathUSD and is
+    /// replaced by the fee payer's fee token once the payer and hardfork are known.
+    explicit_fee_token: bool,
 }
 
 impl Doctor {
     const fn new(
         root_account: Option<Address>,
         key_address: Option<Address>,
-        fee_token: Address,
+        fee_token: Option<Address>,
     ) -> Self {
+        let (fee_token, explicit_fee_token) = match fee_token {
+            Some(fee_token) => (fee_token, true),
+            None => (DEFAULT_FEE_TOKEN, false),
+        };
         let context = DoctorContext { root_account, key_address, chain_id: None, fee_token };
-        Self { steps: Vec::new(), context }
+        Self { steps: Vec::new(), context, explicit_fee_token }
     }
 
     /// Records `step`; `None` when it failed so `?` stops the diagnosis.
@@ -1581,6 +1592,12 @@ impl Doctor {
         let (step, hardfork) = check_hardfork(&provider).await;
         self.steps.push(step);
         let is_t3 = hardfork.map(|hardfork| hardfork.is_t3());
+        // Sponsorship decides who pays the fee, and so which fee token the checks below use.
+        let (sponsorship, fee_payer) = check_sponsorship(tempo, root_account).await;
+        if !self.explicit_fee_token {
+            self.context.fee_token =
+                payer_fee_token(&provider, fee_payer.unwrap_or(root_account), hardfork).await;
+        }
         let fee_token = self.context.fee_token;
         let (limits, pending) = match &registration {
             KeyRegistration::OnChain(info) => {
@@ -1604,7 +1621,6 @@ impl Doctor {
             hardfork,
         ));
 
-        let (sponsorship, fee_payer) = check_sponsorship(tempo, root_account).await;
         let sponsor_failed = sponsorship.status == DoctorStatus::Fail;
         self.steps.push(sponsorship);
         let balance = if sponsor_failed && tempo.has_sponsor_submission() {
@@ -1626,7 +1642,7 @@ impl Doctor {
 
     /// Renders the doctor report.
     fn finish(self) -> Result<()> {
-        let Self { steps, context } = self;
+        let Self { steps, context, .. } = self;
         let count = |status| steps.iter().filter(|s| s.status == status).count();
         let failure_count = count(DoctorStatus::Fail);
         let warning_count = count(DoctorStatus::Warn);
@@ -2316,6 +2332,35 @@ async fn check_fee_token_balance<P: Provider<TempoNetwork>>(
             "verify --fee-token points to a TIP-20 token",
         ),
     }
+}
+
+/// Fee token Tempo charges `payer` for a transaction that names none.
+///
+/// This is the payer's fee manager preference. Without one, from T13 the protocol pays with the
+/// first fallback fee token whose balance covers the fee; not knowing the fee, the doctor takes the
+/// first one the payer holds any of. Otherwise, and when a lookup fails, it is PathUSD.
+async fn payer_fee_token<P: Provider<TempoNetwork>>(
+    provider: &P,
+    payer: Address,
+    hardfork: Option<TempoHardfork>,
+) -> Address {
+    let fee_manager = IFeeManager::new(TIP_FEE_MANAGER_ADDRESS, provider);
+    if let Ok(preferred) = fee_manager.userTokens(payer).call().await
+        && !preferred.is_zero()
+    {
+        return preferred;
+    }
+    let Some(hardfork) = hardfork.filter(|hardfork| hardfork.is_t13()) else {
+        return DEFAULT_FEE_TOKEN;
+    };
+    for &token in hardfork.fallback_fee_tokens() {
+        // A fallback token missing from this chain, like OUSD on a devnet, fails the lookup.
+        let balance = ITIP20::new(token, provider).balanceOf(payer).call().await;
+        if balance.is_ok_and(|balance| !balance.is_zero()) {
+            return token;
+        }
+    }
+    DEFAULT_FEE_TOKEN
 }
 
 /// Validate TIP-1009 expiring-nonce options, if supplied.
@@ -3136,7 +3181,6 @@ pub(crate) async fn send_precompile_tx_with_root_signer(
         if print_sponsor_hash { None } else { tx_opts.tempo.sponsor_config().await? };
 
     let (config, provider) = tempo_provider(&send_tx.eth)?;
-    apply_poll_interval(&provider, send_tx.poll_interval);
     // `--curl` must preserve the first RPC request for the user's intended action.
     let fee_provider = (!config.eth_rpc_curl).then_some(&provider);
 
@@ -3150,6 +3194,7 @@ pub(crate) async fn send_precompile_tx_with_root_signer(
         .await?
         .with_code_sig_and_args(None, Some(hex::encode_prefixed(&calldata)), vec![])
         .await?;
+    apply_poll_interval(&provider, send_tx.poll_interval, builder.chain().id());
 
     let from = root_signer.address();
     if print_sponsor_hash {
@@ -3376,12 +3421,23 @@ fn print_allowed_calls(allowed_calls: &AllowedCallsView) -> Result<()> {
     Ok(())
 }
 
+/// Names the tokens Tempo falls back to for fees, which have the same address on every network
+/// that deploys them.
+const fn fallback_fee_token_name(address: Address) -> Option<&'static str> {
+    match address {
+        PATH_USD_ADDRESS => Some("PathUSD"),
+        OUSD_ADDRESS => Some("OUSD"),
+        _ => None,
+    }
+}
+
 fn address_label(address: Address) -> String {
-    if address == PATH_USD_ADDRESS { "PathUSD".to_string() } else { address.to_string() }
+    fallback_fee_token_name(address).map_or_else(|| address.to_string(), str::to_string)
 }
 
 fn address_label_with_address(address: Address) -> String {
-    if address == PATH_USD_ADDRESS { format!("PathUSD ({address})") } else { address.to_string() }
+    fallback_fee_token_name(address)
+        .map_or_else(|| address.to_string(), |name| format!("{name} ({address})"))
 }
 
 fn format_selector(selector: &[u8; 4]) -> String {
@@ -4075,5 +4131,34 @@ mod tests {
         );
         assert!(sanitized.contains("private-key://<redacted>"));
         assert!(!sanitized.contains("super-secret"));
+    }
+
+    #[tokio::test]
+    async fn payer_fee_token_prefers_stored_token_then_held_fallback() {
+        let preference = |token: Address| IFeeManager::userTokensCall::abi_encode_returns(&token);
+        let balance = |amount: u64| ITIP20::balanceOfCall::abi_encode_returns(&U256::from(amount));
+        // Each case lists the eth_call results in order: preference, then fallback balances.
+        let cases = [
+            (TempoHardfork::T13, vec![preference(addr(0xAA))], addr(0xAA)),
+            (TempoHardfork::T12, vec![preference(Address::ZERO)], PATH_USD_ADDRESS),
+            (
+                TempoHardfork::T13,
+                vec![preference(Address::ZERO), balance(0), balance(5)],
+                OUSD_ADDRESS,
+            ),
+            (TempoHardfork::T13, vec![preference(Address::ZERO), balance(3)], PATH_USD_ADDRESS),
+        ];
+        for (hardfork, responses, expected) in cases {
+            let asserter = alloy_provider::mock::Asserter::new();
+            for response in &responses {
+                asserter.push_success(&Bytes::from(response.clone()));
+            }
+            let provider = alloy_provider::ProviderBuilder::new_with_network::<TempoNetwork>()
+                .connect_mocked_client(asserter.clone());
+
+            let token = payer_fee_token(&provider, addr(0x11), Some(hardfork)).await;
+            assert_eq!(token, expected, "{hardfork:?} {responses:?}");
+            assert_eq!(asserter.requests().len(), responses.len(), "{hardfork:?}");
+        }
     }
 }

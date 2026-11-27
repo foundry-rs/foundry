@@ -16,8 +16,8 @@ use foundry_cli::{
     opts::{BuildOpts, EthereumOpts, EtherscanOpts, TransactionOpts},
     utils::{
         LoadConfig, ResolvedLane, apply_gas_estimate_multiplier, find_contract_artifacts,
-        maybe_print_resolved_lane, parse_constructor_args, read_constructor_args_file,
-        resolve_lane,
+        gas_cap_hardfork, maybe_print_resolved_lane, parse_constructor_args,
+        read_constructor_args_file, resolve_lane,
     },
 };
 use foundry_common::{
@@ -636,14 +636,28 @@ impl CreateArgs {
             } else {
                 deployer.tx.clone()
             };
-            if self.tx.tempo.is_sponsored() {
-                mark_sponsored_gas_estimation(&provider, &mut request).await;
-            }
-            let estimated = provider.estimate_gas(request).await?;
+            let resolved = if self.tx.tempo.is_sponsored() {
+                mark_sponsored_gas_estimation(&provider, &mut request).await
+            } else {
+                None
+            };
+            let estimate = async { provider.estimate_gas(request).await };
+            let cap_hardfork = async {
+                Ok(gas_cap_hardfork(
+                    provider.as_ref(),
+                    Some(chain.id()),
+                    self.gas_estimate_multiplier,
+                    resolved,
+                )
+                .await)
+            };
+            // The hardfork only caps a successful estimate, so a failed one returns without it.
+            let (estimated, hardfork) = tokio::try_join!(estimate, cap_hardfork)?;
             deployer.tx.set_gas_limit(apply_gas_estimate_multiplier(
                 estimated,
                 self.gas_estimate_multiplier,
                 Some(chain.id()),
+                hardfork,
             )?);
         }
 

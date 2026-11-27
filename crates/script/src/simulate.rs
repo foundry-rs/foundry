@@ -28,6 +28,7 @@ use foundry_common::{
 };
 use foundry_evm::{
     core::evm::FoundryEvmNetwork,
+    hardforks::ExecutionSpec,
     traces::{
         CallTraceDecoder, Traces, debug::ContractSources, decode_trace_arena, prune_trace_depth,
         render_trace_arena_inner,
@@ -136,7 +137,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
     ///
     /// Panics if any transaction has no `rpc` field. Monad simulation has a concrete owner and
     /// must not use this entry point.
-    pub(crate) async fn fill_ordinary_metadata(self) -> Result<FilledTransactionsState<FEN>> {
+    pub(crate) async fn fill_ordinary_metadata(mut self) -> Result<FilledTransactionsState<FEN>> {
         if self.args.skip_simulation {
             return self.fill_without_simulation().await;
         }
@@ -276,6 +277,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                         &result,
                         self.args.gas_estimate_multiplier,
                         self.execution_artifacts.rpc_data.chain_ids.get(&rpc).copied(),
+                        self.execution_artifacts.rpc_data.hardforks.get(&rpc).copied(),
                         &self.build_data,
                     )?
                     .build();
@@ -381,9 +383,10 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
             .collect()
     }
 
-    /// Build [ScriptRunner] forking given RPC for each RPC used in the script.
+    /// Build [ScriptRunner] forking given RPC for each RPC used in the script, and records the
+    /// hardfork each one simulates under.
     async fn build_runners(
-        &self,
+        &mut self,
     ) -> Result<Vec<(String, RpcSimulationContext<ScriptRunner<FEN>>)>> {
         let rpcs = &self.execution_artifacts.rpc_data.total_rpcs;
 
@@ -408,6 +411,11 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                 )
                 .await?,
             );
+        }
+        for (rpc, context) in &contexts {
+            if let Some(hardfork) = context.runner.executor.spec_id().reported_hardfork() {
+                self.execution_artifacts.rpc_data.hardforks.insert(rpc.clone(), hardfork);
+            }
         }
         Ok(contexts)
     }
@@ -755,6 +763,7 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
                             tx,
                             &provider_info.provider,
                             self.args.gas_estimate_multiplier,
+                            self.execution_artifacts.rpc_data.hardforks.get(&tx_rpc).copied(),
                             false,
                             self.script_config.tempo.is_sponsored(),
                         )

@@ -2266,7 +2266,7 @@ async fn can_get_node_info_tempo_t0() {
         environment: NodeEnvironment {
             base_fee: 10_000_000_000,
             chain_id: 31337,
-            gas_limit: 30_000_000,
+            gas_limit: 500_000_000,
             gas_price: 11_000_000_000,
         },
         fork_config: NodeForkConfig {
@@ -2314,7 +2314,7 @@ async fn can_get_node_info_tempo_t1() {
         environment: NodeEnvironment {
             base_fee: 20_000_000_000,
             chain_id: 31337,
-            gas_limit: 30_000_000,
+            gas_limit: 500_000_000,
             gas_price: 21_000_000_000,
         },
         fork_config: NodeForkConfig {

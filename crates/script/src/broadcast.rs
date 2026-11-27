@@ -41,13 +41,16 @@ use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
 use foundry_cheatcodes::Wallets;
 use foundry_cli::{
     opts::TempoOpts,
-    utils::{apply_gas_estimate_multiplier, has_batch_support, has_different_gas_calc},
+    utils::{
+        apply_gas_estimate_multiplier, gas_cap_hardfork, has_batch_support, has_different_gas_calc,
+    },
 };
 use foundry_common::{
     FoundryTransactionBuilder, TransactionMaybeSigned,
     provider::{
         ProviderBuilder,
         fee::{estimate_eip1559_fees, resolve_broadcast_eip1559_fees},
+        set_chain_poll_interval,
     },
     shell,
     tempo::{
@@ -115,6 +118,7 @@ where
         is_fixed_gas_limit: bool,
         estimate_via_rpc: bool,
         estimate_multiplier: u64,
+        hardfork: Option<FoundryHardfork>,
         tempo_sponsor: Option<&TempoSponsor>,
         fee_tokens: Option<&mut StoredFeeTokens>,
     ) -> Result<()> {
@@ -186,8 +190,15 @@ where
         // Chains which use `eth_estimateGas` are being sent sequentially and require their
         // gas to be re-estimated right before broadcasting.
         if !is_fixed_gas_limit && estimate_via_rpc {
-            estimate_gas(tx, provider, estimate_multiplier, browser, tempo_sponsor.is_some())
-                .await?;
+            estimate_gas(
+                tx,
+                provider,
+                estimate_multiplier,
+                hardfork,
+                browser,
+                tempo_sponsor.is_some(),
+            )
+            .await?;
         }
 
         if let Some(sponsor) = tempo_sponsor {
@@ -208,6 +219,7 @@ where
         is_fixed_gas_limit: bool,
         estimate_via_rpc: bool,
         estimate_multiplier: u64,
+        hardfork: Option<FoundryHardfork>,
         tempo_sponsor: Option<&TempoSponsor>,
         fee_tokens: Option<&mut StoredFeeTokens>,
     ) -> Result<PreparedTransaction<'a, N>> {
@@ -217,6 +229,7 @@ where
             is_fixed_gas_limit,
             estimate_via_rpc,
             estimate_multiplier,
+            hardfork,
             tempo_sponsor,
             fee_tokens,
         )
@@ -826,6 +839,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 let rpc_url = &rpc_urls[sequence_idx];
                 let provider =
                     Arc::new(ProviderBuilder::from_config_with_url(config, rpc_url)?.build()?);
+                set_chain_poll_interval(&*provider, sequence.chain);
                 progress_ref
                     .wait_for_pending(
                         sequence_idx,
@@ -1082,7 +1096,8 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 eyre::bail!(message);
             }
 
-            // An owner key that a configurable account holds cannot also send on its own.
+            // An owner key that a configurable account holds cannot also sign as a plain wallet
+            // for a sender, which `for_sender` picks for a scope without another signer.
             let mut eth_wallets = AddressHashMap::<EthereumWallet>::default();
             for signer in wallet_signers {
                 let address = signer.address();
@@ -1090,11 +1105,19 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     Some(signer) => {
                         eth_wallets.insert(address, signer.into());
                     }
-                    None if required_addresses.contains(&address) => eyre::bail!(
-                        "{address} signs both as a sender and as an owner of a Tempo \
-                         configurable account in this script, which is not supported; broadcast \
-                         them in separate scripts"
-                    ),
+                    None if remaining_transactions.iter().any(|scope| {
+                        scope.sender == address
+                            && !access_keys.contains_key(scope)
+                            && !configurable_accounts.contains_key(scope)
+                            && !offline_owners.contains_key(scope)
+                    }) =>
+                    {
+                        eyre::bail!(
+                            "{address} signs both as a sender and as an owner of a Tempo \
+                             configurable account in this script, which is not supported; \
+                             broadcast them in separate scripts"
+                        )
+                    }
                     None => {}
                 }
             }
@@ -1176,6 +1199,15 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
             let broadcast_sequence = async {
                 let sequence_offset = operation_ordinal(self.sequence.sequences(), i, 0);
                 let remaining_indices = remaining_operation_indices(&self.sequence, i);
+                // Whether nothing was submitted on this chain before, in this run or an earlier
+                // one, so that a rejection of the first send cannot depend on an earlier
+                // transaction or an earlier attempt of it.
+                let chain = self.sequence.sequences()[i].chain;
+                let first_on_chain =
+                    (0..=i).filter(|&s| self.sequence.sequences()[s].chain == chain).all(|s| {
+                        (0..self.sequence.sequences()[s].transactions.len())
+                            .all(|index| !is_operation_submitted(&self.sequence, s, index))
+                    });
                 // A transaction signed with its owners' approvals is recorded as a submission
                 // attempt only when it is sent, in order.
                 let signed_payloads = (0..self.sequence.sequences()[i].transactions.len())
@@ -1194,6 +1226,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     ProviderBuilder::from_config_with_url(&self.script_config.config, &rpc_url)?
                         .build()?,
                 );
+                set_chain_poll_interval(&*provider, sequence.chain);
                 let unlocked_submission_provider = Arc::new(
                     ProviderBuilder::from_config_with_url(&self.script_config.config, &rpc_url)?
                         .max_retry(0)
@@ -1271,6 +1304,9 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     };
                     let expiring_nonce_discriminators = self.script_config.tempo.expiring_nonce
                         && tempo_hardfork.is_some_and(|fork| fork >= TempoHardfork::T12);
+                    // The hardfork also caps gas estimate margins on chains whose schedule is
+                    // unknown, such as local and development Tempo nodes.
+                    let reported_hardfork = tempo_hardfork.map(FoundryHardfork::from);
 
                     // Iterate through transactions, matching the `from` field with the associated
                     // wallet. Then send the transaction. Panics if we find a unknown `from`
@@ -1334,6 +1370,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                         &provider,
                         &transactions,
                         self.args.gas_estimate_multiplier,
+                        reported_hardfork,
                     )
                     .await?;
                     sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
@@ -1378,6 +1415,12 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     // We send transactions and wait for receipts in batches of 100, since some
                     // networks cannot handle more than that.
                     let batch_size = if sequential_broadcast { 1 } else { 100 };
+                    // A Tempo transaction is signed and sent only once the node accepted the
+                    // previous one, so a rejection leaves none of the sender's later nonces in a
+                    // pool behind the gap, where they would run once it is filled, and leaves
+                    // them unsigned for `--resume`. Other batches are signed before any of them
+                    // is sent, and sent all at once.
+                    let ordered = self.script_config.evm_opts.networks.is_tempo();
 
                     // Each fee payer's stored fee token is read once, unless a transaction sets
                     // its sender's fee token, which later transactions must then pay with.
@@ -1392,71 +1435,83 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                             batch_number * batch_size + std::cmp::min(batch_size, batch.len()) - 1
                         ));
 
-                        let mut prepared = Vec::with_capacity(batch.len());
-                        for (kind, is_fixed_gas_limit, index) in batch {
-                            // A pending operation can be confirmed while waiting on an earlier
-                            // batch.
-                            if is_operation_completed(&self.sequence, i, *index) {
-                                continue;
-                            }
-                            kind.validate_expiring_create_nonce(
-                                &provider,
-                                &self.sequence.sequences()[i].transactions[*index],
-                            )
-                            .await?;
-                            let mut kind = kind
-                                .clone()
-                                .prepare_for_durable_send(
+                        let mut unsent = batch.iter();
+                        let mut buffer = FuturesUnordered::new();
+                        let mut fail_fast_index = None;
+                        'send: loop {
+                            let mut prepared = Vec::new();
+                            while (!ordered || buffer.is_empty() && prepared.is_empty())
+                                && let Some((kind, is_fixed_gas_limit, index)) = unsent.next()
+                            {
+                                // A pending operation can be confirmed while waiting on an earlier
+                                // batch.
+                                if is_operation_completed(&self.sequence, i, *index) {
+                                    continue;
+                                }
+                                kind.validate_expiring_create_nonce(
                                     &provider,
-                                    sequential_broadcast,
-                                    *is_fixed_gas_limit,
-                                    estimate_via_rpc,
-                                    self.args.gas_estimate_multiplier,
-                                    tempo_sponsor.as_deref(),
-                                    fee_tokens.as_mut(),
+                                    &self.sequence.sequences()[i].transactions[*index],
                                 )
                                 .await?;
-                            if let PreparedTransaction::Raw(payload, hash) = &mut kind {
-                                *hash = self.sequence.persist_signed_payload(
-                                    i,
-                                    *index,
-                                    payload.clone(),
-                                    tempo_hardfork.is_none_or(|fork| fork >= TempoHardfork::T1B),
-                                )?;
+                                let mut kind = kind
+                                    .clone()
+                                    .prepare_for_durable_send(
+                                        &provider,
+                                        sequential_broadcast,
+                                        *is_fixed_gas_limit,
+                                        estimate_via_rpc,
+                                        self.args.gas_estimate_multiplier,
+                                        reported_hardfork,
+                                        tempo_sponsor.as_deref(),
+                                        fee_tokens.as_mut(),
+                                    )
+                                    .await?;
+                                if let PreparedTransaction::Raw(payload, hash) = &mut kind {
+                                    *hash = self.sequence.persist_signed_payload(
+                                        i,
+                                        *index,
+                                        payload.clone(),
+                                        tempo_hardfork
+                                            .is_none_or(|fork| fork >= TempoHardfork::T1B),
+                                    )?;
+                                }
+                                prepared.push((kind, *index));
                             }
-                            prepared.push((kind, *index));
-                        }
 
-                        let mut buffer = FuturesUnordered::new();
-                        for (kind, index) in prepared {
-                            if let Some(request) = kind.delegated_request() {
-                                kind.validate_delegated_submission()?;
-                                self.sequence.persist_delegated_request(
-                                    i,
-                                    index,
-                                    request.clone(),
-                                )?;
+                            if batch_number == 0 && first_on_chain && fail_fast_index.is_none() {
+                                fail_fast_index = prepared.first().map(|(_, index)| *index);
                             }
-                            let provider = if matches!(kind, PreparedTransaction::Unlocked(_)) {
-                                unlocked_submission_provider.clone()
-                            } else {
-                                provider.clone()
+                            for (kind, index) in prepared {
+                                if let Some(request) = kind.delegated_request() {
+                                    kind.validate_delegated_submission()?;
+                                    self.sequence.persist_delegated_request(
+                                        i,
+                                        index,
+                                        request.clone(),
+                                    )?;
+                                }
+                                let provider = if matches!(kind, PreparedTransaction::Unlocked(_)) {
+                                    unlocked_submission_provider.clone()
+                                } else {
+                                    provider.clone()
+                                };
+                                let mut pending = async move {
+                                    let res = kind.clone().send(provider).await;
+                                    (res, kind, 0, None, index)
+                                }
+                                .boxed();
+                                if let Some(result) = pending.as_mut().now_or_never() {
+                                    buffer.push(futures::future::ready(result).boxed());
+                                } else {
+                                    buffer.push(pending);
+                                }
+                            }
+
+                            let Some((mut res, kind, attempt, original_res, index)) =
+                                buffer.next().await
+                            else {
+                                break;
                             };
-                            let mut pending = async move {
-                                let res = kind.clone().send(provider).await;
-                                (res, kind, 0, None, index)
-                            }
-                            .boxed();
-                            if let Some(result) = pending.as_mut().now_or_never() {
-                                buffer.push(futures::future::ready(result).boxed());
-                            } else {
-                                buffer.push(pending);
-                            }
-                        }
-
-                        'send: while let Some((mut res, kind, attempt, original_res, index)) =
-                            buffer.next().await
-                        {
                             if res.is_err()
                                 && let PreparedTransaction::Raw(_, hash) = kind
                                 && provider
@@ -1482,7 +1537,24 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                     "submission outcome for delegated operation {index} is unknown; refusing to risk a duplicate transaction"
                                 );
                             }
-                            if res.is_err() && attempt <= 3 {
+                            // A JSON-RPC error response to the first send of the first transaction
+                            // on a chain means the node rejected the payload itself, for example
+                            // for a gas limit above the chain's cap, so resending it fails again.
+                            // Any other rejection may depend on an earlier transaction the node
+                            // has not caught up with, such as a pool's in-flight limit for an
+                            // EIP-7702 delegated sender, or on an earlier attempt of this one that
+                            // landed, so it is retried. The transport retries errors it classifies
+                            // as transient itself and reports exhausted retries as transport
+                            // errors.
+                            if attempt <= 3
+                                && let Err(error) = &res
+                                && (attempt > 0
+                                    || Some(index) != fail_fast_index
+                                    || !matches!(
+                                        error.downcast_ref::<TransportError>(),
+                                        Some(RpcError::ErrorResp(_))
+                                    ))
+                            {
                                 // Try to resubmit the transaction
                                 let provider = provider.clone();
                                 let progress = seq_progress.inner.clone();
@@ -1498,6 +1570,20 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                 }));
 
                                 continue 'send;
+                            }
+
+                            if ordered && res.is_err() {
+                                let not_sent = transactions
+                                    .iter()
+                                    .map(|(_, _, other)| *other)
+                                    .filter(|&other| other > index)
+                                    .collect::<Vec<_>>();
+                                if !not_sent.is_empty() {
+                                    sh_warn!(
+                                        "Transactions {} on chain {sequence_chain} were not sent after transaction {index} failed. Add `--resume` to your command to retry transaction {index} and send them.",
+                                        not_sent.iter().format(", ")
+                                    )?;
+                                }
                             }
 
                             // Preserve the original error if any
@@ -2066,10 +2152,18 @@ impl BundledState<TempoEvmNetwork> {
         }
 
         // Estimate gas for the batch transaction
+        let multiplier = self.args.gas_estimate_multiplier;
+        // A sponsored estimate reads the hardfork for its marker and caps the margin with it.
+        let hardfork = if tempo_sponsor.is_some() {
+            None
+        } else {
+            gas_cap_hardfork(provider.as_ref(), Some(chain_id), Some(multiplier), None).await
+        };
         estimate_gas(
             &mut batch_tx,
             provider.as_ref(),
-            self.args.gas_estimate_multiplier,
+            multiplier,
+            hardfork,
             false,
             tempo_sponsor.is_some(),
         )
@@ -2308,11 +2402,14 @@ async fn wait_for_batch_receipt<N: Network>(
 }
 
 /// Estimates and sets the gas limit of `tx`, which a Tempo fee payer signs afterwards when
-/// `sponsored`.
+/// `sponsored`. The margin is capped as [`apply_gas_estimate_multiplier`] does, with `hardfork`,
+/// the one the node reports, for chains whose hardfork schedule is unknown. Without `hardfork`, a
+/// sponsored estimate uses the one its fee payer marker reads.
 pub async fn estimate_gas<N: Network, P: Provider<N>>(
     tx: &mut N::TransactionRequest,
     provider: &P,
     estimate_multiplier: u64,
+    hardfork: Option<FoundryHardfork>,
     browser: bool,
     sponsored: bool,
 ) -> Result<()>
@@ -2324,15 +2421,16 @@ where
     tx.reset_gas_limit();
 
     let mut request = if browser { tx.browser_wallet_gas_estimation_request() } else { tx.clone() };
-    if sponsored {
-        mark_sponsored_gas_estimation(provider, &mut request).await;
-    }
+    // The marker's lookup also caps the margin when the caller has no hardfork.
+    let resolved =
+        if sponsored { mark_sponsored_gas_estimation(provider, &mut request).await } else { None };
     let estimate =
         provider.estimate_gas(request).await.wrap_err("Failed to estimate gas for tx")?;
     tx.set_gas_limit(apply_gas_estimate_multiplier(
         estimate,
         Some(estimate_multiplier),
         tx.chain_id(),
+        hardfork.or(resolved.map(Into::into)),
     )?);
     Ok(())
 }
@@ -2838,7 +2936,7 @@ mod tests {
         let provider =
             RootProvider::<TempoNetwork>::new_http("http://localhost:8545".parse().unwrap());
 
-        sender.prepare(&provider, false, true, false, 100, None, None).await.unwrap();
+        sender.prepare(&provider, false, true, false, 100, None, None, None).await.unwrap();
 
         match sender {
             SendTransactionKind::AccessKey(tx, _) => {
@@ -3155,7 +3253,7 @@ mod tests {
             SendTransactionKind::PreparedRaw(Bytes::from_static(SIGNED_TX), hash),
         ] {
             let prepared = input
-                .prepare_for_durable_send(&provider, true, false, true, 130, None, None)
+                .prepare_for_durable_send(&provider, true, false, true, 130, None, None, None)
                 .await
                 .unwrap();
             let PreparedTransaction::Raw(payload, prepared_hash) = prepared else {
@@ -3177,10 +3275,28 @@ mod tests {
             asserter.push_success(&alloy_primitives::U64::from(estimate));
             let mut tx = alloy_rpc_types::TransactionRequest::default();
 
-            let result = estimate_gas(&mut tx, &provider, multiplier, false, false).await;
+            let result = estimate_gas(&mut tx, &provider, multiplier, None, false, false).await;
 
             assert_eq!(result.is_ok(), expected.is_some());
             assert_eq!(tx.gas, expected);
         }
+    }
+
+    // A sponsored estimate on a chain without a known schedule gets its gas cap only from the
+    // hardfork the fee payer marker reads.
+    #[tokio::test]
+    async fn sponsored_estimate_gas_caps_margin_with_the_marker_hardfork() {
+        let asserter = Asserter::new();
+        asserter.push_success(&serde_json::json!({ "active": "T14", "schedule": [] }));
+        asserter.push_success(&alloy_primitives::U64::from(24_461_632));
+        let provider = alloy_provider::ProviderBuilder::<_, _, TempoNetwork>::default()
+            .connect_mocked_client(asserter.clone());
+        let mut tx = TempoTransactionRequest::default();
+        tx.inner.chain_id = Some(31337);
+
+        estimate_gas(&mut tx, &provider, 130, None, false, true).await.unwrap();
+
+        assert_eq!(tx.inner.gas, Some(30_000_000));
+        assert!(asserter.read_q().is_empty());
     }
 }

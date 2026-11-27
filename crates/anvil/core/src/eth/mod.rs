@@ -965,6 +965,22 @@ pub enum EthRequest {
     /// Creates a native TIP-20 token at a chosen address (Tempo-only).
     #[serde(rename = "anvil_tempoCreateToken", with = "sequence")]
     TempoCreateToken(TempoCreateTokenRequest),
+
+    /// Returns the Tempo fork schedule and the active fork, like a Tempo node (Tempo-only).
+    #[serde(rename = "tempo_forkSchedule", with = "empty_params")]
+    TempoForkSchedule(()),
+
+    /// Mints Tempo's fee tokens to an address, like the testnet faucet (Tempo-only).
+    #[serde(rename = "tempo_fundAddress", with = "sequence")]
+    TempoFundAddress(Address),
+
+    /// Simulates like `eth_simulateV1` and adds the metadata of the TIP-20 tokens involved
+    /// (Tempo-only).
+    #[serde(rename = "tempo_simulateV1")]
+    TempoSimulateV1(
+        SimulatePayload<WithOtherFields<TransactionRequest>>,
+        #[serde(default)] Option<BlockId>,
+    ),
 }
 
 /// Native Tempo consensus selector: `"latest"` or `{"height": N}` with a numeric height.

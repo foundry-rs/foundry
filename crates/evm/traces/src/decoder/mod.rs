@@ -4083,11 +4083,17 @@ mod tests {
             idx: 1,
             ..Default::default()
         });
+        // OUSD is a TIP20 precompile too, though not every genesis deploys it.
+        arena.nodes_mut().push(CallTraceNode {
+            trace: CallTrace { address: OUSD_ADDRESS, depth: 1, ..Default::default() },
+            idx: 2,
+            ..Default::default()
+        });
 
         let mut identifier = RecordingIdentifier { queried: Vec::new() };
         decoder.identify_addresses(&arena, &mut identifier);
 
-        // On a Tempo chain, the Tempo precompile should be filtered out.
+        // On a Tempo chain, the Tempo precompiles should be filtered out.
         assert_eq!(identifier.queried, vec![regular_addr]);
     }
 

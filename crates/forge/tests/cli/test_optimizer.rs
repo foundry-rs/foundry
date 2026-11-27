@@ -3166,12 +3166,14 @@ Ran 1 test for test/Counter.t.sol:CounterTest
 [PASS] test_Increment() ([GAS])
 Traces:
   [..] CounterTest::test_Increment()
-    ├─ [[..]] VM::deployCode("src/Counter.sol:Counter")
-    │   ├─ [[..]] → new Counter@0xF62849F9A0B5Bf2913b396098F7c7019b51A820a
-    │   │   └─ ← [Return] 481 bytes of code
-    │   └─ ← [Return] Counter: [0xF62849F9A0B5Bf2913b396098F7c7019b51A820a]
-    ├─ [..] Counter::setNumber(0)
-    │   └─ ← [Stop]
+    ├─ [..] CounterTest::create_counter(uint256)(0)
+    │   ├─ [[..]] VM::deployCode("src/Counter.sol:Counter")
+    │   │   ├─ [[..]] → new Counter@0xF62849F9A0B5Bf2913b396098F7c7019b51A820a
+    │   │   │   └─ ← [Return] 481 bytes of code
+    │   │   └─ ← [Return] Counter: [0xF62849F9A0B5Bf2913b396098F7c7019b51A820a]
+    │   ├─ [..] Counter::setNumber(0)
+    │   │   └─ ← [Stop]
+    │   └─ ← 
     ├─ [..] Counter::increment()
     │   └─ ← [Stop]
     ├─ [..] Counter::number() [staticcall]

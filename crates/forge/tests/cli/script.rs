@@ -8889,6 +8889,102 @@ contract TempoResume is Script {
     assert_eq!(provider.get_storage_at(target, U256::ZERO).await.unwrap(), U256::from(7));
 }
 
+// A Tempo node's rejection of a batched transaction stops the batch: the sender's later
+// transactions are neither signed nor sent, so none waits behind the nonce gap, and `--resume`
+// retries the rejected one and sends them.
+#[forgetest_init]
+async fn tempo_script_stops_batch_at_rejected_transaction(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "TempoRejected.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract TempoRejectedTarget {
+    uint256 public value;
+
+    function set(uint256 newValue) external {
+        value = newValue;
+    }
+}
+
+contract TempoRejected is Script {
+    function run() external {
+        vm.startBroadcast();
+        TempoRejectedTarget target = new TempoRejectedTarget();
+        for (uint256 i = 1; i <= 4; i++) {
+            target.set(i);
+        }
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let (rejecting_rpc, rejecting) = rpc::spawn_rpc_proxy_method_error_after_when_enabled(
+        handle.http_endpoint(),
+        "eth_sendRawTransaction",
+        2,
+        -32003,
+        "fee token rejected",
+    )
+    .await;
+    let (rpc, submissions) =
+        spawn_rpc_proxy_recording_method(rejecting_rpc, "eth_sendRawTransaction").await;
+    let sender = handle.dev_accounts().next().unwrap();
+    let args = [
+        "--tc",
+        "TempoRejected",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+        "--network",
+        "tempo",
+    ];
+
+    cmd.arg("script").arg(&script).args(args).assert_failure().stderr_eq(str![[r#"
+Paying gas in AlphaUSD (0x20C0000000000000000000000000000000000001)
+Paying gas in AlphaUSD (0x20C0000000000000000000000000000000000001)
+Warning: Transactions 3, 4 on chain 31337 were not sent after transaction 2 failed. Add `--resume` to your command to retry transaction 2 and send them.
+Error: Failed to send transaction after 4 attempts Err(server returned an error response: error code -32003: fee token rejected)
+
+"#]]);
+    // The rejected transaction is resent, but nothing after it is submitted.
+    let mut payloads =
+        submissions.lock().unwrap().iter().map(|params| params[0].clone()).collect::<Vec<_>>();
+    payloads.dedup();
+    assert_eq!(payloads.len(), 3);
+    let sequence: Value =
+        foundry_common::fs::read_json_file(&latest_broadcast_path(prj.root())).unwrap();
+    let transactions = sequence["transactions"].as_array().unwrap();
+    assert_eq!(transactions.len(), 5);
+    assert!(transactions[..2].iter().all(|tx| tx["hash"].is_string()));
+    assert!(transactions[2..].iter().all(|tx| tx["hash"].is_null()));
+    let recovery_path = foundry_common::fs::json_files(&prj.root().join("cache"))
+        .find(|path| path.to_string_lossy().ends_with(".recovery.json"))
+        .unwrap();
+    let recovery: Value = foundry_common::fs::read_json_file(&recovery_path).unwrap();
+    assert_eq!(recovery["deployments"][0]["attempts"].as_array().unwrap().len(), 3);
+    let provider = handle.http_provider();
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 2);
+
+    rejecting.store(false, Ordering::SeqCst);
+    cmd.forge_fuse().arg("script").arg(&script).args(args).arg("--resume").assert_success();
+    let sequence: Value =
+        foundry_common::fs::read_json_file(&latest_broadcast_path(prj.root())).unwrap();
+    let receipts = sequence["receipts"].as_array().unwrap();
+    assert_eq!(receipts.len(), 5);
+    assert!(receipts.iter().all(|receipt| receipt["status"] == "0x1"), "{receipts:?}");
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 5);
+    let target = sequence["transactions"][0]["contractAddress"]
+        .as_str()
+        .unwrap()
+        .parse::<Address>()
+        .unwrap();
+    assert_eq!(provider.get_storage_at(target, U256::ZERO).await.unwrap(), U256::from(4));
+}
+
 #[forgetest_init]
 async fn tempo_aa_script_broadcasts_with_local_sponsor(prj: _, cmd: _) {
     let script = prj.add_script(
@@ -9541,6 +9637,47 @@ async fn script_check_contract_sizes_honors_config_limit(prj: _, cmd: _) {
 Warning: Simulated with Foundry's default sender, so addresses and nonces may not match your deployer. Set your own --sender.
 
 "#]]);
+}
+
+// Tempo caps transactions at 30M gas. Foundry knows no hardfork schedule for a local Tempo chain,
+// so the cap that keeps the default 130% gas estimate margin sendable comes from the node. Anvil
+// lifts the cap by default, so the test checks the gas limits recorded and sent rather than a
+// rejection.
+#[forgetest_init]
+async fn tempo_script_caps_gas_margin_on_unscheduled_chain(prj: _, cmd: _) {
+    const TEMPO_TX_GAS_LIMIT_CAP: u64 = 30_000_000;
+    write_large_runtime_deploy_script(&prj, 24_000);
+    // Only the transaction cap limits the deployment, whatever Anvil's default block gas limit.
+    let (_api, handle) = spawn(NodeConfig::test_tempo().with_gas_limit(Some(500_000_000))).await;
+    let rpc = handle.http_endpoint();
+    let args = [
+        "DeployLarge",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    ];
+    let gas = |value: &Value| u64::from_str_radix(&value.as_str().unwrap()[2..], 16).unwrap();
+
+    cmd.arg("script").args(args).assert_success();
+    let dry_run = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+        .find(|path| path.ends_with("dry-run/run-latest.json"))
+        .expect("no dry-run broadcast artifact");
+    let sequence: Value = foundry_common::fs::read_json_file(&dry_run).unwrap();
+    assert_eq!(gas(&sequence["transactions"][0]["transaction"]["gas"]), TEMPO_TX_GAS_LIMIT_CAP);
+
+    cmd.forge_fuse().arg("script").args(args).arg("--broadcast").assert_success();
+    let sequence: Value =
+        foundry_common::fs::read_json_file(&latest_broadcast_path(prj.root())).unwrap();
+    let receipt = &sequence["receipts"][0];
+    assert_eq!(receipt["status"], "0x1");
+    assert!(gas(&receipt["gasUsed"]) * 130 / 100 > TEMPO_TX_GAS_LIMIT_CAP);
+    let tx = handle
+        .http_provider()
+        .raw_request::<_, Value>("eth_getTransactionByHash".into(), (&receipt["transactionHash"],))
+        .await
+        .unwrap();
+    assert_eq!(gas(&tx["gas"]), TEMPO_TX_GAS_LIMIT_CAP);
 }
 
 // Regression test for https://github.com/foundry-rs/foundry/issues/15207: the broadcast simulation
@@ -10870,7 +11007,7 @@ contract LinkedDeployScript is Script {
 }
 
 /// A script that broadcasts from an upgraded EOA signs with its owners, also when the EOA's
-/// retired root key is among the wallets.
+/// retired root key is among the wallets or is the account's only owner.
 #[forgetest_init]
 async fn tempo_t14_script_broadcasts_from_upgraded_eoa(prj: _, cmd: _) {
     prj.initialize_default_contracts();
@@ -10900,51 +11037,73 @@ contract UpgradedDeployScript is Script {
     let fee_token = foundry_common::tempo::ALPHA_USD_ADDRESS.to_string();
     let upgrade = prj.add_script(
         "Upgrade.s.sol",
-        &format!(
-            r#"
-import {{Script}} from "forge-std/Script.sol";
+        r#"
+import {Script} from "forge-std/Script.sol";
 
-interface IConfigurableAccount {{
-    struct ConfigurableAccountOwner {{
+interface IConfigurableAccount {
+    struct ConfigurableAccountOwner {
         address owner;
         uint8 weight;
-    }}
+    }
 
     function upgradeAccount(uint8 threshold, ConfigurableAccountOwner[] calldata owners) external;
-}}
+}
 
-contract UpgradeScript is Script {{
-    function run() external {{
+contract UpgradeScript is Script {
+    function run() external {
         IConfigurableAccount.ConfigurableAccountOwner[] memory owners =
             new IConfigurableAccount.ConfigurableAccountOwner[](1);
-        owners[0] = IConfigurableAccount.ConfigurableAccountOwner({owner}, 1);
+        owners[0] = IConfigurableAccount.ConfigurableAccountOwner(vm.envAddress("OWNER"), 1);
         vm.startBroadcast();
         (bool ok,) = address(0xAACC000000000000000000000000000000000000).call(
             abi.encodeCall(IConfigurableAccount.upgradeAccount, (1, owners))
         );
         require(ok, "upgrade failed");
         vm.stopBroadcast();
-    }}
-}}
-"#
-        ),
+    }
+}
+"#,
     );
-    cmd.forge_fuse().arg("script").arg(&upgrade).args(["--rpc-url", &rpc, "--broadcast"]);
-    cmd.args(["--network", "tempo", "--tempo.fee-token", &fee_token]);
-    cmd.args(["--private-key", &root_key, "--skip-simulation"]).assert_success();
+    // `cast wallet upgrade` makes the EOA's own key its only owner by default.
+    let self_owned = handle.dev_wallets().nth(4).unwrap();
+    let self_owned_key = hex::encode_prefixed(self_owned.to_bytes());
+    for (key, owner) in [(&root_key, owner), (&self_owned_key, self_owned.address())] {
+        cmd.forge_fuse().arg("script").arg(&upgrade).args(["--rpc-url", &rpc, "--broadcast"]);
+        cmd.args(["--network", "tempo", "--tempo.fee-token", &fee_token]);
+        cmd.args(["--private-key", key, "--skip-simulation"]);
+        cmd.env("OWNER", owner.to_string());
+        cmd.assert_success();
+    }
 
-    // The owner key is a wallet, then a `--tempo.owner`.
+    // The owner key is a wallet, then a `--tempo.owner`, then the self-owned EOA's own key.
+    let root_sender = root.address().to_string();
     let owner_arg = format!("private-key://{}", keys[0]);
-    for owner in [["--private-keys", keys[0].as_str()], ["--tempo.owner", owner_arg.as_str()]] {
+    for (sender, wallets) in [
+        (
+            root.address(),
+            vec!["--sender", &root_sender, "--private-keys", &root_key, "--private-keys", &keys[0]],
+        ),
+        (
+            root.address(),
+            vec![
+                "--sender",
+                &root_sender,
+                "--private-keys",
+                &root_key,
+                "--tempo.owner",
+                &owner_arg,
+            ],
+        ),
+        (self_owned.address(), vec!["--private-key", &self_owned_key]),
+    ] {
         cmd.forge_fuse().arg("script").arg(&script).args(["--rpc-url", &rpc, "--broadcast"]);
         cmd.args(["--network", "tempo", "--tempo.fee-token", &fee_token]);
-        cmd.args(["--sender", &root.address().to_string(), "--private-keys", &root_key]);
-        cmd.args(owner).assert_success();
+        cmd.args(wallets).assert_success();
         let block = provider.get_block_number().await.unwrap();
         let receipts = provider.get_block_receipts(block.into()).await.unwrap().unwrap();
         let receipt = receipts.last().unwrap();
         assert!(receipt.status());
-        assert_eq!(receipt.from(), root.address());
+        assert_eq!(receipt.from(), sender);
         let raw = provider
             .raw_request::<_, Bytes>(
                 "eth_getRawTransactionByHash".into(),
@@ -10957,6 +11116,33 @@ contract UpgradeScript is Script {{
         };
         assert!(signed.signature().as_configurable_account().is_some());
     }
+
+    // An owner key of the upgraded EOA cannot also send on its own in the same script.
+    let conflict = prj.add_script(
+        "UpgradedConflict.s.sol",
+        r#"
+import {Script} from "forge-std/Script.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract UpgradedConflictScript is Script {
+    function run() external {
+        vm.broadcast(vm.envAddress("OWNER"));
+        new Counter();
+        vm.broadcast(vm.envAddress("ROOT"));
+        new Counter();
+    }
+}
+"#,
+    );
+    cmd.forge_fuse().arg("script").arg(&conflict).args(["--rpc-url", &rpc, "--broadcast"]);
+    cmd.args(["--network", "tempo", "--tempo.fee-token", &fee_token, "--skip-simulation"]);
+    cmd.args(["--private-keys", &root_key, "--private-keys", &keys[0]]);
+    cmd.env("OWNER", owner.to_string());
+    cmd.env("ROOT", &root_sender);
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: 0xeD5970f07eea5A9E7b359D3c5d3F82b34a8F1E15 signs both as a sender and as an owner of a Tempo configurable account in this script, which is not supported; broadcast them in separate scripts
+
+"#]]);
 
     // `--resume` with only the retired root key loaded runs the script again to collect the
     // owner key it remembers.
@@ -12193,6 +12379,7 @@ interface Vm {
     function getRawBlockHeader(uint256 blockNumber) external view returns (bytes memory);
     function rpc(string calldata method, string calldata params) external returns (bytes memory);
     function startBroadcast(uint256 privateKey) external;
+    function stopBroadcast() external;
     function transact(bytes32 txHash) external;
 }
 
@@ -12286,6 +12473,18 @@ contract BroadcastsTwice is Base {
     function run() external {
         vm.startBroadcast(0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80);
         payable(address(0xdead)).transfer(1);
+        payable(address(0xbeef)).transfer(1);
+    }
+}
+
+contract BroadcastsThroughTwoUrls is Base {
+    function run() external {
+        vm.createSelectFork(vm.envString("FIRST_URL"));
+        vm.startBroadcast(0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80);
+        payable(address(0xdead)).transfer(1);
+        vm.stopBroadcast();
+        vm.createSelectFork(vm.envString("SECOND_URL"));
+        vm.startBroadcast(0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d);
         payable(address(0xbeef)).transfer(1);
     }
 }
@@ -12498,7 +12697,7 @@ async fn script_json_rpc_failure_codes_fork(prj: _, cmd: _) {
 {"success":true,"...":"{...}"}
 {"chain":31337,"...":"{...}"}
 {"status":"success","transactions":"[..]/broadcast/Failures.s.sol/31337/run-latest.json","sensitive":"[..]/cache/Failures.s.sol/31337/run-latest.json"}
-{"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"rpc.error","message":"Failed to send transaction after 4 attempts Err(server returned an error response: error code -32000: rejected)","details":{"code":-32000}}],"warnings":[]}
+{"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"rpc.error","message":"Failed to send transaction; server returned an error response: error code -32000: rejected","details":{"code":-32000}}],"warnings":[]}
 
 "#]]
         .is_jsonlines(),
@@ -12592,6 +12791,20 @@ Script ran successfully.
 ...
 "#]],
     );
+
+    // Decoding internal calls does not request outputs the cache lacks, which would compile.
+    cmd.forge_fuse()
+        .arg("script")
+        .arg(&script)
+        .args(["--no-compile", "--decode-internal", "-vvvv"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+No files changed, compilation skipped
+Traces:
+...
+Script ran successfully.
+...
+"#]]);
 
     prj.add_source("Foo", "contract Demo { function run() external pure {} }");
     cmd.forge_fuse()
@@ -12799,4 +13012,65 @@ Script ran successfully.
 [GAS]
 
 "#]]);
+}
+
+// A pool may reject a transaction until an earlier one of the same batch is mined, such as reth's
+// in-flight limit for an EIP-7702 delegated sender, so such a rejection is retried.
+#[forgetest]
+async fn script_retries_rejection_behind_pending_transaction_fork(prj: _, cmd: _) {
+    prj.add_script("Failures.s.sol", JSON_FAILURE_SCRIPT);
+    let (api, handle) =
+        spawn(NodeConfig::test().with_blocktime(Some(Duration::from_secs(1)))).await;
+    let (proxy, rejections) =
+        rpc::spawn_rpc_proxy_one_pooled_transaction(handle.http_endpoint()).await;
+
+    cmd.args(["script", "BroadcastsTwice", "--fork-url", &proxy, "--broadcast"]).assert_success();
+    let sender = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+    assert_eq!(api.transaction_count(sender, None).await.unwrap(), U256::from(2));
+    assert!(rejections.load(Ordering::Relaxed) > 0);
+}
+
+// Each transaction sent with `--slow` is the first of its batch. A rejection after an earlier one
+// was mined may still depend on it, such as from a pool or backend that has not dropped it yet, so
+// it is retried.
+#[forgetest]
+async fn script_retries_rejection_after_mined_transaction_fork(prj: _, cmd: _) {
+    prj.add_script("Failures.s.sol", JSON_FAILURE_SCRIPT);
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let proxy = rpc::spawn_rpc_proxy_method_error_once(
+        handle.http_endpoint(),
+        "eth_sendRawTransaction",
+        1,
+        -32000,
+        "in-flight transaction limit reached for delegated accounts",
+    )
+    .await;
+
+    cmd.args(["script", "BroadcastsTwice", "--fork-url", &proxy, "--broadcast", "--slow"])
+        .assert_success();
+    let sender = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+    assert_eq!(api.transaction_count(sender, None).await.unwrap(), U256::from(2));
+}
+
+// A script that broadcasts through two endpoints of one chain sends a sequence per endpoint. The
+// second sequence's first transaction is sent after the first sequence's, so its rejection is
+// retried.
+#[forgetest]
+async fn script_retries_rejection_in_later_sequence_on_chain_fork(prj: _, cmd: _) {
+    prj.add_script("Failures.s.sol", JSON_FAILURE_SCRIPT);
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let second = rpc::spawn_rpc_proxy_method_error_once(
+        handle.http_endpoint(),
+        "eth_sendRawTransaction",
+        0,
+        -32000,
+        "in-flight transaction limit reached for delegated accounts",
+    )
+    .await;
+
+    cmd.env("FIRST_URL", handle.http_endpoint());
+    cmd.env("SECOND_URL", &second);
+    cmd.args(["script", "BroadcastsThroughTwoUrls", "--broadcast"]).assert_success();
+    let sender = address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8");
+    assert_eq!(api.transaction_count(sender, None).await.unwrap(), U256::from(1));
 }
