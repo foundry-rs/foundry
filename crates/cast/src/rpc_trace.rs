@@ -147,6 +147,7 @@ fn push_frame(
         trace,
         logs,
         ordering: Vec::new(),
+        execution_address_override: None,
     });
 
     let mut children = Vec::with_capacity(frame.calls.len());

@@ -101,3 +101,12 @@ fn disassemble_spec_names(cmd: _) {
 
 "#]]);
 }
+
+#[casttest]
+fn disassemble_unknown_opcode(cmd: _) {
+    cmd.args(["disassemble", "0c"]).assert_success().stdout_eq(str![[r#"
+00000000: UNKNOWN(0x0C)
+
+
+"#]]);
+}
