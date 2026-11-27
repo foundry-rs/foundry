@@ -142,6 +142,12 @@ pub struct NodeArgs {
     #[arg(long, requires = "block_time")]
     pub mixed_mining: bool,
 
+    /// Allow blocks without an explicit timestamp to share their parent's timestamp when the wall
+    /// clock has not advanced past it, as on sub-second chains. By default each block advances at
+    /// least one second.
+    #[arg(long)]
+    pub allow_equal_timestamps: bool,
+
     /// The hosts the server will listen on.
     #[arg(
         long,
@@ -327,6 +333,7 @@ impl NodeArgs {
             ))
             .with_no_mining(self.no_mining)
             .with_mixed_mining(self.mixed_mining, self.block_time)
+            .with_allow_equal_timestamps(self.allow_equal_timestamps)
             .with_account_generator(self.account_generator())?
             .with_genesis_balance(genesis_balance)
             .with_genesis_timestamp(self.timestamp)
