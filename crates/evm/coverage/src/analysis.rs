@@ -17,7 +17,7 @@ use std::{
 
 /// A visitor that walks the AST of a single contract and finds coverage items.
 #[derive(Clone)]
-struct SourceVisitor<'gcx, 'calls> {
+struct SourceVisitor<'gcx> {
     /// The source ID of the contract.
     source_id: u32,
     /// The solar session for span resolution.
@@ -31,17 +31,16 @@ struct SourceVisitor<'gcx, 'calls> {
 
     /// Coverage items
     items: Vec<CoverageItem>,
-    unique_calls: Option<&'calls FxHashMap<Span, SourceLocation>>,
+    unique_calls: Arc<FxHashMap<Span, hir::FunctionId>>,
     /// Sparse anchor hints keyed by the current visitor item index.
     anchor_hints: HashMap<usize, AnchorHints>,
 
     all_lines: Vec<u32>,
     /// Branch IDs whose anchors need more than their source span, with their kind.
     branch_kinds: Vec<(u32, BranchKind)>,
-    /// Deferred function-call spans, each paired with the contract scope active where the call
-    /// was collected, so scope travels with the span to the delayed HIR resolution pass.
-    function_calls: Vec<(Span, Arc<str>)>,
-    function_call_scopes: FxHashMap<Span, Arc<str>>,
+    /// Deferred calls with their lexical scope for the HIR resolution pass.
+    function_calls: Vec<(Span, PendingFunctionCall)>,
+    function_call_scopes: FxHashMap<Span, PendingFunctionCall>,
     /// The span of the statement that follows each `if` statement in its block.
     stmts_after_if: FxHashMap<Span, Span>,
     /// The coverage source ID of every HIR source.
@@ -59,7 +58,20 @@ struct SourceVisitor<'gcx, 'calls> {
 pub(crate) struct AnchorHints {
     pub revert_guard: Option<RevertGuard>,
     pub alias_function: Option<SourceLocation>,
-    pub unique_callee: Option<SourceLocation>,
+    pub unique_callee: Option<UniqueCallee>,
+}
+
+/// The enclosing caller and the native callee of a direct call.
+#[derive(Clone, Debug)]
+pub(crate) struct UniqueCallee {
+    pub caller: SourceLocation,
+    pub callee: SourceLocation,
+}
+
+#[derive(Clone)]
+struct PendingFunctionCall {
+    contract: Arc<str>,
+    caller: Option<SourceLocation>,
 }
 
 #[derive(Clone)]
@@ -176,11 +188,12 @@ fn resolve_empty_special_functions(
     resolved
 }
 
-impl<'gcx, 'calls> SourceVisitor<'gcx, 'calls> {
+impl<'gcx> SourceVisitor<'gcx> {
     fn new(
         source_id: u32,
         gcx: Gcx<'gcx>,
         hir_source_ids: Arc<HashMap<hir::SourceId, u32>>,
+        unique_calls: Arc<FxHashMap<Span, hir::FunctionId>>,
     ) -> Self {
         Self {
             source_id,
@@ -197,7 +210,7 @@ impl<'gcx, 'calls> SourceVisitor<'gcx, 'calls> {
             revert_guards: Default::default(),
             current_function: None,
             items: Default::default(),
-            unique_calls: None,
+            unique_calls,
             anchor_hints: Default::default(),
         }
     }
@@ -399,6 +412,12 @@ impl<'gcx, 'calls> SourceVisitor<'gcx, 'calls> {
         }
     }
 
+    fn function_location(&self, function: &hir::Function<'_>) -> Option<SourceLocation> {
+        let &source_id = self.hir_source_ids.get(&function.source)?;
+        let contract = function.contract.map(|id| self.gcx.hir.contract(id).name.as_str());
+        Some(self.location(function.span, source_id, contract.unwrap_or_default().into()))
+    }
+
     /// Records the functions that a call by name can run, from the functions its callee names
     /// resolve to. An overloaded name resolves to every overload.
     fn push_callees(&mut self, call: &hir::Expr<'_>, callee: &hir::Expr<'_>) {
@@ -410,11 +429,7 @@ impl<'gcx, 'calls> SourceVisitor<'gcx, 'calls> {
                 _ => None,
             })
             .filter(|function| function.body.is_some())
-            .filter_map(|function| {
-                let &source_id = self.hir_source_ids.get(&function.source)?;
-                let contract = function.contract.map(|id| self.gcx.hir.contract(id).name.as_str());
-                Some(self.location(function.span, source_id, contract.unwrap_or_default().into()))
-            })
+            .filter_map(|function| self.function_location(function))
             .collect::<Vec<_>>();
         if !callees.is_empty() {
             let bytes = self.gcx.sess.source_map().span_to_source(call.span).unwrap().data;
@@ -429,7 +444,7 @@ impl<'gcx, 'calls> SourceVisitor<'gcx, 'calls> {
     }
 }
 
-impl<'ast> ast::Visit<'ast> for SourceVisitor<'_, '_> {
+impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
     type BreakValue = Never;
 
     fn visit_item_contract(
@@ -614,8 +629,17 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_, '_> {
                 }
             }
             ExprKind::Call(callee, _args) => {
-                // Resolve later. Capture the current contract scope so it travels with the span.
-                self.function_calls.push((expr.span, self.contract_name.clone()));
+                self.function_calls.push((
+                    expr.span,
+                    PendingFunctionCall {
+                        contract: self.contract_name.clone(),
+                        caller: self
+                            .unique_calls
+                            .contains_key(&expr.span)
+                            .then(|| self.current_function.clone())
+                            .flatten(),
+                    },
+                ));
 
                 if let ExprKind::Ident(ident) = &callee.kind {
                     // Might be a require call, add branch coverage.
@@ -709,9 +733,9 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_, '_> {
 
 /// Walks all expression shapes, adding only ternary decisions. Statement coverage remains owned
 /// by the enclosing statement or the ordinary expression visitor.
-struct TernaryVisitor<'a, 'gcx, 'calls>(&'a mut SourceVisitor<'gcx, 'calls>);
+struct TernaryVisitor<'a, 'gcx>(&'a mut SourceVisitor<'gcx>);
 
-impl<'ast> ast::Visit<'ast> for TernaryVisitor<'_, '_, '_> {
+impl<'ast> ast::Visit<'ast> for TernaryVisitor<'_, '_> {
     type BreakValue = Never;
 
     fn visit_expr(&mut self, expr: &'ast ast::Expr<'ast>) -> ControlFlow<Self::BreakValue> {
@@ -735,7 +759,7 @@ impl<'ast> ast::Visit<'ast> for TernaryVisitor<'_, '_, '_> {
     }
 }
 
-impl<'gcx> hir::Visit<'gcx> for SourceVisitor<'gcx, '_> {
+impl<'gcx> hir::Visit<'gcx> for SourceVisitor<'gcx> {
     type BreakValue = Never;
 
     fn hir(&self) -> &'gcx hir::Hir<'gcx> {
@@ -777,11 +801,15 @@ impl<'gcx> hir::Visit<'gcx> for SourceVisitor<'gcx, '_> {
         {
             // Attribute the call with the scope captured where it was collected, not the
             // visitor's final scope (which leaks across free functions and contracts).
-            let prev = std::mem::replace(&mut self.contract_name, scope);
+            let prev = std::mem::replace(&mut self.contract_name, scope.contract);
             let id = self.items.len();
             self.push_stmt(expr.span);
-            if let Some(callee) = self.unique_calls.and_then(|calls| calls.get(&expr.span)) {
-                self.anchor_hints.entry(id).or_default().unique_callee = Some(callee.clone());
+            if let Some(caller) = scope.caller
+                && let Some(&callee) = self.unique_calls.get(&expr.span)
+                && let Some(callee) = self.function_location(self.gcx.hir.function(callee))
+            {
+                self.anchor_hints.entry(id).or_default().unique_callee =
+                    Some(UniqueCallee { caller, callee });
             }
             self.contract_name = prev;
             self.push_callees(expr, lhs);
@@ -860,7 +888,7 @@ fn stmt_has_statements(stmt: &ast::Stmt<'_>) -> bool {
 struct UniqueInternalCalls<'gcx> {
     gcx: Gcx<'gcx>,
     references: FxHashMap<hir::FunctionId, usize>,
-    calls: FxHashMap<hir::FunctionId, Vec<Span>>,
+    calls: FxHashMap<hir::FunctionId, Span>,
     unresolved_members: FxHashMap<Symbol, HashSet<hir::ItemId>>,
     scope: Option<hir::ItemId>,
     dependencies: FxHashMap<hir::ItemId, HashSet<hir::ItemId>>,
@@ -1017,16 +1045,13 @@ impl<'gcx> hir::Visit<'gcx> for UniqueInternalCalls<'gcx> {
             && let Some(hir::Res::Item(hir::ItemId::Function(function))) =
                 self.gcx.resolve_path_expr(callee.peel_parens())
         {
-            self.calls.entry(function).or_default().push(expression.span);
+            self.calls.insert(function, expression.span);
         }
         self.walk_expr(expression)
     }
 }
 
-fn unique_internal_calls(
-    gcx: Gcx<'_>,
-    source_ids: &Arc<HashMap<hir::SourceId, u32>>,
-) -> FxHashMap<Span, SourceLocation> {
+fn unique_internal_calls(gcx: Gcx<'_>) -> FxHashMap<Span, hir::FunctionId> {
     let mut visitor = UniqueInternalCalls {
         gcx,
         references: Default::default(),
@@ -1087,8 +1112,7 @@ fn unique_internal_calls(
     visitor
         .calls
         .into_iter()
-        .filter_map(|(id, calls)| {
-            let [call] = calls.as_slice() else { return None };
+        .filter_map(|(id, call)| {
             if visitor.references.get(&id).copied() != Some(1) || unsafe_scopes.contains(&id.into())
             {
                 return None;
@@ -1096,19 +1120,14 @@ fn unique_internal_calls(
             let function = gcx.hir.function(id);
             if !matches!(function.visibility, ast::Visibility::Internal | ast::Visibility::Private)
                 || function.virtual_
+                || function.override_
                 || function
                     .name
                     .is_none_or(|name| visitor.unresolved_members.contains_key(&name.name))
             {
                 return None;
             }
-            let mut source =
-                SourceVisitor::new(*source_ids.get(&function.source)?, gcx, source_ids.clone());
-            source.contract_name = function
-                .contract
-                .map(|id| gcx.hir.contract(id).name.as_str().into())
-                .unwrap_or_default();
-            Some((*call, source.source_location_for(function.span)))
+            Some((call, id))
         })
         .collect()
 }
@@ -1159,7 +1178,7 @@ impl SourceAnalysis {
             );
             resolved_empty_special_functions =
                 resolve_empty_special_functions(compiler.gcx(), &hir_source_ids);
-            let unique_calls = unique_internal_calls(compiler.gcx(), &hir_source_ids);
+            let unique_calls = Arc::new(unique_internal_calls(compiler.gcx()));
             data.sources
                 .par_iter()
                 .map(|(&source_id, path)| {
@@ -1169,9 +1188,12 @@ impl SourceAnalysis {
                     let ast = source.ast.as_ref().unwrap();
                     let (hir_source_id, _) = compiler.gcx().get_hir_source(path).unwrap();
 
-                    let mut visitor =
-                        SourceVisitor::new(source_id, compiler.gcx(), hir_source_ids.clone());
-                    visitor.unique_calls = Some(&unique_calls);
+                    let mut visitor = SourceVisitor::new(
+                        source_id,
+                        compiler.gcx(),
+                        hir_source_ids.clone(),
+                        unique_calls.clone(),
+                    );
                     for item in ast.items.iter() {
                         match &item.kind {
                             // Contracts: walk their functions, dropping test contracts.
@@ -1381,7 +1403,8 @@ mod tests {
             .build();
         let compiler = solar::sema::Compiler::new(session);
         compiler.enter(|compiler| {
-            let mut visitor = SourceVisitor::new(0, compiler.gcx(), Default::default());
+            let mut visitor =
+                SourceVisitor::new(0, compiler.gcx(), Default::default(), Default::default());
             visitor.items = vec![item(30, 3), item(10, 1), item(20, 2)];
             visitor.all_lines = vec![3, 1, 2];
             visitor.anchor_hints.insert(
@@ -1513,6 +1536,38 @@ mod tests {
         );
     }
 
+    #[test]
+    fn callee_entry_is_a_fallback_for_codeless_items() {
+        let mut analysis = SourceAnalysis::for_test(vec![item(100, 1), item(120, 2)], vec![]);
+        let hint = UniqueCallee {
+            caller: SourceLocation { bytes: 90..140, ..item(90, 1).loc },
+            callee: SourceLocation { bytes: 10..30, ..item(10, 3).loc },
+        };
+        for id in 0..2 {
+            analysis.anchor_hints.insert(
+                id,
+                AnchorHints { unique_callee: Some(hint.clone()), ..Default::default() },
+            );
+        }
+        let bytecode = [
+            opcode::PUSH0,
+            opcode::POP,
+            opcode::PUSH1,
+            6,
+            opcode::JUMP,
+            opcode::INVALID,
+            opcode::JUMPDEST,
+            opcode::STOP,
+        ];
+        let source_map = sourcemap::parse("100:1:0;110:3:0;;;-1:-1:-1;10:20:0;12:1:0").unwrap();
+        let ic_pc_map = IcPcMap::new(&bytecode);
+        let anchors = crate::anchors::find_anchors(&bytecode, &source_map, &ic_pc_map, &analysis);
+        assert_eq!(
+            anchors.anchors.iter().map(|a| (a.item_id, a.instruction)).collect::<Vec<_>>(),
+            [(0, 0), (1, 6)],
+        );
+    }
+
     fn recover(main: &str, support: &str) -> Vec<(String, SourceLocation)> {
         let session = solar::interface::Session::builder()
             .with_buffer_emitter(solar::interface::ColorChoice::Never)
@@ -1536,10 +1591,9 @@ mod tests {
             let main_id = gcx.get_hir_source(PathBuf::from("Main.sol")).unwrap().0;
             let support_id = gcx.get_hir_source(PathBuf::from("Support.sol")).unwrap().0;
             let source_ids = Arc::new([(main_id, 17), (support_id, 29)].into_iter().collect());
-            let calls = unique_internal_calls(gcx, &source_ids);
+            let calls = Arc::new(unique_internal_calls(gcx));
             // Hints belong directly to the call statements created by the ordinary HIR walk.
-            let mut visitor = SourceVisitor::new(17, gcx, source_ids);
-            visitor.unique_calls = Some(&calls);
+            let mut visitor = SourceVisitor::new(17, gcx, source_ids, calls.clone());
             let (_, source) = gcx.get_ast_source(PathBuf::from("Main.sol")).unwrap();
             for item in source.ast.as_ref().unwrap().items.iter() {
                 match &item.kind {
@@ -1564,24 +1618,24 @@ mod tests {
                 expected
             );
             for (&id, hints) in &visitor.anchor_hints {
-                if let Some(callee) = &hints.unique_callee {
+                if let Some(hint) = &hints.unique_callee {
                     let item = &visitor.items[id];
                     assert!(matches!(item.kind, CoverageItemKind::Statement));
-                    assert!(calls.iter().any(|(&call, location)| {
+                    assert!(calls.iter().any(|(&call, &callee)| {
                         let call = gcx.sess.source_map().span_to_source(call).unwrap();
+                        let callee = visitor.function_location(gcx.hir.function(callee)).unwrap();
                         call.file.name == source.file.name
                             && call.data == item.loc.bytes()
-                            && location.bytes == callee.bytes
-                            && location.source_id == callee.source_id
+                            && callee.bytes == hint.callee.bytes
+                            && callee.source_id == hint.callee.source_id
                     }));
+                    assert_eq!(hint.caller.source_id, item.loc.source_id);
+                    assert_eq!(hint.caller.contract_name, item.loc.contract_name);
+                    assert!(hint.caller.bytes.start <= item.loc.bytes.start);
+                    assert!(hint.caller.bytes.end >= item.loc.bytes.end);
+                    result.push((main[item.loc.bytes()].to_owned(), hint.callee.clone()));
                 }
             }
-            result = calls
-                .iter()
-                .map(|(&call, location)| {
-                    (gcx.sess.source_map().span_to_snippet(call).unwrap(), location.clone())
-                })
-                .collect();
         });
         result
     }
@@ -1614,6 +1668,21 @@ mod tests {
                 assert!(calls.is_empty(), "{extra}");
             }
         }
+    }
+
+    #[test]
+    fn non_virtual_override_is_ineligible() {
+        let main = "
+            contract Base {
+                function run() external { hook(); }
+                function hook() internal virtual {}
+            }
+            contract Impl is Base {
+                function direct() external { hook(); }
+                function hook() internal override {}
+            }
+        ";
+        assert!(recover(main, "").is_empty());
     }
 
     #[test]
