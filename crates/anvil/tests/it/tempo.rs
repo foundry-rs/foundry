@@ -9484,10 +9484,11 @@ mod subscriptions;
 
 mod create_token;
 
-// `tempo_forkSchedule` reports the forks the node runs, active from genesis.
+// `tempo_forkSchedule` reports the forks the node runs as active from time 0, as Tempo's localnet
+// genesis does.
 #[tokio::test(flavor = "multi_thread")]
 async fn tempo_fork_schedule_lists_active_forks() {
-    let (api, handle) =
+    let (_api, handle) =
         spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T5.into()))).await;
     let schedule = handle
         .http_provider()
@@ -9498,10 +9499,45 @@ async fn tempo_fork_schedule_lists_active_forks() {
     assert_eq!(schedule.active, "T5");
     let names = schedule.schedule.iter().map(|fork| fork.name.as_str()).collect::<Vec<_>>();
     assert_eq!(names, ["T0", "T1", "T1A", "T1B", "T1C", "T2", "T3", "T4", "T5"]);
-    let genesis_time = api.anvil_get_genesis_time().unwrap();
-    assert!(
-        schedule.schedule.iter().all(|fork| fork.active && fork.activation_time == genesis_time)
-    );
+    assert!(schedule.schedule.iter().all(|fork| fork.active && fork.activation_time == 0));
+}
+
+// On Moderato's chain, a fork is active exactly when its activation time is at or before the head,
+// as Tempo clients check: a fork the node runs before Moderato does activates at the head, and one
+// Moderato schedules after the head stays inactive at its activation time.
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_fork_schedule_matches_moderato_head() {
+    let head = TempoHardfork::T13.moderato_activation_timestamp().unwrap() - 1;
+    for (hardfork, active_t13) in [(TempoHardfork::T12, false), (TempoHardfork::T13, true)] {
+        let (_api, handle) = spawn(
+            NodeConfig::test_tempo()
+                .with_chain_id(Some(alloy_chains::NamedChain::TempoModerato as u64))
+                .with_genesis_timestamp(Some(head))
+                .with_hardfork(Some(hardfork.into())),
+        )
+        .await;
+        let schedule = handle
+            .http_provider()
+            .raw_request::<_, tempo_alloy::rpc::ForkSchedule>("tempo_forkSchedule".into(), ())
+            .await
+            .unwrap();
+
+        assert_eq!(schedule.active, hardfork.to_string());
+        let forks = schedule
+            .schedule
+            .iter()
+            .map(|fork| (fork.name.as_str(), fork.activation_time, fork.active))
+            .collect::<Vec<_>>();
+        let t12 = TempoHardfork::T12.moderato_activation_timestamp().unwrap();
+        let t14 = TempoHardfork::T14.moderato_activation_timestamp().unwrap();
+        let t13 = if active_t13 { head } else { head + 1 };
+        assert_eq!(
+            forks[forks.len() - 3..],
+            [("T12", t12, true), ("T13", t13, active_t13), ("T14", t14, false)],
+            "{hardfork}"
+        );
+        assert!(forks.iter().all(|&(_, time, active)| active == (time <= head)), "{hardfork}");
+    }
 }
 
 // `tempo_fundAddress` mints each faucet token like Moderato's faucet, without a transaction.
@@ -9587,6 +9623,23 @@ async fn test_tempo_gas_bounds_stay_within_tx_cap() {
     assert!(!receipt.status());
 }
 
+// A fork serves the schedule before it mines a block, as forge reads it to pick the hardfork.
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_fork_schedule_on_unmined_fork() {
+    let (_source_api, source_handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T5.into()))).await;
+    let (_api, handle) =
+        spawn(NodeConfig::test_tempo().with_eth_rpc_url(Some(source_handle.http_endpoint()))).await;
+    let schedule = handle
+        .http_provider()
+        .raw_request::<_, tempo_alloy::rpc::ForkSchedule>("tempo_forkSchedule".into(), ())
+        .await
+        .unwrap();
+
+    assert_eq!(schedule.active, "T5");
+    assert!(schedule.schedule.iter().all(|fork| fork.active && fork.activation_time == 0));
+}
+
 // A fork applies the cap of the forked chain's hardfork: EIP-7825's before T1A.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_tempo_fork_applies_source_hardfork_tx_cap() {
@@ -9615,3 +9668,36 @@ async fn test_tempo_fork_applies_source_hardfork_tx_cap() {
 mod epoch_warning;
 
 mod set_code;
+
+// A genesis that already has Tempo's tokens but predates OUSD, such as an `--init` genesis exported
+// from an earlier node, still starts, without OUSD.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_init_genesis_without_ousd() {
+    let (source_api, _source_handle) = spawn(NodeConfig::test_tempo()).await;
+    let state = source_api.serialized_state(false).await.unwrap();
+    let mut genesis = Genesis::default();
+    // The dev accounts' keys are registered again at startup.
+    for (&address, account) in state
+        .accounts
+        .iter()
+        .filter(|(address, _)| ![OUSD_ADDRESS, ACCOUNT_KEYCHAIN_ADDRESS].contains(address))
+    {
+        genesis.alloc.insert(
+            address,
+            GenesisAccount::default()
+                .with_code(Some(account.code.clone()))
+                .with_nonce(Some(account.nonce))
+                .with_storage(Some(
+                    account.storage.iter().map(|(&slot, &value)| (slot, value.into())).collect(),
+                )),
+        );
+    }
+
+    let (_api, handle) = spawn(NodeConfig::test_tempo().with_genesis(Some(genesis))).await;
+    let provider = handle.http_provider();
+    assert!(provider.get_code_at(OUSD_ADDRESS).await.unwrap().is_empty());
+    let sender = handle.dev_accounts().next().unwrap();
+    let tx = TransactionRequest::default().from(sender).to(Address::random());
+    let receipt = provider.send_transaction(tx.into()).await.unwrap().get_receipt().await.unwrap();
+    assert!(receipt.status());
+}

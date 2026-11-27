@@ -5889,17 +5889,25 @@ impl EthApi<FoundryNetwork> {
 
     /// Returns the Tempo fork schedule and the active fork, like a Tempo node.
     ///
-    /// Every fork up to the node's hardfork is active. A fork of Tempo mainnet or Moderato reports
-    /// that chain's activation times, including scheduled forks the node does not run; on other
-    /// chains, the active forks report the genesis time.
+    /// Every fork up to the node's hardfork is active, as on Tempo a fork is active exactly when
+    /// its activation time is at or before the head. A fork of Tempo mainnet or Moderato reports
+    /// that chain's activation times, capped at the head for a fork the node runs early, and its
+    /// forks scheduled after the head that the node does not run; on other chains, the active forks
+    /// activate at time 0 as in Tempo's localnet genesis. Fork IDs are not reported.
     ///
     /// Handler for `tempo_forkSchedule`; unavailable on non-Tempo networks.
     pub fn tempo_fork_schedule(&self) -> Result<ForkSchedule> {
         node_info!("tempo_forkSchedule");
         self.ensure_tempo_mode()?;
         let active = self.backend.tempo_hardfork();
-        let chain_id = self.backend.chain_id().to::<u64>();
-        let genesis_time = self.backend.genesis_time();
+        let chain_id = self.backend.protocol_chain_id();
+        // A fork stores no block until it mines one, so its head is then the fork block.
+        let head = self
+            .backend
+            .get_block_by_hash(self.backend.best_hash())
+            .map(|block| block.header.timestamp())
+            .or_else(|| self.backend.get_fork().map(|fork| fork.timestamp()))
+            .ok_or(BlockchainError::BlockNotFound)?;
         let schedule = TempoHardfork::VARIANTS
             .iter()
             .filter(|&&fork| fork != TempoHardfork::Genesis)
@@ -5909,12 +5917,17 @@ impl EthApi<FoundryNetwork> {
                 } else if chain_id == NamedChain::TempoModerato as u64 {
                     fork.moderato_activation_timestamp()
                 } else {
-                    None
+                    Some(0)
                 };
                 let is_active = fork <= active;
+                let activation_time = if is_active {
+                    scheduled.map_or(head, |time| time.min(head))
+                } else {
+                    scheduled.filter(|&time| time > head)?
+                };
                 Some(ForkInfo {
                     name: fork.to_string(),
-                    activation_time: scheduled.or(is_active.then_some(genesis_time))?,
+                    activation_time,
                     active: is_active,
                     fork_id: None,
                 })

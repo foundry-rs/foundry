@@ -1,7 +1,7 @@
 //! Tempo precompile and fee token initialization for Anvil.
 //!
 //! When running in Tempo mode, Anvil needs to set up Tempo-specific precompiles
-//! and fee tokens (PathUSD, AlphaUSD, BetaUSD, ThetaUSD) to enable proper
+//! and fee tokens (PathUSD, AlphaUSD, BetaUSD, ThetaUSD, OUSD) to enable proper
 //! transaction validation.
 //!
 //! Tempo precompile storage runs on a Tempo evm2 EVM over Anvil's `Db`, using the shared
@@ -52,8 +52,8 @@ const ADMIN: Address = address!("0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f");
 /// quintillion u64::MAX values.
 const TEST_ACCOUNT_FEE_TOKEN_BALANCE: U256 = U256::from_limbs([u64::MAX, 0, 0, 0]);
 
-/// The tokens Tempo's testnet faucet mints, as `tempo_fundAddress` does.
-const FAUCET_TOKENS: [Address; 5] =
+/// The fee tokens of Tempo's localnet genesis, which the testnet faucet also mints.
+const FEE_TOKENS: [Address; 5] =
     [PATH_USD_ADDRESS, ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, THETA_USD_ADDRESS, OUSD_ADDRESS];
 
 /// The amount of each token the testnet faucet mints: one million units with 6 decimals.
@@ -146,13 +146,7 @@ pub fn initialize_tempo_precompiles(
     let addresses = tempo_genesis_contracts()
         .map(|(address, _)| address)
         .chain(active_tempo_precompile_addresses(hardfork.into()))
-        .chain([
-            PATH_USD_ADDRESS,
-            ALPHA_USD_ADDRESS,
-            BETA_USD_ADDRESS,
-            THETA_USD_ADDRESS,
-            OUSD_ADDRESS,
-        ])
+        .chain(FEE_TOKENS)
         .filter(|address| initialized || *address == TIP_FEE_MANAGER_ADDRESS);
     for address in addresses {
         db.set_nonce(address, 1)?;
@@ -237,7 +231,7 @@ pub fn fund_fork_test_accounts(
 /// earlier block, are skipped.
 pub fn fund_faucet_account(account: Address) -> Result<(), TempoPrecompileError> {
     let factory = TIP20Factory::new();
-    for token in FAUCET_TOKENS {
+    for token in FEE_TOKENS {
         if factory.is_tip20(token)? {
             mint_without_issuer(&mut TIP20Token::from_address(token)?, account, FAUCET_AMOUNT)?;
         }
@@ -269,10 +263,18 @@ fn initialize_tempo_genesis(
     let initialized = initialize_tempo_genesis_inner(ADMIN, SENDER, hardfork.into())?;
 
     let mint_amount = TEST_ACCOUNT_FEE_TOKEN_BALANCE;
-    let tokens =
-        [PATH_USD_ADDRESS, ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, THETA_USD_ADDRESS, OUSD_ADDRESS];
 
     (|| -> Result<bool, TempoPrecompileError> {
+        // A genesis that already has the tokens, such as one passed with `--init`, may lack the
+        // ones added later, such as OUSD.
+        let factory = TIP20Factory::new();
+        let mut tokens = Vec::with_capacity(FEE_TOKENS.len());
+        for token in FEE_TOKENS {
+            if factory.is_tip20(token)? {
+                tokens.push(token);
+            }
+        }
+
         // Mint fee tokens to test accounts
         for &token_address in &tokens {
             let mut token = TIP20Token::from_address(token_address)?;

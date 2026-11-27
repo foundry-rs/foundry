@@ -1502,7 +1502,7 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns the chain ID that defines protocol behavior.
-    fn protocol_chain_id(&self) -> u64 {
+    pub(crate) fn protocol_chain_id(&self) -> u64 {
         self.get_fork().map_or_else(|| self.evm_env.read().cfg_env.chain_id, |fork| fork.chain_id())
     }
 
@@ -2060,12 +2060,11 @@ impl<N: Network> Backend<N> {
         }
     }
 
-    /// Returns the EIP-7825 cap enforced on a transaction's gas limit, if any.
+    /// Returns the cap enforced on a transaction's gas limit, such as EIP-7825's or Tempo's, or
+    /// `None` when it is lifted with `u64::MAX`.
     ///
     /// Under EIP-8037 the cap only bounds regular gas, and gas above it becomes the state gas
     /// reservoir, so the gas limit itself is not capped.
-    /// Returns the per-transaction gas limit cap that applies, or `None` if it is lifted with
-    /// `u64::MAX` or replaced by EIP-8037's regular gas cap.
     pub(crate) fn enforced_tx_gas_limit_cap(&self, evm_env: &EvmEnv) -> Option<u64> {
         if evm_env.cfg_env.tx_gas_limit_cap == Some(u64::MAX)
             || evm_env.cfg_env.spec >= SpecId::AMSTERDAM

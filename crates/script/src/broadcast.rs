@@ -1268,6 +1268,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                         &provider,
                         &transactions,
                         self.args.gas_estimate_multiplier,
+                        tempo_hardfork,
                     )
                     .await?;
                     sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
