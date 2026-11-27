@@ -29,7 +29,7 @@ use foundry_common::{
     external_compiler::is_builtin_compiler_source,
     fs::canonicalize_path,
     namespaced_storage,
-    provider::ProviderBuilder,
+    provider::{ProviderBuilder, set_chain_poll_interval},
     tempo::configurable_account::{
         detect_configurable_account, parse_config, reaches_threshold, stored_owner_keys,
     },
@@ -44,7 +44,10 @@ use foundry_compilers::{
 };
 use foundry_evm::{
     core::evm::FoundryEvmNetwork,
-    traces::{CallTraceDecoder, debug::ContractSources},
+    traces::{
+        CallTraceDecoder,
+        debug::{ContractSources, lower_sources},
+    },
 };
 use foundry_linking::Linker;
 use foundry_wallets::{MultiWalletOpts, wallet_browser::signer::BrowserSigner};
@@ -181,6 +184,7 @@ impl LinkedBuildData {
         predeploy_libraries: ScriptPredeployLibraries,
         mut build_data: BuildData,
     ) -> Result<Self> {
+        lower_sources(&mut build_data.output);
         let sources = ContractSources::from_project_output(
             &build_data.output,
             &build_data.project_root,
@@ -433,6 +437,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                         sequence.rpc_url(index),
                     )?
                     .build()?;
+                    set_chain_poll_interval(&provider, sequence.sequences()[index].chain);
                     // A saved signed attempt whose response was lost before its hash was recorded
                     // is reconciled before requesting signers when its receipt shows it was mined.
                     for operation in 0..sequence.sequences()[index].transactions.len() {

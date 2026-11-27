@@ -986,13 +986,16 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         }
 
         if !setup.outcome.is_success() {
-            // The setup failed, so we return a single test result for `setUp`
+            // The setup was skipped or failed, so we return a single test result for `setUp`.
             let name = setup.outcome.function_name();
-            return self.failed_suite(
-                start,
-                warnings,
-                [(name.to_string(), TestResult::setup_result(setup))],
-            );
+            let skipped = matches!(setup.outcome, SetupOutcome::Skipped(_));
+            let results = [(name.to_string(), TestResult::setup_result(setup))];
+            // A skipped suite is not a failure, so it does not trip fail-fast.
+            return if skipped {
+                SuiteResult::new(start.elapsed(), results.into(), warnings)
+            } else {
+                self.failed_suite(start, warnings, results)
+            };
         }
 
         // Filter out functions sequentially since it's very fast and there is no need to do it

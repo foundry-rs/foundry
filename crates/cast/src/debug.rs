@@ -10,7 +10,7 @@ use foundry_evm::{
     opts::ForkEndpointIdentity,
     traces::{
         CallTraceDecoderBuilder, DebugTraceIdentifier, TraceContext,
-        debug::ContractSources,
+        debug::{ContractSources, lower_sources},
         erc8021::Attribution,
         identifier::{SignaturesIdentifier, TraceIdentifiers},
     },
@@ -71,6 +71,9 @@ pub(crate) async fn handle_traces(
         // Status prose goes to stderr so `--json` output on stdout stays machine-readable.
         let _ = sh_status!("Compiling project to generate artifacts");
         let mut config = config.clone();
+        if tracing.decode_internal && !debug {
+            config.enable_internal_call_artifacts();
+        }
         if debug {
             if !config.extra_output.contains(&ContractOutputSelection::StorageLayout) {
                 config.extra_output.push(ContractOutputSelection::StorageLayout);
@@ -86,6 +89,7 @@ pub(crate) async fn handle_traces(
         let project = config.project()?;
         let compiler = ProjectCompiler::new();
         let mut output = compiler.compile(&project)?;
+        lower_sources(&mut output);
         let mut sources = ContractSources::from_project_output(&output, project.root(), None)?;
         if debug {
             sources.insert_compiled_sources(&project.paths.build_infos);

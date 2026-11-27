@@ -43,10 +43,11 @@ use foundry_common::{
     },
 };
 use foundry_config::Config;
+use foundry_evm::hardforks::FoundryHardfork;
 use itertools::Itertools;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
-use tempo_alloy::{TempoNetwork, chainspec::hardfork::TempoHardfork};
+use tempo_alloy::TempoNetwork;
 use tempo_primitives::{
     TempoTxEnvelope,
     transaction::{
@@ -147,7 +148,7 @@ pub(crate) async fn prepare<'a, N: Network>(
     provider: &RootProvider<N>,
     transactions: &[(SendTransactionKind<'a, N>, bool, usize)],
     gas_estimate_multiplier: u64,
-    tempo_hardfork: Option<TempoHardfork>,
+    hardfork: Option<FoundryHardfork>,
 ) -> Result<Vec<Awaiting<'a, N>>>
 where
     N::TxEnvelope: for<'de> serde::Deserialize<'de> + serde::Serialize,
@@ -276,8 +277,15 @@ where
         // `eth_simulateV1`.
         Err(_) if requests.len() == 1 => {
             if adjusted[0] {
-                estimate_gas(&mut requests[0], provider, gas_estimate_multiplier, false, false)
-                    .await?;
+                estimate_gas(
+                    &mut requests[0],
+                    provider,
+                    gas_estimate_multiplier,
+                    hardfork,
+                    false,
+                    false,
+                )
+                .await?;
             }
             return Ok(awaiting(transactions, requests));
         }
@@ -313,8 +321,10 @@ where
     // that succeeds until they all do.
     // The gas a call can be given: in one block, what the calls before it leave of it, up to the
     // node's per-transaction cap, which the chain ID does not reveal on a local node.
-    let tx_gas_limit_cap =
-        tempo_hardfork.and_then(|hardfork| hardfork.tx_gas_limit_cap()).unwrap_or(u64::MAX);
+    let tx_gas_limit_cap = match hardfork {
+        Some(FoundryHardfork::Tempo(hardfork)) => hardfork.tx_gas_limit_cap().unwrap_or(u64::MAX),
+        _ => u64::MAX,
+    };
     let room = |calls: &[SimCallResult], position: usize| {
         let used =
             if per_call { 0 } else { calls[..position].iter().map(|call| call.gas_used).sum() };
@@ -327,6 +337,7 @@ where
                 used,
                 Some(gas_estimate_multiplier),
                 requests[position].chain_id(),
+                hardfork,
             )?;
             requests[position].set_gas_limit(gas_limit.min(room(&calls, position)));
         }
@@ -347,6 +358,7 @@ where
             per_call,
             room(&calls, position),
             gas_estimate_multiplier,
+            hardfork,
         )
         .await
         .wrap_err_with(|| format!("cannot fix the gas limit of transaction {index}"))?;
@@ -477,8 +489,9 @@ where
 }
 
 /// Returns the least gas limit with which the last of `requests` succeeds after the ones before
-/// it, found as `eth_estimateGas` does and raised by `multiplier` percent, up to `cap`. The last
-/// request fails with its current gas limit.
+/// it, found as `eth_estimateGas` does and raised by `multiplier` percent, up to `cap` and the
+/// transaction gas cap of the chain or of `hardfork`. The last request fails with its current gas
+/// limit.
 async fn least_gas_limit<N: Network>(
     provider: &RootProvider<N>,
     requests: &mut [N::TransactionRequest],
@@ -486,6 +499,7 @@ async fn least_gas_limit<N: Network>(
     per_call: bool,
     cap: u64,
     multiplier: u64,
+    hardfork: Option<FoundryHardfork>,
 ) -> Result<u64>
 where
     N::TransactionRequest: FoundryTransactionBuilder<N> + serde::Serialize,
@@ -513,7 +527,9 @@ where
         }
     }
     let chain_id = requests.last().and_then(|request| request.chain_id());
-    Ok(apply_gas_estimate_multiplier(high, Some(multiplier), chain_id)?.max(high).min(cap))
+    Ok(apply_gas_estimate_multiplier(high, Some(multiplier), chain_id, hardfork)?
+        .max(high)
+        .min(cap))
 }
 
 /// Adds the owner approvals in `signatures` to the transactions awaiting their owners, and checks

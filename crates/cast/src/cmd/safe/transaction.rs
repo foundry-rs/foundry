@@ -123,13 +123,13 @@ impl SafeCall {
         let from = signer.address();
         let provider = ProviderBuilder::<N>::from_config(&config)?
             .build_with_wallet(EthereumWallet::from(signer))?;
-        apply_poll_interval(&provider, self.poll_interval);
         let builder = CastTxBuilder::new(&provider, tx_opts, &config)
             .await?
             .with_to(Some(self.to.into()))
             .await?
             .with_code_sig_and_args(None, Some(hex::encode_prefixed(self.data)), Vec::new())
             .await?;
+        apply_poll_interval(&provider, self.poll_interval, builder.chain().id());
         let (mut request, _) = builder.build(from).await?;
         let fee_provider = (!config.eth_rpc_curl).then_some(&provider);
         tempo::resolve_and_print_fee_token(fee_provider, &mut request, Some(from)).await?;

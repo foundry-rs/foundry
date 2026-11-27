@@ -1,0 +1,216 @@
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 12 tests for test/Target.t.sol:TargetTest
+[PASS] test_big() ([GAS])
+Traces:
+  [..] TargetTest::test_big()
+    ├─ [..] → new Target@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 1691 bytes of code
+    ├─ [..] Target::runBig(10)
+    │   ├─ [..] Target::big(uint256)(11)
+    │   │   └─ ← 10
+    │   ├─ [..] Target::big(uint256)(10)
+    │   │   └─ ← 11
+    │   └─ ← [Return] 21
+    └─ ← [Stop]
+
+[PASS] test_branches() ([GAS])
+Traces:
+  [..] TargetTest::test_branches()
+    ├─ [..] → new Target@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 1691 bytes of code
+    ├─ [..] Target::runBranches(3)
+    │   ├─ [..] Target::br(uint256)(14)
+    │   │   └─ ← 4
+    │   ├─ [..] Target::br(uint256)(9)
+    │   │   └─ ← 4
+    │   ├─ [..] Target::br(uint256)(3)
+    │   │   └─ ← 3
+    │   └─ ← [Return] 11
+    └─ ← [Stop]
+
+[PASS] test_chain() ([GAS])
+Traces:
+  [..] TargetTest::test_chain()
+    ├─ [..] → new Target@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 1691 bytes of code
+    ├─ [..] Target::runChain(5) [staticcall]
+    │   ├─ [..] Target::a(uint256)(5)
+    │   │   ├─ [..] Target::b(uint256)(5)
+    │   │   │   ├─ [..] Target::c(uint256)(5)
+    │   │   │   │   └─ ← 8
+    │   │   │   └─ ← 40
+    │   │   └─ ← 47
+    │   └─ ← [Return] 47
+    └─ ← [Stop]
+
+[PASS] test_fib() ([GAS])
+Traces:
+  [..] TargetTest::test_fib()
+    ├─ [..] → new Target@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 1691 bytes of code
+    ├─ [..] Target::runFib(6) [staticcall]
+    │   ├─ [..] Target::fib(uint256)(6)
+    │   │   ├─ [..] Target::fib(uint256)(4)
+    │   │   │   ├─ [..] Target::fib(uint256)(2)
+    │   │   │   │   ├─ [..] Target::fib(uint256)(0)
+    │   │   │   │   │   └─ ← 0
+    │   │   │   │   ├─ [..] Target::fib(uint256)(1)
+    │   │   │   │   │   └─ ← 1
+    │   │   │   │   └─ ← 1
+    │   │   │   ├─ [..] Target::fib(uint256)(3)
+    │   │   │   │   ├─ [..] Target::fib(uint256)(1)
+    │   │   │   │   │   └─ ← 1
+    │   │   │   │   ├─ [..] Target::fib(uint256)(2)
+    │   │   │   │   │   ├─ [..] Target::fib(uint256)(0)
+    │   │   │   │   │   │   └─ ← 0
+    │   │   │   │   │   ├─ [..] Target::fib(uint256)(1)
+    │   │   │   │   │   │   └─ ← 1
+    │   │   │   │   │   └─ ← 1
+    │   │   │   │   └─ ← 2
+    │   │   │   └─ ← 3
+    │   │   ├─ [..] Target::fib(uint256)(5)
+    │   │   │   ├─ [..] Target::fib(uint256)(3)
+    │   │   │   │   ├─ [..] Target::fib(uint256)(1)
+    │   │   │   │   │   └─ ← 1
+    │   │   │   │   ├─ [..] Target::fib(uint256)(2)
+    │   │   │   │   │   ├─ [..] Target::fib(uint256)(0)
+    │   │   │   │   │   │   └─ ← 0
+    │   │   │   │   │   ├─ [..] Target::fib(uint256)(1)
+    │   │   │   │   │   │   └─ ← 1
+    │   │   │   │   │   └─ ← 1
+    │   │   │   │   └─ ← 2
+    │   │   │   ├─ [..] Target::fib(uint256)(4)
+    │   │   │   │   ├─ [..] Target::fib(uint256)(2)
+    │   │   │   │   │   ├─ [..] Target::fib(uint256)(0)
+    │   │   │   │   │   │   └─ ← 0
+    │   │   │   │   │   ├─ [..] Target::fib(uint256)(1)
+    │   │   │   │   │   │   └─ ← 1
+    │   │   │   │   │   └─ ← 1
+    │   │   │   │   ├─ [..] Target::fib(uint256)(3)
+    │   │   │   │   │   ├─ [..] Target::fib(uint256)(1)
+    │   │   │   │   │   │   └─ ← 1
+    │   │   │   │   │   ├─ [..] Target::fib(uint256)(2)
+    │   │   │   │   │   │   ├─ [..] Target::fib(uint256)(0)
+    │   │   │   │   │   │   │   └─ ← 0
+    │   │   │   │   │   │   ├─ [..] Target::fib(uint256)(1)
+    │   │   │   │   │   │   │   └─ ← 1
+    │   │   │   │   │   │   └─ ← 1
+    │   │   │   │   │   └─ ← 2
+    │   │   │   │   └─ ← 3
+    │   │   │   └─ ← 5
+    │   │   └─ ← 8
+    │   └─ ← [Return] 8
+    └─ ← [Stop]
+
+[PASS] test_lib() ([GAS])
+Traces:
+  [..] TargetTest::test_lib()
+    ├─ [..] → new Target@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 1691 bytes of code
+    ├─ [..] Target::runLib(1) [staticcall]
+    │   ├─ [..] L::twice(uint256)(1)
+    │   │   └─ ← 2
+    │   ├─ [..] L::twice(uint256)(2)
+    │   │   └─ ← 4
+    │   ├─ [..] L::twice(uint256)(3)
+    │   │   └─ ← 6
+    │   └─ ← [Return] 12
+    └─ ← [Stop]
+
+[PASS] test_loop() ([GAS])
+Traces:
+  [..] TargetTest::test_loop()
+    ├─ [..] → new Target@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 1691 bytes of code
+    ├─ [..] Target::runLoop(5)
+    │   ├─ [..] Target::step(uint256,uint256)(0, 0)
+    │   │   └─ ← 0
+    │   ├─ [..] Target::step(uint256,uint256)(0, 1)
+    │   │   └─ ← 1
+    │   ├─ [..] Target::step(uint256,uint256)(1, 2)
+    │   │   └─ ← 5
+    │   ├─ [..] Target::step(uint256,uint256)(5, 3)
+    │   │   └─ ← 18
+    │   ├─ [..] Target::step(uint256,uint256)(18, 4)
+    │   │   └─ ← 58
+    │   └─ ← [Return] 58
+    └─ ← [Stop]
+
+[PASS] test_mod() ([GAS])
+Traces:
+  [..] TargetTest::test_mod()
+    ├─ [..] → new Target@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 1691 bytes of code
+    ├─ [..] Target::runMod(4)
+    │   ├─ [..] Target::withMod(uint256)(4)
+    │   │   └─ ← 5
+    │   └─ ← [Return] 5
+    └─ ← [Stop]
+
+[PASS] test_multi() ([GAS])
+Traces:
+  [..] TargetTest::test_multi()
+    ├─ [..] → new Target@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 1691 bytes of code
+    ├─ [..] Target::runMulti(4660) [staticcall]
+    │   ├─ [..] Target::sumMem(uint256[])(<unknown>)
+    │   │   └─ ← 4730
+    │   └─ ← [Return] 4730
+    └─ ← [Stop]
+
+[PASS] test_nested() ([GAS])
+Traces:
+  [..] TargetTest::test_nested()
+    ├─ [..] → new Target@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 1691 bytes of code
+    ├─ [..] Target::runNested(7) [staticcall]
+    │   ├─ [..] Target::f2(uint256,uint256)(82, 263)
+    │   │   └─ ← 21566 [2.156e4]
+    │   └─ ← [Return] 21566 [2.156e4]
+    └─ ← [Stop]
+
+[PASS] test_overload() ([GAS])
+Traces:
+  [..] TargetTest::test_overload()
+    ├─ [..] → new Target@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 1691 bytes of code
+    ├─ [..] Target::runOverload(8) [staticcall]
+    │   ├─ [..] Target::ov(uint256,uint256)(8, 2)
+    │   │   └─ ← 10
+    │   ├─ [..] Target::ov(uint256)(8)
+    │   │   └─ ← 9
+    │   └─ ← [Return] 19
+    └─ ← [Stop]
+
+[PASS] test_ptr() ([GAS])
+Traces:
+  [..] TargetTest::test_ptr()
+    ├─ [..] → new Target@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 1691 bytes of code
+    ├─ [..] Target::runPtr(4) [staticcall]
+    │   ├─ [..] Target::sq(uint256)(5)
+    │   │   └─ ← 25
+    │   ├─ [..] Target::sq(uint256)(4)
+    │   │   └─ ← 16
+    │   └─ ← [Return] 41
+    └─ ← [Stop]
+
+[PASS] test_tail() ([GAS])
+Traces:
+  [..] TargetTest::test_tail()
+    ├─ [..] → new Target@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 1691 bytes of code
+    ├─ [..] Target::runTail(9)
+    │   ├─ [..] Target::t1(uint256)(9)
+    │   │   ├─ [..] Target::t2(uint256)(10)
+    │   │   │   └─ ← 30
+    │   │   └─ ← 30
+    │   └─ ← [Return] 30
+    └─ ← [Stop]
+
+Suite result: ok. 12 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 12 tests passed, 0 failed, 0 skipped (12 total tests)

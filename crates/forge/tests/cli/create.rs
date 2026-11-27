@@ -2,7 +2,7 @@
 
 use crate::{
     constants::*,
-    utils::{tempo_linked_keystore, tempo_two_of_three_account},
+    utils::{generate_large_runtime_contract, tempo_linked_keystore, tempo_two_of_three_account},
 };
 use alloy_consensus::Transaction;
 use alloy_network::ReceiptResponse;
@@ -898,4 +898,21 @@ async fn create_json_warns_about_absolute_metadata_paths(prj: _, cmd: _) {
 Warning: Solidity metadata contains absolute filesystem paths that may reveal information about your local system when published. Review the metadata before sharing or verifying these artifacts.
 
 "#]]);
+}
+
+// Foundry knows no hardfork schedule for a local Tempo chain, so the 30M transaction cap that keeps
+// a gas estimate margin sendable comes from the node. Anvil lifts the cap by default, so the test
+// checks the gas limit sent rather than a rejection.
+#[forgetest]
+async fn create_caps_gas_margin_on_unscheduled_tempo_chain(prj: _, cmd: _) {
+    prj.add_source("LargeRuntime.sol", &generate_large_runtime_contract(24_000));
+    let (_api, handle) = spawn(NodeConfig::test_tempo().with_gas_limit(Some(500_000_000))).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+    cmd.args(["create", "src/LargeRuntime.sol:LargeRuntime", "--json", "--rpc-url"])
+        .arg(handle.http_endpoint())
+        .args(["--private-key", &pk, "--gas-estimate-multiplier", "130"]);
+    let output: Value = serde_json::from_str(&cmd.assert_success().get_output().stdout_lossy())
+        .expect("forge create prints the transaction as JSON");
+    assert_eq!(output["transaction"]["gas"], "0x1c9c380");
 }

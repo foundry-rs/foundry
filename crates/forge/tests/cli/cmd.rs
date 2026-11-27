@@ -2019,7 +2019,7 @@ fn solar_receives_threads(prj: _, cmd: _) {
 /// Writes a fake `solar` that reports the solc-compatible `version` and emits only the experimental
 /// codegen warning (2264).
 #[cfg(unix)]
-fn write_fake_solar(solar: &Path, version: &str) {
+pub(crate) fn write_fake_solar(solar: &Path, version: &str) {
     fs::create_dir_all(solar.parent().unwrap()).unwrap();
     let script = r#"#!/bin/sh
 if [ "$1" = "--version" ]; then

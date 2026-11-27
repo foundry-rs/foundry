@@ -14,7 +14,7 @@ use alloy_signer_local::PrivateKeySigner;
 use evm2::{
     EvmFeatures, SpecId,
     bytecode::Bytecode,
-    evm::{AccountInfo, InMemoryDB},
+    evm::{AccountInfo, DbResult, DynDatabase, InMemoryDB},
 };
 use std::num::NonZeroU64;
 use tempo_alloy::primitives::{TempoTransaction, TempoTxEnvelope, transaction::Call};
@@ -352,6 +352,71 @@ fn tempo_factory_seeds_local_genesis() {
         let hash = code_hash(&mut evm, address);
         assert!(hash != B256::ZERO && hash != alloy_primitives::KECCAK256_EMPTY, "{address}");
     }
+}
+
+#[test]
+fn tempo_factory_seeds_fork_precompiles_without_fetching() {
+    /// A forked database that must never be asked for a Tempo precompile account.
+    struct ForkedDb(InMemoryDB);
+
+    impl DynDatabase for ForkedDb {
+        fn get_account(&mut self, address: &Address) -> DbResult<Option<AccountInfo>> {
+            assert!(
+                *address != crate::tempo::PATH_USD_ADDRESS
+                    && !foundry_evm_networks::TEMPO_PRECOMPILE_ADDRESSES.contains(address),
+                "fetched seeded account {address}"
+            );
+            self.0.get_account(address)
+        }
+
+        fn get_code_by_hash(&mut self, code_hash: &B256) -> DbResult<Bytecode> {
+            self.0.get_code_by_hash(code_hash)
+        }
+
+        fn get_storage(&mut self, address: &Address, key: &U256) -> DbResult<U256> {
+            self.0.get_storage(address, key)
+        }
+
+        fn get_block_hash(&mut self, number: &U256) -> DbResult<B256> {
+            self.0.get_block_hash(number)
+        }
+    }
+
+    impl FoundryDatabase for ForkedDb {
+        fn is_forked_mode(&self) -> bool {
+            true
+        }
+    }
+
+    let path_usd = crate::tempo::PATH_USD_ADDRESS;
+    let mut fork = InMemoryDB::default();
+    fork.insert_account_storage(&path_usd, &U256::from(7), &U256::from(42));
+    let factory = tempo_evm::TempoEvmFactory::default();
+    let spec = tempo_hardfork::TempoHardfork::default();
+    let env = EvmEnv::new(spec, factory.version(spec, 4217), Default::default());
+    let mut evm = FoundryEvmFactory::new_evm(&factory, ForkedDb(fork), env);
+    // An account cached as absent is seeded, and one already cached, such as an etched
+    // persistent precompile, is kept.
+    let fee_manager = crate::tempo::TIP_FEE_MANAGER_ADDRESS;
+    let etched = Bytecode::new_legacy(Bytes::from_static(STORE));
+    let overlay = evm.overlay_db_mut();
+    overlay.cache.accounts.insert(path_usd, None);
+    overlay.insert_account_info(&fee_manager, AccountInfo::default().with_code(etched.clone()));
+    factory.initialize_evm(&mut evm, true);
+
+    let etched_hash = evm.read_account_info(&fee_manager).unwrap().unwrap().code_hash;
+    assert_eq!(etched_hash, etched.hash_slow());
+    let info = evm.read_account_info(&path_usd).unwrap().unwrap();
+    assert_eq!(
+        info.code_hash,
+        alloy_primitives::keccak256(crate::constants::SYSTEM_PRECOMPILE_STUB)
+    );
+    assert_eq!((info.balance, info.nonce), (U256::ZERO, 0));
+    // Seeding the account keeps its storage reading from the fork.
+    assert_eq!(
+        evm.state_mut().storage_slot_untracked(&path_usd, &U256::from(7)).unwrap(),
+        U256::from(42)
+    );
 }
 
 #[cfg(feature = "optimism")]
