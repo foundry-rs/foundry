@@ -43,7 +43,9 @@ use evm2::{
 use foundry_evm_hardforks::FoundryHardfork;
 use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope, FoundryTxType};
 use std::{fmt, mem, sync::Arc};
+use tempo_hardfork::TempoHardfork;
 use tempo_precompiles::{NONCE_PRECOMPILE_ADDRESS, nonce::NonceManager};
+use tempo_primitives::TempoTxEnvelope;
 
 #[cfg(any(feature = "base", feature = "optimism"))]
 pub(crate) mod optimism;
@@ -162,6 +164,38 @@ pub struct PoolTxGasConfig {
     pub enforced_tx_gas_limit_cap: Option<u64>,
     pub max_blob_gas_per_block: u64,
     pub is_cancun: bool,
+    /// Tempo's general gas lane, or `None` on other networks.
+    pub tempo_general_lane: Option<TempoGeneralLane>,
+}
+
+/// The general gas lane of a Tempo block: the gas its non-payment transactions may use.
+#[derive(Clone, Copy, Debug)]
+pub struct TempoGeneralLane {
+    /// Gas available to non-payment transactions.
+    pub gas_limit: u64,
+    /// Hardfork whose payment classifier applies.
+    pub hardfork: TempoHardfork,
+}
+
+impl TempoGeneralLane {
+    /// Returns whether `tx` is a payment, which does not use the general lane.
+    fn is_payment(&self, tx: &FoundryTxEnvelope) -> bool {
+        let tx = match tx.clone() {
+            FoundryTxEnvelope::Legacy(tx) => TempoTxEnvelope::Legacy(tx),
+            FoundryTxEnvelope::Eip2930(tx) => TempoTxEnvelope::Eip2930(tx),
+            FoundryTxEnvelope::Eip1559(tx) => TempoTxEnvelope::Eip1559(tx),
+            FoundryTxEnvelope::Eip7702(tx) => TempoTxEnvelope::Eip7702(tx),
+            FoundryTxEnvelope::Tempo(tx) => TempoTxEnvelope::AA(tx),
+            _ => return false,
+        };
+        if self.hardfork.is_t15() {
+            tx.is_payment_v3()
+        } else if self.hardfork.is_t5() {
+            tx.is_payment_v2()
+        } else {
+            tx.is_payment_v1()
+        }
+    }
 }
 
 /// A transaction executed and committed by [`AnvilBlockExecutor`].
@@ -561,6 +595,7 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
         let mut tx_info = Vec::<TransactionInfo>::new();
         let mut transactions = Vec::new();
         let mut blob_gas_used = 0u64;
+        let mut general_gas_used = 0u64;
         let mut unavailable_markers = HashSet::<TxMarker>::default();
 
         for pool_tx in pool_transactions {
@@ -628,6 +663,18 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
                 continue;
             }
 
+            // Like Tempo's payload builder, defer a non-payment transaction that could overflow the
+            // general gas lane to a later block.
+            let general_lane =
+                gas_config.tempo_general_lane.filter(|lane| !lane.is_payment(transaction));
+            if let Some(lane) = general_lane
+                && general_gas_used.saturating_add(pending.transaction.gas_limit()) > lane.gas_limit
+            {
+                trace!(target: "backend", tx_gas_limit = %pending.transaction.gas_limit(), tx_hash = ?pool_tx.hash(), "general gas lane exhausting, skipping transaction");
+                unavailable_markers.extend(pool_tx.provides.iter().cloned());
+                continue;
+            }
+
             // Osaka EIP-7825 tx gas limit cap check.
             if let Some(tx_gas_limit_cap) = gas_config.enforced_tx_gas_limit_cap
                 && pending.transaction.gas_limit() > tx_gas_limit_cap
@@ -662,6 +709,9 @@ impl<'a, N: AnvilEvmNetwork> AnvilBlockExecutor<'a, N> {
                         blob_gas_used = blob_gas_used.saturating_add(declared_blob_gas);
                     }
                     let gas_used = result.ext.charged_gas;
+                    if general_lane.is_some() {
+                        general_gas_used = general_gas_used.saturating_add(gas_used);
+                    }
                     if result.stop.is_out_of_gas() {
                         warn!(target: "backend", "[{:?}] executed with out of gas", pool_tx.hash());
                     }

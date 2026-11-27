@@ -27,7 +27,8 @@ use crate::{
             },
             executor::{
                 AnvilBlockExecutor, BlockExecutionKind, BlockExecutionResult,
-                EthereumBlockTransitions, ExecutedPoolTransactions, PoolTxGasConfig, build_receipt,
+                EthereumBlockTransitions, ExecutedPoolTransactions, PoolTxGasConfig,
+                TempoGeneralLane, build_receipt,
             },
             fork::{ClientFork, ForkEndpointIdentity},
             genesis::GenesisConfig,
@@ -2100,7 +2101,19 @@ impl<N: Network> Backend<N> {
             enforced_tx_gas_limit_cap: self.enforced_tx_gas_limit_cap(evm_env),
             max_blob_gas_per_block: blob_params.max_blob_gas_per_block(),
             is_cancun,
+            tempo_general_lane: self.is_tempo().then(|| self.tempo_general_lane(evm_env)),
         }
+    }
+
+    /// Returns the general gas lane of the Tempo block executed in `evm_env`.
+    fn tempo_general_lane(&self, evm_env: &EvmEnv) -> TempoGeneralLane {
+        let hardfork =
+            TempoHardfork::from(self.execution_hardfork_at(
+                self.hardfork(),
+                evm_env.block_env.timestamp.saturating_to(),
+            ));
+        let (gas_limit, _) = tempo_lane_gas_limits(hardfork, evm_env.block_env.gas_limit);
+        TempoGeneralLane { gas_limit, hardfork }
     }
 
     /// Returns the cap enforced on a transaction's gas limit, such as EIP-7825's or Tempo's, or

@@ -6078,6 +6078,53 @@ async fn test_tempo_blocks_share_a_second_on_the_wall_clock() {
 }
 
 // ============================================================================
+// Block & Chain: General Gas Lane
+// ============================================================================
+
+// Like Tempo's payload builder, a block keeps non-payment transactions within the 30M general gas
+// lane and defers the rest, while payments use the remaining block gas.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_general_gas_lane_defers_non_payment_transactions() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let accounts = handle.dev_accounts().collect::<Vec<_>>();
+    // Stores to a new slot in an endless loop, so it uses its whole gas limit.
+    let endless = Address::repeat_byte(0x51);
+    api.anvil_set_code(endless, bytes!("60005b600101808055600256")).await.unwrap();
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let general = |from| {
+        WithOtherFields::new(
+            TransactionRequest::default().from(from).to(endless).gas_limit(20_000_000),
+        )
+    };
+    let first = *provider.send_transaction(general(accounts[0])).await.unwrap().tx_hash();
+    let deferred = *provider.send_transaction(general(accounts[1])).await.unwrap().tx_hash();
+    let transfer = tempo_precompiles::tip20::ITIP20::transferCall {
+        to: Address::repeat_byte(0x42),
+        amount: U256::from(1),
+    };
+    let payment = WithOtherFields::new(
+        TransactionRequest::default()
+            .from(accounts[2])
+            .to(PATH_USD)
+            .input(transfer.abi_encode().into())
+            .gas_limit(1_000_000),
+    );
+    let payment = *provider.send_transaction(payment).await.unwrap().tx_hash();
+
+    let block_hashes = async |number: u64| {
+        let block = provider.get_block(number.into()).await.unwrap().unwrap();
+        block.transactions.hashes().collect::<Vec<_>>()
+    };
+    api.mine_one().await.unwrap();
+    assert_eq!(block_hashes(1).await, [first, payment]);
+
+    api.mine_one().await.unwrap();
+    assert_eq!(block_hashes(2).await, [deferred]);
+}
+
+// ============================================================================
 // Block & Chain: Block Gas Limit
 // ============================================================================
 
