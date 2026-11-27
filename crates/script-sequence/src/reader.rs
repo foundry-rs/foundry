@@ -1,5 +1,6 @@
 use crate::{ScriptSequence, TransactionWithMetadata};
 use alloy_network::{Network, ReceiptResponse};
+use alloy_primitives::Address;
 use evm2_inspectors::tracing::types::CallKind;
 use eyre::{Result, bail};
 use foundry_common::{errors::FsPathError, fs};
@@ -61,6 +62,14 @@ impl BroadcastReader {
     where
         N::TxEnvelope: for<'d> Deserialize<'d>,
     {
+        Ok(self.filter_and_sort(self.read_all()?))
+    }
+
+    /// Reads every broadcast in the broadcast directory without applying the filters.
+    fn read_all<N: Network>(&self) -> eyre::Result<Vec<ScriptSequence<N>>>
+    where
+        N::TxEnvelope: for<'d> Deserialize<'d>,
+    {
         // 1. Recursively read all .json files in the broadcast directory
         let mut broadcasts = vec![];
         for entry in walkdir::WalkDir::new(&self.broadcast_path) {
@@ -100,8 +109,6 @@ impl BroadcastReader {
                 broadcasts.push(broadcast);
             }
         }
-
-        let broadcasts = self.filter_and_sort(broadcasts);
 
         Ok(broadcasts)
     }
@@ -178,6 +185,61 @@ impl BroadcastReader {
 
         targets
     }
+
+    /// Returns the address of the deployment whose recorded `vm.label` is `label`, in the latest
+    /// broadcast on this reader's chain that has a confirmed deployment with that label.
+    ///
+    /// Deployments include CREATE and CREATE2 transactions and the contracts they or calls create
+    /// (`additionalContracts`). The contract name and transaction type filters do not apply.
+    /// Errors when the label names several addresses in that broadcast.
+    pub fn read_latest_deployment_by_label<N: Network>(&self, label: &str) -> Result<Address>
+    where
+        N::TxEnvelope: for<'d> Deserialize<'d>,
+    {
+        let addresses = self
+            .read_all::<N>()?
+            .into_iter()
+            .filter(|broadcast| broadcast.chain == self.chain_id)
+            .filter_map(|broadcast| {
+                let mut addresses = Vec::new();
+                for tx in &broadcast.transactions {
+                    if !tx.hash.is_some_and(|hash| {
+                        broadcast.receipts.iter().any(|r| r.transaction_hash() == hash)
+                    }) {
+                        continue;
+                    }
+                    if tx.call_kind.is_any_create()
+                        && tx.label.as_deref() == Some(label)
+                        && let Some(address) = tx.contract_address
+                    {
+                        addresses.push(address);
+                    }
+                    addresses.extend(
+                        tx.additional_contracts
+                            .iter()
+                            .filter(|contract| contract.label.as_deref() == Some(label))
+                            .map(|contract| contract.address),
+                    );
+                }
+                (!addresses.is_empty()).then_some((broadcast.timestamp, addresses))
+            })
+            .max_by_key(|(timestamp, _)| *timestamp)
+            .map(|(_, addresses)| addresses)
+            .unwrap_or_default();
+
+        match addresses[..] {
+            [address] => Ok(address),
+            [] => bail!(
+                "no deployment labeled \"{label}\" on chain {}; use getDeployment for contract names",
+                self.chain_id
+            ),
+            _ => bail!(
+                "label \"{label}\" matches multiple deployments on chain {}: {}",
+                self.chain_id,
+                addresses.iter().map(Address::to_string).collect::<Vec<_>>().join(", ")
+            ),
+        }
+    }
 }
 
 /// Deserializes a broadcast sequence, treating receipts without a `type` as legacy like
@@ -200,7 +262,7 @@ where
 mod tests {
     use super::*;
     use alloy_network::{AnyNetwork, Ethereum};
-    use alloy_primitives::{Address, B256, Bloom};
+    use alloy_primitives::{B256, Bloom};
     use foundry_common::TransactionMaybeSigned;
 
     fn deployment(address: Address) -> ScriptSequence<Ethereum> {
@@ -287,6 +349,106 @@ mod tests {
         )
         .unwrap();
         assert_eq!(reader.read::<AnyNetwork>().unwrap().len(), 2);
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn read_latest_deployment_by_label() {
+        let address = Address::with_last_byte;
+        // A confirmed `Counter` deployment at `address(n)` in block `n`, labeled `label`.
+        let confirmed = |n: u8, label: Option<&str>| {
+            let mut sequence = deployment(address(n));
+            let hash = B256::with_last_byte(n);
+            sequence.transactions[0].hash = Some(hash);
+            sequence.transactions[0].label = label.map(str::to_string);
+            sequence.receipts.push(
+                serde_json::from_value(serde_json::json!({
+                    "type": "0x0",
+                    "status": "0x1",
+                    "cumulativeGasUsed": "0x5208",
+                    "logs": [],
+                    "logsBloom": Bloom::ZERO,
+                    "transactionHash": hash,
+                    "transactionIndex": "0x0",
+                    "blockHash": B256::ZERO,
+                    "blockNumber": format!("{n:#x}"),
+                    "gasUsed": "0x5208",
+                    "effectiveGasPrice": "0x1",
+                    "from": Address::ZERO,
+                    "to": null,
+                    "contractAddress": address(n),
+                }))
+                .unwrap(),
+            );
+            sequence
+        };
+        let run = |timestamp: u128, deployments: Vec<ScriptSequence<Ethereum>>| {
+            let mut run = ScriptSequence { timestamp, chain: 1, ..Default::default() };
+            for deployment in deployments {
+                run.transactions.extend(deployment.transactions);
+                run.receipts.extend(deployment.receipts);
+            }
+            run
+        };
+
+        // Run 1 deploys two labeled pools of the same contract.
+        let first = run(1, vec![confirmed(1, Some("UsdcPool")), confirmed(2, Some("WethPool"))]);
+        // Run 2 redeploys `WethPool`, plus a factory call whose created contract is labeled
+        // `FactoryPool`, an unconfirmed `UsdcPool`, and two deployments sharing a label.
+        let mut factory = confirmed(3, Some("FactoryPool"));
+        factory.transactions[0].call_kind = CallKind::Call;
+        factory.transactions[0].additional_contracts.push(crate::AdditionalContract {
+            address: address(4),
+            label: Some("FactoryPool".to_string()),
+            ..Default::default()
+        });
+        let mut second = run(
+            2,
+            vec![
+                confirmed(5, Some("WethPool")),
+                factory,
+                confirmed(6, Some("Dup")),
+                confirmed(7, Some("Dup")),
+            ],
+        );
+        second.transactions.extend(deployment(address(8)).transactions);
+        second.transactions.back_mut().unwrap().label = Some("UsdcPool".to_string());
+        // A newer run on another chain must not shadow chain 1.
+        let mut other_chain = run(3, vec![confirmed(9, Some("WethPool"))]);
+        other_chain.chain = 2;
+
+        let root = std::env::temp_dir().join(format!("broadcast-label-{}", std::process::id()));
+        let dir = root.join("Counter.s.sol").join("1");
+        std::fs::create_dir_all(&dir).unwrap();
+        for (index, run) in [first, second, other_chain].iter().enumerate() {
+            fs::write_json_file(&dir.join(format!("run-{index}.json")), run).unwrap();
+        }
+        let reader = BroadcastReader::new("Counter".to_string(), 1, &root).unwrap();
+        let lookup = |label| {
+            reader.read_latest_deployment_by_label::<AnyNetwork>(label).map_err(|e| e.to_string())
+        };
+
+        assert_eq!(lookup("UsdcPool"), Ok(address(1)));
+        assert_eq!(lookup("WethPool"), Ok(address(5)));
+        assert_eq!(lookup("FactoryPool"), Ok(address(4)));
+        assert_eq!(
+            lookup("Dup"),
+            Err("label \"Dup\" matches multiple deployments on chain 1: \
+                 0x0000000000000000000000000000000000000006, \
+                 0x0000000000000000000000000000000000000007"
+                .to_string())
+        );
+        assert_eq!(
+            lookup("Counter"),
+            Err("no deployment labeled \"Counter\" on chain 1; use getDeployment for contract names"
+                .to_string())
+        );
+        assert_eq!(
+            lookup("usdcpool"),
+            Err("no deployment labeled \"usdcpool\" on chain 1; use getDeployment for contract names"
+                .to_string())
+        );
 
         std::fs::remove_dir_all(root).unwrap();
     }

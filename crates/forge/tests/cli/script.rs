@@ -10169,6 +10169,36 @@ Deployed contracts (chain 31337):
                 .stderr_eq(str![""]);
         }
     }
+
+    // Labels tell apart the two `Pool` deployments of the latest run.
+    prj.add_test(
+        "DeploymentByLabel.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface LabelVm {
+    function _expectCheatcodeRevert(bytes calldata revertData) external;
+    function getDeployment(string calldata contractName, uint64 chainId) external view returns (address);
+    function getDeploymentByLabel(string calldata label) external view returns (address);
+    function getDeploymentByLabel(string calldata label, uint64 chainId) external view returns (address);
+}
+
+contract DeploymentByLabelTest is Test {
+    LabelVm constant labels = LabelVm(address(vm));
+
+    function test_getDeploymentByLabel() public {
+        assertEq(labels.getDeploymentByLabel("UsdcPool"), 0x5FbDB2315678afecb367f032d93F642f64180aa3);
+        assertEq(labels.getDeploymentByLabel("WethPool", 31337), 0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512);
+        assertEq(labels.getDeployment("Pool", 31337), 0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512);
+        labels._expectCheatcodeRevert(
+            bytes('no deployment labeled "Pool" on chain 31337; use getDeployment for contract names')
+        );
+        labels.getDeploymentByLabel("Pool");
+    }
+}
+"#,
+    );
+    cmd.forge_fuse().args(["test", "--mc", "DeploymentByLabelTest"]).assert_success();
 }
 
 // A local proxy cannot grant forked code cheatcode access, and a rejected call must not interrupt
