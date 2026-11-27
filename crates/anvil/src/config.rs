@@ -80,6 +80,9 @@ pub const NODE_PORT: u16 = 8545;
 pub const CHAIN_ID: u64 = 31337;
 /// The default gas limit for all transactions
 pub const DEFAULT_GAS_LIMIT: u64 = 30_000_000;
+
+/// The block gas limit of Tempo's mainnet, Moderato and localnet genesis.
+pub const TEMPO_GAS_LIMIT: u64 = 500_000_000;
 /// The default number of slots in an epoch used for safe/finalized block tags.
 pub const DEFAULT_SLOTS_IN_AN_EPOCH: u64 = 32;
 /// Default mnemonic for dev accounts
@@ -526,7 +529,7 @@ Gas Limit
                         if self.fork_choice.is_some() {
                             "Forked".to_string()
                         } else {
-                            DEFAULT_GAS_LIMIT.to_string()
+                            self.default_gas_limit().to_string()
                         }
                     })
                 }
@@ -759,11 +762,16 @@ impl NodeConfig {
     ///
     /// The EIP-7825 cap is lifted unless `enable_tx_gas_limit` is set, except under EIP-8037, where
     /// the cap divides a transaction's gas into regular gas and the state gas reservoir instead of
-    /// limiting it.
+    /// limiting it. Tempo always applies its own cap, 30M from T1A, which decides whether a
+    /// deployment fits.
     pub(crate) fn set_cfg_spec(&self, cfg: &mut CfgEnv, spec: SpecId) {
         cfg.spec = spec;
         let is_amsterdam = spec >= SpecId::AMSTERDAM;
-        cfg.tx_gas_limit_cap = (!self.enable_tx_gas_limit && !is_amsterdam).then_some(u64::MAX);
+        cfg.tx_gas_limit_cap = if self.networks.is_tempo() {
+            TempoHardfork::from(self.get_hardfork()).tx_gas_limit_cap()
+        } else {
+            (!self.enable_tx_gas_limit && !is_amsterdam).then_some(u64::MAX)
+        };
     }
 
     /// Returns the memory limit of the node
@@ -2558,7 +2566,12 @@ latest block number: {latest_block}"
             return u64::MAX;
         }
 
-        self.gas_limit.unwrap_or(DEFAULT_GAS_LIMIT)
+        self.gas_limit.unwrap_or_else(|| self.default_gas_limit())
+    }
+
+    /// Returns the block gas limit of a non-forked node without `--gas-limit`.
+    const fn default_gas_limit(&self) -> u64 {
+        if self.networks.is_tempo() { TEMPO_GAS_LIMIT } else { DEFAULT_GAS_LIMIT }
     }
 }
 

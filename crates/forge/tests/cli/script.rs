@@ -11321,7 +11321,7 @@ contract CaGasScript is Script {
 }
 "#,
     );
-    for (calls, block_gas_limit, sent) in [(16, Some(1_000_000), 16), (0, None, 2)] {
+    for (calls, block_gas_limit, sent) in [(16, Some(1_000_000), 16), (0, Some(30_000_000), 2)] {
         let (api, handle) = spawn(
             NodeConfig::test_tempo()
                 .with_hardfork(Some(TempoHardfork::T14.into()))

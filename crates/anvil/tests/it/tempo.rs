@@ -42,10 +42,7 @@ use anvil::{
     eth::{EthApi, pool::transactions::TransactionOrder},
     spawn, try_spawn,
 };
-use anvil_core::{
-    eth::block::Block,
-    types::{ReorgOptions, TempoCreateTokenRequest},
-};
+use anvil_core::{eth::block::Block, types::ReorgOptions};
 use axum::{Json, Router, routing::post};
 use commonware_codec::{DecodeExt, Encode, ReadExt, varint::UInt};
 use commonware_cryptography::bls12381::primitives::{
@@ -710,22 +707,11 @@ async fn test_tempo_fork_funds_dev_account_fee_tokens() {
     // Prefers AlphaUSD.
     let from = accounts.next().unwrap();
     source_api.anvil_deal_tip20(from, ALPHA_USD, U256::ZERO).await.unwrap();
-    // Prefers a fee token outside the standard set.
+    // Prefers OUSD, which it lacks.
     let prefers_ousd = accounts.nth(2).unwrap();
+    source_api.anvil_deal_tip20(prefers_ousd, OUSD_ADDRESS, U256::ZERO).await.unwrap();
     // Has no preference and holds OUSD, so it pays with OUSD rather than PathUSD.
     let no_preference = accounts.next().unwrap();
-    source_api
-        .anvil_tempo_create_token(TempoCreateTokenRequest {
-            address: OUSD_ADDRESS,
-            name: "OUSD".into(),
-            symbol: "OUSD".into(),
-            currency: "USD".into(),
-            quote_token: PATH_USD,
-            admin: from,
-            mint: vec![],
-        })
-        .await
-        .unwrap();
     for (account, token) in [(prefers_ousd, OUSD_ADDRESS), (no_preference, Address::ZERO)] {
         let slot = TipFeeManager::new().user_tokens[account].slot();
         source_api
@@ -743,6 +729,7 @@ async fn test_tempo_fork_funds_dev_account_fee_tokens() {
     source_api.mine_one().await.unwrap();
 
     let source = source_handle.http_provider();
+    let ousd_supply = IERC20::new(OUSD_ADDRESS, &source).totalSupply().call().await.unwrap();
     let mut genesis = Genesis::default();
     for (address, slot, value) in [
         (
@@ -796,7 +783,7 @@ async fn test_tempo_fork_funds_dev_account_fee_tokens() {
         assert_eq!(balance(PATH_USD, allocated).await, U256::from(7));
         assert_eq!(
             IERC20::new(OUSD_ADDRESS, &provider).totalSupply().call().await.unwrap(),
-            funded * U256::from(2) - U256::from(1000),
+            ousd_supply + funded * U256::from(2) - U256::from(1000),
         );
         let tx = TransactionRequest::default().from(from).to(Address::random());
         let receipt =
@@ -9450,6 +9437,7 @@ async fn test_tempo_genesis_contract_nonces() {
             ALPHA_USD_ADDRESS,
             BETA_USD_ADDRESS,
             THETA_USD_ADDRESS,
+            OUSD_ADDRESS,
         ]) {
             assert_eq!(provider.get_transaction_count(address).await.unwrap(), 1, "{address}");
         }
@@ -9530,11 +9518,45 @@ async fn tempo_fund_address_mints_faucet_tokens() {
 
     assert!(hashes.is_empty());
     let amount = U256::from(1_000_000_000_000u64);
-    for token in [PATH_USD, ALPHA_USD, BETA_USD, THETA_USD] {
+    for token in [PATH_USD, ALPHA_USD, BETA_USD, THETA_USD, OUSD_ADDRESS] {
         let token = tempo_precompiles::tip20::ITIP20::new(token, &provider);
         assert_eq!(token.balanceOf(account).call().await.unwrap(), amount);
     }
     assert_eq!(path_usd.totalSupply().call().await.unwrap(), supply + amount);
+}
+
+// A local Tempo node has Tempo's 500M block gas limit and its 30M cap per transaction, rather than
+// EIP-7825's, so a transaction above the cap fails as it would on Tempo, and OUSD is deployed as on
+// Tempo.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_genesis_matches_tempo_limits_and_tokens() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(block.header.gas_limit(), 500_000_000);
+
+    let ousd = tempo_precompiles::tip20::ITIP20::new(OUSD_ADDRESS, &provider);
+    assert_eq!(ousd.symbol().call().await.unwrap(), "OUSD");
+    assert!(!ousd.balanceOf(sender).call().await.unwrap().is_zero());
+
+    let tx = |gas_limit| {
+        WithOtherFields::new(
+            TransactionRequest::default()
+                .from(sender)
+                .to(Address::repeat_byte(0x42))
+                .gas_limit(gas_limit),
+        )
+    };
+    let receipt = provider.send_transaction(tx(30_000_000)).await.unwrap().get_receipt().await;
+    assert!(receipt.unwrap().status());
+    let err = provider.send_transaction(tx(30_000_001)).await.unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "server returned an error response: error code -32003: Transaction gas limit is greater \
+         than the block gas limit, gas_limit: 30000001, cap: 30000000"
+    );
 }
 
 #[cfg(feature = "cli")]

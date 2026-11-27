@@ -146,7 +146,13 @@ pub fn initialize_tempo_precompiles(
     let addresses = tempo_genesis_contracts()
         .map(|(address, _)| address)
         .chain(active_tempo_precompile_addresses(hardfork.into()))
-        .chain([PATH_USD_ADDRESS, ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, THETA_USD_ADDRESS])
+        .chain([
+            PATH_USD_ADDRESS,
+            ALPHA_USD_ADDRESS,
+            BETA_USD_ADDRESS,
+            THETA_USD_ADDRESS,
+            OUSD_ADDRESS,
+        ])
         .filter(|address| initialized || *address == TIP_FEE_MANAGER_ADDRESS);
     for address in addresses {
         db.set_nonce(address, 1)?;
@@ -263,7 +269,8 @@ fn initialize_tempo_genesis(
     let initialized = initialize_tempo_genesis_inner(ADMIN, SENDER, hardfork.into())?;
 
     let mint_amount = TEST_ACCOUNT_FEE_TOKEN_BALANCE;
-    let tokens = [PATH_USD_ADDRESS, ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, THETA_USD_ADDRESS];
+    let tokens =
+        [PATH_USD_ADDRESS, ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, THETA_USD_ADDRESS, OUSD_ADDRESS];
 
     (|| -> Result<bool, TempoPrecompileError> {
         // Mint fee tokens to test accounts
