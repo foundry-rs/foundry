@@ -319,11 +319,16 @@ where
     // Gas used is not the gas a call needs to start with, as calls keep back 1/64 of their gas,
     // so the limits are checked together, and the first one that fails is raised to the least
     // that succeeds until they all do.
-    // The gas a call can be given: in one block, what the calls before it leave of it.
+    // The gas a call can be given: in one block, what the calls before it leave of it, up to the
+    // node's per-transaction cap, which the chain ID does not reveal on a local node.
+    let tx_gas_limit_cap = match hardfork {
+        Some(FoundryHardfork::Tempo(hardfork)) => hardfork.tx_gas_limit_cap().unwrap_or(u64::MAX),
+        _ => u64::MAX,
+    };
     let room = |calls: &[SimCallResult], position: usize| {
         let used =
             if per_call { 0 } else { calls[..position].iter().map(|call| call.gas_used).sum() };
-        block_gas_limit.saturating_sub(used)
+        block_gas_limit.saturating_sub(used).min(tx_gas_limit_cap)
     };
     for (position, call) in calls.iter().enumerate() {
         if adjusted[position] {
@@ -506,8 +511,8 @@ where
     let mut low = requests.last().and_then(|request| request.gas_limit()).unwrap_or_default();
     if low >= cap || !succeeds(requests, cap).await? {
         bail!(
-            "it fails after the transactions before it even with gas limit {cap}, the gas left \
-             in the block; \
+            "it fails after the transactions before it even with gas limit {cap}, the most gas \
+             it can have in the block; \
              {GAS_CAP_HINT}"
         );
     }

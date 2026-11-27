@@ -1504,7 +1504,7 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns the chain ID that defines protocol behavior.
-    fn protocol_chain_id(&self) -> u64 {
+    pub(crate) fn protocol_chain_id(&self) -> u64 {
         self.get_fork().map_or_else(|| self.evm_env.read().cfg_env.chain_id, |fork| fork.chain_id())
     }
 
@@ -2062,12 +2062,15 @@ impl<N: Network> Backend<N> {
         }
     }
 
-    /// Returns the EIP-7825 cap enforced on a transaction's gas limit, if any.
+    /// Returns the cap enforced on a transaction's gas limit, such as EIP-7825's or Tempo's, or
+    /// `None` when it is lifted with `u64::MAX`.
     ///
     /// Under EIP-8037 the cap only bounds regular gas, and gas above it becomes the state gas
     /// reservoir, so the gas limit itself is not capped.
-    fn enforced_tx_gas_limit_cap(&self, evm_env: &EvmEnv) -> Option<u64> {
-        if evm_env.cfg_env.tx_gas_limit_cap.is_some() || evm_env.cfg_env.spec >= SpecId::AMSTERDAM {
+    pub(crate) fn enforced_tx_gas_limit_cap(&self, evm_env: &EvmEnv) -> Option<u64> {
+        if evm_env.cfg_env.tx_gas_limit_cap == Some(u64::MAX)
+            || evm_env.cfg_env.spec >= SpecId::AMSTERDAM
+        {
             return None;
         }
         #[cfg(feature = "monad")]
@@ -2672,9 +2675,10 @@ impl<N: Network> Backend<N> {
         let hash = known_hash.unwrap_or_else(|| header.hash_slow());
         let number = header.number();
         let withdrawals_root = header.withdrawals_root();
-        // Blocks mined before a Tempo header was stored report the defaults of one.
+        // Blocks mined before a Tempo header was stored report the defaults of one, with the lane
+        // gas limits of the hardfork.
         let header = match header {
-            FoundryHeader::Ethereum(header) if self.is_tempo() => FoundryHeader::tempo(header),
+            FoundryHeader::Ethereum(header) => foundry_header(self.fees.tempo_hardfork(), header),
             header => header,
         };
         let mut other = OtherFields::default();
@@ -4741,7 +4745,7 @@ impl<N: Network> Backend<N> {
                     genesis.number,
                 )
             };
-            Blockchain::new(foundry_header(&networks, header))
+            Blockchain::new(foundry_header(fees.tempo_hardfork(), header))
         };
 
         // Sync EVM block.number with genesis for non-fork mode.
@@ -5638,7 +5642,7 @@ impl<N: Network> Backend<N> {
             if preserve_live_base_fee { staged_fees.base_fee() } else { local_base_fee };
 
         let mut staged_cfg = CfgEnv::default();
-        staged_config.set_cfg_spec(&mut staged_cfg, local_spec);
+        staged_config.set_cfg_spec(&mut staged_cfg, local_hardfork);
         staged_cfg.chain_id = local_chain_id;
         staged_cfg.limit_contract_code_size = staged_config.code_size_limit;
         staged_cfg.disable_eip3607 = true;
@@ -5661,7 +5665,8 @@ impl<N: Network> Backend<N> {
 
         let base_fee = staged_fees.is_eip1559().then_some(genesis_base_fee);
         let header = genesis_header(&staged_env, base_fee, genesis_timestamp, genesis_number);
-        let staged_storage = BlockchainStorage::new(foundry_header(&self.networks, header));
+        let staged_storage =
+            BlockchainStorage::new(foundry_header(staged_fees.tempo_hardfork(), header));
 
         // Seed the next block's fee state. Tempo always advances through its hardfork rule, an
         // implicit in-memory Ethereum reset restores Anvil's default, and explicit or
@@ -6653,7 +6658,7 @@ where
             slot_number: None,
         };
 
-        let block = create_block(foundry_header(&self.networks, header), transactions);
+        let block = create_block(foundry_header(self.fees.tempo_hardfork(), header), transactions);
         BlockInfo { block, transactions: transaction_infos, receipts: block_result.receipts }
     }
 
@@ -9097,7 +9102,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
                     requests_hash: (spec_id >= SpecId::PRAGUE).then_some(EMPTY_REQUESTS_HASH),
                     ..Default::default()
                 };
-                let header = foundry_header(&self.networks, header);
+                let header = foundry_header(self.fees.tempo_hardfork(), header);
                 let best_hash = header.hash_slow();
                 selected_header = Some(header.clone());
                 checkpoint = Some(create_block(
@@ -10547,6 +10552,14 @@ impl Backend<FoundryNetwork> {
         .await
     }
 
+    /// Mints the testnet faucet tokens to `address`, like `tempo_fundAddress` (Tempo-only).
+    pub async fn fund_tempo_faucet_account(&self, address: Address) -> DatabaseResult<()> {
+        self.with_tempo_storage(|| {
+            crate::eth::backend::tempo::fund_faucet_account(address).map_err(tempo_db_err)
+        })
+        .await
+    }
+
     /// Creates a native TIP-20 at the requested address with optional initial minting.
     pub async fn create_tempo_token(
         &self,
@@ -11642,9 +11655,25 @@ fn genesis_json_header(genesis: &Genesis) -> Header {
     }
 }
 
-/// Wraps an Ethereum-shaped header in the selected network's consensus header.
-fn foundry_header(networks: &NetworkConfigs, header: Header) -> FoundryHeader {
-    if networks.is_tempo() { FoundryHeader::tempo(header) } else { header.into() }
+/// Wraps an Ethereum-shaped header in the consensus header of the network: a Tempo header when
+/// `tempo_hardfork` is set, with that hardfork's general and shared gas limits.
+fn foundry_header(tempo_hardfork: Option<TempoHardfork>, header: Header) -> FoundryHeader {
+    let Some(hardfork) = tempo_hardfork else { return header.into() };
+    let (general_gas_limit, shared_gas_limit) = tempo_lane_gas_limits(hardfork, header.gas_limit);
+    let mut header = FoundryHeader::tempo(header);
+    if let FoundryHeader::Tempo(header) = &mut header {
+        header.general_gas_limit = general_gas_limit;
+        header.shared_gas_limit = shared_gas_limit;
+    }
+    header
+}
+
+/// Returns the general (non-payment) and shared gas limits of a Tempo block, as Tempo's consensus
+/// requires them: the shared lane is a tenth of the block before T4, and the general lane is fixed
+/// from T1 and half of the rest before.
+fn tempo_lane_gas_limits(hardfork: TempoHardfork, gas_limit: u64) -> (u64, u64) {
+    let shared = hardfork.shared_gas_limit(gas_limit);
+    (hardfork.general_gas_limit().unwrap_or((gas_limit - shared) / 2), shared)
 }
 
 /// Adds the fields a Tempo header has beyond an Ethereum one to its RPC block, like a Tempo node.

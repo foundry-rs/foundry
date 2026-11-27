@@ -80,6 +80,9 @@ pub const NODE_PORT: u16 = 8545;
 pub const CHAIN_ID: u64 = 31337;
 /// The default gas limit for all transactions
 pub const DEFAULT_GAS_LIMIT: u64 = 30_000_000;
+
+/// The block gas limit of Tempo's mainnet, Moderato and localnet genesis.
+pub const TEMPO_GAS_LIMIT: u64 = 500_000_000;
 /// The default number of slots in an epoch used for safe/finalized block tags.
 pub const DEFAULT_SLOTS_IN_AN_EPOCH: u64 = 32;
 /// Default mnemonic for dev accounts
@@ -526,7 +529,7 @@ Gas Limit
                         if self.fork_choice.is_some() {
                             "Forked".to_string()
                         } else {
-                            DEFAULT_GAS_LIMIT.to_string()
+                            self.default_gas_limit().to_string()
                         }
                     })
                 }
@@ -755,15 +758,21 @@ impl NodeConfig {
         }
     }
 
-    /// Sets the execution spec and the transaction gas limit cap.
+    /// Sets the execution spec of `hardfork` and its transaction gas limit cap.
     ///
     /// The EIP-7825 cap is lifted unless `enable_tx_gas_limit` is set, except under EIP-8037, where
     /// the cap divides a transaction's gas into regular gas and the state gas reservoir instead of
-    /// limiting it.
-    pub(crate) fn set_cfg_spec(&self, cfg: &mut CfgEnv, spec: SpecId) {
+    /// limiting it. Tempo always applies its own cap, 30M from T1A, which decides whether a
+    /// deployment fits.
+    pub(crate) fn set_cfg_spec(&self, cfg: &mut CfgEnv, hardfork: FoundryHardfork) {
+        let spec = SpecId::from(hardfork);
         cfg.spec = spec;
         let is_amsterdam = spec >= SpecId::AMSTERDAM;
-        cfg.tx_gas_limit_cap = (!self.enable_tx_gas_limit && !is_amsterdam).then_some(u64::MAX);
+        cfg.tx_gas_limit_cap = if self.networks.is_tempo() {
+            TempoHardfork::from(hardfork).tx_gas_limit_cap()
+        } else {
+            (!self.enable_tx_gas_limit && !is_amsterdam).then_some(u64::MAX)
+        };
     }
 
     /// Returns the memory limit of the node
@@ -1529,7 +1538,7 @@ impl NodeConfig {
         // configure the revm environment
 
         let mut cfg = CfgEnv::default();
-        self.set_cfg_spec(&mut cfg, self.get_hardfork().into());
+        self.set_cfg_spec(&mut cfg, self.get_hardfork());
 
         cfg.chain_id = self.get_chain_id();
         cfg.limit_contract_code_size = self.code_size_limit;
@@ -2303,7 +2312,7 @@ latest block number: {latest_block}"
         let fork_hardfork = self.hardfork.or(inferred_hardfork);
         let effective_hardfork = fork_hardfork.unwrap_or_else(|| self.get_hardfork());
         let effective_spec = SpecId::from(effective_hardfork);
-        self.set_cfg_spec(&mut evm_env.cfg_env, effective_spec);
+        self.set_cfg_spec(&mut evm_env.cfg_env, effective_hardfork);
         fees.set_execution_rules(
             effective_spec,
             self.networks.base_fee_params(block.header.timestamp()),
@@ -2558,7 +2567,12 @@ latest block number: {latest_block}"
             return u64::MAX;
         }
 
-        self.gas_limit.unwrap_or(DEFAULT_GAS_LIMIT)
+        self.gas_limit.unwrap_or_else(|| self.default_gas_limit())
+    }
+
+    /// Returns the block gas limit of a non-forked node without `--gas-limit`.
+    const fn default_gas_limit(&self) -> u64 {
+        if self.networks.is_tempo() { TEMPO_GAS_LIMIT } else { DEFAULT_GAS_LIMIT }
     }
 }
 

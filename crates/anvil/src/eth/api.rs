@@ -39,6 +39,7 @@ use crate::{
     filter::{EthFilter, Filters, LogsFilter},
     mem::{transaction_build, transaction_build_with_block_hash},
 };
+use alloy_chains::NamedChain;
 use alloy_consensus::{
     Blob, BlockHeader, Transaction, TrieAccount, TxEip4844Variant, TxReceipt, Typed2718,
     transaction::{Recovered, SignerRecoverable},
@@ -115,6 +116,7 @@ use futures::{
 };
 use parking_lot::{Mutex, RwLock};
 use std::{sync::Arc, time::Duration};
+use tempo_alloy::rpc::{ForkInfo, ForkSchedule};
 use tempo_evm::account_access_gas;
 use tempo_hardfork::{TempoHardfork, gas_params};
 use tempo_primitives::{AASigned, TEMPO_TX_TYPE_ID, transaction::FEE_PAYER_SIGNATURE_MARKER};
@@ -2106,6 +2108,10 @@ impl EthApi<FoundryNetwork> {
         // get the highest possible gas limit, either the request's set value or the currently
         // configured gas limit
         let mut highest_gas_limit = inner.gas.map_or(block_env.gas_limit.into(), |g| g as u128);
+        // A limit above the per-transaction cap, such as Tempo's, is rejected when sent.
+        if let Some(cap) = self.backend.enforced_tx_gas_limit_cap(&self.backend.evm_env().read()) {
+            highest_gas_limit = highest_gas_limit.min(cap.into());
+        }
 
         // Tempo AA transactions pay fees in ERC-20 tokens, not ETH. Only treat requests as
         // Tempo AA in Tempo mode, otherwise `feeToken` should not bypass ETH funds checks.
@@ -2799,6 +2805,10 @@ impl EthApi<FoundryNetwork> {
             }
             EthRequest::TempoCreateToken(request) => {
                 self.anvil_tempo_create_token(request).await.to_rpc_result()
+            }
+            EthRequest::TempoForkSchedule(()) => self.tempo_fork_schedule().to_rpc_result(),
+            EthRequest::TempoFundAddress(address) => {
+                self.tempo_fund_address(address).await.to_rpc_result()
             }
             EthRequest::TempoSimulateV1(simulation, block) => {
                 self.tempo_simulate_v1(simulation, block).await.to_rpc_result()
@@ -5916,6 +5926,68 @@ impl EthApi<FoundryNetwork> {
         self.ensure_tempo_mode()?;
         let _mining = self.backend.lock_mining().await;
         self.backend.create_tempo_token(request).await
+    }
+
+    /// Returns the Tempo fork schedule and the active fork, like a Tempo node.
+    ///
+    /// Every fork up to the node's hardfork is active, as on Tempo a fork is active exactly when
+    /// its activation time is at or before the head. A fork of Tempo mainnet or Moderato reports
+    /// that chain's activation times, capped at the head for a fork the node runs early, and its
+    /// forks scheduled after the head that the node does not run; on other chains, the active forks
+    /// activate at time 0 as in Tempo's localnet genesis. Fork IDs are not reported.
+    ///
+    /// Handler for `tempo_forkSchedule`; unavailable on non-Tempo networks.
+    pub fn tempo_fork_schedule(&self) -> Result<ForkSchedule> {
+        node_info!("tempo_forkSchedule");
+        self.ensure_tempo_mode()?;
+        let active = self.backend.tempo_hardfork();
+        let chain_id = self.backend.protocol_chain_id();
+        // A fork stores no block until it mines one, so its head is then the fork block.
+        let head = self
+            .backend
+            .get_block_by_hash(self.backend.best_hash())
+            .map(|block| block.header.timestamp())
+            .or_else(|| self.backend.get_fork().map(|fork| fork.timestamp()))
+            .ok_or(BlockchainError::BlockNotFound)?;
+        let schedule = TempoHardfork::VARIANTS
+            .iter()
+            .filter(|&&fork| fork != TempoHardfork::Genesis)
+            .filter_map(|&fork| {
+                let scheduled = if chain_id == NamedChain::Tempo as u64 {
+                    fork.mainnet_activation_timestamp()
+                } else if chain_id == NamedChain::TempoModerato as u64 {
+                    fork.moderato_activation_timestamp()
+                } else {
+                    Some(0)
+                };
+                let is_active = fork <= active;
+                let activation_time = if is_active {
+                    scheduled.map_or(head, |time| time.min(head))
+                } else {
+                    scheduled.filter(|&time| time > head)?
+                };
+                Some(ForkInfo {
+                    name: fork.to_string(),
+                    activation_time,
+                    active: is_active,
+                    fork_id: None,
+                })
+            })
+            .collect();
+        Ok(ForkSchedule { schedule, active: active.to_string() })
+    }
+
+    /// Mints Tempo's testnet faucet tokens to `address`, like `tempo_fundAddress` on Moderato:
+    /// one million each of PathUSD, AlphaUSD, BetaUSD, ThetaUSD and OUSD, where deployed.
+    ///
+    /// The balances change without a transaction, so no transaction hashes are returned.
+    ///
+    /// Handler for `tempo_fundAddress`; unavailable on non-Tempo networks.
+    pub async fn tempo_fund_address(&self, address: Address) -> Result<Vec<B256>> {
+        node_info!("tempo_fundAddress");
+        self.ensure_tempo_mode()?;
+        self.backend.fund_tempo_faucet_account(address).await?;
+        Ok(Vec::new())
     }
 
     /// Simulates like `eth_simulateV1` and adds the metadata of each TIP-20 token that is called,
