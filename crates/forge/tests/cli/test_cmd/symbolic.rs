@@ -7814,7 +7814,7 @@ contract RoundedProductTest {
         assert(tick / spacing * spacing == tick);
     }
 
-    // The checked product's overflow guard divides by the quotient, after the product became `x`.
+    // The checked product's overflow guard divides the rounded product by the quotient.
     function checkExactLot(uint256 amount, uint128 lot) external pure {
         require(lot != 0);
         require(amount % lot == 0);
@@ -7855,6 +7855,24 @@ contract RoundedProductTest {
         assert(q * d == x && q <= x);
     }
 
+    // The guard `d == 0 || x % d == 0` and a separate `d != 0` make `x` a multiple of `d`.
+    function checkExactGuard(uint256 x, uint256 d) external pure {
+        require(d != 0);
+        bool ok = true;
+        assembly {
+            if or(iszero(d), iszero(mod(x, d))) { ok := eq(mul(div(x, d), d), x) }
+        }
+        assert(ok);
+    }
+
+    // Divisibility must not hide the rounded product from the enclosing quotient.
+    function checkExactCeilingRoundTrip(uint128 value, uint128 rate) external pure {
+        require(rate >= 37);
+        require((uint256(value) * rate + 36) % 37 == 0);
+        uint256 rounded = (uint256(value) * rate + 36) / 37 * 37;
+        assert(rounded / rate == value);
+    }
+
     function checkExactConverse(uint256 x, uint256 d) external pure {
         require(d != 0);
         require(x / d * d == x);
@@ -7886,7 +7904,7 @@ contract RoundedProductTest {
         require(d != 0);
         bool ok = true;
         assembly {
-            if iszero(mul(mod(x, d), iszero(flag))) { ok := eq(mul(div(x, d), d), x) }
+            if or(flag, or(iszero(d), iszero(mod(x, d)))) { ok := eq(mul(div(x, d), d), x) }
         }
         assert(ok);
     }
@@ -7896,7 +7914,7 @@ contract RoundedProductTest {
         require(d != 0);
         bool ok = true;
         assembly {
-            if iszero(mul(mod(x, 7), iszero(iszero(d)))) { ok := eq(mul(div(x, d), d), x) }
+            if or(iszero(d), iszero(mod(x, 7))) { ok := eq(mul(div(x, d), d), x) }
         }
         assert(ok);
     }
@@ -7905,7 +7923,7 @@ contract RoundedProductTest {
     function checkExactMismatchedZeroCheck(uint256 x, uint256 d) external pure {
         bool ok = true;
         assembly {
-            if iszero(mul(mod(x, 7), iszero(iszero(d)))) { ok := eq(mul(div(x, 7), 7), x) }
+            if or(iszero(d), iszero(mod(x, 7))) { ok := eq(mul(div(x, 7), 7), x) }
         }
         assert(ok);
     }
@@ -7929,7 +7947,7 @@ contract RoundedProductTest {
                 "--symbolic-timeout",
                 "30",
                 "--match-test",
-                "check(Exact(TickSpacing|Lot|ConstantLot|Granularity|EarlyReturn|Assembly|Downstream|Converse)|FloorError|DividendRelation|WrappingDividendRelation|CeilingError|CeilingRoundTrip|SymbolicDivisorFacts|EuclideanIdentities|SymbolicEuclideanIdentity|NarrowFloorError|NestedConstantQuotient|ReversedNestedConstantQuotient|NestedFeeEuclideanIdentity|NestedFeeCeiling|BasisPointsFee|SlippageMinimum|TransferConservation)",
+                "check(Exact(TickSpacing|Lot|ConstantLot|Granularity|EarlyReturn|Assembly|Downstream|Guard|CeilingRoundTrip|Converse)|FloorError|DividendRelation|WrappingDividendRelation|CeilingError|CeilingRoundTrip|SymbolicDivisorFacts|EuclideanIdentities|SymbolicEuclideanIdentity|NarrowFloorError|NestedConstantQuotient|ReversedNestedConstantQuotient|NestedFeeEuclideanIdentity|NestedFeeCeiling|BasisPointsFee|SlippageMinimum|TransferConservation)",
             ])
             .assert_success()
             .get_output()
@@ -7947,6 +7965,8 @@ contract RoundedProductTest {
             "checkExactEarlyReturn(uint256,uint256)",
             "checkExactAssembly(uint256,uint256)",
             "checkExactDownstream(uint256,uint256)",
+            "checkExactGuard(uint256,uint256)",
+            "checkExactCeilingRoundTrip(uint128,uint128)",
             "checkExactConverse(uint256,uint256)",
         ] {
             let result = json_test_result(&output, signature);
