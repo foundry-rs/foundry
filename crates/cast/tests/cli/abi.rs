@@ -12,6 +12,22 @@ fn calldata_array(cmd: _) {
 }
 
 #[casttest]
+fn calldata_file_conflicts_with_positional_arguments(prj: _, cmd: _) {
+    let path = prj.root().join("args.txt");
+    fs::write(&path, "5\n").unwrap();
+    let file = path.to_str().unwrap();
+
+    cmd.args(["calldata", "--file", file, "foo(uint256)"])
+        .assert_success()
+        .stdout_eq("0x2fbebd380000000000000000000000000000000000000000000000000000000000000005\n");
+
+    cmd.cast_fuse()
+        .args(["calldata", "--file", file, "foo(uint256)", "6"])
+        .assert_code(2)
+        .stdout_eq("");
+}
+
+#[casttest]
 fn string_decode(cmd: _) {
     cmd.args(["string-decode", "0x88c379a0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000054753303235000000000000000000000000000000000000000000000000000000"]).assert_success().stdout_eq(str![[r#"
 "GS025"
