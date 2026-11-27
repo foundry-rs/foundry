@@ -4,12 +4,14 @@ use crate::{
         confirm_continue,
         tip20::iso4217_warning_message,
     },
-    tempo,
+    tempo::{self, RelayFeeTokenGuard, SponsorRelayConnector},
     tx::{self, CastTxBuilder, CastTxSender, SendTxOpts, TxParams, apply_poll_interval},
 };
 use alloy_consensus::{SignableTransaction, Signed};
 use alloy_ens::NameOrAddress;
-use alloy_network::{Ethereum, EthereumWallet, Network, NetworkTransactionBuilder};
+use alloy_network::{
+    Ethereum, EthereumWallet, Network, NetworkTransactionBuilder, TransactionBuilder,
+};
 use alloy_primitives::{Address, B256, hex};
 use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
 use alloy_signer::{Signature, Signer};
@@ -23,7 +25,10 @@ use foundry_common::{
     FoundryTransactionBuilder,
     fmt::{UIfmt, UIfmtReceiptExt},
     provider::ProviderBuilder,
-    tempo::{configurable_account::ConfigurableAccountSigner, maybe_print_fee_token},
+    tempo::{
+        PATH_USD_ADDRESS, configurable_account::ConfigurableAccountSigner, maybe_print_fee_token,
+        resolve_and_set_fee_token,
+    },
 };
 use foundry_config::Config;
 use foundry_wallets::{WalletSigner, wallet_browser::signer::BrowserSigner};
@@ -231,7 +236,9 @@ impl SendTxArgs {
         let print_sponsor_hash = tx.tempo.print_sponsor_hash;
         let sponsor_url = tx.tempo.sponsor_url.clone();
         let sponsor_fee_payer = tx.tempo.sponsor;
-        let expires_at = tx.tempo.resolve_expires();
+        let expires_at =
+            tx.tempo.resolve_expires().or_else(|| tx.tempo.default_sponsor_url_valid_before());
+        let gas_limit_estimated = tx.gas_limit.is_none();
         let tempo_sponsor = if print_sponsor_hash || sponsor_url.is_some() {
             None
         } else {
@@ -470,12 +477,18 @@ impl SendTxArgs {
             )
             .await?;
             if let Some(sponsor_url) = sponsor_url.as_deref() {
-                cast_send_with_tempo_wallet_via_sponsor(
+                let (prepared, send_opts) = (&prepared, &send_opts);
+                send_via_sponsor_relay(
                     &provider,
                     tx_request,
-                    &prepared,
                     sponsor_url,
-                    &send_opts,
+                    gas_limit_estimated,
+                    gas_estimate_multiplier,
+                    |relay, tx| async move {
+                        let relay =
+                            AlloyProviderBuilder::<_, _, N>::default().connect_with(&relay).await?;
+                        cast_send_with_tempo_wallet(&relay, tx, prepared, send_opts).await
+                    },
                 )
                 .await?;
             } else {
@@ -490,16 +503,18 @@ impl SendTxArgs {
                 return Ok(());
             };
             if let Some(sponsor_url) = sponsor_url.as_deref() {
-                // The relay selects the fee token and adds its fee-payer signature.
-                tx_request.set_fee_payer_signature(FEE_PAYER_SIGNATURE_MARKER);
-                let connector = tempo::sponsor_relay_connector(&provider, sponsor_url)?;
-                let sponsor_provider =
-                    AlloyProviderBuilder::<_, _, N>::default().connect_with(&connector).await?;
-                cast_send_with_configurable_account(
-                    &sponsor_provider,
+                let (account, send_opts) = (&account, &send_opts);
+                send_via_sponsor_relay(
+                    &provider,
                     tx_request,
-                    &account,
-                    &send_opts,
+                    sponsor_url,
+                    gas_limit_estimated,
+                    gas_estimate_multiplier,
+                    |relay, tx| async move {
+                        let relay =
+                            AlloyProviderBuilder::<_, _, N>::default().connect_with(&relay).await?;
+                        cast_send_with_configurable_account(&relay, tx, account, send_opts).await
+                    },
                 )
                 .await?;
             } else {
@@ -533,13 +548,22 @@ impl SendTxArgs {
             if let Some(sponsor_url) = sponsor_url {
                 // Sign locally, ask the sponsor service for a fee-payer signature, then submit the
                 // fully-sponsored tx to the regular RPC.
-                tx_request.set_fee_payer_signature(FEE_PAYER_SIGNATURE_MARKER);
-                let connector = tempo::sponsor_relay_connector(&provider, &sponsor_url)?;
-                let provider = wallet_provider
-                    .wallet(EthereumWallet::from(signer))
-                    .connect_with(&connector)
-                    .await?;
-                cast_send(provider, tx_request, &send_opts).await?;
+                let (wallet, send_opts) = (&EthereumWallet::from(signer), &send_opts);
+                send_via_sponsor_relay(
+                    &provider,
+                    tx_request,
+                    &sponsor_url,
+                    gas_limit_estimated,
+                    gas_estimate_multiplier,
+                    |relay, tx| async move {
+                        let provider = AlloyProviderBuilder::<_, _, N>::default()
+                            .wallet(wallet.clone())
+                            .connect_with(&relay)
+                            .await?;
+                        cast_send(provider, tx, send_opts).await
+                    },
+                )
+                .await?;
             } else {
                 tempo::maybe_attach_sponsor(
                     tempo_sponsor.as_ref(),
@@ -745,25 +769,72 @@ where
     opts.print_send_result(provider, tx_hash, receipt).await
 }
 
-/// Signs a prepared transaction with a Tempo wallet, obtains a remote fee-payer signature, and
-/// broadcasts the sponsored transaction through the original provider transport. The relay
-/// selects the fee token, so `opts` must not resolve one.
-pub(crate) async fn cast_send_with_tempo_wallet_via_sponsor<N: Network, P: Provider<N>>(
+/// Sends `tx` with `send`, which signs it and submits it through the sponsor relay connector it
+/// is given. The relay at `sponsor_url` adds its fee payer signature and selects the fee token, so
+/// `send` must not resolve one.
+///
+/// When `gas_limit_estimated`, the gas limit of `tx` was estimated for its fee token, or the
+/// sender's when it names none, and the relay must sign with that token: otherwise the transaction
+/// is not broadcast but estimated for the relay's token with `gas_estimate_multiplier` and sent
+/// again, and a relay that then changes its token fails the send.
+async fn send_via_sponsor_relay<N, P, F, Fut>(
     provider: &P,
     mut tx: N::TransactionRequest,
-    wallet: &TempoAccountsWallet,
     sponsor_url: &str,
-    opts: &SendOptions,
-) -> Result<B256>
+    gas_limit_estimated: bool,
+    gas_estimate_multiplier: Option<u64>,
+    mut send: F,
+) -> Result<()>
 where
+    N: Network,
+    P: Provider<N>,
     N::TransactionRequest: FoundryTransactionBuilder<N>,
-    N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
+    F: FnMut(SponsorRelayConnector, N::TransactionRequest) -> Fut,
+    Fut: Future<Output = Result<B256>>,
 {
-    tx.set_fee_payer_signature(FEE_PAYER_SIGNATURE_MARKER);
-    let connector = tempo::sponsor_relay_connector(provider, sponsor_url)?;
-    let sponsor_provider =
-        AlloyProviderBuilder::<_, _, N>::default().connect_with(&connector).await?;
-    cast_send_with_tempo_wallet(&sponsor_provider, tx, wallet, opts).await
+    let mut guard = if gas_limit_estimated {
+        // Without a fee token the node estimated with the sender's, and PathUSD for an unpriced
+        // request without a preference.
+        let estimated = match tx.fee_token() {
+            Some(fee_token) => fee_token,
+            None => resolve_and_set_fee_token(Some(provider), &mut tx.clone(), tx.from())
+                .await?
+                .unwrap_or(PATH_USD_ADDRESS),
+        };
+        Some(RelayFeeTokenGuard::new(estimated))
+    } else {
+        None
+    };
+    let mut estimated_again = false;
+    loop {
+        let mut sponsored = tx.clone();
+        sponsored.set_fee_payer_signature(FEE_PAYER_SIGNATURE_MARKER);
+        let relay = tempo::sponsor_relay_connector(provider, sponsor_url, guard.clone())?;
+        let err = match send(relay, sponsored).await {
+            Ok(_) => return Ok(()),
+            Err(err) => err,
+        };
+        let Some((estimated, relay_fee_token)) =
+            guard.as_ref().and_then(|guard| Some((guard.estimated(), guard.refused_fee_token()?)))
+        else {
+            return Err(err);
+        };
+        let Some(fee_token) = relay_fee_token.filter(|_| !estimated_again) else {
+            eyre::bail!(
+                "the sponsor relay at {sponsor_url} signed with fee token {} after the gas was \
+                 estimated for {estimated}; pass --gas-limit to send it anyway",
+                relay_fee_token.map_or_else(|| "none".to_string(), |token| token.to_string())
+            );
+        };
+        sh_status!("The sponsor relay pays with fee token {fee_token}; estimating gas for it")?;
+        tx.set_fee_token(fee_token);
+        tx.reset_gas_limit();
+        let gas_limit =
+            tx::estimate_gas_limit(provider, tx.clone(), gas_estimate_multiplier, true).await?;
+        tx.set_gas_limit(gas_limit);
+        guard = Some(RelayFeeTokenGuard::new(fee_token));
+        estimated_again = true;
+    }
 }
 
 /// Validates that a sponsor URL uses https:// (localhost/127.0.0.1 may use http://).

@@ -1128,6 +1128,50 @@ async fn send_sponsored_for_sender_without_fee_token_balance(cmd: _) {
     assert_eq!(receipt["feeToken"], serde_json::to_value(ALPHA_USD_ADDRESS).unwrap(), "{receipt}");
 }
 
+// A sponsor relay pays with the fee token it chooses, here PathUSD, while the sender's estimate
+// used its own AlphaUSD, which it transfers. The transaction is estimated again for PathUSD before
+// it is broadcast, or it runs out of gas. Relays only sign transactions that expire within an
+// hour, so it expires five minutes after it is built.
+#[casttest]
+async fn send_with_sponsor_url_estimates_for_relay_fee_token(cmd: _) {
+    let (_, handle) = anvil::spawn(tempo_t14()).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let (_, sender_key) = dev_account(&handle, 0);
+    let sponsor = handle.dev_accounts().last().unwrap();
+    let recipient = Address::repeat_byte(0x42).to_string();
+
+    let built_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let output = cmd
+        .cast_fuse()
+        .args(["send", &ALPHA_USD_ADDRESS.to_string(), "transfer(address,uint256)", &recipient])
+        .args(["1000", "--private-key", &sender_key, "--rpc-url", &rpc, "--sponsor-url", &rpc])
+        .arg("--json")
+        .assert_success();
+    let output = output.get_output();
+    let sent_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let receipt: serde_json::Value = parse_json(output.stdout_lossy().trim()).unwrap();
+    assert_eq!(receipt["status"], "0x1", "{receipt}");
+    assert_eq!(receipt["feePayer"], serde_json::to_value(sponsor).unwrap(), "{receipt}");
+    assert_eq!(receipt["feeToken"], serde_json::to_value(PATH_USD_ADDRESS).unwrap(), "{receipt}");
+    let stderr = output.stderr_lossy();
+    assert!(stderr.contains("The sponsor relay pays with fee token"), "{stderr}");
+
+    let tx = provider
+        .raw_request::<_, serde_json::Value>(
+            "eth_getTransactionByHash".into(),
+            (receipt["transactionHash"].clone(),),
+        )
+        .await
+        .unwrap();
+    let valid_before = u64::from_str_radix(
+        tx["validBefore"].as_str().expect("validBefore").trim_start_matches("0x"),
+        16,
+    )
+    .unwrap();
+    assert!((built_at + 300..=sent_at + 300).contains(&valid_before), "{tx}");
+}
+
 #[casttest]
 fn tip20_logo_check_accepts_valid_values(cmd: _) {
     for uri in ["", "https://example.com/logo.png", "HTTP://example.com/logo.png", "ipfs://token"] {

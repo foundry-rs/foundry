@@ -1,12 +1,16 @@
 //! Tempo transaction helpers used by Cast-facing commands.
 
 use crate::tx::fill_transaction_gas_fees;
+use alloy_eips::Decodable2718;
+use alloy_json_rpc::{RequestPacket, ResponsePacket, SerializedRequest};
 use alloy_network::{Ethereum, Network, TransactionBuilder};
-use alloy_primitives::{Address, B256};
+use alloy_primitives::{Address, B256, hex};
 use alloy_provider::Provider;
 use alloy_rpc_client::BuiltInConnectionString;
 use alloy_rpc_types::BlockId;
-use alloy_transport::{BoxTransport, TransportConnect, TransportError};
+use alloy_transport::{
+    BoxTransport, TransportConnect, TransportError, TransportErrorKind, TransportFut,
+};
 use eyre::Result;
 use foundry_cli::{
     json::print_json_success,
@@ -26,8 +30,13 @@ use foundry_common::{
 use foundry_config::{Chain, Config, Eip1559FeeEstimatePreset};
 use foundry_evm_networks::NetworkVariant;
 use foundry_wallets::{WalletOpts, WalletSigner};
+use serde::Deserialize;
 use serde_json::Value;
-use std::{str::FromStr, sync::Arc};
+use std::{
+    str::FromStr,
+    sync::{Arc, Mutex, PoisonError},
+    task::{Context, Poll},
+};
 use tempo_alloy::{
     TempoNetwork,
     accounts::TempoAccountsWallet,
@@ -35,6 +44,7 @@ use tempo_alloy::{
     rpc::{ConfigurableAccountSimulationSpec, TempoTransactionRequest},
     transport::{RelayConnector, SponsorshipMode},
 };
+use tempo_primitives::TempoTxEnvelope;
 
 pub use foundry_common::tempo::TempoSponsor;
 
@@ -237,16 +247,109 @@ impl TransportConnect for ExistingTransportConnector {
     }
 }
 
+/// Connector routing sponsored transaction submissions through a sponsor relay.
+pub(crate) type SponsorRelayConnector =
+    RelayConnector<ExistingTransportConnector, BuiltInConnectionString>;
+
+/// Connects to the sponsor relay at `sponsor_url`, which signs transactions submitted through it
+/// as their fee payer before they are broadcast through `provider`'s transport.
+///
+/// With `fee_token_guard`, a transaction the relay signed with another fee token than the guard
+/// expects is not broadcast: the submission fails and the guard records the relay's fee token.
 pub(crate) fn sponsor_relay_connector<N: Network>(
     provider: &impl Provider<N>,
     sponsor_url: &str,
-) -> Result<RelayConnector<ExistingTransportConnector, BuiltInConnectionString>> {
-    let default = ExistingTransportConnector {
-        transport: provider.client().transport().clone(),
-        is_local: provider.client().is_local(),
-    };
+    fee_token_guard: Option<RelayFeeTokenGuard>,
+) -> Result<SponsorRelayConnector> {
+    let mut transport = provider.client().transport().clone();
+    if let Some(guard) = fee_token_guard {
+        transport = BoxTransport::new(RelayFeeTokenCheck { inner: transport, guard });
+    }
+    let default = ExistingTransportConnector { transport, is_local: provider.client().is_local() };
     let relay = BuiltInConnectionString::from_str(sponsor_url)?;
     Ok(RelayConnector::with_config(default, relay, SponsorshipMode::SignOnly, false))
+}
+
+/// Requires a sponsor relay to sign a transaction with the fee token its gas was estimated for.
+///
+/// The fee token is part of the estimated execution: the node resolves and reads it before the
+/// calls run, which warms storage the calls may touch too, so a transaction the relay pays for
+/// with another token can run out of gas.
+#[derive(Clone, Debug)]
+pub(crate) struct RelayFeeTokenGuard {
+    estimated: Address,
+    refused: Arc<Mutex<Option<Option<Address>>>>,
+}
+
+impl RelayFeeTokenGuard {
+    /// Expects the relay to sign with `estimated`, the fee token the gas was estimated for.
+    pub(crate) fn new(estimated: Address) -> Self {
+        Self { estimated, refused: Default::default() }
+    }
+
+    /// Returns the fee token the gas was estimated for.
+    pub(crate) const fn estimated(&self) -> Address {
+        self.estimated
+    }
+
+    /// Returns the fee token of a relay-signed transaction that was not broadcast, if any.
+    pub(crate) fn refused_fee_token(&self) -> Option<Option<Address>> {
+        *self.refused.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// Transport below a sponsor relay that broadcasts only the transactions a
+/// [`RelayFeeTokenGuard`] accepts.
+#[derive(Clone, Debug)]
+struct RelayFeeTokenCheck {
+    inner: BoxTransport,
+    guard: RelayFeeTokenGuard,
+}
+
+impl tower::Service<RequestPacket> for RelayFeeTokenCheck {
+    type Response = ResponsePacket;
+    type Error = TransportError;
+    type Future = TransportFut<'static>;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, request: RequestPacket) -> Self::Future {
+        if let RequestPacket::Single(request) = &request
+            && let Some(fee_token) = submitted_tempo_fee_token(request)
+            && fee_token != Some(self.guard.estimated)
+        {
+            *self.guard.refused.lock().unwrap_or_else(PoisonError::into_inner) = Some(fee_token);
+            return Box::pin(async {
+                Err(TransportErrorKind::custom_str(
+                    "the sponsor relay signed with another fee token than the gas was estimated for",
+                ))
+            });
+        }
+        self.inner.call(request)
+    }
+}
+
+/// Returns the fee token of the Tempo AA transaction `request` submits, or `None` when it submits
+/// none.
+fn submitted_tempo_fee_token(request: &SerializedRequest) -> Option<Option<Address>> {
+    #[derive(Deserialize)]
+    struct SendRawTransaction<'a> {
+        #[serde(borrow)]
+        params: [&'a str; 1],
+    }
+
+    if !matches!(request.method(), "eth_sendRawTransaction" | "eth_sendRawTransactionSync") {
+        return None;
+    }
+    let SendRawTransaction { params: [raw_tx] } =
+        serde_json::from_str(request.serialized().get()).ok()?;
+    let raw_tx = hex::decode(raw_tx).ok()?;
+    match TempoTxEnvelope::decode_2718(&mut raw_tx.as_slice()).ok()? {
+        TempoTxEnvelope::AA(tx) => Some(tx.tx().fee_token),
+        _ => None,
+    }
 }
 
 /// Resolves the transaction network and any configured signer without letting an unrelated Tempo
@@ -484,7 +587,7 @@ mod tests {
         asserter.push_success(&alloy_primitives::U64::from(42));
         let provider = AlloyProviderBuilder::new().connect_mocked_client(asserter);
         let connector =
-            sponsor_relay_connector(&provider, "http://127.0.0.1:1").expect("valid relay");
+            sponsor_relay_connector(&provider, "http://127.0.0.1:1", None).expect("valid relay");
         let transport = connector.get_transport().await.expect("relay transport");
         let client = RpcClient::builder().transport(transport, true);
         let relayed = AlloyProviderBuilder::new().connect_client(client);

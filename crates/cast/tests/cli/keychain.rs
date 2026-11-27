@@ -1001,6 +1001,10 @@ async fn send_with_accounts_store_and_remote_sponsor_sync_succeeds(cmd: _) {
             &rpc,
             "--sponsor-url",
             &sponsor_url,
+            // The relay pays with PathUSD. Estimating for it spares a second signing request,
+            // which this relay does not serve.
+            "--tempo.fee-token",
+            &path_usd,
             "--sync",
             "--json",
         ])

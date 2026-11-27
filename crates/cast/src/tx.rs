@@ -970,6 +970,20 @@ where
     }
 }
 
+/// Estimates the gas limit of `request` the way [`CastTxBuilder`] fills it, for a transaction a
+/// Tempo fee payer signs afterwards when `sponsored`.
+pub(crate) async fn estimate_gas_limit<N: Network, P: Provider<N>>(
+    provider: &P,
+    request: N::TransactionRequest,
+    multiplier: Option<u64>,
+    sponsored: bool,
+) -> Result<u64>
+where
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
+    TxBuilderInner::<N, P>::estimate_gas(provider, request, multiplier, sponsored).await
+}
+
 /// Fills gas price or EIP-1559 fee fields from the provider and validates the final pair.
 pub(crate) async fn fill_transaction_gas_fees<N: Network, P: Provider<N>>(
     provider: &P,
