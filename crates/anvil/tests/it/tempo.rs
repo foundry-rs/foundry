@@ -9688,7 +9688,7 @@ async fn test_tempo_init_genesis_without_ousd() {
                 .with_code(Some(account.code.clone()))
                 .with_nonce(Some(account.nonce))
                 .with_storage(Some(
-                    account.storage.iter().map(|(&slot, &value)| (slot, value.into())).collect(),
+                    account.storage.iter().map(|(&slot, &value)| (slot, value)).collect(),
                 )),
         );
     }
