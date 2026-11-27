@@ -344,7 +344,11 @@ fn tempo_factory_seeds_local_genesis() {
     let code_hash = |evm: &mut Evm<'_, _>, address| {
         evm.read_account_info(&address).unwrap().map(|info| info.code_hash).unwrap_or_default()
     };
-    for address in [crate::tempo::PATH_USD_ADDRESS, crate::tempo::TIP_FEE_MANAGER_ADDRESS] {
+    for address in [
+        crate::tempo::PATH_USD_ADDRESS,
+        crate::tempo::OUSD_ADDRESS,
+        crate::tempo::TIP_FEE_MANAGER_ADDRESS,
+    ] {
         let hash = code_hash(&mut evm, address);
         assert!(hash != B256::ZERO && hash != alloy_primitives::KECCAK256_EMPTY, "{address}");
     }

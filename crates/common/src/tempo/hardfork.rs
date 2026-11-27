@@ -18,8 +18,8 @@ struct AnvilNodeInfo {
 
 /// Returns whether `hardfork` is active at the head of the chain behind `provider`.
 ///
-/// Queries `tempo_forkSchedule` and falls back to `anvil_nodeInfo` for Anvil nodes, which do not
-/// serve the fork schedule. Fails when neither source reports a hardfork known to this build.
+/// Queries `tempo_forkSchedule` and falls back to `anvil_nodeInfo` for older Anvil nodes, which do
+/// not serve the fork schedule. Fails when neither source reports a hardfork known to this build.
 pub async fn is_tempo_hardfork_active<N: Network, P: Provider<N>>(
     provider: &P,
     hardfork: TempoHardfork,
