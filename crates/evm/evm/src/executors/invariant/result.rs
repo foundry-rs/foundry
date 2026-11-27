@@ -435,10 +435,15 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
             invariant_run.inputs.pop();
         }
 
-        // With `check_interval = 1` the check after the last successful call covers a reverted
-        // call. With any other interval the calls since the last check are unchecked, so a
-        // revert on a check must not skip it.
-        if reverted && should_check && !is_optimization && invariant_config.check_interval != 1 {
+        // A reverted call changes nothing that an invariant can read, unless the campaign has
+        // delays: then its warp/roll stays. So with `check_interval = 1` and no delay, the check
+        // after the last successful call still covers it. In every other case the state since
+        // the last check is unchecked, so a revert on a check must not skip it.
+        if reverted
+            && should_check
+            && !is_optimization
+            && (invariant_config.check_interval != 1 || invariant_config.has_delay())
+        {
             let (_, cancelled) = assert_invariants(
                 invariant_contract,
                 invariant_config,

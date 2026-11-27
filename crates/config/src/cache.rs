@@ -8,9 +8,23 @@ use unit_prefix::NumberPrefix;
 /// Settings to configure caching of remote.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StorageCachingConfig {
-    /// Chains to cache.
+    /// Chains whose fork state is cached.
+    ///
+    /// Valid values:
+    ///
+    /// - `"all"`: cache every chain.
+    /// - `"none"`: cache no chain.
+    /// - An array of chain names or EIP-155 IDs, such as `["mainnet", "optimism"]` or `[1, 10]`.
+    ///
+    /// Local development chains (chain IDs 99, 1337 and 31337) are never cached.
     pub chains: CachedChains,
-    /// Endpoints to cache.
+    /// RPC endpoints whose fork state is cached.
+    ///
+    /// Valid values:
+    ///
+    /// - `"all"`: cache every endpoint.
+    /// - `"remote"`: cache endpoints whose URL contains neither `localhost:` nor `127.0.0.1:`.
+    /// - Any other string: a regular expression; endpoints whose URL matches it are cached.
     pub endpoints: CachedEndpoints,
 }
 

@@ -1,7 +1,9 @@
 use super::{
     CoverageItemKind, ExecutionAnchor, ExecutionAnchorKind, ItemAnchor, ItemAnchors, SourceLocation,
 };
-use crate::analysis::{BranchKind, EmptySpecialFunctionKind, IfArms, SourceAnalysis, TernaryArms};
+use crate::analysis::{
+    BranchKind, EmptySpecialFunctionKind, IfArms, SourceAnalysis, TernaryArms, UniqueCallee,
+};
 use alloy_primitives::{U256, map::rustc_hash::FxHashSet};
 use evm2::interpreter::op as opcode;
 use eyre::ensure;
@@ -86,9 +88,19 @@ pub fn find_anchors(
                 {
                     return Some((anchor, jump, vec![]));
                 }
-                hints.alias_function.as_ref().and_then(|function| {
-                    index.alias_return(item_id, function).map(|anchor| (anchor, None, vec![]))
-                })
+                hints
+                    .alias_function
+                    .as_ref()
+                    .and_then(|function| {
+                        index.alias_return(item_id, function).map(|anchor| (anchor, None, vec![]))
+                    })
+                    .or_else(|| {
+                        hints.unique_callee.as_ref().and_then(|hint| {
+                            index
+                                .unique_callee_entry(item_id, hint)
+                                .map(|anchor| (anchor, None, vec![]))
+                        })
+                    })
             };
             if let CoverageItemKind::Branch { branch_id, path_id, .. } = item.kind
                 && let Some(BranchKind::If(arms)) =
@@ -627,12 +639,17 @@ impl<'a> AnchorIndex<'a> {
     /// Returns whether a static jump mapped outside `loc` targets `instruction`.
     fn is_jumped_to_from_outside(&self, instruction: usize, loc: &SourceLocation) -> bool {
         let Some(pc) = self.ic_pc_map.get(instruction as u32) else { return false };
+        self.jump_pushes_to(pc)
+            .filter_map(|push| self.push_element(push))
+            .any(|element| !is_within_source_span(element, loc))
+    }
+
+    fn jump_pushes_to(&self, pc: u32) -> impl Iterator<Item = usize> + '_ {
         let start = self.jumps.partition_point(|&(target, _)| target < pc);
         self.jumps[start..]
             .iter()
-            .take_while(|&&(target, _)| target == pc)
-            .filter_map(|&(_, push)| self.push_element(push))
-            .any(|element| !is_within_source_span(element, loc))
+            .take_while(move |&&(target, _)| target == pc)
+            .map(|&(_, push)| push)
     }
 
     /// Returns the source element that places the push `push`. An unmapped push, such as the
@@ -667,11 +684,8 @@ impl<'a> AnchorIndex<'a> {
         if self.bytecode.get(pc as usize) != Some(&opcode::JUMPDEST) {
             return Ok(Vec::new());
         }
-        let start = self.jumps.partition_point(|&(target, _)| target < pc);
-        self.jumps[start..]
-            .iter()
-            .take_while(|&&(target, _)| target == pc)
-            .map(|&(_, push)| {
+        self.jump_pushes_to(pc)
+            .map(|push| {
                 let jump = self.pcs.get(push + 1).copied().unwrap_or_default();
                 let conditional = self.bytecode[jump as usize] == opcode::JUMPI;
                 ensure!(
@@ -923,6 +937,49 @@ impl<'a> AnchorIndex<'a> {
         })
     }
 
+    /// A declaration label can recover an erased call when its sole external edge is
+    /// mapped inside the caller. An indexed direct jump or fallthrough from any instruction
+    /// that can continue qualifies. A marked return from outside the callee makes it ambiguous.
+    fn unique_callee_entry(&self, item_id: u32, hint: &UniqueCallee) -> Option<ItemAnchor> {
+        let callee = &hint.callee;
+        let key = (callee.source_id as i32, callee.bytes.start);
+        let start = self.entries.partition_point(|&(source, offset, _)| (source, offset) < key);
+        let mut labels = self.entries[start..]
+            .iter()
+            .take_while(|&&(source, offset, _)| (source, offset) == key)
+            .filter_map(|&(_, _, ic)| {
+                let pc = *self.pcs.get(ic)?;
+                (pc != 0
+                    && self.bytecode.get(pc as usize) == Some(&opcode::JUMPDEST)
+                    && self.source_map[ic].length() == callee.len()
+                    && self.has_caller_entry(ic, pc, hint))
+                .then_some(pc)
+            });
+        let instruction = labels.next()?;
+        labels.next().is_none().then_some(ItemAnchor { item_id, instruction })
+    }
+
+    fn has_caller_entry(&self, ic: usize, pc: u32, hint: &UniqueCallee) -> bool {
+        let jumps = self.jump_pushes_to(pc).map(|push| push + 1);
+        let fallthrough = self.falls_through[ic].then(|| ic - 1);
+        let mut from_caller = false;
+        for predecessor in jumps.chain(fallthrough) {
+            let Some(element) = self.source_map.get(predecessor) else { return false };
+            if is_within_source_span(element, &hint.callee) {
+                continue;
+            }
+            if from_caller
+                || element.jump() == Jump::Out
+                || element.length() == 0
+                || !is_within_source_span(element, &hint.caller)
+            {
+                return false;
+            }
+            from_caller = true;
+        }
+        from_caller
+    }
+
     /// An alias-only function has no instructions for some of its statements. Its unique normal
     /// return proves those statements completed. Require an exact declaration location at the
     /// entry, an explicit function-exit marker mapped to the declaration or the closing brace, and
@@ -1107,7 +1164,10 @@ fn in_reverting_run(runs: &[Range<usize>], instruction: usize) -> bool {
 fn is_within_source_span(element: &SourceElement, location: &SourceLocation) -> bool {
     element.index_i32() == location.source_id as i32
         && element.offset() >= location.bytes.start
-        && element.offset() + element.length() <= location.bytes.start + location.len()
+        && element
+            .offset()
+            .checked_add(element.length())
+            .is_some_and(|end| end <= location.bytes.end)
 }
 
 /// Calculates whether `element` is within the range of the target `location`.
@@ -1819,6 +1879,118 @@ mod tests {
             selector: [0xe3, 0x37, 0x2e, 0x2d],
         };
         assert!(index.revert_guard(0, &guard).is_none());
+    }
+
+    fn erased_call_hint(source_id: usize) -> UniqueCallee {
+        UniqueCallee {
+            caller: SourceLocation { source_id, ..source_location(90, 30) },
+            callee: source_location(10, 20),
+        }
+    }
+
+    #[test]
+    fn erased_call_distinguishes_entries_from_completions() {
+        let bytecode = [
+            opcode::PUSH1,
+            4,
+            opcode::JUMP,
+            opcode::INVALID,
+            opcode::JUMPDEST,
+            opcode::PUSH1,
+            8,
+            opcode::JUMP,
+            opcode::JUMPDEST,
+            opcode::STOP,
+        ];
+        let maps = [
+            // Both labels have the function span, but only pc 4 is entered from the caller.
+            ("100:10:0;;-1:-1:-1;10:20:0;12:1:0;;10:20:0;12:1:0", 0, Some(4)),
+            // An exit label alone cannot stand in for an entry, even if it has the exact span.
+            ("100:10:0;;-1:-1:-1;12:1:0;;;10:20:0;12:1:0", 0, None),
+            // A return from a helper outside this function is still a completion edge.
+            ("100:10:0;100:10:0:o;-1:-1:-1:-;10:20:0;12:1:0;;10:20:0;12:1:0", 0, None),
+            // Unknown or overlapping source ranges do not prove an external predecessor.
+            ("-1:-1:-1;;;10:20:0;12:1:0;;10:20:0;12:1:0", 0, None),
+            ("0:200:0;;-1:-1:-1;10:20:0;12:1:0;;10:20:0;12:1:0", 0, None),
+            ("0:0:1;;-1:-1:-1;10:20:0;12:1:0;;10:20:0;12:1:0", 0, None),
+            // Native helpers can be called from another source file in the same frame.
+            ("100:10:1;;-1:-1:-1;10:20:0;12:1:0;;10:20:0;12:1:0", 1, Some(4)),
+        ];
+        for (map, caller_source, expected) in maps {
+            let source_map = sourcemap::parse(map).unwrap();
+            let ic_pc_map = IcPcMap::new(&bytecode);
+            let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
+            assert_eq!(
+                index
+                    .unique_callee_entry(0, &erased_call_hint(caller_source))
+                    .map(|a| a.instruction),
+                expected,
+                "{map}"
+            );
+        }
+    }
+
+    #[test]
+    fn erased_tail_call_can_fall_through_into_a_reverting_callee() {
+        let bytecode =
+            [opcode::PUSH1, 0, opcode::JUMPDEST, opcode::PUSH0, opcode::PUSH0, opcode::REVERT];
+        let source_map = sourcemap::parse("100:10:0;10:20:0;12:1:0;;;").unwrap();
+        let ic_pc_map = IcPcMap::new(&bytecode);
+        let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
+        let anchor = index.unique_callee_entry(0, &erased_call_hint(0)).unwrap();
+        assert_eq!(anchor.instruction, 2);
+    }
+
+    #[test]
+    fn erased_call_rejects_two_externally_entered_labels() {
+        let bytecode = [
+            opcode::PUSH1,
+            4,
+            opcode::JUMP,
+            opcode::INVALID,
+            opcode::JUMPDEST,
+            opcode::STOP,
+            opcode::PUSH1,
+            10,
+            opcode::JUMP,
+            opcode::INVALID,
+            opcode::JUMPDEST,
+            opcode::STOP,
+        ];
+        let source_map =
+            sourcemap::parse("100:10:0;;-1:-1:-1;10:20:0;;100:10:0;;-1:-1:-1;10:20:0;").unwrap();
+        let ic_pc_map = IcPcMap::new(&bytecode);
+        let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
+        assert!(index.unique_callee_entry(0, &erased_call_hint(0)).is_none());
+    }
+
+    #[test]
+    fn erased_call_rejects_entries_shared_with_other_callers() {
+        let bytecode = [
+            opcode::PUSH1,
+            8,
+            opcode::JUMP,
+            opcode::INVALID,
+            opcode::PUSH1,
+            8,
+            opcode::JUMP,
+            opcode::INVALID,
+            opcode::JUMPDEST,
+            opcode::STOP,
+        ];
+        for map in [
+            // A jump from the hinted caller cannot disambiguate a shared entry.
+            "100:5:0;;-1:-1:-1;130:5:0;;-1:-1:-1;10:20:0;12:1:0",
+            // A marked return into the same label also makes it ambiguous.
+            "100:5:0;;-1:-1:-1;130:5:0;130:5:0:o;-1:-1:-1:-;10:20:0;12:1:0",
+            // The jump itself must be mapped to the caller, even if its push is.
+            "100:5:0;130:5:0;-1:-1:-1;12:1:0;;-1:-1:-1;10:20:0;12:1:0",
+        ] {
+            let source_map = sourcemap::parse(map).unwrap();
+            let ic_pc_map = IcPcMap::new(&bytecode);
+            let index = AnchorIndex::new(&bytecode, &source_map, &ic_pc_map);
+            assert!(index.unique_callee_entry(0, &erased_call_hint(0)).is_none(), "{map}");
+        }
     }
 
     #[test]

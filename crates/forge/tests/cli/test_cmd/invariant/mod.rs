@@ -2305,6 +2305,32 @@ contract CheckIntervalTest is Test {
         require(handler.counter() <= 5, "counter > 5");
     }
 }
+
+// Every call reverts, so only its time delay stays.
+contract RevertingHandler {
+    uint256 public writes;
+
+    function step() public {
+        writes++;
+        revert("always reverts");
+    }
+}
+
+contract CheckIntervalDelayTest is Test {
+    RevertingHandler handler;
+    uint256 start;
+
+    function setUp() public {
+        handler = new RevertingHandler();
+        targetContract(address(handler));
+        start = block.timestamp;
+    }
+
+    /// forge-config: default.invariant.max_time_delay = 1000
+    function invariant_time_does_not_move() public view {
+        require(block.timestamp == start, "time moved");
+    }
+}
    "#,
     );
 
@@ -2316,6 +2342,17 @@ contract CheckIntervalTest is Test {
 ...
 "#
     ]]);
+
+    // A reverted call keeps its time delay, so its check still runs.
+    assert_invariant(cmd.forge_fuse().args(["test", "--mt", "invariant_time"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: time moved]
+	[SEQUENCE]
+ invariant_time_does_not_move() ([RUNS])
+...
+"#]]);
 }
 
 // Tests that check_interval=N checks every N calls AND always on the last call.
