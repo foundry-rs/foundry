@@ -9507,6 +9507,23 @@ contract SymbolicVestingSchedule {
         }
     }
 
+    // `start <= t1` and `t2 <= t1` do not order `start` before `t2`.
+    function checkVestedAtReversedTimes(
+        uint128 total,
+        uint64 start,
+        uint64 duration,
+        uint64 t1,
+        uint64 t2
+    ) public pure {
+        if (duration == 0 || t2 > t1 || t1 < start || uint256(t1) > uint256(start) + duration) {
+            return;
+        }
+        unchecked {
+            uint256 v2 = uint256(total) * (uint256(t2) - start) / duration;
+            assert(v2 <= total);
+        }
+    }
+
     // One strict link makes a whole order chain strict, so the duration below is nonzero. A chain
     // of only weak links allows an empty stream.
     function checkStreamThroughStrictChain(
@@ -9591,6 +9608,7 @@ contract SymbolicVestingSchedule {
             "checkStreamedOtherStart(uint128,uint40,uint40,uint40,uint40)",
             "checkEmptyStreamReleased(uint128,uint40,uint40)",
             "checkVestedAtTwoTimesBeforeStart(uint128,uint64,uint64,uint64,uint64)",
+            "checkVestedAtReversedTimes(uint128,uint64,uint64,uint64,uint64)",
             "checkStreamThroughWeakChain(uint128,uint40,uint40,uint40)",
         ] {
             let result = json_test_result(&output, signature);

@@ -727,17 +727,19 @@ impl ConstraintContext {
     }
 
     /// Adds `a <= c` for asserted `a <= b` and `b <= c`, strictly once either link is strict. Each
-    /// round at least doubles the closed chain length, so the literal fact count bounds the rounds
-    /// like `propagate_order_bounds`. The closure is partial by design once the facts reach
-    /// `MAX_LOCAL_ANALYSIS_NODES` pairs, as a missing fact only declines a rewrite.
+    /// round composes the relation with itself, doubling the closed chain length, and facts only
+    /// grow within the budget, so the rounds end. A closure larger
+    /// than `MAX_LOCAL_ANALYSIS_NODES` pairs keeps only the literal facts, since a missing fact
+    /// only declines a rewrite, and a partial closure would depend on hash iteration order.
     fn close_order_facts(&mut self) {
-        let literal_count = self.order_facts.values().map(Vec::len).sum::<usize>();
-        if !(2..MAX_LOCAL_ANALYSIS_NODES).contains(&literal_count) {
+        let mut pair_count = self.order_facts.values().map(Vec::len).sum::<usize>();
+        if !(2..MAX_LOCAL_ANALYSIS_NODES).contains(&pair_count) {
             return;
         }
-        let mut pair_count = literal_count;
-        for _ in 0..literal_count {
-            let mut derived = Vec::new();
+        let literal = (self.order_facts.clone(), self.strict_order_facts.clone());
+        loop {
+            // Distinct pairs to add or make strict, so duplicates through other middles are free.
+            let mut derived = HashMap::<(SymExpr, SymExpr), bool>::default();
             for (small, middles) in &self.order_facts {
                 for middle in middles {
                     let strict_link =
@@ -745,27 +747,36 @@ impl ConstraintContext {
                     for large in self.asserted_upper_bounds(middle) {
                         let strict = strict_link
                             || self.strict_order_facts.contains(&(middle.clone(), large.clone()));
-                        let pair = (small.clone(), large.clone());
-                        if large != small
-                            && (!middles.contains(large)
-                                || (strict && !self.strict_order_facts.contains(&pair)))
+                        let known = middles.contains(large);
+                        if large == small
+                            || (known
+                                && (!strict
+                                    || self
+                                        .strict_order_facts
+                                        .contains(&(small.clone(), large.clone()))))
                         {
-                            derived.push((pair, strict));
+                            continue;
+                        }
+                        let entry =
+                            derived.entry((small.clone(), large.clone())).or_insert_with(|| {
+                                pair_count += usize::from(!known);
+                                false
+                            });
+                        *entry |= strict;
+                        if pair_count > MAX_LOCAL_ANALYSIS_NODES {
+                            (self.order_facts, self.strict_order_facts) = literal;
+                            return;
                         }
                     }
                 }
             }
             if derived.is_empty() {
-                break;
+                return;
             }
             for ((small, large), strict) in derived {
                 let uppers = self.order_facts.entry(small.clone()).or_default();
                 if !uppers.contains(&large) {
-                    if pair_count >= MAX_LOCAL_ANALYSIS_NODES {
-                        return;
-                    }
                     uppers.push(large.clone());
-                    pair_count += 1;
                 }
                 if strict {
                     self.strict_order_facts.insert((small, large));
