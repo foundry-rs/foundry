@@ -135,7 +135,10 @@ use evm2::{
     ethereum::{
         access_list_counts, intrinsic_and_floor_gas, validate_floor_gas, validate_intrinsic_gas,
     },
-    evm::{BalContext, BlockAccessIndex, BlockStateAccumulator, PendingState, StateChangeSource},
+    evm::{
+        BalContext, BlockAccessIndex, BlockStateAccumulator, DynDatabase, PendingState,
+        StateChangeSource,
+    },
     interpreter::InstrStop,
     registry::HandlerError,
 };
@@ -176,19 +179,22 @@ use std::{
 use storage::{Blockchain, DEFAULT_HISTORY_LIMIT, MinedTransaction};
 use tempo_alloy::rpc::{ConfigurableAccountSimulationSpec, PrimitiveSignatureType};
 use tempo_contracts::precompiles::IConfigurableAccount;
-use tempo_evm::{FeePaymentError, TempoInvalidTransaction};
+use tempo_evm::{
+    FeePaymentError, FeeTokenResolver, TempoFeeManager, TempoInvalidTransaction, TempoStateAccess,
+};
 use tempo_hardfork::TempoHardfork;
 use tempo_precompiles::{
     CONFIGURABLE_ACCOUNT_ADDRESS, NONCE_PRECOMPILE_ADDRESS, TIP_FEE_MANAGER_ADDRESS,
     configurable_account,
+    error::TempoPrecompileError,
     nonce::NonceManager,
-    storage::{Handler, account_config_commitment},
+    storage::{Handler, StorageActions, account_config_commitment},
     tip_fee_manager::{IFeeManager, TipFeeManager},
-    tip20::{ITIP20, TIP20Token},
+    tip20::{ITIP20, TIP20Error, TIP20Token},
     tip20_factory::TIP20Factory,
 };
 use tempo_primitives::{
-    AASigned, SignatureType, TEMPO_TX_TYPE_ID, TempoSignature,
+    AASigned, SignatureType, TEMPO_GAS_PRICE_SCALING_FACTOR, TEMPO_TX_TYPE_ID, TempoSignature,
     transaction::{
         ConfigurableAccountConfig, ConfigurableAccountQuorumError, ConfigurableAccountSignature,
         ConfigurableAccountWeightAccumulator, KeychainSignature, MAX_WEBAUTHN_SIGNATURE_LENGTH,
@@ -3929,6 +3935,55 @@ impl<N: Network> Backend<N> {
             },
             monad_context,
         )
+    }
+
+    /// Returns the gas the fee payer of `request` can afford with `gas_price`, like a Tempo
+    /// node's `caller_gas_allowance`: every transaction type pays with its resolved fee token.
+    ///
+    /// `gas_limit` is the search bound the fee token is resolved with. When no fallback token
+    /// covers it, the largest fallback balance bounds the gas instead.
+    pub(crate) fn tempo_caller_gas_allowance(
+        &self,
+        state: &dyn DatabaseRef,
+        request: FoundryTransactionRequest,
+        fee_details: FeeDetails,
+        block_env: BlockEnv,
+        gas_limit: u64,
+        gas_price: u128,
+    ) -> Result<u64, BlockchainError>
+    where
+        N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
+    {
+        let PreparedCall { evm_env, mut tx, .. } =
+            self.prepare_typed_call_env(state, request, fee_details, block_env)?;
+        tx.tx = with_gas_limit(tx.tx, gas_limit);
+        let opts = self.evm_options(&evm_env);
+        let tx = TempoEvmNetwork::prepared_evm_tx(&tx, opts.cheats.as_ref())?;
+        let fee_payer =
+            tx.fee_payer().map_err(|error| BlockchainError::Message(error.to_string()))?;
+        let spec = self.tempo_hardfork();
+        let mut db = EvmDb::for_storage(state);
+        let mut db: &mut dyn DynDatabase = &mut db;
+        let balance = match TempoFeeManager::new().resolve_fee_token(
+            &mut db,
+            &tx,
+            fee_payer,
+            spec,
+            StorageActions::disabled(),
+        ) {
+            Ok(token) => db
+                .get_token_balance(token, fee_payer, spec, StorageActions::disabled())
+                .map_err(tempo_db_err)?,
+            Err(TempoPrecompileError::TIP20(TIP20Error::InsufficientBalance(error))) => {
+                error.available
+            }
+            Err(error) => return Err(tempo_db_err(error).into()),
+        };
+        Ok(balance
+            .saturating_mul(TEMPO_GAS_PRICE_SCALING_FACTOR)
+            .checked_div(U256::from(gas_price))
+            .unwrap_or_default()
+            .saturating_to())
     }
 
     pub(crate) fn call_with_state_typed_access_list(

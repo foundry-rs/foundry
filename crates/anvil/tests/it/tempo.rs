@@ -2402,8 +2402,8 @@ async fn test_tempo_pool_requires_max_fee_rounded_up_in_fee_token() {
         format!("insufficient fee token balance: have {}, need {required}", required - U256::ONE)
     );
 
-    // Only pool admission names the fee token balance; calls, estimates and simulations report
-    // the shortfall as missing funds.
+    // Only pool admission names the fee token balance; calls and simulations report the shortfall
+    // as missing funds. An estimate searches below the affordable gas instead, like a Tempo node.
     let mut request = WithOtherFields::new(
         TransactionRequest::default()
             .with_from(sender)
@@ -2413,14 +2413,11 @@ async fn test_tempo_pool_requires_max_fee_rounded_up_in_fee_token() {
             .with_max_priority_fee_per_gas(gas_price / 10),
     );
     request.other.insert("feeToken".into(), serde_json::to_value(PATH_USD).unwrap());
-    for err in [
-        provider.call(request.clone()).await.unwrap_err(),
-        provider.estimate_gas(request.clone()).await.unwrap_err(),
-    ] {
-        let err = err.as_error_resp().unwrap();
-        assert_eq!(err.code, -32003);
-        assert_eq!(err.message, "Insufficient funds for gas * price + value");
-    }
+    let err = provider.call(request.clone()).await.unwrap_err();
+    let err = err.as_error_resp().unwrap();
+    assert_eq!(err.code, -32003);
+    assert_eq!(err.message, "Insufficient funds for gas * price + value");
+    assert!(provider.estimate_gas(request.clone()).await.unwrap() < gas_limit);
     let err = provider
         .raw_request::<_, serde_json::Value>(
             "eth_simulateV1".into(),
@@ -9702,6 +9699,51 @@ async fn test_tempo_gas_bounds_stay_within_tx_cap() {
     let receipt = provider.send_transaction(reverting_call).await.unwrap().get_receipt().await;
     let receipt = receipt.unwrap();
     assert!(!receipt.status());
+}
+
+// Like a Tempo node, a priced estimate of any transaction type is bounded by the fee payer's
+// fee-token balance, not its native balance, which Tempo accounts do not have.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_estimate_gas_bounded_by_fee_token_balance() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let sender = Address::repeat_byte(0xfb);
+    provider.raw_request::<_, Vec<B256>>("tempo_fundAddress".into(), (sender,)).await.unwrap();
+    assert!(provider.get_balance(sender).await.unwrap().is_zero());
+
+    let max_fee_per_gas = provider.get_gas_price().await.unwrap() * 2;
+    let request = WithOtherFields::new(
+        TransactionRequest::default()
+            .with_from(sender)
+            .with_to(PATH_USD)
+            .with_input(
+                tempo_precompiles::tip20::ITIP20::transferCall {
+                    to: Address::repeat_byte(0x42),
+                    amount: U256::from(1),
+                }
+                .abi_encode(),
+            )
+            .with_max_fee_per_gas(max_fee_per_gas)
+            .with_max_priority_fee_per_gas(0),
+    );
+    let gas = provider.estimate_gas(request.clone()).await.unwrap();
+
+    // With fee tokens for half the needed gas, the fee token balance is the bound.
+    let affordable = gas / 2;
+    let balance = calc_gas_balance_spending(affordable, max_fee_per_gas);
+    for token in [PATH_USD, ALPHA_USD, BETA_USD, THETA_USD, OUSD_ADDRESS] {
+        api.anvil_deal_tip20(sender, token, U256::ZERO).await.unwrap();
+    }
+    api.anvil_deal_tip20(sender, PATH_USD, balance).await.unwrap();
+    let err = provider.estimate_gas(request).await.unwrap_err();
+    let allowance = balance * TEMPO_GAS_PRICE_SCALING_FACTOR / U256::from(max_fee_per_gas);
+    assert_eq!(
+        err.to_string(),
+        format!(
+            "server returned an error response: error code -32003: Out of gas: gas required \
+             exceeds allowance: {allowance}"
+        )
+    );
 }
 
 // A fork serves the schedule before it mines a block, as forge reads it to pick the hardfork.
