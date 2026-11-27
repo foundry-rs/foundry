@@ -293,10 +293,9 @@ impl SendTxArgs {
         // An unsponsored sender's fee token is resolved while building the transaction, alongside
         // its nonce and fees, unless the request is only rendered as `curl`. A browser wallet send
         // attaches its fee payment after building, which leaves legacy requests without one.
-        let build_resolves_fee_token = !config.eth_rpc_curl
-            && !tx.tempo.is_sponsored()
-            && !send_tx.browser.browser
-            && pre_resolved_browser.is_none();
+        let browser_wallet = send_tx.browser.browser || pre_resolved_browser.is_some();
+        let build_resolves_fee_token =
+            !config.eth_rpc_curl && !tx.tempo.is_sponsored() && !browser_wallet;
 
         let resolved_lane = resolve_lane(&mut tx.tempo, &config.root)?;
         let lane = resolved_lane.as_ref();
@@ -310,18 +309,19 @@ impl SendTxArgs {
                     .1;
         }
 
-        // Inject access key ID into TempoOpts so it's set before gas estimation.
-        if let Some(ak) = &access_key {
+        // Access-key sends select and pin the key from the encoded call before estimating gas.
+        // Only externally signed sends need the estimation hint here.
+        let externally_signed = unlocked || browser_wallet;
+        if externally_signed
+            && !print_sponsor_hash
+            && let Some(ak) = &access_key
+        {
             tx.tempo.key_id = Some(ak.key_id()?);
         }
 
         // A configurable account sender signs with its owners, which the RPC, a browser wallet or
         // an access key cannot do.
-        let (configurable_account, chain) = if access_key.is_some()
-            || unlocked
-            || send_tx.browser.browser
-            || pre_resolved_browser.is_some()
-        {
+        let (configurable_account, chain) = if access_key.is_some() || externally_signed {
             eyre::ensure!(
                 !tx.tempo.has_configurable_account_options(),
                 "Tempo configurable accounts cannot be combined with --unlocked, --browser or an \

@@ -8,17 +8,21 @@ use alloy_primitives::{Address, B256, U256, hex};
 use alloy_provider::Provider;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
+use alloy_sol_types::SolCall;
 use anvil::NodeConfig;
 use foundry_cli::utils::parse_json;
-use foundry_common::tempo::configurable_account::{parse_config, single_owner_account};
+use foundry_common::tempo::configurable_account::{
+    combine_approvals, parse_config, single_owner_account,
+};
 use foundry_evm::core::tempo::PATH_USD_ADDRESS;
 use foundry_test_utils::{TestCommand, assert_data_eq, snapbox::IntoData, util::OutputExt};
-use tempo_contracts::precompiles::{CONFIGURABLE_ACCOUNT_ADDRESS, IConfigurableAccount};
+use tempo_contracts::precompiles::{CONFIGURABLE_ACCOUNT_ADDRESS, IConfigurableAccount, ITIP20};
 use tempo_hardfork::TempoHardfork;
 use tempo_primitives::{
     TempoTxEnvelope,
     transaction::{
-        KeyAuthorization, SignatureType, SignedKeyAuthorization, configurable_account_digest,
+        CallScope, KeyAuthorization, PrimitiveSignature, SelectorRule, SignatureType,
+        SignedKeyAuthorization, configurable_account_digest,
     },
 };
 
@@ -564,7 +568,7 @@ Error: an access key cannot manage the keys of the account it signs for
     }
 }
 
-/// An access key carries a fresh multisig's two-owner grant in the account's first transaction.
+/// A transfer-only key carries a fresh multisig's two-owner grant in its first transfer.
 #[casttest]
 async fn tempo_t14_fresh_multisig_authorizes_first_send(prj: _, cmd: _) {
     let (api, handle) =
@@ -577,12 +581,15 @@ async fn tempo_t14_fresh_multisig_authorizes_first_send(prj: _, cmd: _) {
     std::fs::write(&config_path, &config).unwrap();
     let key = PrivateKeySigner::from_bytes(&B256::repeat_byte(0x34)).unwrap();
     let key_arg = key.address().to_string();
+    let scope = format!("{PATH_USD_ADDRESS}:transfer");
     let sign = [
         "key-authorization",
         "sign",
         &key_arg,
         "--chain-id",
         &CHAIN_ID.to_string(),
+        "--scope",
+        &scope,
         "--rpc-url",
         &rpc,
     ];
@@ -590,7 +597,14 @@ async fn tempo_t14_fresh_multisig_authorizes_first_send(prj: _, cmd: _) {
     let alice_args = ["--private-key", &hex::encode_prefixed(alice.to_bytes())];
     let authorization =
         KeyAuthorization::unrestricted(CHAIN_ID, SignatureType::Secp256k1, key.address())
-            .with_account(account);
+            .with_account(account)
+            .with_allowed_calls(vec![CallScope {
+                target: PATH_USD_ADDRESS,
+                selector_rules: vec![SelectorRule {
+                    selector: ITIP20::transferCall::SELECTOR,
+                    recipients: vec![],
+                }],
+            }]);
     let digest = configurable_account_digest(authorization.signature_hash(), account, 0);
     cmd.cast_fuse()
         .args(sign)
@@ -637,20 +651,31 @@ async fn tempo_t14_fresh_multisig_authorizes_first_send(prj: _, cmd: _) {
         .get_output()
         .stdout_lossy();
 
+    // The store checks the most recent import first. Give that key an empty call allowlist.
+    let other = PrivateKeySigner::from_bytes(&B256::repeat_byte(0x35)).unwrap();
+    let no_calls =
+        KeyAuthorization::unrestricted(CHAIN_ID, SignatureType::Secp256k1, other.address())
+            .with_account(account)
+            .with_no_calls();
+    let hash = no_calls.signature_hash();
+    let digest = configurable_account_digest(hash, account, initial.version);
+    let approvals = [alice, bob]
+        .map(|owner| PrimitiveSignature::Secp256k1(owner.sign_hash_sync(&digest).unwrap()));
+    let signature = combine_approvals(account, &initial, hash, approvals.into()).unwrap();
+    let other_signed = hex::encode_prefixed(alloy_rlp::encode(no_calls.into_signed(signature)));
     let store = prj.root().join("tempo");
-    cmd.cast_fuse();
-    cmd.env("TEMPO_HOME", &store);
-    cmd.args([
-        "tempo",
-        "import-access-key",
-        "--account",
-        &account_arg,
-        "--access-key",
-        &hex::encode_prefixed(key.to_bytes()),
-        "--authorization",
-        signed.trim(),
-    ])
-    .assert_success();
+    for (signer, grant) in [(&key, signed.trim()), (&other, other_signed.as_str())] {
+        cmd.cast_fuse();
+        cmd.env("TEMPO_HOME", &store);
+        cmd.args(["tempo", "import-access-key", "--account", &account_arg])
+            .args([
+                "--access-key",
+                &hex::encode_prefixed(signer.to_bytes()),
+                "--authorization",
+                grant,
+            ])
+            .assert_success();
+    }
     api.anvil_deal_tip20(account, PATH_USD_ADDRESS, U256::from(1_000_000_000_000u64))
         .await
         .unwrap();
@@ -659,19 +684,13 @@ async fn tempo_t14_fresh_multisig_authorizes_first_send(prj: _, cmd: _) {
     assert_eq!(provider.get_transaction_count(account).await.unwrap(), 0);
     assert!(!is_provisioned(&mut cmd, &rpc, account, key.address()));
     let fee_token = PATH_USD_ADDRESS.to_string();
+    let send = ["--from", &account_arg, "--tempo.fee-token", &fee_token, "--rpc-url", &rpc];
     cmd.cast_fuse();
     cmd.env("TEMPO_HOME", &store);
     let output = cmd
-        .args(["send", &fee_token, "approve(address,uint256)", &key_arg, "1"])
-        .args([
-            "--from",
-            &account_arg,
-            "--tempo.fee-token",
-            &fee_token,
-            "--rpc-url",
-            &rpc,
-            "--json",
-        ])
+        .args(["send", &fee_token, "transfer(address,uint256)", &key_arg, "1"])
+        .args(send)
+        .arg("--json")
         .assert_success()
         .get_output()
         .stdout_lossy();
@@ -692,4 +711,19 @@ async fn tempo_t14_fresh_multisig_authorizes_first_send(prj: _, cmd: _) {
     assert_eq!(approvals.config(), &initial);
     assert_eq!(approvals.signatures().len(), 2);
     assert!(is_provisioned(&mut cmd, &rpc, account, key.address()));
+    assert!(!is_provisioned(&mut cmd, &rpc, account, other.address()));
+    let token = ITIP20::new(PATH_USD_ADDRESS, &provider);
+    assert_eq!(token.balanceOf(key.address()).call().await.unwrap(), U256::from(1));
+
+    cmd.cast_fuse();
+    cmd.env("TEMPO_HOME", &store);
+    cmd.args(["send", &fee_token, "approve(address,uint256)", &key_arg, "1"])
+        .args(send)
+        .assert_failure()
+        .stderr_eq(format!(
+            "Error: local usage error: Tempo Accounts has no locally signable access key for \
+             account {account} on chain {CHAIN_ID}\n"
+        ));
+    assert_eq!(provider.get_transaction_count(account).await.unwrap(), 1);
+    assert_eq!(token.allowance(account, key.address()).call().await.unwrap(), U256::ZERO);
 }
