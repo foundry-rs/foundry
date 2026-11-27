@@ -748,19 +748,19 @@ impl<'a> AnchorIndex<'a> {
         if !self.has_own_code(body) {
             return None;
         }
-        let statement = self.simple(item_id, loc).ok()?;
-        let body = self.simple(item_id, body).ok()?;
+        let entry = self.simple(item_id, body).ok()?;
         // A body that starts with a loop head runs it once per iteration, not per entry.
-        let ic = self.pcs.binary_search(&body.instruction).ok()?;
-        let start = self.address_pushes.partition_point(|&(target, _)| target < body.instruction);
+        let ic = self.pcs.binary_search(&entry.instruction).ok()?;
+        let start = self.address_pushes.partition_point(|&(target, _)| target < entry.instruction);
         if self.address_pushes[start..]
             .iter()
-            .take_while(|&&(target, _)| target == body.instruction)
+            .take_while(|&&(target, _)| target == entry.instruction)
             .any(|&(_, push)| push >= ic)
         {
             return None;
         }
-        Some((statement, None, vec![(body.instruction, false)]))
+        let statement = self.simple(item_id, loc).ok()?;
+        Some((statement, None, vec![(entry.instruction, false)]))
     }
 
     /// Finds the anchor that counts the entries into an arm of an `if` that has no code of its
@@ -879,7 +879,29 @@ impl<'a> AnchorIndex<'a> {
         {
             return None;
         }
-        let body = self
+        let modifier = arms
+            .callee_modifiers
+            .iter()
+            .find(|(function, _)| {
+                (function.source_id, &function.bytes) == (callee.source_id, &callee.bytes)
+            })
+            .map(|(_, modifier)| modifier);
+        let anchor = self.run_entry(item_id, arm, callee, modifier)?;
+        Some((anchor, None, Vec::new()))
+    }
+
+    /// Finds the anchor that counts the entries into the run of a function that the compiler
+    /// inlined into `arm`: its first instruction. The run is the instructions mapped to the
+    /// function, and to its modifier when the function has one that only it applies, as the
+    /// modifier's code runs with every call.
+    fn run_entry(
+        &self,
+        item_id: u32,
+        arm: &SourceLocation,
+        callee: &SourceLocation,
+        modifier: Option<&SourceLocation>,
+    ) -> Option<ItemAnchor> {
+        let mut body = self
             .instructions_starting_in(callee)
             .filter(|&ic| {
                 self.starts_in_range(ic, callee)
@@ -887,6 +909,11 @@ impl<'a> AnchorIndex<'a> {
                     && self.source_map[ic].offset() < callee.bytes.end
             })
             .collect::<Vec<_>>();
+        if let Some(modifier) = modifier {
+            body.extend(self.instructions_starting_in(modifier).filter(|&ic| {
+                self.starts_in_range(ic, modifier) && self.source_map[ic].length() != modifier.len()
+            }));
+        }
         // The overflow check's failure stub can follow the run. A function that only fails has
         // nothing but the stub, which is then its run.
         let live = body
@@ -900,7 +927,9 @@ impl<'a> AnchorIndex<'a> {
         // copy or a nested call.
         if !(first..=last).all(|ic| {
             self.source_map.get(ic).is_some_and(|element| {
-                element.index().is_none() || is_in_source_range(element, callee)
+                element.index().is_none()
+                    || is_in_source_range(element, callee)
+                    || modifier.is_some_and(|modifier| is_in_source_range(element, modifier))
             })
         }) {
             return None;
@@ -908,13 +937,16 @@ impl<'a> AnchorIndex<'a> {
         // The run is entered once per arm. A first instruction that a later jump returns to, such
         // as a loop header, runs more often than the arm, even behind unmapped `JUMPDEST`s. A jump
         // from before it only enters the run when it is the dispatcher's, which is mapped to no
-        // source or to the whole contract, and not another function's call or a merged copy.
+        // source or to the whole contract, or the arm's own, and not another function's call or a
+        // merged copy.
         let enters = |push: usize| {
             self.source_map.get(push).is_some_and(|element| {
                 element.index().is_none()
                     || (element.index() == Some(arm.source_id as u32)
-                        && element.offset() <= arm.bytes.start
-                        && element.offset() + element.length() >= arm.bytes.end)
+                        && ((element.offset() <= arm.bytes.start
+                            && element.offset() + element.length() >= arm.bytes.end)
+                            || (element.offset() >= arm.bytes.start
+                                && element.offset() + element.length() <= arm.bytes.end)))
             })
         };
         let mut ic = first;
@@ -942,9 +974,7 @@ impl<'a> AnchorIndex<'a> {
                 _ => break,
             }
         }
-        let anchor =
-            ItemAnchor::from_instruction(Some(first), self.ic_pc_map, item_id, arm).ok()?;
-        Some((anchor, None, Vec::new()))
+        ItemAnchor::from_instruction(Some(first), self.ic_pc_map, item_id, arm).ok()
     }
 
     /// Returns whether the taken side of an `if`'s jump enters its then arm, or `None` when the
@@ -2641,6 +2671,8 @@ mod tests {
             after: after.then(|| location(80..90)),
             then_callees: then_callee.into_iter().map(location).collect(),
             else_callees: else_callee.into_iter().map(location).collect(),
+            callee_modifiers: Vec::new(),
+            placeholder_modifier: None,
         };
         let items = (0..2 - u32::from(!else_arm))
             .map(|path_id| CoverageItem {

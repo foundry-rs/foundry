@@ -63,6 +63,11 @@ struct SourceVisitor<'gcx> {
     value_refs: HashMap<(usize, u32, u32), u32>,
     /// The spans of the callees that are bare names of calls, which `callee_calls` counts.
     callee_idents: FxHashSet<Span>,
+    /// The functions that apply each modifier.
+    modifier_users: Arc<FunctionUses>,
+    /// The modifier of each called function that has exactly one, which no other function
+    /// applies, by [`callee_key`].
+    callee_modifiers: HashMap<(usize, u32, u32), SourceLocation>,
     /// Direct revert guards, resolved against HIR after collecting their source items.
     revert_guards: Vec<PendingRevertGuard>,
     current_function: Option<SourceLocation>,
@@ -120,6 +125,12 @@ pub(crate) struct IfArms {
     pub(crate) then_callees: Vec<SourceLocation>,
     /// The functions that the else arm calls by name.
     pub(crate) else_callees: Vec<SourceLocation>,
+    /// The modifier of each of those functions that has exactly one, which no other function
+    /// applies, as `(function, modifier)`. A compiler can place the modifier's code in the run of
+    /// the function.
+    pub(crate) callee_modifiers: Vec<(SourceLocation, SourceLocation)>,
+    /// The modifier that holds this `if`, when its then arm is only the placeholder `_;`.
+    pub(crate) placeholder_modifier: Option<SourceLocation>,
 }
 
 /// The source spans of the arms of a ternary expression.
@@ -193,11 +204,105 @@ const fn callee_key(loc: &SourceLocation) -> (usize, u32, u32) {
     (loc.source_id, loc.bytes.start, loc.bytes.end)
 }
 
+/// Which functions apply each modifier and how often each function is referenced.
+#[derive(Default)]
+struct FunctionUses {
+    /// The functions that apply each modifier.
+    users: FxHashMap<hir::FunctionId, Vec<hir::FunctionId>>,
+    /// How many expressions name each function: calls, function values and operator bindings.
+    refs: FxHashMap<hir::FunctionId, u32>,
+}
+
+impl FunctionUses {
+    fn new(gcx: Gcx<'_>) -> Self {
+        let mut uses = Self::default();
+        for id in gcx.hir.function_ids() {
+            for modifier in gcx.hir.function(id).modifiers {
+                if let hir::ItemId::Function(modifier) = modifier.id
+                    && gcx.hir.function(modifier).kind == ast::FunctionKind::Modifier
+                {
+                    uses.users.entry(modifier).or_default().push(id);
+                }
+            }
+        }
+        let mut refs = FunctionRefs(gcx, FxHashMap::default());
+        for id in gcx.hir.function_ids() {
+            let _ = hir::Visit::visit_nested_function(&mut refs, id);
+        }
+        uses.refs = refs.1;
+        let operators = gcx
+            .hir
+            .source_ids()
+            .flat_map(|id| gcx.hir.source(id).usings)
+            .chain(gcx.hir.contract_ids().flat_map(|id| gcx.hir.contract(id).usings))
+            .flat_map(|using| using.entries)
+            .filter(|entry| entry.operator.is_some());
+        for entry in operators {
+            if let hir::UsingEntryKind::Functions(ids) = entry.kind {
+                for &id in ids {
+                    *uses.refs.entry(id).or_default() += 1;
+                }
+            }
+        }
+        uses
+    }
+}
+
+/// Counts the expressions that name each function.
+struct FunctionRefs<'gcx>(Gcx<'gcx>, FxHashMap<hir::FunctionId, u32>);
+
+impl<'gcx> hir::Visit<'gcx> for FunctionRefs<'gcx> {
+    type BreakValue = Never;
+
+    fn hir(&self) -> &'gcx hir::Hir<'gcx> {
+        &self.0.hir
+    }
+
+    fn visit_expr(&mut self, expr: &'gcx hir::Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
+        match &expr.kind {
+            hir::ExprKind::Ident(res) => {
+                for res in *res {
+                    if let hir::Res::Item(hir::ItemId::Function(id)) = res {
+                        *self.1.entry(*id).or_default() += 1;
+                    }
+                }
+            }
+            hir::ExprKind::Member(..) => {
+                if let Some(hir::Res::Item(hir::ItemId::Function(id))) = self.0.resolved_expr(expr)
+                {
+                    *self.1.entry(id).or_default() += 1;
+                }
+            }
+            _ => {}
+        }
+        self.walk_expr(expr)
+    }
+}
+
+/// Counts the placeholders `_` of a modifier.
+struct Placeholders<'gcx>(Gcx<'gcx>, u32);
+
+impl<'gcx> hir::Visit<'gcx> for Placeholders<'gcx> {
+    type BreakValue = Never;
+
+    fn hir(&self) -> &'gcx hir::Hir<'gcx> {
+        &self.0.hir
+    }
+
+    fn visit_stmt(&mut self, stmt: &'gcx hir::Stmt<'gcx>) -> ControlFlow<Self::BreakValue> {
+        if matches!(stmt.kind, hir::StmtKind::Placeholder) {
+            self.1 += 1;
+        }
+        self.walk_stmt(stmt)
+    }
+}
+
 impl<'gcx> SourceVisitor<'gcx> {
     fn new(
         source_id: u32,
         gcx: Gcx<'gcx>,
         hir_source_ids: Arc<HashMap<hir::SourceId, u32>>,
+        modifier_users: Arc<FunctionUses>,
     ) -> Self {
         Self {
             source_id,
@@ -215,6 +320,8 @@ impl<'gcx> SourceVisitor<'gcx> {
             member_calls: Default::default(),
             value_refs: Default::default(),
             callee_idents: Default::default(),
+            modifier_users,
+            callee_modifiers: Default::default(),
             revert_guards: Default::default(),
             current_function: None,
             items: Default::default(),
@@ -335,12 +442,30 @@ impl<'gcx> SourceVisitor<'gcx> {
             found.dedup_by_key(|callee| (callee.source_id, callee.bytes.clone()));
             found
         };
-        for (_, kind) in &mut self.branch_kinds {
+        let mut branch_kinds = std::mem::take(&mut self.branch_kinds);
+        for (_, kind) in &mut branch_kinds {
             if let BranchKind::If(arms) = kind {
                 arms.then_callees = callees_in(&arms.then_arm);
                 arms.else_callees = arms.else_arm.as_ref().map(callees_in).unwrap_or_default();
+                arms.callee_modifiers = arms
+                    .then_callees
+                    .iter()
+                    .chain(&arms.else_callees)
+                    .filter_map(|callee| {
+                        let modifier = self.callee_modifiers.get(&callee_key(callee))?;
+                        Some((callee.clone(), modifier.clone()))
+                    })
+                    .collect();
+                // The placeholder runs the body of the function that applies the modifier, so
+                // the body is the code that tells the sides of the condition's jump apart.
+                if let Some(body) =
+                    arms.placeholder_modifier.as_ref().and_then(|m| self.placeholder_body(m))
+                {
+                    arms.then_callees.push(body);
+                }
             }
         }
+        self.branch_kinds = branch_kinds;
     }
 
     fn sort(&mut self) {
@@ -453,6 +578,51 @@ impl<'gcx> SourceVisitor<'gcx> {
         Some(callee_key(&location))
     }
 
+    /// Returns the modifier of a function that has exactly one modifier, which no other function
+    /// applies, when the code of the function is in one place: a modifier that a derived contract
+    /// can override runs other code, and a function that is referenced more than once, or that
+    /// outside callers can also reach, can be inlined at several places.
+    fn sole_modifier(&self, id: hir::FunctionId) -> Option<hir::FunctionId> {
+        let function = self.gcx.hir.function(id);
+        let [modifier] = function.modifiers else { return None };
+        let hir::ItemId::Function(modifier) = modifier.id else { return None };
+        let definition = self.gcx.hir.function(modifier);
+        if definition.virtual_ || definition.marked_virtual || definition.override_ {
+            return None;
+        }
+        let refs = self.modifier_users.refs.get(&id).copied().unwrap_or_default();
+        let one_copy = match function.visibility {
+            ast::Visibility::External => true,
+            ast::Visibility::Public => refs == 0,
+            ast::Visibility::Internal | ast::Visibility::Private => refs <= 1,
+        };
+        (one_copy && self.modifier_users.users.get(&modifier)?.len() == 1).then_some(modifier)
+    }
+
+    /// Returns the body of the one function that applies the modifier, when the modifier has
+    /// exactly one placeholder: the code that `_` runs.
+    fn placeholder_body(&self, modifier: &SourceLocation) -> Option<SourceLocation> {
+        let hir = &self.gcx.hir;
+        let (&id, users) =
+            self.modifier_users.users.iter().find(|&(&id, _)| {
+                self.function_key(hir.function(id)) == Some(callee_key(modifier))
+            })?;
+        let [user_id] = users[..] else { return None };
+        let user = hir.function(user_id);
+        self.sole_modifier(user_id)?;
+        if user.body.is_none() || user.body_span.is_dummy() {
+            return None;
+        }
+        let mut placeholders = Placeholders(self.gcx, 0);
+        let _ = hir::Visit::visit_nested_function(&mut placeholders, id);
+        if placeholders.1 != 1 {
+            return None;
+        }
+        let &source_id = self.hir_source_ids.get(&user.source)?;
+        let contract = user.contract.map(|id| hir.contract(id).name.as_str());
+        Some(self.location(user.body_span, source_id, contract.unwrap_or_default().into()))
+    }
+
     /// Records the functions that a call by name can run, from the functions its callee names
     /// resolve to. An overloaded name resolves to every overload. A call of a contract that is
     /// dropped from the report, as a test's, only counts as a call to those functions.
@@ -461,30 +631,45 @@ impl<'gcx> SourceVisitor<'gcx> {
         let functions = res
             .iter()
             .filter_map(|res| match res {
-                hir::Res::Item(hir::ItemId::Function(id)) => Some(self.gcx.hir.function(*id)),
+                hir::Res::Item(hir::ItemId::Function(id)) => {
+                    Some((*id, self.gcx.hir.function(*id)))
+                }
                 _ => None,
             })
             .collect::<Vec<_>>();
         // A call that only names a function without a body runs an override of it, which the
         // call counts for by name.
-        if let Some(function) = functions.first()
-            && functions.iter().all(|function| function.body.is_none())
+        if let Some((_, function)) = functions.first()
+            && functions.iter().all(|(_, function)| function.body.is_none())
             && let Some(name) = &function.name
         {
             *self.member_calls.entry(Arc::from(name.as_str())).or_default() += 1;
         }
         let callees = functions
             .into_iter()
-            .filter(|function| function.body.is_some())
-            .filter_map(|function| {
+            .filter(|(_, function)| function.body.is_some())
+            .filter_map(|(function_id, function)| {
                 let &source_id = self.hir_source_ids.get(&function.source)?;
                 let contract = function.contract.map(|id| self.gcx.hir.contract(id).name.as_str());
-                // A function that can be called from outside also runs from there, and one with
-                // modifiers runs its body less often than it is called.
+                // A modifier that only this function applies runs once per call, with the code
+                // the source map attributes to the modifier. Other modifiers run the body less
+                // often than the function is called.
+                let modifier = self.sole_modifier(function_id).and_then(|id| {
+                    let modifier = self.gcx.hir.function(id);
+                    let &source_id = self.hir_source_ids.get(&modifier.source)?;
+                    let contract =
+                        modifier.contract.map(|id| self.gcx.hir.contract(id).name.as_str());
+                    Some(self.location(
+                        modifier.span,
+                        source_id,
+                        contract.unwrap_or_default().into(),
+                    ))
+                });
+                // A function that can be called from outside also runs from there.
                 let calls = if matches!(
                     function.visibility,
                     ast::Visibility::Internal | ast::Visibility::Private
-                ) && function.modifiers.is_empty()
+                ) && (function.modifiers.is_empty() || modifier.is_some())
                 {
                     1
                 } else {
@@ -493,11 +678,14 @@ impl<'gcx> SourceVisitor<'gcx> {
                 let location =
                     self.location(function.span, source_id, contract.unwrap_or_default().into());
                 let name = function.name.as_ref().map_or("", |name| name.as_str());
-                Some((location, calls, name))
+                Some((location, calls, name, modifier))
             })
             .collect::<Vec<_>>();
-        for (callee, calls, name) in &callees {
+        for (callee, calls, name, modifier) in &callees {
             self.callee_calls.entry(callee_key(callee)).or_insert((0, Arc::from(*name))).0 += calls;
+            if let Some(modifier) = modifier {
+                self.callee_modifiers.insert(callee_key(callee), modifier.clone());
+            }
         }
         let callees = callees.into_iter().map(|(callee, ..)| callee).collect::<Vec<_>>();
         if record && !callees.is_empty() {
@@ -626,6 +814,10 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
                         after,
                         then_callees: Vec::new(),
                         else_callees: Vec::new(),
+                        callee_modifiers: Vec::new(),
+                        placeholder_modifier: only_placeholder(then_stmt)
+                            .then(|| self.current_function.clone())
+                            .flatten(),
                     };
                     self.push_item_kind(
                         CoverageItemKind::Branch { branch_id, path_id: 0, is_first_opcode: true },
@@ -972,6 +1164,17 @@ fn has_statements(block: Option<&ast::Block<'_>>) -> bool {
     block.is_some_and(|block| !block.is_empty())
 }
 
+/// Returns whether the statement is only a modifier's placeholder `_;`.
+fn only_placeholder(stmt: &ast::Stmt<'_>) -> bool {
+    match &stmt.kind {
+        StmtKind::Placeholder => true,
+        StmtKind::Block(block) => {
+            matches!(&block.stmts[..], [only] if matches!(only.kind, StmtKind::Placeholder))
+        }
+        _ => false,
+    }
+}
+
 fn stmt_has_statements(stmt: &ast::Stmt<'_>) -> bool {
     match &stmt.kind {
         StmtKind::Assembly(a) => !a.block.is_empty(),
@@ -1038,6 +1241,7 @@ impl SourceAnalysis {
             );
             resolved_empty_special_functions =
                 resolve_empty_special_functions(compiler.gcx(), &hir_source_ids);
+            let modifier_users = Arc::new(FunctionUses::new(compiler.gcx()));
             // Sources that the report leaves out, such as libraries and tests, still call the
             // functions of the reported ones.
             let excluded = compiler
@@ -1049,8 +1253,12 @@ impl SourceAnalysis {
             excluded_counts = excluded
                 .par_iter()
                 .map(|&hir_source_id| {
-                    let mut visitor =
-                        SourceVisitor::new(u32::MAX, compiler.gcx(), hir_source_ids.clone());
+                    let mut visitor = SourceVisitor::new(
+                        u32::MAX,
+                        compiler.gcx(),
+                        hir_source_ids.clone(),
+                        modifier_users.clone(),
+                    );
                     visitor.resolve_function_calls(hir_source_id);
                     (visitor.callee_calls, visitor.member_calls, visitor.value_refs)
                 })
@@ -1064,8 +1272,12 @@ impl SourceAnalysis {
                     let ast = source.ast.as_ref().unwrap();
                     let (hir_source_id, _) = compiler.gcx().get_hir_source(path).unwrap();
 
-                    let mut visitor =
-                        SourceVisitor::new(source_id, compiler.gcx(), hir_source_ids.clone());
+                    let mut visitor = SourceVisitor::new(
+                        source_id,
+                        compiler.gcx(),
+                        hir_source_ids.clone(),
+                        modifier_users.clone(),
+                    );
                     for item in ast.items.iter() {
                         match &item.kind {
                             // Contracts: walk their functions, dropping test contracts.
@@ -1323,7 +1535,8 @@ mod tests {
             .build();
         let compiler = solar::sema::Compiler::new(session);
         compiler.enter(|compiler| {
-            let mut visitor = SourceVisitor::new(0, compiler.gcx(), Default::default());
+            let mut visitor =
+                SourceVisitor::new(0, compiler.gcx(), Default::default(), Default::default());
             visitor.items = vec![item(30, 3), item(10, 1), item(20, 2)];
             visitor.all_lines = vec![3, 1, 2];
             visitor.anchor_hints.insert(
@@ -1397,6 +1610,8 @@ mod tests {
                     after: None,
                     then_callees: vec![],
                     else_callees: vec![],
+                    callee_modifiers: vec![],
+                    placeholder_modifier: None,
                 }),
             )]
             .into_iter()
