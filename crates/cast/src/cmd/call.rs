@@ -18,7 +18,7 @@ use alloy_eips::BlockNumHash;
 use alloy_ens::NameOrAddress;
 use alloy_network::{BlockResponse, Ethereum, TransactionBuilder, primitives::HeaderResponse};
 use alloy_primitives::{B256, Bytes, TxKind, U256, hex, map::AddressHashMap};
-use alloy_provider::{Provider, ext::DebugApi};
+use alloy_provider::{EthCallParams, Provider, ext::DebugApi};
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, TransactionInput, TransactionRequest,
     trace::geth::{GethDebugTracingCallOptions, GethDebugTracingOptions},
@@ -903,7 +903,12 @@ impl CallArgs {
             }
             ("debug_traceCall", serde_json::json!([call_request, block_param, call_options]))
         } else {
-            ("eth_call", serde_json::json!([call_request, block_param]))
+            // Serialize like the provider path so state and block overrides keep their positions.
+            let params = EthCallParams::<Ethereum>::new(call_request)
+                .with_block(self.block.unwrap_or_else(BlockId::latest))
+                .with_overrides_opt(self.overrides.get_state_overrides()?)
+                .with_block_overrides_opt(self.overrides.get_block_overrides()?);
+            ("eth_call", serde_json::to_value(params)?)
         };
 
         let curl_cmd = generate_curl_command(

@@ -1891,7 +1891,7 @@ DA:51,0
 FNF:7
 FNH:7
 LF:27
-LH:17
+LH:20
 BRF:16
 BRH:9
 end_of_record

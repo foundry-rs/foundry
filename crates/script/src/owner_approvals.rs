@@ -319,7 +319,11 @@ where
     for (position, call) in calls.iter().enumerate() {
         if adjusted[position] {
             let used = call.max_used_gas.unwrap_or_default().max(call.gas_used);
-            let gas_limit = apply_gas_estimate_multiplier(used, Some(gas_estimate_multiplier))?;
+            let gas_limit = apply_gas_estimate_multiplier(
+                used,
+                Some(gas_estimate_multiplier),
+                requests[position].chain_id(),
+            )?;
             requests[position].set_gas_limit(gas_limit.min(room(&calls, position)));
         }
     }
@@ -504,7 +508,8 @@ where
             low = middle;
         }
     }
-    Ok(apply_gas_estimate_multiplier(high, Some(multiplier))?.max(high).min(cap))
+    let chain_id = requests.last().and_then(|request| request.chain_id());
+    Ok(apply_gas_estimate_multiplier(high, Some(multiplier), chain_id)?.max(high).min(cap))
 }
 
 /// Adds the owner approvals in `signatures` to the transactions awaiting their owners, and checks

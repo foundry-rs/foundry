@@ -4311,8 +4311,17 @@ impl EthApi<FoundryNetwork> {
     /// Handler for RPC call: `debug_getRawHeader`.
     pub async fn raw_header(&self, block: BlockId) -> Result<Bytes> {
         node_info!("debug_getRawHeader");
-        let block = self.backend.get_block(block).ok_or(BlockchainError::BlockNotFound)?;
-        Ok(alloy_rlp::encode(&block.header).into())
+        if let Some(block) = self.backend.get_block(block) {
+            return Ok(alloy_rlp::encode(&block.header).into());
+        }
+        // In fork mode, serve pre-fork blocks from the upstream provider.
+        if let Some(fork) = self.get_fork()
+            && let BlockRequest::Number(number) = self.trace_block_request(block).await?
+            && fork.predates_fork_inclusive(number)
+        {
+            return fork.raw_header(number).await?.ok_or(BlockchainError::BlockNotFound);
+        }
+        Err(BlockchainError::BlockNotFound)
     }
 
     /// Returns RLP encoded raw block.
@@ -4320,8 +4329,17 @@ impl EthApi<FoundryNetwork> {
     /// Handler for RPC call: `debug_getRawBlock`.
     pub async fn raw_block(&self, block: BlockId) -> Result<Bytes> {
         node_info!("debug_getRawBlock");
-        let block = self.backend.get_block(block).ok_or(BlockchainError::BlockNotFound)?;
-        Ok(alloy_rlp::encode(canonical_block(block)).into())
+        if let Some(block) = self.backend.get_block(block) {
+            return Ok(alloy_rlp::encode(canonical_block(block)).into());
+        }
+        // In fork mode, serve pre-fork blocks from the upstream provider.
+        if let Some(fork) = self.get_fork()
+            && let BlockRequest::Number(number) = self.trace_block_request(block).await?
+            && fork.predates_fork_inclusive(number)
+        {
+            return fork.raw_block(number).await?.ok_or(BlockchainError::BlockNotFound);
+        }
+        Err(BlockchainError::BlockNotFound)
     }
 
     /// Returns EIP-2718 encoded raw transaction by block hash and index
@@ -6214,6 +6232,60 @@ mod tests {
             assert_eq!(result.is_ok(), to == succeeds);
             assert_eq!(std::fs::read_to_string(file.path()).unwrap(), expected);
         }
+    }
+
+    // The pending block executes the queued transactions again for every request that reads it.
+    // Only mining prints their console logs and traces, without changing console call results.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn pending_block_does_not_print_logs_or_traces_and_preserves_collectors() {
+        let (api, handle) =
+            spawn(NodeConfig::test().with_no_mining(true).with_print_traces(true)).await;
+        let from = handle.dev_accounts().next().unwrap();
+        // Calls `console.log(uint256)` with 11, then stops.
+        let mut code =
+            alloy_primitives::hex!("63f82c50f160e01b600052600b6004526000600060246000").to_vec();
+        code.push(0x73);
+        code.extend_from_slice(HARDHAT_CONSOLE_ADDRESS.as_slice());
+        code.extend_from_slice(&[0x5a, 0xfa, 0x50, 0x00]);
+        let to = Address::repeat_byte(0x42);
+        api.anvil_set_code(to, code.into()).await.unwrap();
+        // An empty console call reverts with the log collector installed. Store 1 + its success
+        // flag, so removing the collector after the first transaction would store 2 instead of 1.
+        let mut probe = alloy_primitives::hex!("600060006000600073").to_vec();
+        probe.extend_from_slice(HARDHAT_CONSOLE_ADDRESS.as_slice());
+        probe.extend_from_slice(&alloy_primitives::hex!("5afa60010160005500"));
+        let probe_address = Address::repeat_byte(0x43);
+        api.anvil_set_code(probe_address, probe.into()).await.unwrap();
+        for (nonce, to) in [(0, to), (1, probe_address)] {
+            let request =
+                TransactionRequest::default().from(from).to(to).nonce(nonce).gas_limit(100_000);
+            api.send_transaction(WithOtherFields::new(request)).await.unwrap();
+        }
+
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let subscriber = tracing_subscriber::fmt()
+            .with_env_filter("off,node::user=info,node::console=info")
+            .without_time()
+            .with_ansi(false)
+            .with_writer(Arc::new(file.reopen().unwrap()))
+            .finish();
+        let _subscriber = tracing::subscriber::set_default(subscriber);
+        let output = || std::fs::read_to_string(file.path()).unwrap();
+
+        api.pending_block().await.unwrap();
+        api.pending_block().await.unwrap();
+        let pending_request = api.block_request(Some(BlockId::pending())).await.unwrap();
+        let pending =
+            api.backend.storage_at(probe_address, U256::ZERO, Some(pending_request)).await.unwrap();
+        assert_eq!(pending, B256::from(U256::from(1)));
+        assert_eq!(output(), "");
+
+        api.mine_one().await.unwrap();
+        let mined = api.backend.storage_at(probe_address, U256::ZERO, None).await.unwrap();
+        assert_eq!(mined, pending);
+        let output = output();
+        assert_eq!(output.matches("node::console: 11\n").count(), 1, "{output}");
+        assert_eq!(output.matches("Traces=").count(), 2, "{output}");
     }
 
     // Regression test for <https://github.com/foundry-rs/foundry/issues/13680>.

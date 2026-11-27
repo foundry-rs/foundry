@@ -11,6 +11,7 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
 use anvil::NodeConfig;
 use foundry_cli::utils::parse_json;
+use foundry_common::tempo::NATIVE_BALANCE_PLACEHOLDER;
 use foundry_evm::core::tempo::{ALPHA_USD_ADDRESS, PATH_USD_ADDRESS};
 use foundry_test_utils::util::OutputExt;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -2216,6 +2217,25 @@ async fn tempo_t0_expiring_nonce_key_uses_lane_nonce(cmd: _) {
         .assert_success()
         .stdout_eq(str![[r#"
 2
+
+"#]]);
+}
+
+// Tempo has no native token, so its nodes answer `eth_getBalance` with a placeholder.
+#[casttest]
+async fn balance_warns_about_tempo_placeholder(cmd: _) {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let account = Address::repeat_byte(0x42);
+    api.anvil_set_balance(account, NATIVE_BALANCE_PLACEHOLDER).await.unwrap();
+
+    cmd.args(["balance", &account.to_string(), "--rpc-url", &handle.http_endpoint()])
+        .assert_success()
+        .stdout_eq(str![[r#"
+4242424242424242424242424242424242424242424242424242424242424242424242424242
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Tempo has no native token, so this balance is a placeholder; use `cast erc20 balance <TOKEN> 0x4242424242424242424242424242424242424242` for a TIP-20 balance, such as PathUSD (0x20C0000000000000000000000000000000000000) or OUSD (0x20c0000000000000000000006a37DA5C996874BE)
 
 "#]]);
 }

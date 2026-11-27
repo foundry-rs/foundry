@@ -596,10 +596,14 @@ impl Future for MultiForkHandler {
                                 this.insert_new_fork(fork_id, fork, sender, additional_senders);
                             }
                             Err(err) => {
-                                let _ = sender.send(Err(eyre::eyre!("{err}")));
                                 for sender in additional_senders {
                                     let _ = sender.send(Err(eyre::eyre!("{err}")));
                                 }
+                                // The first requester gets the error itself, so callers can
+                                // tell why the RPC failed. Wrapping it in its full text keeps
+                                // the printed error unchanged.
+                                let message = err.to_string();
+                                let _ = sender.send(Err(err.wrap_err(message)));
                             }
                         }
                     } else {

@@ -23,7 +23,7 @@ use evm2::{EvmFeatures, Version, env::BlockEnv};
 use eyre::{OptionExt, WrapErr};
 use foundry_common::{
     ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING,
-    provider::{ProviderBuilder, is_rpc_method_not_found},
+    provider::{BlockNotFound, ProviderBuilder, is_rpc_method_not_found},
 };
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{Chain, Config, ExecutionSpec, FoundryHardfork, GasLimit, evm_spec_id};
@@ -1089,7 +1089,10 @@ impl EvmOpts {
             } else {
                 Default::default()
             };
-            eyre::bail!("failed to get {block_number_message}{latest_message}");
+            return Err(BlockNotFound(format!(
+                "failed to get {block_number_message}{latest_message}"
+            ))
+            .into());
         };
         let actual = BlockNumHash::new(block.header().number(), block.header().hash());
 

@@ -93,7 +93,7 @@ fn sstore_staking<FEN: FoundryEvmNetwork>(
     ccx.evm
         .state_mut()
         .storage_slot(&STAKING_ADDRESS, key)
-        .map_err(|e| fmt_err!("staking sstore failed: {e}"))?
+        .map_err(|e| fmt_err!("staking sstore failed: {e}").with_rpc_failure_of(&e))?
         .set(value);
     Ok(())
 }
@@ -200,7 +200,7 @@ fn apply_block_reward<FEN: FoundryEvmNetwork>(
         .evm
         .state_mut()
         .account(&STAKING_ADDRESS)
-        .map_err(|e| fmt_err!("blockReward balance increment failed: {e}"))?
+        .map_err(|e| fmt_err!("blockReward balance increment failed: {e}").with_rpc_failure_of(&e))?
         .add_balance(reward);
 
     Ok(Default::default())
