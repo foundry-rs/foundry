@@ -37,7 +37,7 @@ impl Cheatcode for getFoundryVersionCall {
 impl Cheatcode for verbosityCall {
     fn apply_context_free(&self) -> Result {
         let Self {} = self;
-        Ok(shell::verbosity().abi_encode())
+        Ok(U256::from(shell::verbosity()).abi_encode())
     }
 }
 
