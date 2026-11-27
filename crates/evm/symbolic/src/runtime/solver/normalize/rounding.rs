@@ -161,7 +161,7 @@ impl ConstraintContext {
     /// `a + (c - a) * t / d` is at most `c`, and a decay `c - (c - a) * t / d` is at least `a`,
     /// once `a <= c` and the quotient is at most `c - a`.
     /// A weighted average `(p * u + q * v) / k` with `u + v <= k` is at most a bound on `p` and
-    /// `q`.
+    /// `q`. The next multiple of a nonzero `d` after `n` is above `n` once `n + d` cannot wrap.
     pub(super) fn division_comparison_value(&self, expr: &SymBoolExpr) -> Option<bool> {
         if let SymBoolExprKind::Not(inner) = expr.kind() {
             return self.division_comparison_value(inner).map(|value| !value);
@@ -266,6 +266,18 @@ impl ConstraintContext {
                 .is_some_and(|range| !range.min.is_zero())
         {
             return Some(false);
+        }
+        // The next multiple `(q + 1) * d` after `n = q * d + r` with `r < d` is strictly above
+        // `n`, as for the next epoch boundary. Over the integers it is `n - r + d <= n + d`, so it
+        // cannot wrap once `n + d` does not, and `(n + d) / d` is then `q + 1`. SMT's `n / 0` is
+        // all ones, so `d` must be nonzero.
+        if let Some(divisor) = next_multiple_divisor(large, small)
+            && self
+                .interval_cached(divisor, intervals, remaining)
+                .is_some_and(|range| !range.min.is_zero())
+            && self.sum_cannot_wrap(small, divisor, intervals, remaining)
+        {
+            return Some(true);
         }
         // With `n = q * d + r` and `r < d`, `(n + d - 1) / d` is `q` or `q + 1`, so it lies between
         // `n / d` and `n / d + 1`. A wrapped `n + d` breaks the lower bound and lets `n / d + 1`
@@ -828,4 +840,28 @@ fn ceil_sum_operands(ceiling: &SymExpr) -> Option<(&SymExpr, &SymExpr)> {
         return None;
     };
     (decrement.as_const() == Some(U256::ONE)).then_some((n, divisor))
+}
+
+/// Returns `d` for the multiple of `d` after `n`, written `(n / d + 1) * d`, `n / d * d + d`, or
+/// `(n + d) / d * d`. Unlike a ceiling, it is `n + d` rather than `n` for a multiple `n`.
+fn next_multiple_divisor<'a>(next: &'a SymExpr, n: &SymExpr) -> Option<&'a SymExpr> {
+    let floor = |quotient: &SymExpr, d: &SymExpr| quotient.udiv_operands() == Some((n, d));
+    let sum = |sum: &SymExpr, d: &SymExpr| {
+        matches!(sum.kind(), SymExprKind::BinOp(SymBinOp::Add, a, b)
+            if (a == n && b == d) || (a == d && b == n))
+    };
+    let SymExprKind::BinOp(op, a, b) = next.kind() else { return None };
+    [(a, b), (b, a)].into_iter().find_map(|(x, d)| {
+        let found = match (op, x.kind()) {
+            (SymBinOp::Mul, SymExprKind::BinOp(SymBinOp::Add, quotient, one)) => {
+                one.as_const() == Some(U256::ONE) && floor(quotient, d)
+            }
+            (SymBinOp::Mul, _) => x.udiv_operands().is_some_and(|(s, y)| y == d && sum(s, d)),
+            (SymBinOp::Add, SymExprKind::BinOp(SymBinOp::Mul, p, q)) => {
+                (floor(p, d) && q == d) || (floor(q, d) && p == d)
+            }
+            _ => false,
+        };
+        found.then_some(d)
+    })
 }
