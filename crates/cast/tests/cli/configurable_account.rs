@@ -633,129 +633,6 @@ fn private_key(key: &PrivateKeySigner) -> String {
     hex::encode_prefixed(key.to_bytes())
 }
 
-/// A 2-of-3 account signs off-chain before registration. Registration preserves the signature,
-/// and rotating both signing owners invalidates it for the same address and typed data.
-#[casttest]
-async fn tempo_t14_wallet_sign_verify_configurable_account(cmd: _) {
-    let (api, handle) =
-        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
-    let rpc = handle.http_endpoint();
-    let (account, config, [alice, bob, carol]) = two_of_three();
-    let address = account.to_string();
-    let contract = IConfigurableAccount::new(CONFIGURABLE_ACCOUNT_ADDRESS, handle.http_provider());
-    let commitment = contract.getConfigCommitment(account);
-    assert_eq!(commitment.call().await.unwrap(), B256::ZERO);
-    let signing = [
-        "--private-key",
-        &private_key(&alice),
-        "--tempo.owner",
-        &format!("private-key://{}", private_key(&bob)),
-    ];
-    let sign = ["wallet", "sign", "--tempo.configurable-account", &address, "--rpc-url", &rpc];
-    let verify = ["wallet", "verify", "--address", &address, "--rpc-url", &rpc];
-    let success = format!("Validation succeeded. Address {address} signed this message.\n");
-    let typed = r#"{"types":{"Note":[{"name":"text","type":"string"}]},"domain":{"name":"Notes"},"primaryType":"Note","message":{"text":"hello"}}"#;
-    let typed_hash = serde_json::from_str::<TypedData>(typed)
-        .unwrap()
-        .eip712_signing_hash()
-        .unwrap()
-        .to_string();
-    let message_hash = eip191_hash_message("hello").to_string();
-    let raw = B256::repeat_byte(0x42).to_string();
-    cmd.cast_fuse()
-        .args(sign)
-        .args(["--data", typed, "--tempo.config", &config, "--private-key", &private_key(&alice)])
-        .assert_failure()
-        .stderr_eq(str![[r#"
-Error: [..] needs owner weight 2, but the local owner keys [..] reach weight 1. Its owners are [..]. Pass the other owner keys with --tempo.owner, or keep them in the Tempo Accounts store.
-
-"#]]);
-    let mut roundtrip = |input: &[&str], expected_hash: &str| {
-        let signature = cmd
-            .cast_fuse()
-            .args(sign)
-            .args(input)
-            .args(signing)
-            .args(["--tempo.config", &config])
-            .assert_success()
-            .get_output()
-            .stdout_lossy()
-            .trim()
-            .to_string();
-        cmd.cast_fuse()
-            .args(verify)
-            .args(input)
-            .arg(&signature)
-            .assert_success()
-            .stdout_eq(success.as_str());
-        cmd.cast_fuse()
-            .args(verify)
-            .args(["--no-hash", expected_hash, &signature])
-            .assert_success()
-            .stdout_eq(success.as_str());
-        signature
-    };
-    roundtrip(&["--no-hash", &raw], &raw);
-    roundtrip(&["0x68656c6c6f"], &message_hash);
-    let signature = roundtrip(&["--data", typed], &typed_hash);
-    assert_eq!(commitment.call().await.unwrap(), B256::ZERO);
-
-    api.anvil_deal_tip20(account, ALPHA_USD_ADDRESS, U256::from(1_000_000_000_000u64))
-        .await
-        .unwrap();
-    let fee_token = ALPHA_USD_ADDRESS.to_string();
-    let send = ["send", "--from", &address, "--rpc-url", &rpc, "--tempo.fee-token", &fee_token];
-    cmd.cast_fuse()
-        .args(send)
-        .arg(&address)
-        .args(signing)
-        .args(["--tempo.config", &config])
-        .assert_success();
-    cmd.cast_fuse()
-        .args(verify)
-        .args(["--data", typed, &signature])
-        .assert_success()
-        .stdout_eq(success.as_str());
-
-    let current = parse_config(&config).unwrap();
-    let rotation = IConfigurableAccount::updateConfigCall {
-        current: IConfigurableAccount::ConfigurableAccountConfig {
-            salt: current.salt,
-            version: current.version,
-            threshold: current.threshold,
-            owners: abi_owners(&current),
-        },
-        threshold: 1,
-        owners: vec![IConfigurableAccount::ConfigurableAccountOwner {
-            owner: carol.address(),
-            weight: 1,
-        }],
-    };
-    cmd.cast_fuse()
-        .args(send)
-        .args([
-            &CONFIGURABLE_ACCOUNT_ADDRESS.to_string(),
-            &hex::encode_prefixed(rotation.abi_encode()),
-        ])
-        .args(signing)
-        .assert_success();
-    cmd.cast_fuse().args(verify).args(["--data", typed, &signature]).assert_failure().stderr_eq(
-        format!("Error: Validation failed. Address {address} did not sign this message.\n"),
-    );
-    let current = cmd
-        .cast_fuse()
-        .args(sign)
-        .args(["--data", typed, "--private-key", &private_key(&carol)])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-    cmd.cast_fuse()
-        .args(verify)
-        .args(["--data", typed, current.trim()])
-        .assert_success()
-        .stdout_eq(success.as_str());
-}
-
 /// Returns the receipt of the last transaction in the latest block, as JSON.
 async fn last_receipt(provider: &RetryProvider) -> serde_json::Value {
     let block = provider.get_block_number().await.unwrap();
@@ -1234,4 +1111,127 @@ Private key: [..]
     );
     assert_eq!(requests.load(Ordering::SeqCst), 1);
     server.abort();
+}
+
+/// A 2-of-3 account signs off-chain before registration. Registration preserves the signature,
+/// and rotating both signing owners invalidates it for the same address and typed data.
+#[casttest]
+async fn tempo_t14_wallet_sign_verify_configurable_account(cmd: _) {
+    let (api, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let rpc = handle.http_endpoint();
+    let (account, config, [alice, bob, carol]) = two_of_three();
+    let address = account.to_string();
+    let contract = IConfigurableAccount::new(CONFIGURABLE_ACCOUNT_ADDRESS, handle.http_provider());
+    let commitment = contract.getConfigCommitment(account);
+    assert_eq!(commitment.call().await.unwrap(), B256::ZERO);
+    let signing = [
+        "--private-key",
+        &private_key(&alice),
+        "--tempo.owner",
+        &format!("private-key://{}", private_key(&bob)),
+    ];
+    let sign = ["wallet", "sign", "--tempo.configurable-account", &address, "--rpc-url", &rpc];
+    let verify = ["wallet", "verify", "--address", &address, "--rpc-url", &rpc];
+    let success = format!("Validation succeeded. Address {address} signed this message.\n");
+    let typed = r#"{"types":{"Note":[{"name":"text","type":"string"}]},"domain":{"name":"Notes"},"primaryType":"Note","message":{"text":"hello"}}"#;
+    let typed_hash = serde_json::from_str::<TypedData>(typed)
+        .unwrap()
+        .eip712_signing_hash()
+        .unwrap()
+        .to_string();
+    let message_hash = eip191_hash_message("hello").to_string();
+    let raw = B256::repeat_byte(0x42).to_string();
+    cmd.cast_fuse()
+        .args(sign)
+        .args(["--data", typed, "--tempo.config", &config, "--private-key", &private_key(&alice)])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: [..] needs owner weight 2, but the local owner keys [..] reach weight 1. Its owners are [..]. Pass the other owner keys with --tempo.owner, or keep them in the Tempo Accounts store.
+
+"#]]);
+    let mut roundtrip = |input: &[&str], expected_hash: &str| {
+        let signature = cmd
+            .cast_fuse()
+            .args(sign)
+            .args(input)
+            .args(signing)
+            .args(["--tempo.config", &config])
+            .assert_success()
+            .get_output()
+            .stdout_lossy()
+            .trim()
+            .to_string();
+        cmd.cast_fuse()
+            .args(verify)
+            .args(input)
+            .arg(&signature)
+            .assert_success()
+            .stdout_eq(success.as_str());
+        cmd.cast_fuse()
+            .args(verify)
+            .args(["--no-hash", expected_hash, &signature])
+            .assert_success()
+            .stdout_eq(success.as_str());
+        signature
+    };
+    roundtrip(&["--no-hash", &raw], &raw);
+    roundtrip(&["0x68656c6c6f"], &message_hash);
+    let signature = roundtrip(&["--data", typed], &typed_hash);
+    assert_eq!(commitment.call().await.unwrap(), B256::ZERO);
+
+    api.anvil_deal_tip20(account, ALPHA_USD_ADDRESS, U256::from(1_000_000_000_000u64))
+        .await
+        .unwrap();
+    let fee_token = ALPHA_USD_ADDRESS.to_string();
+    let send = ["send", "--from", &address, "--rpc-url", &rpc, "--tempo.fee-token", &fee_token];
+    cmd.cast_fuse()
+        .args(send)
+        .arg(&address)
+        .args(signing)
+        .args(["--tempo.config", &config])
+        .assert_success();
+    cmd.cast_fuse()
+        .args(verify)
+        .args(["--data", typed, &signature])
+        .assert_success()
+        .stdout_eq(success.as_str());
+
+    let current = parse_config(&config).unwrap();
+    let rotation = IConfigurableAccount::updateConfigCall {
+        current: IConfigurableAccount::ConfigurableAccountConfig {
+            salt: current.salt,
+            version: current.version,
+            threshold: current.threshold,
+            owners: abi_owners(&current),
+        },
+        threshold: 1,
+        owners: vec![IConfigurableAccount::ConfigurableAccountOwner {
+            owner: carol.address(),
+            weight: 1,
+        }],
+    };
+    cmd.cast_fuse()
+        .args(send)
+        .args([
+            &CONFIGURABLE_ACCOUNT_ADDRESS.to_string(),
+            &hex::encode_prefixed(rotation.abi_encode()),
+        ])
+        .args(signing)
+        .assert_success();
+    cmd.cast_fuse().args(verify).args(["--data", typed, &signature]).assert_failure().stderr_eq(
+        format!("Error: Validation failed. Address {address} did not sign this message.\n"),
+    );
+    let current = cmd
+        .cast_fuse()
+        .args(sign)
+        .args(["--data", typed, "--private-key", &private_key(&carol)])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    cmd.cast_fuse()
+        .args(verify)
+        .args(["--data", typed, current.trim()])
+        .assert_success()
+        .stdout_eq(success.as_str());
 }
