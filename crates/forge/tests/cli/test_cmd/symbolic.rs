@@ -10292,8 +10292,8 @@ contract SymbolicPreviewMint {
 // bounded by the total. Compound's utilization `borrows * WAD / (cash + borrows - reserves)` is at
 // most `WAD` once `reserves <= cash`, since the divisor is `borrows + (cash - reserves)`. Reserves
 // above the cash, or only below the borrows, shrink the divisor below the borrows, and the rate
-// reaches `WAD` exactly when the reserves equal the cash. A wrapped `cash + borrows` is not bounded
-// either.
+// reaches `WAD` exactly when the reserves equal the cash. Reserves below both amounts, or a borrow
+// floor equal to the reserve cap, still bound it. A wrapped `cash + borrows` is not bounded either.
 #[forgetest_init]
 fn symbolic_proves_remaining_ratio_bounded(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_remaining_ratio_bounded");
@@ -10339,6 +10339,23 @@ contract SymbolicRemainingRatio {
         pure
     {
         require(borrows != 0 && reserves <= cash);
+        assert(uint256(borrows) * WAD / (uint256(cash) + borrows - reserves) <= WAD);
+    }
+
+    function checkUtilizationReservesBelowBoth(uint256 borrows, uint256 cash, uint256 reserves)
+        public
+        pure
+    {
+        require(borrows != 0 && reserves <= cash && reserves <= borrows);
+        assert(borrows * WAD / (cash + borrows - reserves) <= WAD);
+    }
+
+    function checkNarrowUtilizationReservesAtBorrowFloor(
+        uint128 cash,
+        uint128 borrows,
+        uint128 reserves
+    ) public pure {
+        require(borrows >= 100 && reserves <= 100 && reserves <= cash);
         assert(uint256(borrows) * WAD / (uint256(cash) + borrows - reserves) <= WAD);
     }
 
@@ -10394,6 +10411,8 @@ contract SymbolicRemainingRatio {
             "checkRemainingRatio(uint256,uint256)",
             "checkUtilizationRate(uint256,uint256,uint256)",
             "checkNarrowUtilizationRate(uint128,uint128,uint128)",
+            "checkUtilizationReservesBelowBoth(uint256,uint256,uint256)",
+            "checkNarrowUtilizationReservesAtBorrowFloor(uint128,uint128,uint128)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(
