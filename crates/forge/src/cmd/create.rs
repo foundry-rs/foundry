@@ -30,7 +30,7 @@ use foundry_common::{
     shell,
     tempo::{
         configurable_account::ConfigurableAccountSigner, mark_sponsored_gas_estimation,
-        maybe_print_fee_token, resolve_and_set_fee_token, resolve_and_set_sponsor_fee_token,
+        maybe_print_fee_token, resolve_and_set_fee_token,
     },
 };
 use foundry_compilers::{
@@ -621,15 +621,6 @@ impl CreateArgs {
             }
         }
 
-        if let Some(sponsor) = self.tx.tempo.sponsor {
-            resolve_and_set_sponsor_fee_token(
-                resolve_unknown_fee_token_symbol.then_some(&provider),
-                &mut deployer.tx,
-                sponsor,
-            )
-            .await?;
-        }
-
         // set access list if specified
         if let Some(access_list) = match self.tx.access_list {
             None => None,
@@ -646,7 +637,8 @@ impl CreateArgs {
                 deployer.tx.clone()
             };
             if self.tx.tempo.is_sponsored() {
-                mark_sponsored_gas_estimation(&provider, &mut request).await;
+                let sponsor = self.tx.tempo.sponsor.filter(|_| resolve_unknown_fee_token_symbol);
+                mark_sponsored_gas_estimation(&provider, &mut request, sponsor).await;
             }
             let estimated = provider.estimate_gas(request).await?;
             deployer.tx.set_gas_limit(apply_gas_estimate_multiplier(

@@ -20,10 +20,7 @@ use foundry_cli::{
 use foundry_common::{
     FoundryTransactionBuilder,
     provider::ProviderBuilder,
-    tempo::{
-        configurable_account::prepare_request, mark_sponsored_gas_estimation,
-        resolve_and_set_sponsor_fee_token,
-    },
+    tempo::{configurable_account::prepare_request, mark_sponsored_gas_estimation},
 };
 use foundry_config::Config;
 use foundry_wallets::{BrowserWalletOpts, WalletOpts};
@@ -237,11 +234,8 @@ impl EstimateArgs {
 
         let mut tx = if is_browser { tx.browser_wallet_gas_estimation_request() } else { tx };
         // Estimated as `cast send` estimates a sponsored transaction.
-        if let Some(sponsor) = sponsor {
-            resolve_and_set_sponsor_fee_token(Some(&provider), &mut tx, sponsor).await?;
-        }
         if sponsored {
-            mark_sponsored_gas_estimation(&provider, &mut tx).await;
+            mark_sponsored_gas_estimation(&provider, &mut tx, sponsor).await;
         }
         let gas = provider.estimate_gas(tx).block(block.unwrap_or_default()).await?;
         if cost {

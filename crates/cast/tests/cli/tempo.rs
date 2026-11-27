@@ -1225,6 +1225,61 @@ async fn estimate_covers_access_key_and_sponsored_sends(cmd: _) {
     }
 }
 
+// A sponsor signs the digest of a transaction that names no fee token when it is printed without
+// the sponsor. Sending it with the sponsor named must keep that digest, also for a sponsor without
+// a stored preference, which the protocol charges a fallback fee token.
+#[casttest]
+async fn send_with_sponsor_signature_over_digest_printed_without_sponsor(cmd: _) {
+    let (_, handle) = anvil::spawn(tempo_t14()).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let (sender, sender_key) = dev_account(&handle, 0);
+    let sponsor = PrivateKeySigner::random();
+    let tip20 = ITIP20::new(PATH_USD_ADDRESS, &provider);
+    let fund = TransactionRequest::default().from(sender).to(PATH_USD_ADDRESS).with_input(
+        tip20.transfer(sponsor.address(), U256::from(1_000_000_000)).calldata().clone(),
+    );
+    let funded =
+        provider.send_transaction(WithOtherFields::new(fund)).await.unwrap().get_receipt().await;
+    assert!(funded.unwrap().status());
+
+    let (token, recipient) = (PATH_USD_ADDRESS.to_string(), Address::repeat_byte(0x42).to_string());
+    let nonce = provider.get_transaction_count(sender).await.unwrap().to_string();
+    let tx = [&token, "transfer(address,uint256)", &recipient, "1", "--private-key", &sender_key];
+    let pinned = ["--nonce", &nonce, "--gas-limit", "1000000", "--gas-price", "40gwei"];
+    let hash = cmd
+        .cast_fuse()
+        .arg("mktx")
+        .args(tx)
+        .args(pinned)
+        .args(["--priority-gas-price", "1gwei", "--rpc-url", &rpc, "--tempo.print-sponsor-hash"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let sponsor_key = hex::encode_prefixed(sponsor.to_bytes());
+    let sig = cmd
+        .cast_fuse()
+        .args(["wallet", "sign", "--private-key", &sponsor_key, "--no-hash", hash.trim()])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let output = cmd
+        .cast_fuse()
+        .arg("send")
+        .args(tx)
+        .args(pinned)
+        .args(["--priority-gas-price", "1gwei", "--rpc-url", &rpc, "--json"])
+        .args(["--tempo.sponsor", &sponsor.address().to_string()])
+        .args(["--tempo.sponsor-signature", sig.trim()])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let receipt: serde_json::Value = parse_json(output.trim()).unwrap();
+    assert_eq!(receipt["status"], "0x1", "{receipt}");
+    assert_eq!(receipt["feePayer"], serde_json::to_value(sponsor.address()).unwrap(), "{receipt}");
+}
+
 #[casttest]
 fn tip20_logo_check_accepts_valid_values(cmd: _) {
     for uri in ["", "https://example.com/logo.png", "HTTP://example.com/logo.png", "ipfs://token"] {

@@ -275,8 +275,15 @@ where
         // `eth_simulateV1`.
         Err(_) if requests.len() == 1 => {
             if adjusted[0] {
-                estimate_gas(&mut requests[0], provider, gas_estimate_multiplier, false, false)
-                    .await?;
+                estimate_gas(
+                    &mut requests[0],
+                    provider,
+                    gas_estimate_multiplier,
+                    false,
+                    false,
+                    None,
+                )
+                .await?;
             }
             return Ok(awaiting(transactions, requests));
         }

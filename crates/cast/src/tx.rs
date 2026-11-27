@@ -24,7 +24,7 @@ use foundry_common::{
     shell,
     tempo::{
         ensure_expiring_nonce_discriminator_active, is_tempo_hardfork_active,
-        mark_sponsored_gas_estimation, resolve_and_set_sponsor_fee_token,
+        mark_sponsored_gas_estimation,
     },
 };
 use foundry_config::{Chain, Config, Eip1559FeeEstimatePreset};
@@ -508,8 +508,8 @@ struct TxBuilderInner<N: Network, P> {
     gas_estimate_multiplier: Option<u64>,
     /// Whether a Tempo fee payer will sponsor the transaction.
     sponsored: bool,
-    /// The Tempo fee payer sponsoring the transaction, whose fee token is resolved before gas
-    /// estimation. `None` when it is not known, or the RPC must not be queried for it.
+    /// The Tempo fee payer sponsoring the transaction, whose fee token the gas estimate runs with.
+    /// `None` when it is not known, or the RPC must not be queried for it.
     sponsor: Option<Address>,
     auth: Vec<CliAuthorizationList>,
     chain: Chain,
@@ -757,10 +757,6 @@ where
         // targets. If `to` is set, `build_aa()` would add a spurious extra call.
         self.tx.clear_batch_to();
 
-        if fill && let Some(sponsor) = self.sponsor {
-            resolve_and_set_sponsor_fee_token(Some(&self.provider), &mut self.tx, sponsor).await?;
-        }
-
         // Read-only calls do not need a nonce unless it is required to sign an authorization.
         // Avoid an otherwise unused `eth_getTransactionCount` request for raw transactions.
         let resolve_in_parallel =
@@ -777,14 +773,14 @@ where
             let gas_request =
                 (fees_are_complete && self.access_list.is_none() && self.tx.gas_limit().is_none())
                     .then(|| self.tx.clone());
-            let (blob, legacy, browser, eip1559_fee_estimate, gas_estimate_multiplier, sponsored) = (
+            let (blob, legacy, browser, eip1559_fee_estimate, gas_estimate_multiplier) = (
                 self.blob,
                 self.legacy,
                 self.browser,
                 self.eip1559_fee_estimate,
                 self.gas_estimate_multiplier,
-                self.sponsored,
             );
+            let (sponsored, sponsor) = (self.sponsored, self.sponsor);
             let Self { provider, tx, .. } = &mut self;
             let provider = &*provider;
             let (tx_nonce, (), gas_limit) = tokio::try_join!(
@@ -797,6 +793,7 @@ where
                             request,
                             gas_estimate_multiplier,
                             sponsored,
+                            sponsor,
                         )
                         .await
                         .map(Some),
@@ -856,6 +853,7 @@ where
                 request,
                 self.gas_estimate_multiplier,
                 self.sponsored,
+                self.sponsor,
             )
             .await?;
             self.tx.set_gas_limit(estimated);
@@ -956,14 +954,18 @@ where
     }
 
     /// Estimate tx gas from provider call. Tries to decode custom error if execution reverted.
+    ///
+    /// A transaction a fee payer sponsors is estimated with the fee token `sponsor` pays with, when
+    /// known, see [`mark_sponsored_gas_estimation`].
     async fn estimate_gas(
         provider: &P,
         mut request: N::TransactionRequest,
         multiplier: Option<u64>,
         sponsored: bool,
+        sponsor: Option<Address>,
     ) -> Result<u64> {
         if sponsored {
-            mark_sponsored_gas_estimation(provider, &mut request).await;
+            mark_sponsored_gas_estimation(provider, &mut request, sponsor).await;
         }
         let chain_id = request.chain_id();
         let err = match provider.estimate_gas(request).await {
@@ -995,7 +997,7 @@ pub(crate) async fn estimate_gas_limit<N: Network, P: Provider<N>>(
 where
     N::TransactionRequest: FoundryTransactionBuilder<N>,
 {
-    TxBuilderInner::<N, P>::estimate_gas(provider, request, multiplier, sponsored).await
+    TxBuilderInner::<N, P>::estimate_gas(provider, request, multiplier, sponsored, None).await
 }
 
 /// Fills gas price or EIP-1559 fee fields from the provider and validates the final pair.

@@ -27,8 +27,9 @@ use tempo_primitives::transaction::{
 
 use super::{
     ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, OUSD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
-    TIP_FEE_MANAGER_ADDRESS, TempoSponsor, known_fee_token_symbol, maybe_signer,
-    resolve_and_set_fee_token, resolve_fee_token_symbol, verify_browser_key_authorization,
+    TIP_FEE_MANAGER_ADDRESS, TempoSponsor, known_fee_token_symbol, mark_sponsored_gas_estimation,
+    maybe_signer, resolve_and_set_fee_token, resolve_fee_token_symbol,
+    verify_browser_key_authorization,
 };
 
 #[test]
@@ -299,26 +300,30 @@ async fn sponsor_fee_token_resolution_uses_sponsor_address() -> eyre::Result<()>
 }
 
 #[tokio::test]
-async fn sponsor_without_stored_fee_token_pays_with_held_fallback_token() -> eyre::Result<()> {
-    let sponsor = TempoSponsor::new(Address::repeat_byte(0x22), None, None);
-    // Before T13 the only fallback token is PathUSD; from T13 the first of PathUSD and OUSD the
-    // sponsor holds, or PathUSD when it holds neither.
-    for (hardfork, balances, expected) in [
-        ("T12", &[][..], PATH_USD_ADDRESS),
-        ("T13", &[7][..], PATH_USD_ADDRESS),
-        ("T13", &[0, 5][..], OUSD_ADDRESS),
-        ("T14", &[0, 0][..], PATH_USD_ADDRESS),
+async fn sponsored_estimate_pays_with_sponsor_fee_token() {
+    let sponsor = Address::repeat_byte(0x22);
+    // A stored preference wins. Without one, the fallback token: PathUSD alone before T13, from T13
+    // the first of PathUSD and OUSD the sponsor holds, or PathUSD when it holds neither.
+    for (stored, hardfork, balances, expected) in [
+        (BETA_USD_ADDRESS, "T14", &[][..], BETA_USD_ADDRESS),
+        (Address::ZERO, "T12", &[][..], PATH_USD_ADDRESS),
+        (Address::ZERO, "T13", &[7][..], PATH_USD_ADDRESS),
+        (Address::ZERO, "T13", &[0, 5][..], OUSD_ADDRESS),
+        (Address::ZERO, "T14", &[0, 0][..], PATH_USD_ADDRESS),
     ] {
         let asserter = Asserter::new();
         let provider = ProviderBuilder::new_with_network::<TempoNetwork>()
             .connect_mocked_client(asserter.clone());
-        asserter.push_success(&Address::ZERO.abi_encode());
+        asserter.push_success(&stored.abi_encode());
         asserter.push_success(&serde_json::json!({ "active": hardfork, "schedule": [] }));
         for balance in balances {
             asserter.push_success(&U256::from(*balance).abi_encode());
         }
-        let mut tx = TempoTransactionRequest {
-            inner: TransactionRequest::default().with_from(Address::repeat_byte(0x11)),
+        let mut request = TempoTransactionRequest {
+            inner: TransactionRequest::default()
+                .with_from(Address::repeat_byte(0x11))
+                .with_max_fee_per_gas(2)
+                .with_max_priority_fee_per_gas(1),
             calls: vec![Call {
                 to: TxKind::Call(Address::repeat_byte(0x33)),
                 value: U256::ZERO,
@@ -327,12 +332,13 @@ async fn sponsor_without_stored_fee_token_pays_with_held_fallback_token() -> eyr
             ..Default::default()
         };
 
-        let resolved = sponsor.resolve_and_set_fee_token::<TempoNetwork>(Some(&provider), &mut tx);
-        assert_eq!(resolved.await?, Some(expected), "{hardfork} {balances:?}");
-        assert_eq!(tx.fee_token, Some(expected));
-        assert!(asserter.read_q().is_empty(), "{hardfork} {balances:?} read too few responses");
+        mark_sponsored_gas_estimation(&provider, &mut request, Some(sponsor)).await;
+        let case = format!("{stored} {hardfork} {balances:?}");
+        assert_eq!(request.fee_token, Some(expected), "{case}");
+        assert_eq!(request.max_fee_per_gas(), None, "{case}");
+        assert_eq!(request.fee_payer_signature.is_some(), hardfork == "T14", "{case}");
+        assert!(asserter.read_q().is_empty(), "{case} read too few responses");
     }
-    Ok(())
 }
 
 #[tokio::test]

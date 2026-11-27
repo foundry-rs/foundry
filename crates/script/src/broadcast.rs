@@ -180,7 +180,8 @@ where
         // Chains which use `eth_estimateGas` are being sent sequentially and require their
         // gas to be re-estimated right before broadcasting.
         if !is_fixed_gas_limit && estimate_via_rpc {
-            estimate_gas(tx, provider, estimate_multiplier, browser, tempo_sponsor.is_some())
+            let sponsor = tempo_sponsor.map(TempoSponsor::sponsor);
+            estimate_gas(tx, provider, estimate_multiplier, browser, sponsor.is_some(), sponsor)
                 .await?;
         }
 
@@ -2000,6 +2001,7 @@ impl BundledState<TempoEvmNetwork> {
             self.args.gas_estimate_multiplier,
             false,
             tempo_sponsor.is_some(),
+            tempo_sponsor.as_ref().map(TempoSponsor::sponsor),
         )
         .await?;
 
@@ -2236,13 +2238,14 @@ async fn wait_for_batch_receipt<N: Network>(
 }
 
 /// Estimates and sets the gas limit of `tx`, which a Tempo fee payer signs afterwards when
-/// `sponsored`.
+/// `sponsored`. The estimate runs with the fee token `sponsor` pays with, when known.
 pub async fn estimate_gas<N: Network, P: Provider<N>>(
     tx: &mut N::TransactionRequest,
     provider: &P,
     estimate_multiplier: u64,
     browser: bool,
     sponsored: bool,
+    sponsor: Option<Address>,
 ) -> Result<()>
 where
     N::TransactionRequest: FoundryTransactionBuilder<N>,
@@ -2253,7 +2256,7 @@ where
 
     let mut request = if browser { tx.browser_wallet_gas_estimation_request() } else { tx.clone() };
     if sponsored {
-        mark_sponsored_gas_estimation(provider, &mut request).await;
+        mark_sponsored_gas_estimation(provider, &mut request, sponsor).await;
     }
     let estimate =
         provider.estimate_gas(request).await.wrap_err("Failed to estimate gas for tx")?;
@@ -3105,7 +3108,7 @@ mod tests {
             asserter.push_success(&alloy_primitives::U64::from(estimate));
             let mut tx = alloy_rpc_types::TransactionRequest::default();
 
-            let result = estimate_gas(&mut tx, &provider, multiplier, false, false).await;
+            let result = estimate_gas(&mut tx, &provider, multiplier, false, false, None).await;
 
             assert_eq!(result.is_ok(), expected.is_some());
             assert_eq!(tx.gas, expected);
