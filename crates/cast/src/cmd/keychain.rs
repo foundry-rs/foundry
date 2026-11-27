@@ -49,7 +49,7 @@ use tempo_contracts::precompiles::{
         self, CallScope, KeyInfo, KeyRestrictions, LegacyTokenLimit, SelectorRule, SignatureType,
         TokenLimit,
     },
-    ISignatureVerifier, ITIP20, PATH_USD_ADDRESS, SIGNATURE_VERIFIER_ADDRESS,
+    ISignatureVerifier, ITIP20, OUSD_ADDRESS, PATH_USD_ADDRESS, SIGNATURE_VERIFIER_ADDRESS,
     account_keychain::{
         authorizeAdminKeyCall, authorizeKeyCall, authorizeKeyWithWitnessCall,
         legacyAuthorizeKeyCall,
@@ -3376,12 +3376,23 @@ fn print_allowed_calls(allowed_calls: &AllowedCallsView) -> Result<()> {
     Ok(())
 }
 
+/// Names the tokens Tempo falls back to for fees, which have the same address on every network
+/// that deploys them.
+const fn fallback_fee_token_name(address: Address) -> Option<&'static str> {
+    match address {
+        PATH_USD_ADDRESS => Some("PathUSD"),
+        OUSD_ADDRESS => Some("OUSD"),
+        _ => None,
+    }
+}
+
 fn address_label(address: Address) -> String {
-    if address == PATH_USD_ADDRESS { "PathUSD".to_string() } else { address.to_string() }
+    fallback_fee_token_name(address).map_or_else(|| address.to_string(), str::to_string)
 }
 
 fn address_label_with_address(address: Address) -> String {
-    if address == PATH_USD_ADDRESS { format!("PathUSD ({address})") } else { address.to_string() }
+    fallback_fee_token_name(address)
+        .map_or_else(|| address.to_string(), |name| format!("{name} ({address})"))
 }
 
 fn format_selector(selector: &[u8; 4]) -> String {
