@@ -654,7 +654,13 @@ impl ConstraintContext {
         constraints: impl Clone + Iterator<Item = &'a SymBoolExpr>,
         constraint_count: usize,
     ) -> Self {
-        Self::from_constraints_with_lower_bounds(constraints, constraint_count, true)
+        let mut context =
+            Self::from_constraints_with_lower_bounds(constraints, constraint_count, true);
+        // Only contexts that never remove a conjunct they were built from may chain order facts.
+        // The batch context also rewrites its own conjuncts, and a chain through a guard could
+        // prove that the guard itself is redundant.
+        context.close_order_facts();
+        context
     }
 
     /// Builds a rewrite context from the other retained conjuncts, never the predicate itself.
@@ -728,6 +734,65 @@ impl ConstraintContext {
         }
         context.propagate_masked_upper_bounds();
         context
+    }
+
+    /// Adds `a <= c` for asserted `a <= b` and `b <= c`, strictly once either link is strict. Each
+    /// round composes the relation with itself, doubling the closed chain length, and facts only
+    /// grow within the budget, so the rounds end. A closure larger
+    /// than `MAX_LOCAL_ANALYSIS_NODES` pairs keeps only the literal facts, since a missing fact
+    /// only declines a rewrite, and a partial closure would depend on hash iteration order.
+    fn close_order_facts(&mut self) {
+        let mut pair_count = self.order_facts.values().map(Vec::len).sum::<usize>();
+        if !(2..MAX_LOCAL_ANALYSIS_NODES).contains(&pair_count) {
+            return;
+        }
+        let literal = (self.order_facts.clone(), self.strict_order_facts.clone());
+        loop {
+            // Distinct pairs to add or make strict, so duplicates through other middles are free.
+            let mut derived = HashMap::<(SymExpr, SymExpr), bool>::default();
+            for (small, middles) in &self.order_facts {
+                for middle in middles {
+                    let strict_link =
+                        self.strict_order_facts.contains(&(small.clone(), middle.clone()));
+                    for large in self.asserted_upper_bounds(middle) {
+                        let strict = strict_link
+                            || self.strict_order_facts.contains(&(middle.clone(), large.clone()));
+                        let known = middles.contains(large);
+                        if large == small
+                            || (known
+                                && (!strict
+                                    || self
+                                        .strict_order_facts
+                                        .contains(&(small.clone(), large.clone()))))
+                        {
+                            continue;
+                        }
+                        let entry =
+                            derived.entry((small.clone(), large.clone())).or_insert_with(|| {
+                                pair_count += usize::from(!known);
+                                false
+                            });
+                        *entry |= strict;
+                        if pair_count > MAX_LOCAL_ANALYSIS_NODES {
+                            (self.order_facts, self.strict_order_facts) = literal;
+                            return;
+                        }
+                    }
+                }
+            }
+            if derived.is_empty() {
+                return;
+            }
+            for ((small, large), strict) in derived {
+                let uppers = self.order_facts.entry(small.clone()).or_default();
+                if !uppers.contains(&large) {
+                    uppers.push(large.clone());
+                }
+                if strict {
+                    self.strict_order_facts.insert((small, large));
+                }
+            }
+        }
     }
 
     /// Transfers `x & low_mask <= k` to `x` once another bound proves `x` fits the mask, so the
@@ -1030,6 +1095,16 @@ impl ConstraintContext {
             SymBoolExprKind::Const(value) => Some(*value),
             SymBoolExprKind::Not(value) => self.bounded_bool_value(value).map(|value| !value),
             SymBoolExprKind::Cmp(op, left, right) => {
+                // Solmate's `mulDivDown` overflow guard `MAX / y < x` is false once `x * y`
+                // cannot overflow, as `x * y <= MAX` implies `x <= MAX / y` for `y != 0`.
+                if *op == SymCmpOp::Ult
+                    && let Some((numerator, divisor)) = left.udiv_operands()
+                    && numerator.as_const() == Some(U256::MAX)
+                    && self.interval(divisor).is_some_and(|interval| !interval.min.is_zero())
+                    && self.mul_cannot_overflow_256(right, divisor)
+                {
+                    return Some(false);
+                }
                 let left = self.interval(left)?;
                 let right = self.interval(right)?;
                 if *op == SymCmpOp::Eq {
@@ -1684,8 +1759,21 @@ impl ConstraintContext {
                         Some(left.max.saturating_sub(right.min)),
                     );
                 }
-                let left = left?;
-                let right = right?;
+                // `(c + y) - r = y + (c - r)` lies between `y` and `c + y` once `r <= c` and
+                // `c + y` cannot wrap.
+                // When both addends qualify, the larger minimum bounds the difference.
+                let addend_min = self
+                    .addends_within_difference(minuend, subtrahend, intervals, remaining)
+                    .into_iter()
+                    .flatten()
+                    .map(|addend| {
+                        self.interval_cached(addend, intervals, remaining)
+                            .map_or(U256::ZERO, |addend| addend.min)
+                    })
+                    .max();
+                let Some((left, right)) = left.zip(right) else {
+                    return WordInterval::new(addend_min?, left.map_or(U256::MAX, |left| left.max));
+                };
                 if left.max < right.min {
                     // Every subtraction wraps exactly once, so the unsigned image is contiguous.
                     return Some(WordInterval {
@@ -1693,20 +1781,20 @@ impl ConstraintContext {
                         max: left.max.wrapping_sub(right.min),
                     });
                 }
-                if left.min < right.max {
+                let interval = if left.min < right.max {
                     // An asserted `subtrahend <= minuend` rules out wrapping, and a strict
                     // `subtrahend < minuend` also rules out a zero difference.
-                    if !self.asserted_upper_bounds(subtrahend).contains(minuend) {
+                    let ordered = self.asserted_upper_bounds(subtrahend).contains(minuend);
+                    if !ordered && addend_min.is_none() {
                         return None;
                     }
-                    let strict =
-                        self.strict_order_facts.contains(&(subtrahend.clone(), minuend.clone()));
-                    return WordInterval::new(U256::from(strict), left.max - right.min);
-                }
-                Some(WordInterval {
-                    min: left.min.checked_sub(right.max)?,
-                    max: left.max.checked_sub(right.min)?,
-                })
+                    let strict = ordered
+                        && self.strict_order_facts.contains(&(subtrahend.clone(), minuend.clone()));
+                    WordInterval::new(U256::from(strict), left.max - right.min)?
+                } else {
+                    WordInterval { min: left.min - right.max, max: left.max - right.min }
+                };
+                interval.with_bounds(addend_min, None)
             }
             SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
                 // `(n / t) * t <= n`, and the product is zero when `t == 0`.

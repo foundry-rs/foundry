@@ -672,9 +672,28 @@ impl ConstraintContext {
             || complement(b, a)
     }
 
+    /// Returns the addends `y` of `sum = c + y` that `sum - part` cannot fall below: once another
+    /// conjunct asserts `part <= c` and `c + y` cannot wrap, `(c + y) - part = y + (c - part)`.
+    /// Both addends qualify once `part` is asserted at most each of them.
+    pub(super) fn addends_within_difference<'a>(
+        &self,
+        sum: &'a SymExpr,
+        part: &SymExpr,
+        intervals: &mut HashMap<SymExpr, Option<WordInterval>>,
+        remaining: &mut usize,
+    ) -> [Option<&'a SymExpr>; 2] {
+        let SymExprKind::BinOp(SymBinOp::Add, a, b) = sum.kind() else { return [None; 2] };
+        [(a, b), (b, a)].map(|(c, y)| {
+            (self.asserted_upper_bounds(part).contains(c)
+                && self.sum_cannot_wrap(c, y, intervals, remaining))
+            .then_some(y)
+        })
+    }
+
     /// Returns whether other conjuncts assert `small <= large`, including strict `<`. Once
     /// `s <= t`, a difference `t - s` cannot wrap, so it is at most `t`, and at most `d` once
     /// `t <= d + s`. A wrapped `d + s` would be below `s <= t`, so the two facts cannot both hold.
+    /// It is also at most `u - s` once `t <= u`, as `u - s` cannot wrap either.
     pub(super) fn asserts_less_or_equal(&self, small: &SymExpr, large: &SymExpr) -> bool {
         if self.asserted_upper_bounds(small).contains(large) {
             return true;
@@ -685,12 +704,15 @@ impl ConstraintContext {
                 || self.asserted_upper_bounds(end).iter().any(|sum| {
                     matches!(sum.kind(), SymExprKind::BinOp(SymBinOp::Add, a, b)
                         if (a == large && b == start) || (a == start && b == large))
-                }))
+                })
+                || matches!(large.kind(), SymExprKind::BinOp(SymBinOp::Sub, end2, start2)
+                    if start2 == start && self.asserted_upper_bounds(end).contains(end2)))
     }
 
-    /// Returns whether `factor <= divisor`, by equality, another conjunct, or value ranges, so
-    /// `(n / divisor) * factor <= (n / divisor) * divisor <= n`. SMT's `n / 0` is all ones, but a
-    /// zero divisor then forces a zero factor and product.
+    /// Returns whether `factor <= divisor`, by equality, another conjunct, a divisor that is a sum
+    /// minus part of its other addend, or value ranges, so `(n / divisor) * factor` is at most
+    /// `(n / divisor) * divisor <= n`. SMT's `n / 0` is all ones, but a zero divisor then forces a
+    /// zero factor and product.
     pub(super) fn factor_within_divisor(
         &self,
         factor: &SymExpr,
@@ -700,6 +722,9 @@ impl ConstraintContext {
     ) -> bool {
         factor == divisor
             || self.asserts_less_or_equal(factor, divisor)
+            || matches!(divisor.kind(), SymExprKind::BinOp(SymBinOp::Sub, sum, part)
+                if self.addends_within_difference(sum, part, intervals, remaining)
+                    .contains(&Some(factor)))
             || self
                 .interval_cached(factor, intervals, remaining)
                 .zip(self.interval_cached(divisor, intervals, remaining))

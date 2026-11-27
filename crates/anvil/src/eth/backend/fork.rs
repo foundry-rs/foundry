@@ -6,6 +6,7 @@ use crate::eth::{
         env::{BlobExcessGasAndPrice, SpecId},
     },
     error::BlockchainError,
+    tempo_simulate::TempoSimulateV1Response,
 };
 use alloy_chains::NamedChain;
 use alloy_consensus::{BlockHeader, TrieAccount, constants::EMPTY_ROOT_HASH};
@@ -1057,6 +1058,15 @@ impl ClientFork {
             self.cache_block(&block);
         }
         Ok(Some(header))
+    }
+
+    /// Sends `tempo_simulateV1`.
+    pub async fn tempo_simulate_v1(
+        &self,
+        request: &SimulatePayload<WithOtherFields<TransactionRequest>>,
+        block: BlockId,
+    ) -> Result<TempoSimulateV1Response, TransportError> {
+        self.provider().raw_request("tempo_simulateV1".into(), (request, block)).await
     }
 }
 
