@@ -52,6 +52,7 @@ use crate::{
         macros::node_info,
         pool::transactions::PoolTransaction,
         preserve_simulation_request_fields,
+        tempo_simulate::{TempoSimulateV1Response, tip20_targets, transferred_tip20s},
     },
     mem::{
         inspector::{AnvilInspector, FrameGuard, InspectorTxConfig},
@@ -83,7 +84,8 @@ use alloy_network::{
     UnknownTypedTransaction,
 };
 use alloy_primitives::{
-    Address, B256, Bloom, Bytes, KECCAK256_EMPTY, Signature, TxKind, U256, address, hex, keccak256,
+    Address, B256, Bloom, Bytes, KECCAK256_EMPTY, Signature, TxKind, U64, U256, address, hex,
+    keccak256,
     map::{AddressMap, B256Set, HashMap, HashSet},
 };
 use alloy_rlp::{Decodable, Encodable};
@@ -188,7 +190,7 @@ use tempo_precompiles::{
     tip20_factory::TIP20Factory,
 };
 use tempo_primitives::{
-    AASigned, SignatureType, TEMPO_TX_TYPE_ID, TempoSignature,
+    AASigned, SignatureType, TEMPO_TX_TYPE_ID, TempoHeader, TempoSignature,
     transaction::{
         ConfigurableAccountConfig, ConfigurableAccountQuorumError, ConfigurableAccountSignature,
         ConfigurableAccountWeightAccumulator, KeychainSignature, MAX_WEBAUTHN_SIGNATURE_LENGTH,
@@ -2670,21 +2672,15 @@ impl<N: Network> Backend<N> {
         let hash = known_hash.unwrap_or_else(|| header.hash_slow());
         let number = header.number();
         let withdrawals_root = header.withdrawals_root();
-        let consensus_context = header.as_tempo().and_then(|header| header.consensus_context);
-        let tempo_fields = header
-            .as_tempo()
-            .map(|header| {
-                (
-                    header.timestamp_millis(),
-                    header.general_gas_limit,
-                    header.shared_gas_limit,
-                    header.timestamp_millis_part,
-                )
-            })
-            .or_else(|| {
-                self.is_tempo()
-                    .then(|| (header.timestamp().saturating_mul(1000), header.gas_limit(), 0, 0))
-            });
+        // Blocks mined before a Tempo header was stored report the defaults of one.
+        let header = match header {
+            FoundryHeader::Ethereum(header) if self.is_tempo() => FoundryHeader::tempo(header),
+            header => header,
+        };
+        let mut other = OtherFields::default();
+        if let Some(header) = header.as_tempo() {
+            insert_tempo_header_fields(&mut other, header);
+        }
 
         let block = AlloyBlock {
             header: AlloyHeader {
@@ -2698,7 +2694,7 @@ impl<N: Network> Backend<N> {
             withdrawals: withdrawals_root.map(|_| Default::default()),
         };
 
-        let mut block = WithOtherFields::new(block);
+        let mut block = WithOtherFields { inner: block, other };
 
         // If Arbitrum, apply chain specifics to converted block.
         if is_arbitrum(self.protocol_chain_id()) {
@@ -2706,39 +2702,6 @@ impl<N: Network> Backend<N> {
             block.other.insert(
                 "l1BlockNumber".to_string(),
                 serde_json::json!(self.evm_block_number(number)),
-            );
-        }
-
-        if let Some((
-            timestamp_millis,
-            general_gas_limit,
-            shared_gas_limit,
-            timestamp_millis_part,
-        )) = tempo_fields
-        {
-            block.other.insert(
-                "timestampMillis".to_string(),
-                serde_json::Value::String(format!("0x{timestamp_millis:x}")),
-            );
-            block.other.insert(
-                "mainBlockGeneralGasLimit".to_string(),
-                serde_json::Value::String(format!("0x{general_gas_limit:x}")),
-            );
-            block.other.insert(
-                "sharedGasLimit".to_string(),
-                serde_json::Value::String(format!("0x{shared_gas_limit:x}")),
-            );
-            block.other.insert(
-                "timestampMillisPart".to_string(),
-                serde_json::Value::String(format!("0x{timestamp_millis_part:x}")),
-            );
-        }
-
-        if let Some(consensus_context) = consensus_context {
-            block.other.insert(
-                "consensusContext".to_string(),
-                serde_json::to_value(consensus_context)
-                    .expect("Tempo consensus context serializes"),
             );
         }
 
@@ -7192,7 +7155,13 @@ where
             self.cheats.next_block_overrides().parent_beacon_block_root.value.unwrap_or_default(),
         );
 
-        let inspector_tx_config = self.inspector_tx_config();
+        // The pending block is rebuilt for every request that reads it, and its transactions are
+        // printed when they are mined, so don't print their logs and traces here.
+        let inspector_tx_config = InspectorTxConfig {
+            print_traces: false,
+            print_logs: false,
+            ..self.inspector_tx_config()
+        };
         let gas_config = self.pool_tx_gas_config(&evm_env);
 
         let ExecutedBlock { pool: pool_result, result: block_result, state, .. } = self
@@ -9624,6 +9593,40 @@ impl Backend<FoundryNetwork> {
         block_request: Option<BlockRequest<FoundryTxEnvelope>>,
         block_interval: u64,
     ) -> Result<Vec<SimulatedBlock<AnyRpcBlock>>, BlockchainError> {
+        let (blocks, ()) =
+            self.simulate_raw_with(request, block_request, block_interval, |_, _| ()).await?;
+        Ok(blocks)
+    }
+
+    /// Simulates like `eth_simulateV1` and adds the metadata of each TIP-20 token that is called,
+    /// used as a fee token, or emits a `Transfer` log, read from the base block's state like a
+    /// Tempo node (Tempo-only).
+    pub(crate) async fn tempo_simulate_raw(
+        &self,
+        request: SimulatePayload<WithOtherFields<TransactionRequest>>,
+        block_request: BlockRequest<FoundryTxEnvelope>,
+        block_interval: u64,
+    ) -> Result<TempoSimulateV1Response, BlockchainError> {
+        let mut tokens = tip20_targets(&request);
+        let hardfork = self.tempo_hardfork();
+        let (blocks, token_metadata) = self
+            .simulate_raw_with(request, Some(block_request), block_interval, |base, blocks| {
+                tokens.extend(transferred_tip20s(blocks));
+                crate::eth::backend::tempo::tip20_metadata(base, hardfork, tokens)
+            })
+            .await?;
+        Ok(TempoSimulateV1Response { blocks, token_metadata })
+    }
+
+    /// Simulates a payload while preserving transaction extension fields, then passes the base
+    /// block's state and the simulated blocks to `inspect`.
+    async fn simulate_raw_with<T>(
+        &self,
+        request: SimulatePayload<WithOtherFields<TransactionRequest>>,
+        block_request: Option<BlockRequest<FoundryTxEnvelope>>,
+        block_interval: u64,
+        inspect: impl FnOnce(&dyn DatabaseRef, &[SimulatedBlock<AnyRpcBlock>]) -> T,
+    ) -> Result<(Vec<SimulatedBlock<AnyRpcBlock>>, T), BlockchainError> {
         let senders = request
             .block_state_calls
             .iter()
@@ -9642,7 +9645,8 @@ impl Backend<FoundryNetwork> {
                            base_excess_blob_gas,
                            base_blob_gas_used,
                            base_fee_extra_data: Bytes,
-                           optimism_jovian: bool| {
+                           optimism_jovian: bool,
+                           tempo_parent_fields: Option<(u64, u64, u64)>| {
             let SimulatePayload {
                 block_state_calls,
                 trace_transfers,
@@ -10257,6 +10261,18 @@ impl Backend<FoundryNetwork> {
                     }),
                     ..Default::default()
                 };
+                let header = match tempo_parent_fields {
+                    Some((general_gas_limit, shared_gas_limit, timestamp_millis_part)) => {
+                        FoundryHeader::Tempo(TempoHeader {
+                            inner: header,
+                            general_gas_limit,
+                            shared_gas_limit,
+                            timestamp_millis_part,
+                            consensus_context: None,
+                        })
+                    }
+                    None => header.into(),
+                };
                 let block_hash = header.hash_slow();
                 let withdrawals = (spec_id >= SpecId::SHANGHAI).then_some(Default::default());
                 let size = U256::from(
@@ -10268,6 +10284,10 @@ impl Backend<FoundryNetwork> {
                     .into_block(header.clone())
                     .length(),
                 );
+                let mut other = OtherFields::default();
+                if let Some(header) = header.as_tempo() {
+                    insert_tempo_header_fields(&mut other, header);
+                }
                 for (transaction_index, transaction) in transactions.iter_mut().enumerate() {
                     transaction.block_hash = Some(block_hash);
                     transaction.block_number = Some(header.number);
@@ -10277,7 +10297,7 @@ impl Backend<FoundryNetwork> {
                 let mut block = alloy_rpc_types::Block {
                     header: AnyRpcHeader {
                         hash: block_hash,
-                        inner: header.into(),
+                        inner: header.into_inner().into(),
                         total_difficulty: None,
                         size: Some(size),
                     },
@@ -10296,7 +10316,7 @@ impl Backend<FoundryNetwork> {
                     });
                 }
 
-                let mut block = AnyRpcBlock::new(WithOtherFields::new(block));
+                let mut block = AnyRpcBlock::new(WithOtherFields { inner: block, other });
                 if is_arbitrum(self.protocol_chain_id()) {
                     block
                         .other
@@ -10321,7 +10341,8 @@ impl Backend<FoundryNetwork> {
                 self::monad::advance_block_context(&mut monad_context);
             }
 
-            Ok(block_res)
+            let inspected = inspect(&*cache_db.db, &block_res);
+            Ok((block_res, inspected))
         };
 
         match block_request {
@@ -10354,6 +10375,15 @@ impl Backend<FoundryNetwork> {
                         header.blob_gas_used().unwrap_or_default(),
                         parent_fees.extra_data,
                         optimism_jovian,
+                        self.is_tempo().then(|| {
+                            header.as_tempo().map_or((header.gas_limit, 0, 0), |header| {
+                                (
+                                    header.general_gas_limit,
+                                    header.shared_gas_limit,
+                                    header.timestamp_millis_part,
+                                )
+                            })
+                        }),
                     )
                 })
                 .await?
@@ -10376,6 +10406,8 @@ impl Backend<FoundryNetwork> {
                     &base_block.header.inner,
                     parent_fees.optimism_jovian,
                 );
+                let tempo_parent_fields =
+                    self.is_tempo().then(|| tempo_simulation_parent_fields(&base_block));
 
                 #[cfg(feature = "monad")]
                 let monad_context = if self.is_monad() {
@@ -10400,6 +10432,7 @@ impl Backend<FoundryNetwork> {
                         base_block.header.blob_gas_used().unwrap_or_default(),
                         parent_fees.extra_data,
                         optimism_jovian,
+                        tempo_parent_fields,
                     )
                 })
                 .await?
@@ -11612,6 +11645,36 @@ fn genesis_json_header(genesis: &Genesis) -> Header {
 /// Wraps an Ethereum-shaped header in the selected network's consensus header.
 fn foundry_header(networks: &NetworkConfigs, header: Header) -> FoundryHeader {
     if networks.is_tempo() { FoundryHeader::tempo(header) } else { header.into() }
+}
+
+/// Adds the fields a Tempo header has beyond an Ethereum one to its RPC block, like a Tempo node.
+fn insert_tempo_header_fields(block: &mut OtherFields, header: &TempoHeader) {
+    for (key, value) in [
+        ("timestampMillis", header.timestamp_millis()),
+        ("mainBlockGeneralGasLimit", header.general_gas_limit),
+        ("sharedGasLimit", header.shared_gas_limit),
+        ("timestampMillisPart", header.timestamp_millis_part),
+    ] {
+        block.insert(key.to_string(), serde_json::Value::String(format!("{value:#x}")));
+    }
+    if let Some(consensus_context) = header.consensus_context {
+        block.insert(
+            "consensusContext".to_string(),
+            serde_json::to_value(consensus_context).expect("Tempo consensus context serializes"),
+        );
+    }
+}
+
+/// Returns the Tempo header fields that a block simulated on `parent` keeps, like a Tempo node's
+/// pending block environment: `(general_gas_limit, shared_gas_limit, timestamp_millis_part)`.
+fn tempo_simulation_parent_fields(parent: &AnyRpcBlock) -> (u64, u64, u64) {
+    let field =
+        |key| parent.other.get_deserialized::<U64>(key).and_then(Result::ok).map(|v| v.to());
+    (
+        field("mainBlockGeneralGasLimit").unwrap_or_else(|| parent.header.gas_limit()),
+        field("sharedGasLimit").unwrap_or_default(),
+        field("timestampMillisPart").unwrap_or_default(),
+    )
 }
 
 /// Returns the blobs in `block` with their versioned hashes, in transaction order.

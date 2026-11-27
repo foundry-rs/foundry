@@ -1,0 +1,130 @@
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 10 tests for test/C.t.sol:CTest
+[PASS] test_add() ([GAS])
+Traces:
+  [..] CTest::test_add()
+    ├─ [..] → new C@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 2705 bytes of code
+    ├─ [..] C::runAdd(3, 4) [staticcall]
+    │   ├─ [..] C::add(uint256,uint256)(3, 4)
+    │   │   └─ ← 7
+    │   └─ ← [Return] 7
+    └─ ← [Return]
+
+[PASS] test_asm() ([GAS])
+Traces:
+  [..] CTest::test_asm()
+    ├─ [..] → new C@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 2705 bytes of code
+    ├─ [..] C::runAsm(3) [staticcall]
+    │   ├─ [..] C::asmFn(uint256)(3)
+    │   │   └─ ← 6
+    │   └─ ← [Return] 6
+    └─ ← [Return]
+
+[PASS] test_asm_sub() ([GAS])
+Traces:
+  [..] CTest::test_asm_sub()
+    ├─ [..] → new C@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 2705 bytes of code
+    ├─ [..] C::runAsmSub(10) [staticcall]
+    │   ├─ [..] C::asmSub(uint256)(10)
+    │   │   └─ ← 7
+    │   └─ ← [Return] 7
+    └─ ← [Return]
+
+[PASS] test_fact() ([GAS])
+Traces:
+  [..] CTest::test_fact()
+    ├─ [..] → new C@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 2705 bytes of code
+    ├─ [..] C::runFact(3) [staticcall]
+    │   ├─ [..] C::fact(uint256)(3)
+    │   │   ├─ [..] C::fact(uint256)(2)
+    │   │   │   ├─ [..] C::fact(uint256)(1)
+    │   │   │   │   ├─ [..] C::fact(uint256)(0)
+    │   │   │   │   │   └─ ← 1
+    │   │   │   │   └─ ← 1
+    │   │   │   └─ ← 2
+    │   │   └─ ← 6
+    │   └─ ← [Return] 6
+    └─ ← [Return]
+
+[PASS] test_lib() ([GAS])
+Traces:
+  [..] CTest::test_lib()
+    ├─ [..] → new C@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 2705 bytes of code
+    ├─ [..] C::runLib(3) [staticcall]
+    │   ├─ [..] L::sq(uint256)(3)
+    │   │   └─ ← 9
+    │   └─ ← [Return] 9
+    └─ ← [Return]
+
+[PASS] test_mod() ([GAS])
+Traces:
+  [..] CTest::test_mod()
+    ├─ [..] → new C@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 2705 bytes of code
+    ├─ [..] C::runMod(1)
+    │   ├─ [..] C::onlyPositive(uint256)
+    │   │   └─ ← 
+    │   └─ ← [Return] 1
+    └─ ← [Return]
+
+[PASS] test_ptr() ([GAS])
+Traces:
+  [..] CTest::test_ptr()
+    ├─ [..] → new C@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 2705 bytes of code
+    ├─ [..] C::runPtr(5, true)
+    │   ├─ [..] C::dbl(uint256)(5)
+    │   │   └─ ← 10
+    │   └─ ← [Return] 10
+    └─ ← [Return]
+
+[PASS] test_super() ([GAS])
+Traces:
+  [..] CTest::test_super()
+    ├─ [..] → new C@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 2705 bytes of code
+    ├─ [..] C::runSuper(3)
+    │   ├─ [..] C::v(uint256)(3)
+    │   │   ├─ [..] Base::v(uint256)(3)
+    │   │   │   └─ ← 13
+    │   │   └─ ← 26
+    │   └─ ← [Return] 26
+    └─ ← [Return]
+
+[PASS] test_tail() ([GAS])
+Traces:
+  [..] CTest::test_tail()
+    ├─ [..] → new C@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 2705 bytes of code
+    ├─ [..] C::runTail(5)
+    │   ├─ [..] C::tailOuter(uint256)(5)
+    │   │   ├─ [..] C::tailInner(uint256)(6)
+    │   │   │   └─ ← 18
+    │   │   └─ ← 18
+    │   └─ ← [Return] 18
+    └─ ← [Return]
+
+[PASS] test_tiny() ([GAS])
+Traces:
+  [..] CTest::test_tiny()
+    ├─ [..] → new C@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 2705 bytes of code
+    ├─ [..] C::runTiny(7) [staticcall]
+    │   ├─ [..] C::tiny(uint256)(7)
+    │   │   └─ ← 8
+    │   ├─ [..] C::tiny(uint256)(12)
+    │   │   └─ ← 13
+    │   └─ ← [Return] 21
+    └─ ← [Return]
+
+Suite result: ok. 10 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 10 tests passed, 0 failed, 0 skipped (10 total tests)

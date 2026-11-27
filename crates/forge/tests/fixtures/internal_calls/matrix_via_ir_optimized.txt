@@ -1,0 +1,141 @@
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 13 tests for test/Matrix.t.sol:MatrixTest
+[PASS] test_am() ([GAS])
+Traces:
+  [..] MatrixTest::test_am()
+    ├─ [..] → new Matrix@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 1800 bytes of code
+    ├─ [..] Matrix::am([1, 2]) [staticcall]
+    │   └─ ← [Return] 2
+    └─ ← [Stop]
+
+[PASS] test_ar() ([GAS])
+Traces:
+  [..] MatrixTest::test_ar()
+    ├─ [..] → new Matrix@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 1800 bytes of code
+    ├─ [..] Matrix::ar([1, 2, 3]) [staticcall]
+    │   └─ ← [Return] 4
+    └─ ← [Stop]
+
+[PASS] test_av() ([GAS])
+Traces:
+  [..] MatrixTest::test_av()
+    ├─ [..] → new Matrix@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 1800 bytes of code
+    ├─ [..] Matrix::av(0x0000000000000000000000000000000000001234) [staticcall]
+    │   └─ ← [Return] 4661
+    └─ ← [Stop]
+
+[PASS] test_both() ([GAS])
+Traces:
+  [..] MatrixTest::test_both()
+    ├─ [..] → new Matrix@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 1800 bytes of code
+    ├─ [..] Matrix::both(2)
+    │   ├─ [..] Matrix::both(uint256)(1)
+    │   │   ├─ [..] Matrix::both(uint256)(0)
+    │   │   │   └─ ← 1
+    │   │   └─ ← 1
+    │   ├─ [..] Matrix::both(1)
+    │   │   ├─ [..] Matrix::both(uint256)(0)
+    │   │   │   └─ ← 1
+    │   │   └─ ← [Return] 1
+    │   └─ ← [Return] 2
+    └─ ← [Stop]
+
+[PASS] test_dc() ([GAS])
+Traces:
+  [..] MatrixTest::test_dc()
+    ├─ [..] → new Matrix@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 1800 bytes of code
+    ├─ [..] Matrix::dc(4) [staticcall]
+    │   └─ ← [Return] 9
+    └─ ← [Stop]
+
+[PASS] test_io() ([GAS])
+Traces:
+  [..] MatrixTest::test_io()
+    ├─ [..] → new Matrix@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 1800 bytes of code
+    ├─ [..] Matrix::io(2) [staticcall]
+    │   └─ ← [Return] 7
+    └─ ← [Stop]
+
+[PASS] test_ios() ([GAS])
+Traces:
+  [..] MatrixTest::test_ios()
+    ├─ [..] → new Matrix@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 1800 bytes of code
+    ├─ [..] Matrix::ios(3) [staticcall]
+    │   └─ ← [Return] 6
+    └─ ← [Stop]
+
+[PASS] test_rec() ([GAS])
+Traces:
+  [..] MatrixTest::test_rec()
+    ├─ [..] → new Matrix@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 1800 bytes of code
+    ├─ [..] Matrix::rec(2) [staticcall]
+    │   ├─ [..] Matrix::rec(uint256)(1)
+    │   │   ├─ [..] Matrix::rec(uint256)(0)
+    │   │   │   └─ ← 0
+    │   │   └─ ← 1
+    │   └─ ← [Return] 2
+    └─ ← [Stop]
+
+[PASS] test_same() ([GAS])
+Traces:
+  [..] MatrixTest::test_same()
+    ├─ [..] → new Matrix@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 1800 bytes of code
+    ├─ [..] Matrix::same(7)
+    │   ├─ [..] Matrix::same(uint256)(7)
+    │   │   └─ ← 7
+    │   └─ ← [Return] 7
+    └─ ← [Stop]
+
+[PASS] test_sc() ([GAS])
+Traces:
+  [..] MatrixTest::test_sc()
+    ├─ [..] → new Matrix@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 1800 bytes of code
+    ├─ [..] Matrix::sc(S({ a: 4 })) [staticcall]
+    │   ├─ [..] Matrix::sc(uint256)(4)
+    │   │   └─ ← 5
+    │   └─ ← [Return] 5
+    └─ ← [Stop]
+
+[PASS] test_st() ([GAS])
+Traces:
+  [..] MatrixTest::test_st()
+    ├─ [..] → new Matrix@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 1800 bytes of code
+    ├─ [..] Matrix::st(S({ a: 4 })) [staticcall]
+    │   └─ ← [Return] 5
+    └─ ← [Stop]
+
+[PASS] test_sup() ([GAS])
+Traces:
+  [..] MatrixTest::test_sup()
+    ├─ [..] → new Matrix@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 1800 bytes of code
+    ├─ [..] Matrix::sup(5) [staticcall]
+    │   └─ ← [Return] 12
+    └─ ← [Stop]
+
+[PASS] test_sw() ([GAS])
+Traces:
+  [..] MatrixTest::test_sw()
+    ├─ [..] → new Matrix@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 1800 bytes of code
+    ├─ [..] Matrix::sw(3) [staticcall]
+    │   └─ ← [Return] 4
+    └─ ← [Stop]
+
+Suite result: ok. 13 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 13 tests passed, 0 failed, 0 skipped (13 total tests)

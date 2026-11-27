@@ -10559,7 +10559,7 @@ contract LinkedDeployScript is Script {
 }
 
 /// A script that broadcasts from an upgraded EOA signs with its owners, also when the EOA's
-/// retired root key is among the wallets.
+/// retired root key is among the wallets or is the account's only owner.
 #[forgetest_init]
 async fn tempo_t14_script_broadcasts_from_upgraded_eoa(prj: _, cmd: _) {
     prj.initialize_default_contracts();
@@ -10589,51 +10589,73 @@ contract UpgradedDeployScript is Script {
     let fee_token = foundry_common::tempo::ALPHA_USD_ADDRESS.to_string();
     let upgrade = prj.add_script(
         "Upgrade.s.sol",
-        &format!(
-            r#"
-import {{Script}} from "forge-std/Script.sol";
+        r#"
+import {Script} from "forge-std/Script.sol";
 
-interface IConfigurableAccount {{
-    struct ConfigurableAccountOwner {{
+interface IConfigurableAccount {
+    struct ConfigurableAccountOwner {
         address owner;
         uint8 weight;
-    }}
+    }
 
     function upgradeAccount(uint8 threshold, ConfigurableAccountOwner[] calldata owners) external;
-}}
+}
 
-contract UpgradeScript is Script {{
-    function run() external {{
+contract UpgradeScript is Script {
+    function run() external {
         IConfigurableAccount.ConfigurableAccountOwner[] memory owners =
             new IConfigurableAccount.ConfigurableAccountOwner[](1);
-        owners[0] = IConfigurableAccount.ConfigurableAccountOwner({owner}, 1);
+        owners[0] = IConfigurableAccount.ConfigurableAccountOwner(vm.envAddress("OWNER"), 1);
         vm.startBroadcast();
         (bool ok,) = address(0xAACC000000000000000000000000000000000000).call(
             abi.encodeCall(IConfigurableAccount.upgradeAccount, (1, owners))
         );
         require(ok, "upgrade failed");
         vm.stopBroadcast();
-    }}
-}}
-"#
-        ),
+    }
+}
+"#,
     );
-    cmd.forge_fuse().arg("script").arg(&upgrade).args(["--rpc-url", &rpc, "--broadcast"]);
-    cmd.args(["--network", "tempo", "--tempo.fee-token", &fee_token]);
-    cmd.args(["--private-key", &root_key, "--skip-simulation"]).assert_success();
+    // `cast wallet upgrade` makes the EOA's own key its only owner by default.
+    let self_owned = handle.dev_wallets().nth(4).unwrap();
+    let self_owned_key = hex::encode_prefixed(self_owned.to_bytes());
+    for (key, owner) in [(&root_key, owner), (&self_owned_key, self_owned.address())] {
+        cmd.forge_fuse().arg("script").arg(&upgrade).args(["--rpc-url", &rpc, "--broadcast"]);
+        cmd.args(["--network", "tempo", "--tempo.fee-token", &fee_token]);
+        cmd.args(["--private-key", key, "--skip-simulation"]);
+        cmd.env("OWNER", owner.to_string());
+        cmd.assert_success();
+    }
 
-    // The owner key is a wallet, then a `--tempo.owner`.
+    // The owner key is a wallet, then a `--tempo.owner`, then the self-owned EOA's own key.
+    let root_sender = root.address().to_string();
     let owner_arg = format!("private-key://{}", keys[0]);
-    for owner in [["--private-keys", keys[0].as_str()], ["--tempo.owner", owner_arg.as_str()]] {
+    for (sender, wallets) in [
+        (
+            root.address(),
+            vec!["--sender", &root_sender, "--private-keys", &root_key, "--private-keys", &keys[0]],
+        ),
+        (
+            root.address(),
+            vec![
+                "--sender",
+                &root_sender,
+                "--private-keys",
+                &root_key,
+                "--tempo.owner",
+                &owner_arg,
+            ],
+        ),
+        (self_owned.address(), vec!["--private-key", &self_owned_key]),
+    ] {
         cmd.forge_fuse().arg("script").arg(&script).args(["--rpc-url", &rpc, "--broadcast"]);
         cmd.args(["--network", "tempo", "--tempo.fee-token", &fee_token]);
-        cmd.args(["--sender", &root.address().to_string(), "--private-keys", &root_key]);
-        cmd.args(owner).assert_success();
+        cmd.args(wallets).assert_success();
         let block = provider.get_block_number().await.unwrap();
         let receipts = provider.get_block_receipts(block.into()).await.unwrap().unwrap();
         let receipt = receipts.last().unwrap();
         assert!(receipt.status());
-        assert_eq!(receipt.from(), root.address());
+        assert_eq!(receipt.from(), sender);
         let raw = provider
             .raw_request::<_, Bytes>(
                 "eth_getRawTransactionByHash".into(),
@@ -10646,6 +10668,33 @@ contract UpgradeScript is Script {{
         };
         assert!(signed.signature().as_configurable_account().is_some());
     }
+
+    // An owner key of the upgraded EOA cannot also send on its own in the same script.
+    let conflict = prj.add_script(
+        "UpgradedConflict.s.sol",
+        r#"
+import {Script} from "forge-std/Script.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract UpgradedConflictScript is Script {
+    function run() external {
+        vm.broadcast(vm.envAddress("OWNER"));
+        new Counter();
+        vm.broadcast(vm.envAddress("ROOT"));
+        new Counter();
+    }
+}
+"#,
+    );
+    cmd.forge_fuse().arg("script").arg(&conflict).args(["--rpc-url", &rpc, "--broadcast"]);
+    cmd.args(["--network", "tempo", "--tempo.fee-token", &fee_token, "--skip-simulation"]);
+    cmd.args(["--private-keys", &root_key, "--private-keys", &keys[0]]);
+    cmd.env("OWNER", owner.to_string());
+    cmd.env("ROOT", &root_sender);
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: 0xeD5970f07eea5A9E7b359D3c5d3F82b34a8F1E15 signs both as a sender and as an owner of a Tempo configurable account in this script, which is not supported; broadcast them in separate scripts
+
+"#]]);
 
     // `--resume` with only the retired root key loaded runs the script again to collect the
     // owner key it remembers.
@@ -12281,6 +12330,20 @@ Script ran successfully.
 ...
 "#]],
     );
+
+    // Decoding internal calls does not request outputs the cache lacks, which would compile.
+    cmd.forge_fuse()
+        .arg("script")
+        .arg(&script)
+        .args(["--no-compile", "--decode-internal", "-vvvv"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+No files changed, compilation skipped
+Traces:
+...
+Script ran successfully.
+...
+"#]]);
 
     prj.add_source("Foo", "contract Demo { function run() external pure {} }");
     cmd.forge_fuse()

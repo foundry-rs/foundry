@@ -2225,6 +2225,29 @@ contract CheckIntervalTest is Test {
         require(handler.counter() == 0 || handler.counter() == 10, "not multiple of depth");
     }
 }
+
+// The first call breaks the invariant and every later call reverts.
+contract BrickingHandler {
+    bool public broken;
+
+    function step() public {
+        require(!broken, "bricked");
+        broken = true;
+    }
+}
+
+contract CheckIntervalRevertTest is Test {
+    BrickingHandler handler;
+
+    function setUp() public {
+        handler = new BrickingHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_not_broken() public view {
+        require(!handler.broken(), "broken");
+    }
+}
    "#,
     );
 
@@ -2233,6 +2256,18 @@ contract CheckIntervalTest is Test {
 [PASS] invariant_counter_multiple_of_depth() (runs: 1, calls: 10, reverts: 0)
 ...
 "#]]);
+
+    // The last call reverts, and its check still runs.
+    cmd.forge_fuse().args(["test", "--mt", "invariant_not_broken"]).assert_failure().stdout_eq(
+        str![[r#"
+...
+[FAIL: broken]
+[..][Sequence] (original: 1, shrunk: 1)
+[..]calldata=step() args=[]
+ invariant_not_broken() (runs: 1, calls: 10, reverts: 9)
+...
+"#]],
+    );
 }
 
 // Tests that check_interval=1 (default) asserts after every call.
@@ -2270,6 +2305,32 @@ contract CheckIntervalTest is Test {
         require(handler.counter() <= 5, "counter > 5");
     }
 }
+
+// Every call reverts, so only its time delay stays.
+contract RevertingHandler {
+    uint256 public writes;
+
+    function step() public {
+        writes++;
+        revert("always reverts");
+    }
+}
+
+contract CheckIntervalDelayTest is Test {
+    RevertingHandler handler;
+    uint256 start;
+
+    function setUp() public {
+        handler = new RevertingHandler();
+        targetContract(address(handler));
+        start = block.timestamp;
+    }
+
+    /// forge-config: default.invariant.max_time_delay = 1000
+    function invariant_time_does_not_move() public view {
+        require(block.timestamp == start, "time moved");
+    }
+}
    "#,
     );
 
@@ -2281,6 +2342,17 @@ contract CheckIntervalTest is Test {
 ...
 "#
     ]]);
+
+    // A reverted call keeps its time delay, so its check still runs.
+    assert_invariant(cmd.forge_fuse().args(["test", "--mt", "invariant_time"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: time moved]
+	[SEQUENCE]
+ invariant_time_does_not_move() ([RUNS])
+...
+"#]]);
 }
 
 // Tests that check_interval=N checks every N calls AND always on the last call.
@@ -2318,6 +2390,29 @@ contract CheckIntervalTest is Test {
         require(handler.counter() % 5 == 0, "not multiple of 5");
     }
 }
+
+// The first call breaks the invariant and every later call reverts.
+contract BrickingHandler {
+    bool public broken;
+
+    function step() public {
+        require(!broken, "bricked");
+        broken = true;
+    }
+}
+
+contract CheckIntervalRevertTest is Test {
+    BrickingHandler handler;
+
+    function setUp() public {
+        handler = new BrickingHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_not_broken() public view {
+        require(!handler.broken(), "broken");
+    }
+}
    "#,
     );
 
@@ -2326,6 +2421,18 @@ contract CheckIntervalTest is Test {
 [PASS] invariant_counter_multiple_of_five() (runs: 1, calls: 20, reverts: 0)
 ...
 "#]]);
+
+    // Call 5 reverts, and its check still runs.
+    cmd.forge_fuse().args(["test", "--mt", "invariant_not_broken"]).assert_failure().stdout_eq(
+        str![[r#"
+...
+[FAIL: broken]
+[..][Sequence] (original: 1, shrunk: 1)
+[..]calldata=step() args=[]
+ invariant_not_broken() (runs: 1, calls: 5, reverts: 4)
+...
+"#]],
+    );
 }
 
 // Tests check_interval via inline config annotation.

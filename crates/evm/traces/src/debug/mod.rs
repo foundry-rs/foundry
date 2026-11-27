@@ -1,19 +1,23 @@
+mod functions;
+mod internal_calls;
 mod recording;
 mod sources;
 
-use crate::{CallTraceNode, CallTraceStep, DecodedInternalCall, DecodedTraceStep};
-use alloy_dyn_abi::{
-    DynSolType, DynSolValue, Specifier,
-    parser::{Parameters, Storage},
-};
-use alloy_primitives::U256;
+use crate::{CallTraceNode, DecodedInternalCall, DecodedTraceStep};
+use alloy_dyn_abi::{DynSolType, DynSolValue, parser::Storage};
+use alloy_primitives::{U256, keccak256};
 use evm2::interpreter::opcode::OpCode;
 use foundry_common::fmt::format_token;
-use foundry_compilers::artifacts::sourcemap::{Jump, SourceElement};
+use foundry_compilers::{artifacts::sourcemap::Jump, buildinfo::SourceEdit};
+pub use functions::{AbiType, FunctionInfo, LibrarySignature, SourceFunction};
+use functions::{names_agree, without_number};
+pub use internal_calls::{CallConvention, CodeFunctions, FunctionEntry, UnlistedFunction};
+use internal_calls::{ResolvedEntry, SourceMapFunction, TrackerContext, track_internal_calls};
 pub use recording::{
     DebugRecording, DebugStepSink, RecordedFrame, StepConverter, StepStorage, quantity, step_record,
 };
-pub use sources::{ArtifactData, ContractSources, SourceData};
+pub use sources::{ArtifactData, ContractSources, SourceData, function_id, lower_sources};
+use std::sync::Arc;
 
 #[derive(Clone, Debug)]
 pub struct DebugTraceIdentifier {
@@ -39,299 +43,284 @@ impl DebugTraceIdentifier {
         sources: &ContractSources,
         contract_name: &str,
     ) {
-        DebugStepsWalker::new(node, sources, contract_name).walk();
+        let is_create = node.trace.kind.is_any_create();
+        // The code ran if it has every jump destination that the call executed.
+        let ran = |artifact: &ArtifactData| {
+            let jumpdests = &artifact.functions(is_create).jumpdests;
+            node.trace
+                .steps
+                .iter()
+                .filter(|step| step.op == OpCode::JUMPDEST)
+                .all(|step| jumpdests.contains(&step.pc))
+        };
+        let Some(artifact) = sources.find_artifact(contract_name, is_create, ran) else { return };
+        // Without an ABI every external function counts as dispatched.
+        let selected =
+            node.trace.data.first_chunk().and_then(|selector| artifact.selectors.get(selector));
+        // The signature tells overloads apart. A library dispatches by a signature that spells
+        // enums, structs and contracts by name and storage pointers with `storage`, which is no
+        // signature of its ABI, so the selector of the call data is compared to the selector of
+        // that signature. The source of the artifact tells whether it is a library; contracts of
+        // the same name in other sources are others.
+        let is_library = sources.is_library(artifact, contract_name);
+        let calldata_selector = node.trace.data.first_chunk::<4>();
+        let is_dispatched =
+            |function: &FunctionInfo| match (&function.library_signature, is_library) {
+                (LibrarySignature::Exact(signature), true) => calldata_selector
+                    .is_some_and(|selector| keccak256(signature)[..4] == selector[..]),
+                (LibrarySignature::Internal, true) => false,
+                _ => {
+                    artifact.selectors.is_empty()
+                        || selected.is_some_and(|selected| function.matches_signature(selected))
+                }
+            };
+        let resolve = |pc: u32, entries: &[FunctionEntry]| {
+            resolve_entry(sources, artifact, contract_name, is_create, pc, entries)
+        };
+        let src_map = |step: usize| {
+            sources.source_mapping_in(artifact, node.trace.steps.get(step)?.pc, is_create)
+        };
+        // The name that the call at a `JUMP` step calls, from the source location of the jump,
+        // which is the call expression.
+        let callee_name = |step: usize| {
+            let (jump, source) = src_map(step)?;
+            if jump.jump() != Jump::In {
+                return None;
+            }
+            let offset = SourceEdit::original_offset(&source.source_edits, jump.offset() as usize);
+            source.call_sites.get(&offset).cloned()
+        };
+        let context = TrackerContext {
+            code: artifact.functions(is_create),
+            resolve: &resolve,
+            is_create,
+            convention: CallConvention::solc(artifact.via_ir),
+            calldata: node.trace.data.as_ref(),
+            is_dispatched: &is_dispatched,
+            callee_name: &callee_name,
+            from_source_map: &|step| source_map_function(node, sources, artifact, step),
+        };
+        let calls = track_internal_calls(&node.trace.steps, &context);
+        for internal_call in calls {
+            *node.trace.steps[internal_call.start].decoded_mut() =
+                DecodedTraceStep::InternalCall(internal_call.call, internal_call.end);
+        }
     }
 }
 
-/// Walks through the [CallTraceStep]s attempting to match JUMPs to internal functions.
+/// Names the function that a call to the entry at offset `pc` runs, among the `entries` there.
 ///
-/// This is done by looking up jump kinds in the source maps. The structure of internal function
-/// call always looks like this:
-///     - JUMP
-///     - JUMPDEST
-///     ... function steps ...
-///     - JUMP
-///     - JUMPDEST
-///
-/// The assumption we rely on is that first JUMP into function will be marked as [Jump::In] in
-/// source map, and second JUMP out of the function will be marked as [Jump::Out].
-///
-/// Also, we rely on JUMPDEST after first JUMP pointing to the source location of the body of
-/// function which was entered. We pass this source part to [parse_function_from_loc] to extract the
-/// function name.
-///
-/// When we find a [Jump::In] and identify the function name, we push it to the stack.
-///
-/// When we find a [Jump::Out] we try to find a matching [Jump::In] in the stack. A match is found
-/// when source location of the JUMP-in matches the source location of final JUMPDEST (this would be
-/// the location of the function invocation), or when source location of first JUMODEST matches the
-/// source location of the JUMP-out (this would be the location of function body).
-///
-/// When a match is found, all items which were pushed after the matched function are removed. There
-/// is a lot of such items due to source maps getting malformed during optimization.
-struct DebugStepsWalker<'a> {
-    node: &'a mut CallTraceNode,
-    current_step: usize,
-    stack: Vec<(String, usize)>,
-    sources: &'a ContractSources,
-    contract_name: &'a str,
+/// The source map places the entry at the start of the function's definition, which gives the
+/// function in the AST of the source file. The entry is that function only if its key, which
+/// spells the function name, agrees. Entries without a function name, which the compiler
+/// generated, are not shown.
+fn resolve_entry(
+    sources: &ContractSources,
+    artifact: &ArtifactData,
+    contract_name: &str,
+    is_create: bool,
+    pc: u32,
+    entries: &[FunctionEntry],
+) -> Option<ResolvedEntry> {
+    let named = entries.iter().filter(|entry| entry.name.is_some()).collect::<Vec<_>>();
+    let entry = *named.first()?;
+    let (source, offset) = match sources.source_mapping_in(artifact, pc, is_create) {
+        Some((element, source)) => {
+            let offset =
+                SourceEdit::original_offset(&source.source_edits, element.offset() as usize);
+            (Some(source), offset)
+        }
+        None => (None, 0),
+    };
+    let defined = source.and_then(|source| source.functions.get(&offset)).map(Arc::as_ref);
+    let defined_id = source.map_or(0, |source| function_id(&source.path, offset));
+    let mut function = match choose_entry(&named, defined) {
+        Choice::Function(function) => function.info(),
+        // The entries do not tell which contract's function ran.
+        Choice::Ambiguous(function) => {
+            FunctionInfo::untyped(function.name.clone(), function.is_entry)
+        }
+        // Without the source of the function there is nothing to confirm that the entry is a
+        // function of the code, and not one that the compiler generated, such as the helper that
+        // encodes the constructor arguments of a deployment.
+        Choice::KeyName if source.is_none() => return None,
+        Choice::KeyName => {
+            FunctionInfo::untyped(without_number(entry.name.as_deref()?).to_string(), false)
+        }
+        Choice::Hidden => return None,
+    };
+    // The functions that the table lists without an entry point, which can be merged into this
+    // entry: they take and leave as many words, and their body is the one of the function that
+    // kept the entry.
+    let same_body = defined
+        .and_then(|defined| defined.body_hash)
+        .and_then(|hash| sources.functions_by_body.get(&hash));
+    // The key of a function without an entry point names a function of the contract or of the
+    // contracts that it inherits from.
+    let contracts = sources.contract_and_bases(contract_name);
+    function.merged = artifact
+        .functions(is_create)
+        .unlisted
+        .iter()
+        .filter(|unlisted| {
+            (unlisted.parameter_slots, unlisted.return_slots)
+                == (entry.parameter_slots, entry.return_slots)
+                && same_body.is_some_and(|functions| {
+                    functions.iter().any(|other| {
+                        other.id != defined_id
+                            && names_agree(&unlisted.name, &other.name)
+                            && other.contract.as_ref().is_none_or(|c| contracts.contains(c))
+                    })
+                })
+        })
+        .map(|unlisted| unlisted.name.clone())
+        .collect();
+    Some((entry.parameter_slots, entry.return_slots, function))
 }
 
-impl<'a> DebugStepsWalker<'a> {
-    pub const fn new(
-        node: &'a mut CallTraceNode,
-        sources: &'a ContractSources,
-        contract_name: &'a str,
-    ) -> Self {
-        Self { node, current_step: 0, stack: Vec::new(), sources, contract_name }
-    }
+/// What a call to an entry runs.
+enum Choice<'a> {
+    /// The function that the source map and the key agree on.
+    Function(&'a SourceFunction),
+    /// Functions that the compiler merged into one entry, which share a name, such as overloads
+    /// that differ in a type only, or functions of other contracts. The call does not tell which
+    /// of them ran.
+    Ambiguous(&'a SourceFunction),
+    /// The name of the key, if the source map has no function that agrees with it.
+    KeyName,
+    /// Merged functions with different names, which the call cannot tell apart.
+    Hidden,
+}
 
-    fn current_step(&self) -> &CallTraceStep {
-        &self.node.trace.steps[self.current_step]
+/// Decides what a call to an entry runs, given the entries `named` at its offset, of which there
+/// is at least one, and the function `defined` at the offset in the source.
+///
+/// The compiler merges functions with the same code into one entry, and the call does not tell
+/// which of them ran. Such a call is shown only if they share a name, and then without types or
+/// contract.
+fn choose_entry<'a>(named: &[&FunctionEntry], defined: Option<&'a SourceFunction>) -> Choice<'a> {
+    let agrees = |entry: &&FunctionEntry, function: &SourceFunction| {
+        entry.name.as_deref().is_some_and(|key_name| names_agree(key_name, &function.name))
+    };
+    match (named, defined) {
+        ([entry], Some(function)) if agrees(entry, function) => Choice::Function(function),
+        ([_], _) => Choice::KeyName,
+        (_, Some(function)) if named.iter().all(|entry| agrees(entry, function)) => {
+            Choice::Ambiguous(function)
+        }
+        _ => Choice::Hidden,
     }
+}
 
-    fn src_map(&self, step: usize) -> Option<(SourceElement, &SourceData)> {
-        self.sources.find_source_mapping(
-            self.contract_name,
-            self.node.trace.steps[step].pc,
-            self.node.trace.kind.is_any_create(),
+/// A parameter or return value of an internal function.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Param {
+    /// The ABI type, if it has one.
+    pub ty: Option<DynSolType>,
+    /// The data location.
+    pub storage: Option<Storage>,
+    /// The number of stack words the value takes.
+    pub slots: usize,
+}
+
+/// Finds the internal function that a `JUMP` enters from the jump marker and the source location
+/// of the function body in the source map. Returns the function with the number of stack words it
+/// takes and returns.
+///
+/// This is how functions that `functionDebugData` does not list are found, such as inline assembly
+/// functions in legacy codegen.
+fn source_map_function(
+    node: &CallTraceNode,
+    sources: &ContractSources,
+    artifact: &ArtifactData,
+    step: usize,
+) -> Option<SourceMapFunction> {
+    let src_map = |step: usize| {
+        sources.source_mapping_in(
+            artifact,
+            node.trace.steps.get(step)?.pc,
+            node.trace.kind.is_any_create(),
         )
-    }
-
-    fn prev_src_map(&self) -> Option<(SourceElement, &SourceData)> {
-        if self.current_step == 0 {
-            return None;
-        }
-
-        self.src_map(self.current_step - 1)
-    }
-
-    fn is_same_loc(&self, step: usize, other: usize) -> bool {
-        let Some((loc, _)) = self.src_map(step) else {
-            return false;
-        };
-        let Some((other_loc, _)) = self.src_map(other) else {
-            return false;
-        };
-
-        same_loc(&loc, &other_loc)
-    }
-
-    /// Invoked when current step is a JUMPDEST preceded by a JUMP marked as [Jump::In].
-    ///
-    /// `prev_source_element` is the source element of the JUMP.
-    fn jump_in(&mut self, prev_source_element: &SourceElement) {
-        let Some((source_element, source)) = self.src_map(self.current_step) else {
-            return;
-        };
-
-        // This usually means that this is a jump into the external function which is an
-        // entrypoint for the current frame. We don't want to include this to avoid
-        // duplicating traces.
-        if same_loc(&source_element, prev_source_element) {
-            return;
-        }
-
-        if let Some(name) = parse_function_from_loc(source, &source_element) {
-            self.stack.push((name, self.current_step - 1));
-        }
-    }
-
-    /// Invoked when current step is a JUMPDEST preceded by a JUMP marked as [Jump::Out].
-    fn jump_out(&mut self) {
-        let Some((i, _)) = self.stack.iter().enumerate().rfind(|(_, (_, step_idx))| {
-            self.is_same_loc(*step_idx, self.current_step)
-                || self.is_same_loc(step_idx + 1, self.current_step - 1)
-        }) else {
-            return;
-        };
-        // We've found a match, remove all records between start and end, those
-        // are considered invalid.
-        let (func_name, start_idx) = self.stack.split_off(i).swap_remove(0);
-
-        // Try to decode function inputs and outputs from the stack and memory.
-        let (inputs, outputs) = self
-            .src_map(start_idx + 1)
-            .and_then(|(source_element, source)| {
-                let start = source_element.offset() as usize;
-                let (fn_definition, _) =
-                    source_span(&source.source, start, source_element.length() as usize)?;
-                let fn_definition = fn_definition.replace('\n', "");
-                let (inputs, outputs) = parse_types(&fn_definition);
-
-                Some((
-                    inputs.and_then(|t| {
-                        decode_step_parameters(
-                            &t,
-                            &self.node.trace.steps[start_idx + 1],
-                            Some(self.node.trace.data.as_ref()),
-                        )
-                    }),
-                    outputs.and_then(|t| decode_step_parameters(&t, self.current_step(), None)),
-                ))
-            })
-            .unwrap_or_default();
-
-        *self.node.trace.steps[start_idx].decoded_mut() = DecodedTraceStep::InternalCall(
-            DecodedInternalCall { func_name, args: inputs, return_data: outputs },
-            self.current_step,
-        );
-    }
-
-    fn process(&mut self) {
-        // We are only interested in JUMPs.
-        if self.current_step().op != OpCode::JUMP && self.current_step().op != OpCode::JUMPDEST {
-            return;
-        }
-
-        let Some((prev_source_element, _)) = self.prev_src_map() else {
-            return;
-        };
-
-        match prev_source_element.jump() {
-            Jump::In => self.jump_in(&prev_source_element),
-            Jump::Out => self.jump_out(),
-            _ => {}
-        };
-    }
-
-    fn step(&mut self) {
-        self.process();
-        self.current_step += 1;
-    }
-
-    pub fn walk(mut self) {
-        while self.current_step < self.node.trace.steps.len() {
-            self.step();
-        }
-    }
-}
-
-/// Returns whether both source elements refer to the same source location.
-fn same_loc(loc: &SourceElement, other: &SourceElement) -> bool {
-    loc.offset() == other.offset() && loc.length() == other.length() && loc.index() == other.index()
-}
-
-/// Tries to parse the function name from the source code and detect the contract name which
-/// contains the given function.
-///
-/// Returns a string in the format `Contract::function(types)` when parameters can be resolved,
-/// falling back to `Contract::function`.
-fn parse_function_from_loc(source: &SourceData, loc: &SourceElement) -> Option<String> {
-    let start = loc.offset() as usize;
-    let (source_part, end) = source_span(&source.source, start, loc.length() as usize)?;
-
-    if !source_part.starts_with("function") {
+    };
+    let (jump, _) = src_map(step)?;
+    if jump.jump() != Jump::In {
         return None;
     }
-    let function_name = source_part.split_once("function")?.1.split('(').next()?.trim();
-    let contract_name = source.find_contract_name(start, end)?;
-
-    Some(internal_function_identifier(contract_name, function_name, source_part))
-}
-
-fn internal_function_identifier(
-    contract_name: &str,
-    function_name: &str,
-    source_part: &str,
-) -> String {
-    let signature = canonical_function_signature(function_name, source_part)
-        .unwrap_or_else(|| function_name.to_string());
-    format!("{contract_name}::{signature}")
-}
-
-fn canonical_function_signature(function_name: &str, source_part: &str) -> Option<String> {
-    let source_part = source_part.replace('\n', "");
-    let (inputs, _) = parse_types(&source_part);
-    let inputs = inputs?;
-    let types =
-        inputs.params.iter().map(|param| param.resolve().ok()).collect::<Option<Vec<_>>>()?;
-    Some(function_signature(function_name, &types))
-}
-
-/// Formats an ABI-style function signature from a name and canonical parameter types.
-pub fn function_signature(function_name: &str, types: &[DynSolType]) -> String {
-    let mut signature = String::new();
-    signature.push_str(function_name);
-    signature.push('(');
-    for (i, ty) in types.iter().enumerate() {
-        if i > 0 {
-            signature.push(',');
-        }
-        signature.push_str(&ty.sol_type_name());
+    let (loc, source) = src_map(step + 1)?;
+    // This usually means that this is a jump into the external function which is an
+    // entrypoint for the current frame. We don't want to include this to avoid
+    // duplicating traces.
+    if loc.offset() == jump.offset() && loc.length() == jump.length() && loc.index() == jump.index()
+    {
+        return None;
     }
-    signature.push(')');
-    signature
+
+    let offset = SourceEdit::original_offset(&source.source_edits, loc.offset() as usize);
+    let defined = source.functions.get(&offset)?;
+    let function = defined.info();
+    let slots = |params: &Option<Vec<Param>>| params.iter().flatten().map(|p| p.slots).sum();
+    // Yul functions take their first argument on top, as via-IR functions do.
+    let convention = if defined.is_yul {
+        Some(CallConvention::SolcViaIr)
+    } else {
+        CallConvention::solc(artifact.via_ir)
+    };
+    Some(SourceMapFunction {
+        parameter_slots: slots(&function.params),
+        return_slots: slots(&function.returns),
+        function,
+        convention,
+    })
 }
 
-fn source_span(source: &str, start: usize, len: usize) -> Option<(&str, usize)> {
-    let end = start.checked_add(len)?;
-
-    Some((source.get(start..end)?, end))
+/// Whether `args`, the decoded arguments of a call to a public function, are the arguments that
+/// the call data holds for it. They are not if the call data does not decode with the types of
+/// the parameters, or decodes to other values. An argument or type that is not known matches.
+pub fn args_match_calldata(params: &[Param], args: &[String], calldata: &[u8]) -> bool {
+    let Some(types) = params.iter().map(|param| param.ty.clone()).collect::<Option<Vec<_>>>()
+    else {
+        return true;
+    };
+    let Ok(DynSolValue::Tuple(values)) =
+        DynSolType::Tuple(types).abi_decode_params(calldata.get(4..).unwrap_or_default())
+    else {
+        return false;
+    };
+    values.len() == args.len()
+        && values
+            .iter()
+            .zip(args)
+            .all(|(value, arg)| arg == "<unknown>" || format_token(value) == *arg)
 }
 
-/// Parses function input and output types into [Parameters].
-fn parse_types(source: &str) -> (Option<Parameters<'_>>, Option<Parameters<'_>>) {
-    let inputs = source.find('(').and_then(|params_start| {
-        let params_end = params_start + source[params_start..].find(')')?;
-        Parameters::parse(&source[params_start..params_end + 1]).ok()
-    });
-    let outputs = source.find("returns").and_then(|returns_start| {
-        let return_params_start = returns_start + source[returns_start..].find('(')?;
-        let return_params_end = return_params_start + source[return_params_start..].find(')')?;
-        Parameters::parse(&source[return_params_start..return_params_end + 1]).ok()
-    });
-
-    (inputs, outputs)
-}
-
-/// Given [Parameters] and [CallTraceStep], tries to decode parameters by using stack, memory, and
+/// Decodes parameters from the stack words they take, in parameter order, and from memory and
 /// call data.
-pub fn decode_step_parameters(
-    args: &Parameters<'_>,
-    step: &CallTraceStep,
+///
+/// Returns `None` if `words` is not the exact number of stack words that the parameters take.
+pub fn decode_parameters(
+    params: &[Param],
+    words: &[U256],
+    memory: Option<&[u8]>,
     calldata: Option<&[u8]>,
 ) -> Option<Vec<String>> {
-    let params = &args.params;
-
-    if params.is_empty() {
-        return Some(vec![]);
-    }
-
-    let types = params
-        .iter()
-        .map(|p| {
-            p.resolve().ok().map(|t| {
-                let slots = stack_slots(&t, p.storage);
-                (t, p.storage, slots)
-            })
-        })
-        .collect::<Vec<_>>();
-
-    let stack = step.stack.as_ref()?;
-    let stack_slots =
-        types.iter().map(|type_| type_.as_ref().map_or(1, |(_, _, slots)| *slots)).sum::<usize>();
-
-    if stack.len() < stack_slots {
+    if words.len() != params.iter().map(|param| param.slots).sum::<usize>() {
         return None;
     }
 
-    let inputs = &stack[stack.len() - stack_slots..];
-    let memory = step.memory.as_ref().map(|memory| memory.as_bytes().as_ref());
     let mut input_idx = 0;
-    let mut decoded = Vec::with_capacity(types.len());
+    let mut decoded = Vec::with_capacity(params.len());
 
-    for type_and_storage in &types {
-        let Some((type_, storage, slots)) = type_and_storage.as_ref() else {
-            input_idx += 1;
+    for param in params {
+        let slots = param.slots;
+        let input = &words[input_idx..input_idx + slots];
+        input_idx += slots;
+        let Some(ty) = &param.ty else {
             decoded.push("<unknown>".to_string());
             continue;
         };
-        let input = &inputs[input_idx..input_idx + *slots];
-        input_idx += *slots;
 
         decoded.push(
-            decode_parameter(type_, *storage, input, memory, calldata)
+            decode_parameter(ty, param.storage, input, memory, calldata)
                 .as_ref()
                 .map(format_token)
                 .unwrap_or_else(|| "<unknown>".to_string()),
@@ -339,16 +328,6 @@ pub fn decode_step_parameters(
     }
 
     Some(decoded)
-}
-
-const fn stack_slots(ty: &DynSolType, storage: Option<Storage>) -> usize {
-    match (ty, storage) {
-        (
-            DynSolType::String | DynSolType::Bytes | DynSolType::Array(_),
-            Some(Storage::Calldata),
-        ) => 2,
-        _ => 1,
-    }
 }
 
 fn decode_parameter(
@@ -387,13 +366,12 @@ fn decode_from_calldata(
             let length: usize = stack_words.get(1)?.try_into().ok()?;
             let data = memory_range(calldata, offset, length)?;
 
-            match ty {
-                DynSolType::Bytes => Some(DynSolValue::Bytes(data.to_vec())),
+            Some(match ty {
                 DynSolType::String => {
-                    Some(DynSolValue::String(String::from_utf8_lossy(data).to_string()))
+                    DynSolValue::String(String::from_utf8_lossy(data).into_owned())
                 }
-                _ => unreachable!(),
-            }
+                _ => DynSolValue::Bytes(data.to_vec()),
+            })
         }
         _ => None,
     }
@@ -409,39 +387,41 @@ fn decode_from_memory(ty: &DynSolType, memory: &[u8], location: usize) -> Option
             let length: usize = U256::from_be_slice(first_word).try_into().ok()?;
             let data = memory_range(memory, location.checked_add(32)?, length)?;
 
-            match ty {
-                DynSolType::Bytes => Some(DynSolValue::Bytes(data.to_vec())),
+            Some(match ty {
                 DynSolType::String => {
-                    Some(DynSolValue::String(String::from_utf8_lossy(data).to_string()))
+                    DynSolValue::String(String::from_utf8_lossy(data).into_owned())
                 }
-                _ => unreachable!(),
-            }
+                _ => DynSolValue::Bytes(data.to_vec()),
+            })
         }
         // Dynamic arrays are encoded as a word with length followed by words with elements
         // Fixed arrays are encoded as words with elements
         DynSolType::Array(inner) | DynSolType::FixedArray(inner, _) => {
-            let (length, start) = match ty {
-                DynSolType::FixedArray(_, length) => (*length, location),
-                DynSolType::Array(_) => {
-                    (U256::from_be_slice(first_word).try_into().ok()?, location.checked_add(32)?)
-                }
-                _ => unreachable!(),
+            let (length, start) = if let DynSolType::FixedArray(_, length) = ty {
+                (*length, location)
+            } else {
+                (U256::from_be_slice(first_word).try_into().ok()?, location.checked_add(32)?)
             };
             memory_range(memory, start, length.checked_mul(32)?)?;
-            let mut decoded = Vec::with_capacity(length);
-
-            for i in 0..length {
-                let offset = start.checked_add(i.checked_mul(32)?)?;
-                let location = match inner.as_ref() {
-                    // Arrays of variable length types are arrays of pointers to the values
-                    DynSolType::String | DynSolType::Bytes | DynSolType::Array(_) => {
-                        U256::from_be_slice(memory_range(memory, offset, 32)?).try_into().ok()?
-                    }
-                    _ => offset,
-                };
-
-                decoded.push(decode_from_memory(inner, memory, location)?);
-            }
+            let decoded = (0..length)
+                .map(|i| {
+                    let offset = start.checked_add(i.checked_mul(32)?)?;
+                    let location = match inner.as_ref() {
+                        // Arrays of arrays, `bytes` and `string` are arrays of pointers to the
+                        // values
+                        DynSolType::String
+                        | DynSolType::Bytes
+                        | DynSolType::Array(_)
+                        | DynSolType::FixedArray(..) => {
+                            U256::from_be_slice(memory_range(memory, offset, 32)?)
+                                .try_into()
+                                .ok()?
+                        }
+                        _ => offset,
+                    };
+                    decode_from_memory(inner, memory, location)
+                })
+                .collect::<Option<Vec<_>>>()?;
 
             Some(DynSolValue::Array(decoded))
         }
@@ -456,47 +436,85 @@ fn memory_range(memory: &[u8], start: usize, len: usize) -> Option<&[u8]> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use evm2::interpreter::InstrStop;
+    use alloy_dyn_abi::{
+        Specifier,
+        parser::{ParameterSpecifier, Parameters},
+    };
 
-    fn trace_step(stack: Vec<U256>) -> CallTraceStep {
-        CallTraceStep {
-            pc: 0,
-            op: OpCode::STOP,
-            stack: Some(stack.into_boxed_slice()),
-            push_stack: None,
-            memory: None,
-            gas_remaining: 0,
-            gas_refund_counter: 0,
-            gas_cost: 0,
-            state_gas_reservoir: None,
-            storage_change: None,
-            status: Some(InstrStop::Stop),
-            extra: None,
+    fn params(source: &str) -> Vec<Param> {
+        let parameters = Parameters::parse(source).unwrap();
+        let param = |param: &ParameterSpecifier<'_>| {
+            let ty = param.resolve().ok();
+            let two = matches!(ty, Some(DynSolType::Bytes | DynSolType::Array(_)))
+                && param.storage == Some(Storage::Calldata);
+            Param { ty, storage: param.storage, slots: if two { 2 } else { 1 } }
+        };
+        parameters.params.iter().map(param).collect()
+    }
+
+    fn entry(name: &str) -> FunctionEntry {
+        FunctionEntry { name: Some(name.into()), parameter_slots: 1, return_slots: 1 }
+    }
+
+    fn defined(name: &str) -> SourceFunction {
+        SourceFunction {
+            contract: Some("C".into()),
+            name: name.into(),
+            is_entry: false,
+            is_yul: false,
+            body_hash: None,
+            params: None,
+            returns: None,
         }
     }
 
     #[test]
-    fn source_span_returns_none_for_invalid_ranges() {
-        assert_eq!(source_span("abcdef", 2, 3), Some(("cde", 5)));
-        assert_eq!(source_span("abcdef", 7, 1), None);
-        assert_eq!(source_span("abcdef", usize::MAX, 1), None);
+    fn a_name_that_does_not_agree_gives_the_name_of_the_key() {
+        let (a, b) = (entry("a"), entry("b"));
+
+        assert!(matches!(choose_entry(&[&a], Some(&defined("a"))), Choice::Function(_)));
+        // The source map never gives another function than the one of the key.
+        assert!(matches!(choose_entry(&[&b], Some(&defined("a"))), Choice::KeyName));
+        assert!(matches!(choose_entry(&[&a], None), Choice::KeyName));
     }
 
     #[test]
-    fn internal_function_identifier_includes_canonical_signature() {
-        assert_eq!(
-            internal_function_identifier(
-                "DebugMe",
-                "foo",
-                "function foo(uint256 amount, bool ok) internal returns (uint256) {",
-            ),
-            "DebugMe::foo(uint256,bool)"
-        );
+    fn merged_functions_are_shown_only_if_they_share_a_name() {
+        let (first, second) = (entry("log_17"), entry("log_18"));
+        let (a, b) = (entry("a"), entry("b"));
+
+        // Overloads with the same code: the call does not tell which of them ran.
+        assert!(matches!(
+            choose_entry(&[&first, &second], Some(&defined("log"))),
+            Choice::Ambiguous(_)
+        ));
+        // Functions with other names would show the name of the source map for both.
+        assert!(matches!(choose_entry(&[&a, &b], Some(&defined("a"))), Choice::Hidden));
+        assert!(matches!(choose_entry(&[&a, &b], None), Choice::Hidden));
     }
 
     #[test]
     fn decode_from_memory_rejects_overflow_location() {
         assert_eq!(decode_from_memory(&DynSolType::Bytes, &[0; 64], usize::MAX), None);
+    }
+
+    #[test]
+    fn decode_from_memory_follows_pointers_of_nested_fixed_arrays() {
+        // `uint256[2][2]` holds two pointers to the inner arrays.
+        let words = [0x40, 0x80, 1, 2, 3, 4].map(U256::from);
+        let memory = words.iter().flat_map(|word| word.to_be_bytes::<32>()).collect::<Vec<_>>();
+        let inner = DynSolType::FixedArray(Box::new(DynSolType::Uint(256)), 2);
+        let ty = DynSolType::FixedArray(Box::new(inner), 2);
+        let array =
+            |a, b| DynSolValue::Array(vec![DynSolValue::Uint(a, 256), DynSolValue::Uint(b, 256)]);
+
+        assert_eq!(
+            decode_from_memory(&ty, &memory, 0),
+            Some(DynSolValue::Array(vec![
+                array(U256::from(1), U256::from(2)),
+                array(U256::from(3), U256::from(4)),
+            ]))
+        );
     }
 
     #[test]
@@ -508,27 +526,26 @@ mod tests {
     }
 
     #[test]
-    fn decode_step_parameters_marks_storage_params_unknown() {
-        let params = Parameters::parse("(uint256[] storage values)").unwrap();
-        let step = trace_step(vec![U256::from(5)]);
+    fn decode_parameters_marks_storage_params_unknown() {
+        let params = params("(uint256[] storage values)");
 
         assert_eq!(
-            decode_step_parameters(&params, &step, None),
+            decode_parameters(&params, &[U256::from(5)], None, None),
             Some(vec!["<unknown>".to_string()])
         );
     }
 
     #[test]
-    fn decode_step_parameters_aligns_static_arg_before_calldata_bytes() {
-        let params = Parameters::parse("(bytes32 digest, bytes calldata signature)").unwrap();
+    fn decode_parameters_aligns_static_arg_before_calldata_bytes() {
+        let params = params("(bytes32 digest, bytes calldata signature)");
         let digest = U256::from(0x1234);
         let offset = 0x44;
         let mut calldata = vec![0; offset];
         calldata.extend_from_slice(&[0x11, 0x22, 0x33]);
-        let step = trace_step(vec![digest, U256::from(offset), U256::from(3)]);
+        let words = [digest, U256::from(offset), U256::from(3)];
 
         assert_eq!(
-            decode_step_parameters(&params, &step, Some(&calldata)),
+            decode_parameters(&params, &words, None, Some(&calldata)),
             Some(vec![
                 "0x0000000000000000000000000000000000000000000000000000000000001234".to_string(),
                 "0x112233".to_string(),
@@ -537,28 +554,34 @@ mod tests {
     }
 
     #[test]
-    fn decode_step_parameters_marks_calldata_bytes_unknown_without_calldata() {
-        let params = Parameters::parse("(bytes calldata signature)").unwrap();
-        let step = trace_step(vec![U256::from(0x44), U256::from(3)]);
+    fn decode_parameters_marks_calldata_bytes_unknown_without_calldata() {
+        let params = params("(bytes calldata signature)");
 
         assert_eq!(
-            decode_step_parameters(&params, &step, None),
+            decode_parameters(&params, &[U256::from(0x44), U256::from(3)], None, None),
             Some(vec!["<unknown>".to_string()])
         );
     }
 
     #[test]
-    fn decode_step_parameters_aligns_static_arg_after_unsupported_calldata_array() {
-        let params = Parameters::parse("(uint256[] calldata values, bytes32 digest)").unwrap();
+    fn decode_parameters_aligns_static_arg_after_unsupported_calldata_array() {
+        let params = params("(uint256[] calldata values, bytes32 digest)");
         let digest = U256::from(0x1234);
-        let step = trace_step(vec![U256::from(0x44), U256::from(2), digest]);
+        let words = [U256::from(0x44), U256::from(2), digest];
 
         assert_eq!(
-            decode_step_parameters(&params, &step, Some(&[])),
+            decode_parameters(&params, &words, None, Some(&[])),
             Some(vec![
                 "<unknown>".to_string(),
                 "0x0000000000000000000000000000000000000000000000000000000000001234".to_string(),
             ])
         );
+    }
+
+    #[test]
+    fn decode_parameters_rejects_a_wrong_word_count() {
+        let params = params("(uint256 a, bytes calldata b)");
+
+        assert_eq!(decode_parameters(&params, &[U256::from(1), U256::from(2)], None, None), None);
     }
 }

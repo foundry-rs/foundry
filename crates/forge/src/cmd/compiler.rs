@@ -10,10 +10,10 @@ use foundry_compilers::{
         solc::{Solc, SolcCompiler},
     },
 };
-use foundry_config::Config;
-use semver::Version;
+use foundry_config::{Config, SolcReq};
+use semver::{BuildMetadata, Version};
 use serde::Serialize;
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{collections::BTreeMap, fmt, path::PathBuf};
 
 /// CLI arguments for `forge compiler`.
 #[derive(Debug, Parser)]
@@ -26,6 +26,9 @@ impl CompilerArgs {
     pub fn run(self) -> Result<()> {
         match self.sub {
             CompilerSubcommands::Resolve(args) => args.run(),
+            CompilerSubcommands::Install(args) => args.run(),
+            CompilerSubcommands::List(args) => args.run(),
+            CompilerSubcommands::Remove(args) => args.run(),
         }
     }
 }
@@ -35,6 +38,18 @@ pub enum CompilerSubcommands {
     /// Retrieves the resolved version(s) of the compiler within the project.
     #[command(visible_alias = "r")]
     Resolve(ResolveArgs),
+
+    /// Installs solc or Solar releases.
+    #[command(visible_alias = "i")]
+    Install(InstallArgs),
+
+    /// Lists the installed solc and Solar releases.
+    #[command(visible_alias = "ls")]
+    List(ListArgs),
+
+    /// Removes installed Solar releases.
+    #[command(visible_alias = "rm")]
+    Remove(RemoveArgs),
 }
 
 /// Resolved compiler within the project.
@@ -198,6 +213,136 @@ impl ResolveArgs {
     }
 }
 
+/// CLI arguments for `forge compiler install`.
+#[derive(Debug, Parser)]
+pub struct InstallArgs {
+    /// The compilers to install: a solc version such as `0.8.30`, `solar` for the latest known
+    /// Solar release, or `solar:<version>`.
+    #[arg(required = true, value_name = "COMPILER", value_parser = parse_compiler)]
+    compilers: Vec<Compiler>,
+}
+
+impl InstallArgs {
+    pub fn run(self) -> Result<()> {
+        let mut installed = Vec::with_capacity(self.compilers.len());
+        for compiler in self.compilers {
+            // The compilation reporter prints download progress to stdout, which carries only
+            // the installed paths.
+            let solc = match &compiler {
+                Compiler::Solc(version) => match Solc::find_svm_installed_version(version)? {
+                    Some(solc) => solc,
+                    None => {
+                        sh_status!("Installing {compiler}")?;
+                        Solc::blocking_install(version)?
+                    }
+                },
+                Compiler::Solar(version) => match Solc::find_installed_solar(version) {
+                    Some(solc) => solc,
+                    None => {
+                        sh_status!("Installing {compiler}")?;
+                        Solc::blocking_install_solar(version)?
+                    }
+                },
+            };
+            if !shell::is_json() {
+                sh_println!("{}", solc.solc.display())?;
+            }
+            installed.push(InstalledCompiler::new(&compiler, solc.solc));
+        }
+        if shell::is_json() {
+            sh_println!("{}", serde_json::to_string(&installed)?)?;
+        }
+        Ok(())
+    }
+}
+
+/// An installed compiler binary, as `forge compiler install --json` reports it.
+#[derive(Serialize)]
+struct InstalledCompiler {
+    compiler: &'static str,
+    version: Version,
+    path: PathBuf,
+}
+
+impl InstalledCompiler {
+    fn new(compiler: &Compiler, path: PathBuf) -> Self {
+        let (name, version) = match compiler {
+            Compiler::Solc(version) => ("solc", version),
+            Compiler::Solar(version) => ("solar", version),
+        };
+        Self { compiler: name, version: version.clone(), path }
+    }
+}
+
+/// Installed solc and Solar releases.
+#[derive(Serialize)]
+struct InstalledCompilers {
+    solc: Vec<Version>,
+    solar: Vec<Version>,
+}
+
+/// CLI arguments for `forge compiler list`.
+#[derive(Debug, Parser)]
+pub struct ListArgs;
+
+impl ListArgs {
+    pub fn run(self) -> Result<()> {
+        let installed = InstalledCompilers {
+            solc: Solc::installed_versions(),
+            solar: Solc::installed_solar_versions(),
+        };
+        if shell::is_json() {
+            sh_println!("{}", serde_json::to_string(&installed)?)?;
+            return Ok(());
+        }
+        for (name, versions) in [("solc", &installed.solc), ("solar", &installed.solar)] {
+            if versions.is_empty() {
+                continue;
+            }
+            sh_println!("{name}:")?;
+            for version in versions {
+                sh_println!("- {version}")?;
+            }
+            sh_println!()?;
+        }
+        Ok(())
+    }
+}
+
+/// CLI arguments for `forge compiler remove`.
+#[derive(Debug, Parser)]
+pub struct RemoveArgs {
+    /// The Solar releases to remove, as `solar:<version>`. Use `svm remove` for solc releases.
+    #[arg(required = true, value_name = "COMPILER", value_parser = parse_solar_pin)]
+    compilers: Vec<Version>,
+}
+
+impl RemoveArgs {
+    pub fn run(self) -> Result<()> {
+        for version in self.compilers {
+            eyre::ensure!(Solc::remove_solar(&version)?, "solar {version} is not installed");
+            sh_status!("Removed solar {version}")?;
+        }
+        Ok(())
+    }
+}
+
+/// A solc or Solar release named on the command line.
+#[derive(Clone, Debug)]
+enum Compiler {
+    Solc(Version),
+    Solar(Version),
+}
+
+impl fmt::Display for Compiler {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Solc(version) => write!(f, "solc {version}"),
+            Self::Solar(version) => write!(f, "solar {version}"),
+        }
+    }
+}
+
 fn resolved_compiler_path(
     project: &Project<MultiCompiler>,
     compiler: &ResolvedCompiler,
@@ -224,5 +369,43 @@ fn resolved_compiler_path(
             .as_ref()
             .map(|vyper| vyper.path.clone())
             .ok_or_else(|| eyre::eyre!("Vyper compiler is not available")),
+    }
+}
+
+/// Parses a solc version, `solar`, or a `solar:<version>` pin, with the same rules as the `solc`
+/// config key.
+fn parse_compiler(s: &str) -> Result<Compiler, String> {
+    match SolcReq::from(s) {
+        SolcReq::Version(version) => Ok(Compiler::Solc(release(version))),
+        SolcReq::Solar(version) => Ok(Compiler::Solar(release(version))),
+        SolcReq::Local(_) if s == "solar" => Solc::released_solar_versions()
+            .pop()
+            .map(Compiler::Solar)
+            .ok_or_else(|| "no known Solar release".to_string()),
+        SolcReq::Local(_) => Err("expected a solc version such as `0.8.30`, `solar`, or \
+                                  `solar:<version>` naming a release 0.2.0 or later"
+            .to_string()),
+    }
+}
+
+/// Parses a `solar:<version>` pin. A bare `solar` is rejected, because the release it names
+/// changes with the known releases.
+fn parse_solar_pin(s: &str) -> Result<Version, String> {
+    match SolcReq::from(s) {
+        SolcReq::Solar(version) => Ok(release(version)),
+        _ => Err("expected `solar:<version>`; use `svm remove` for solc releases".to_string()),
+    }
+}
+
+/// Returns the release name of `version`.
+///
+/// Like the build path, stable releases are named without build metadata, so
+/// `0.8.30+commit.73712a01` names `0.8.30`. A prerelease keeps its full version, which is the name
+/// a `solc` pin installs it under.
+fn release(version: Version) -> Version {
+    if version.pre.is_empty() {
+        Version { build: BuildMetadata::EMPTY, ..version }
+    } else {
+        version
     }
 }

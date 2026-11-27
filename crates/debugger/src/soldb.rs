@@ -1020,7 +1020,11 @@ mod tests {
                 source: Arc::new("contract C {}".to_string()),
                 language: Default::default(),
                 path: PathBuf::from("src/C.sol"),
-                contract_definitions: Vec::new(),
+                functions: Default::default(),
+                call_sites: Default::default(),
+                contract_bases: Vec::new(),
+                contract_libraries: Vec::new(),
+                source_edits: Vec::new(),
             }),
         );
         sources.artifacts_by_name.insert(
@@ -1033,6 +1037,9 @@ mod tests {
                 build_id: "build".to_string(),
                 file_id: 0,
                 via_ir: Some(false),
+                functions: Default::default(),
+                functions_runtime: Default::default(),
+                selectors: Default::default(),
             }],
         );
         let mut arena = CallTraceArena::default();

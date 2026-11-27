@@ -30,89 +30,280 @@ pub enum SymbolicExplorationOrder {
 /// Configuration for symbolic testing.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SymbolicConfig {
-    /// Whether symbolic tests are enabled.
+    /// Whether to run symbolic tests.
+    ///
+    /// When enabled, `forge test` runs `check*` and `prove*` functions symbolically, and
+    /// `invariant*` and `statefulFuzz*` functions explore a bounded symbolic call sequence.
+    /// A `PASS` holds only for the modeled EVM surface and the configured bounds, and a
+    /// counterexample is reported only after it replays concretely. Symbolic tests need the
+    /// configured `solver` installed. The `--symbolic` flag also enables this.
     pub enabled: bool,
-    /// Whether fuzz tests should be symbolically concretized into fuzz corpus seeds.
+    /// Whether to run fuzz tests symbolically and persist the concrete inputs found to the fuzz
+    /// corpus.
+    ///
+    /// Non-failing concrete inputs from the symbolic run seed later fuzz campaigns. This requires
+    /// `fuzz.corpus_dir`; without it, seeding is skipped with a warning.
     pub seed_corpus: bool,
-    /// Whether fuzz corpus seeds should guide symbolic fuzz-test exploration.
+    /// Whether to run fuzz tests symbolically, using existing fuzz corpus entries as
+    /// path-priority hints.
+    ///
+    /// Fuzz tests run as symbolic tests instead of being fuzzed. Up to `corpus_seed_limit`
+    /// entries are imported from `fuzz.corpus_dir`; without a corpus directory, the test runs
+    /// without imported seeds and a warning is shown.
     pub use_fuzz_corpus: bool,
-    /// Maximum number of fuzz corpus seeds to import for one symbolic run.
+    /// Maximum number of fuzz corpus entries to import for one symbolic test.
+    ///
+    /// Applies when `use_fuzz_corpus` is enabled. `0` imports none.
     pub corpus_seed_limit: usize,
-    /// Whether fuzz branch frontiers should guide targeted symbolic fuzz-test seeding.
+    /// Whether to solve for branches recorded in fuzz branch frontier artifacts and add the
+    /// results to the corpus.
+    ///
+    /// For a fuzz test, Forge imports frontiers from `fuzz.frontier_dir`, replays each recorded
+    /// one-call seed as a path-priority hint, constrains symbolic execution to flip the captured
+    /// comparison, and writes to `fuzz.corpus_dir` only candidates that replay with the expected
+    /// concrete outcome. For an invariant test, it imports frontiers from
+    /// `invariant.frontier_dir`, replays each recorded call prefix, symbolically solves only the
+    /// call that reached the comparison, and writes candidates to `invariant.corpus_dir`. Missing
+    /// directories skip the seeding with a warning.
+    ///
+    /// This is an explicit follow-up to a concrete campaign that captured frontiers, not symbolic
+    /// work in every fuzz run. Keep `timeout` short to bound iteration, and use `frontier_ids`,
+    /// `frontier_pcs`, `frontier_selectors` or a lower `frontier_limit` to spend solver time only
+    /// on selected sites.
     pub use_fuzz_frontiers: bool,
-    /// Whether invariant frontier seeding should first search for a property-breaking call.
+    /// Whether invariant frontier seeding first checks if a selected call can break an invariant.
+    ///
+    /// Enabling this also enables invariant frontier seeding, as `use_fuzz_frontiers` does for
+    /// invariant tests. For each selected frontier, Forge replays the concrete call prefix,
+    /// symbolically executes the target call, and checks the configured invariant functions from
+    /// the resulting state, before separately trying to flip the recorded branch. Without
+    /// `afterInvariant`, each invariant function is checked independently; with it, the check
+    /// uses the campaign's anchor invariant and hook. Only candidates that reproduce the failure
+    /// during concrete replay are persisted. Like invariant frontier seeding, it needs
+    /// `invariant.frontier_dir` and `invariant.corpus_dir`.
+    ///
+    /// An incomplete symbolic search is not a proof that the invariant holds.
+    ///
+    /// ```toml
+    /// [profile.default.symbolic]
+    /// use_fuzz_frontiers = true
+    /// check_invariant_frontiers = true
+    /// ```
     #[serde(default)]
     pub check_invariant_frontiers: bool,
-    /// Whether one bounded symbolic worker assists a running invariant campaign.
+    /// Whether one bounded symbolic solver worker assists a running invariant campaign.
     ///
-    /// Off by default. Uses `timeout`, `max_solver_queries`, and `frontier_limit` as
-    /// campaign-wide budgets. Candidates must pass normal concrete campaign execution.
+    /// The worker takes comparisons observed by the first concrete fuzz worker and tries to flip
+    /// their branches from the replayed call prefix. The concrete campaign executes the sequences
+    /// it returns from setup, with its normal predicate checks, failure reporting, shrinking and
+    /// corpus persistence, and they can expose new frontiers during the same campaign. This does
+    /// not require `enabled` (the `--symbolic-live` flag also enables it).
+    ///
+    /// Budgets apply per campaign: `timeout` (30 seconds when unset) limits when new searches
+    /// start, while `max_solver_queries` and `frontier_limit` bound solver queries and submitted
+    /// frontiers. A zero timeout, query budget or frontier limit disables it. Each search has its
+    /// own one-second solver timeout, and an in-flight search can finish after the deadline.
+    ///
+    /// The worker keeps a backlog of up to 32 frontiers, preferring shorter prefixes; admission
+    /// is lossy. At most 1024 calls and 64 KiB of calldata are retained per sequence; longer
+    /// sequences are not used. It adds one solver thread to the configured fuzz workers, and
+    /// short campaigns can finish before candidates arrive.
+    ///
+    /// It does not support optimization campaigns or `invariant.call_override`, and solves only
+    /// setup-known targets with zero transaction value, keeping the concrete sender. Unsupported
+    /// operations and exhausted budgets leave the concrete campaign running. Frontier filters do
+    /// not apply. Only the direct solver process is terminated on shutdown, so wrapper commands
+    /// must stop any subprocesses they start.
+    ///
+    /// Live assistance does not prove safety. JSON output reports worker counters under
+    /// `symbolic_live`, where `scheduled` counts sequences handed to the campaign, not coverage
+    /// gains.
+    ///
+    /// ```toml
+    /// [profile.default.symbolic]
+    /// live = true
+    /// timeout = 30
+    /// max_solver_queries = 10000
+    /// frontier_limit = 256
+    /// ```
     #[serde(default)]
     pub live: bool,
-    /// Maximum imported frontiers per symbolic run or submitted live frontiers per campaign.
+    /// Maximum number of branch frontiers to import per symbolic run, or to submit per live
+    /// campaign.
+    ///
+    /// Applies to `use_fuzz_frontiers`, `check_invariant_frontiers` and `live`. `0` imports none.
     pub frontier_limit: usize,
-    /// Fuzz branch frontier artifact IDs to import. Empty imports by artifact order.
+    /// Fuzz branch frontier artifact IDs to import.
+    ///
+    /// Empty means any ID. Non-empty frontier filters combine, so a frontier is imported only if
+    /// it matches every non-empty filter (`frontier_ids`, `frontier_pcs`, `frontier_selectors`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub frontier_ids: Vec<u64>,
-    /// Fuzz branch frontier comparison program counters to import. Empty imports any PC.
+    /// Program counters of fuzz branch frontier comparisons to import.
+    ///
+    /// Empty means any program counter. Combines with the other frontier filters.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub frontier_pcs: Vec<usize>,
-    /// Fuzz branch frontier calldata selectors to import. Empty imports any selector.
+    /// Calldata selectors of fuzz branch frontiers to import.
+    ///
+    /// Each entry is a 4-byte hex selector, with or without `0x`, such as `"0x12345678"`; invalid
+    /// entries are ignored with a warning. Empty means any selector. Combines with the other
+    /// frontier filters.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub frontier_selectors: Vec<String>,
-    /// Solver executable to invoke.
+    /// SMT solver to invoke for symbolic tests.
+    ///
+    /// Known names are `z3`, `yices`, `cvc5`, `cvc5-int`, `bitwuzla` and `bitwuzla-abs`. Any other
+    /// value is treated as the path or name of a z3-compatible executable and invoked with
+    /// `-in -smt2`. Use `solver_command` for other command lines or wrapper tools. A nonempty
+    /// `solver_command` or `solver_portfolio` takes precedence.
+    ///
+    /// Custom solver values run local programs when symbolic tests run, including values from
+    /// inline `forge-config` or `@custom:halmos` annotations: review solver settings before
+    /// running symbolic tests from an untrusted project.
     pub solver: String,
-    /// Exact solver command to invoke. When set, this overrides `solver`.
+    /// Exact solver command line to invoke, overriding `solver` and `solver_portfolio`.
+    ///
+    /// The command, such as `"z3 -in -smt2"`, is split into arguments and run directly, not
+    /// through a shell. Timeouts terminate only the direct solver process, so wrapper commands
+    /// must stop any subprocesses they start. Like `solver`, it runs a local program.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub solver_command: Option<String>,
-    /// Solver names or exact commands to race in parallel. Ignored when `solver_command` is set.
+    /// Solver names or commands to race in parallel.
+    ///
+    /// Solvers start in the listed order with staged starts: the first immediately, the second
+    /// shortly after if the query is still unresolved, and later ones as rescue solvers. The first
+    /// validated `sat` result wins; `unsat` is used only once every solver needed to rule out
+    /// `sat` has finished. A nonempty portfolio overrides `solver` and is ignored when
+    /// `solver_command` is set. Entries without whitespace, quotes or backslashes are resolved
+    /// like `solver`; others are split into arguments like `solver_command`, never run through a
+    /// shell.
+    ///
+    /// Start with a small portfolio such as `["yices", "z3"]`: broader ones can use more CPU and
+    /// be slower when one solver already handles most queries. `dump_smt` prints each solver's
+    /// order, launch delay and per-query outcome for comparison.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub solver_portfolio: Vec<String>,
-    /// Optional SMT solver timeout in seconds. Also bounds the stateless deferred hard-arithmetic
-    /// solver phase and wall-clock symbolic invariant exploration before falling back to fuzzing.
+    /// Solver timeout in seconds.
+    ///
+    /// It bounds each SMT query, and also the deferred hard-arithmetic solver phase of stateless
+    /// tests, frontier solving, and the whole wall-clock exploration of a symbolic invariant test
+    /// before it falls back to fuzzing. A timeout makes the result incomplete. `0` removes these
+    /// limits, except for `live`, where it disables assistance.
     pub timeout: Option<u32>,
-    /// Halmos-compatible loop bound accepted by config and annotations.
+    /// Halmos-compatible bound on loop iterations per path.
+    ///
+    /// Each backward jump, counted per loop and calling context, is taken at most this many times
+    /// on a path; paths that would iterate further are dropped. A `PASS` then covers only the
+    /// explored iterations, and skipped iterations are not necessarily reported as incomplete.
+    /// When unset, loops are bounded only by `max_depth`.
     #[serde(default, rename = "loop", skip_serializing_if = "Option::is_none")]
     pub loop_bound: Option<u32>,
-    /// Halmos-compatible execution depth alias. When set, this overrides `max_depth`.
+    /// Halmos-compatible alias for `max_depth`, which it overrides when set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub depth: Option<u32>,
-    /// Halmos-compatible path width alias. When set, this overrides `max_paths`.
+    /// Halmos-compatible alias for `max_paths`, which it overrides when set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub width: Option<u32>,
-    /// Maximum number of opcodes to execute along a path.
+    /// Maximum number of opcodes to execute along one symbolic path.
+    ///
+    /// Reaching it makes the result incomplete. `depth` overrides it when set.
     pub max_depth: u32,
-    /// Maximum number of symbolic paths to explore.
+    /// Maximum number of symbolic paths to explore per test.
+    ///
+    /// It also caps how many calldata shapes dynamic length sets expand into. Reaching it makes
+    /// the result incomplete. `width` overrides it when set.
     pub max_paths: u32,
     /// Maximum number of calls in a bounded symbolic invariant sequence.
+    ///
+    /// A `PASS` covers only sequences up to this length; deeper sequences are not explored and
+    /// not reported as incomplete.
     pub invariant_depth: u32,
-    /// Order used to select the next pending symbolic path.
+    /// Order in which pending symbolic paths are explored.
+    ///
+    /// It only changes which queued path runs next, not path or solver limits or portfolio
+    /// scheduling.
+    ///
+    /// - `bfs`: breadth-first, oldest pending path first.
+    /// - `dfs`: depth-first, newest pending path first.
     #[serde(default)]
     pub exploration_order: SymbolicExplorationOrder,
-    /// Maximum number of solver queries.
+    /// Maximum number of solver queries per symbolic test.
+    ///
+    /// Reaching it makes the result incomplete. For `live`, it is the budget for the whole
+    /// campaign.
     pub max_solver_queries: u32,
-    /// Default bounded length for dynamic ABI inputs.
+    /// Length used for a dynamic ABI input when no other length setting applies.
+    ///
+    /// Dynamic inputs (`bytes`, `string` and dynamic arrays) take one of a bounded set of lengths.
+    /// Lengths resolve in this order: `dynamic_lengths`, then `default_array_lengths` or
+    /// `default_bytes_lengths`, then `array_lengths`, then this value.
     pub default_dynamic_length: u32,
-    /// Maximum permitted bounded length for a dynamic ABI input.
+    /// Maximum length allowed for a symbolic dynamic ABI input.
+    ///
+    /// A configured length above it is a configuration error.
     pub max_dynamic_length: u32,
-    /// Per-dynamic-leaf bounded lengths, applied in ABI traversal order.
+    /// Positional lengths for dynamic ABI inputs, applied in ABI traversal order.
+    ///
+    /// Each entry is the length of the next dynamic leaf, in deterministic ABI pre-order, that
+    /// `dynamic_lengths`, `default_array_lengths` and `default_bytes_lengths` did not set. Extra
+    /// entries that no dynamic leaf uses are a configuration error.
+    ///
+    /// ```solidity
+    /// /// forge-config: default.symbolic.array_lengths = [3]
+    /// function check_bytes(bytes memory data) external pure {}
+    /// ```
     pub array_lengths: Vec<u32>,
-    /// Per-symbolic-input bounded lengths keyed by ABI argument name or generated symbolic name.
+    /// Sets of lengths for dynamic ABI inputs, keyed by ABI argument name or generated symbolic
+    /// name.
+    ///
+    /// Keys are argument names or generated names such as `calldata_0`. Each value is a set of
+    /// lengths, such as `{ data = [3] }`; every length becomes a separate calldata shape, and
+    /// nested dynamic values explore the cross product. These lengths take precedence over every
+    /// other length setting.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub dynamic_lengths: BTreeMap<String, Vec<u32>>,
-    /// Default bounded lengths for dynamic ABI arrays without an explicit length.
+    /// Set of lengths for dynamic ABI arrays without a `dynamic_lengths` entry.
+    ///
+    /// Each length becomes a separate calldata shape. When empty, `array_lengths` and then
+    /// `default_dynamic_length` apply.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub default_array_lengths: Vec<u32>,
-    /// Default bounded lengths for ABI `bytes` and `string` values without an explicit length.
+    /// Set of lengths for ABI `bytes` and `string` values without a `dynamic_lengths` entry.
+    ///
+    /// Each length becomes a separate calldata shape. When empty, `array_lengths` and then
+    /// `default_dynamic_length` apply.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub default_bytes_lengths: Vec<u32>,
-    /// Maximum symbolic calldata size in bytes.
+    /// Maximum size of symbolic calldata, in bytes.
+    ///
+    /// Generated calldata larger than this, and symbolic-size data copies above it during
+    /// execution, are unsupported and make the result incomplete.
     pub max_calldata_bytes: u32,
-    /// Whether symbolic call targets may be expanded over known deployed contracts.
+    /// Whether a symbolic call target may be an address other than a known contract.
+    ///
+    /// Concrete call targets, and symbolic targets constrained to known deployed contracts or
+    /// active precompiles, are always supported. By default, a symbolic target that may be any
+    /// other address makes the result incomplete. When enabled, that case is modeled as a
+    /// successful call to an empty account with no code, including the value transfer for `CALL`;
+    /// arbitrary unknown code is still not modeled.
     pub symbolic_call_targets: bool,
-    /// Whether to dump SMT-LIB queries before invoking the configured solver.
+    /// Whether to print each SMT-LIB query to standard error before invoking the solver.
+    ///
+    /// With a `solver_portfolio`, it also prints each solver's order, launch delay and per-query
+    /// outcome.
     pub dump_smt: bool,
-    /// Storage modelling mode used for symbolic storage reads.
+    /// How symbolic tests model storage they have not written.
+    ///
+    /// - `solidity`: reads at concrete slots use the existing state; a read of an unwritten slot
+    ///   at a symbolic key returns any slot the account already has, such as those `setUp` wrote,
+    ///   or else an unknown value.
+    /// - `generic`: every storage read may return an arbitrary value, as if
+    ///   `vm.setArbitraryStorage` applied to every account.
+    /// - `zero_init`: like `solidity`, but a read of an unwritten slot at a symbolic key returns
+    ///   zero. Use it for aggregate ghost variables that start from zero.
+    ///
+    /// Proofs that involve unknown existing storage hold only under the selected layout.
     pub storage_layout: SymbolicStorageLayout,
 }
 
