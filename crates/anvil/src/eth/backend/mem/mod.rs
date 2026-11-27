@@ -712,19 +712,16 @@ fn with_nonce(tx: FoundryTxEnvelope, nonce: u64) -> FoundryTxEnvelope {
     map_simulated_tx(tx, set).expect("setting the nonce is infallible")
 }
 
-/// Returns whether executing `tx` increments the sender's protocol nonce before its call.
-fn uses_protocol_call_nonce(tx: &FoundryTxEnvelope) -> bool {
+/// Returns whether `tx` is rejected when its sender's protocol nonce is already `u64::MAX`.
+fn hits_max_nonce_cap(tx: &FoundryTxEnvelope) -> bool {
     match tx {
-        FoundryTxEnvelope::Tempo(tx) => {
-            let tx = tx.tx();
-            tx.nonce_key.is_zero() && tx.calls.first().is_some_and(|call| call.to.is_call())
-        }
+        // 2D lanes have their own nonce, and an exhausted creation there is a no-op in Tempo.
+        FoundryTxEnvelope::Tempo(tx) => tx.tx().nonce_key.is_zero(),
         tx if is_deposit(tx) => false,
-        // EIP-8130 transactions count nonces in the nonce manager or the protocol lane before
-        // any phase runs, and their calls do not start from the sender's protocol nonce.
+        // EIP-8130 transactions count nonces in the nonce manager or the protocol lane.
         #[cfg(feature = "base")]
         FoundryTxEnvelope::Eip8130(_) => false,
-        tx => tx.kind().is_call(),
+        _ => true,
     }
 }
 
@@ -9983,13 +9980,23 @@ impl Backend<FoundryNetwork> {
                     };
                     tx.tx = with_gas_limit(tx.tx, execution_gas_limit);
                     apply_tempo_envelope_identity(&mut tx, simulated_tempo_tx.as_ref());
+                    // EIP-2681 caps the sender nonce, and the cap holds without validation too.
+                    // With validation, a mismatched protocol nonce is reported first.
+                    if caller_nonce == u64::MAX
+                        && (!validation || request.nonce == Some(u64::MAX))
+                        && hits_max_nonce_cap(&tx.tx)
+                    {
+                        return Err(simulate_rpc_error(
+                            -32603,
+                            format!("nonce has max value: address {caller}, nonce: {caller_nonce}"),
+                        ));
+                    }
                     if !validation
                         && tempo_nonce_key.is_none_or(|key| key.is_zero())
                         && request.nonce == Some(u64::MAX)
                     {
                         tx.tx = with_nonce(tx.tx, 0);
                     }
-                    let uses_protocol_call_nonce = uses_protocol_call_nonce(&tx.tx);
                     #[cfg(feature = "base")]
                     let simulated_envelope = simulated_envelope
                         .or_else(|| simulated_tempo_tx.map(FoundryTxEnvelope::Tempo));
@@ -10027,24 +10034,12 @@ impl Backend<FoundryNetwork> {
                         self.tx_context(monad_context.as_mut().map(next_monad_context), &tx, false);
                     let execution_result =
                         self.execute_tx(&cache_db, &evm_env, &opts, &tx, &context, &mut inspector);
-                    let Executed { result, mut state } = match execution_result {
+                    let Executed { result, state } = match execution_result {
                         Err(BlockchainError::InvalidTransaction(error)) => {
                             return Err(simulate_transaction_error(error));
                         }
                         result => result?,
                     };
-                    if !validation
-                        && caller_nonce == u64::MAX
-                        && uses_protocol_call_nonce
-                        && let Some(info) = state.account_info(&caller).cloned()
-                    {
-                        let original = cache_db.basic_ref(caller)?;
-                        state.insert_account(
-                            caller,
-                            original,
-                            Some(AccountInfo { nonce: 0, ..info }),
-                        );
-                    }
                     trace!(target: "backend", ?result, ?request, "simulate call");
 
                     let canonical_logs = result.logs.clone();
