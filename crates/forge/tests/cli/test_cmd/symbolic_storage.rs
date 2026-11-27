@@ -698,6 +698,7 @@ contract SymbolicKeccakPreimage {
     constructor() {
         holders.push(address(1));
         holders.push(address(2));
+        new FixedSlot();
         proxy = FoldedNested(address(new DelegatingProxy(address(new FoldedNested()))));
     }
 
@@ -771,6 +772,11 @@ contract FoldedNested {
     function readFolded() external view returns (uint256) {
         return nested[KEY][1];
     }
+}
+
+// The nested[KEY][1] entry above is also the declared slot of an unrelated contract.
+contract FixedSlot layout at 0xe630a7a43cc9c09210962c79a00952852b06f41e70dc0c6b5692d61f040d24bb {
+    uint256 public value;
 }
 
 contract DelegatingProxy {

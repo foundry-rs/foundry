@@ -11,10 +11,9 @@
 //! the literals and immediates, so it is searched only when the run accesses a large constant slot
 //! that the contract's code pushes, and only the match is recorded. A registered preimage is a
 //! real one, so this adds no unsoundness; constants that no candidate produces, such as ERC-1967
-//! and ERC-7201 roots, stay fixed slots. A slot the layout itself declares, such as an ERC-7201
-//! namespace member, is not searched: it is the fixed slot of a variable, and a folded entry within
-//! `2^64` above a hash would need a near-preimage of that slot, which the preimage-resistance
-//! assumption excludes.
+//! and ERC-7201 roots, stay fixed slots. Each contract skips its own declared slots, such as an
+//! ERC-7201 namespace member. Other contracts may use the same numeric slot for a folded mapping
+//! entry.
 
 use super::*;
 use foundry_common::slot_identifier::{ENCODING_INPLACE, ENCODING_MAPPING};
@@ -140,14 +139,13 @@ impl FoldedSlots {
         {
             return true;
         }
-        if self.contracts.iter().any(|c| c.constants.contains(&slot) && c.declared.contains(&slot))
-        {
-            self.searched.insert(slot);
-            return true;
-        }
         let nested_hashes = &mut self.nested_hashes;
         let mut found = false;
-        'search: for contract in self.contracts.iter().filter(|c| c.constants.contains(&slot)) {
+        'search: for contract in self
+            .contracts
+            .iter()
+            .filter(|c| c.constants.contains(&slot) && !c.declared.contains(&slot))
+        {
             for entry in &contract.layout.storage {
                 let Ok(root) = entry.slot.parse::<U256>() else { continue };
                 let completed = walk_mapping_slots(
