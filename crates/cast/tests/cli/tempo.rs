@@ -246,6 +246,44 @@ async fn receive_policy_receipt_json_and_claim_flow(cmd: _) {
     assert_eq!(claimed_balance_output["delivery_state"], "not_held");
 }
 
+// A Tempo transaction creates through a call with a null `to`, since Tempo nodes reject a 0x76
+// request with neither `calls` nor `to`; `--create` with Tempo options estimates and deploys.
+#[casttest]
+async fn tempo_send_create_with_fee_token(cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode_prefixed(wallet.credential().to_bytes());
+    // Deploys a runtime that returns 42.
+    let runtime = "602a60005260206000f3";
+    let init_code = format!("0x600a600c600039600a6000f3{runtime}");
+
+    let output = cmd
+        .cast_fuse()
+        .args([
+            "send",
+            "--tempo.fee-token",
+            &PATH_USD_ADDRESS.to_string(),
+            "--private-key",
+            &pk,
+            "--rpc-url",
+            &rpc,
+            "--json",
+            "--create",
+            &init_code,
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let receipt: serde_json::Value = parse_json(output.trim()).unwrap();
+    assert_eq!(receipt["status"], "0x1", "{receipt}");
+    assert_eq!(receipt["type"], "0x76", "{receipt}");
+
+    let contract: Address = receipt["contractAddress"].as_str().unwrap().parse().unwrap();
+    let code = handle.http_provider().get_code_at(contract).await.unwrap();
+    assert_eq!(hex::encode(code), runtime);
+}
+
 // The ReceivePolicyGuard precompile is only active from T6, so claim/burn must fail early on a
 // pre-T6 RPC instead of submitting a transaction that would silently succeed as a no-op.
 #[casttest]

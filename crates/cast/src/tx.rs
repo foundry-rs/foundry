@@ -730,6 +730,11 @@ where
         // We set both fields to the same value because some nodes only accept the legacy
         // `data` field: https://github.com/foundry-rs/foundry/issues/7764#issuecomment-2210453249
         self.tx.set_input_kind(state.input, TransactionInputKind::Both);
+        // A Tempo AA transaction creates through a call with a null `to`; nodes reject a request
+        // with neither `calls` nor `to`.
+        if self.tx.is_tempo_aa() {
+            self.tx.convert_create_to_call();
+        }
         if !from.is_zero() {
             self.tx.set_from(from);
         }
