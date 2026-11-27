@@ -642,10 +642,10 @@ pub fn try_get_http_provider(builder: impl AsRef<str>) -> Result<RetryProvider> 
 
 /// Sets a remote `provider`'s receipt and block polling interval for `chain_id`.
 ///
-/// [`ProviderBuilder`] picks the interval from the configured chain, which is mainnet when the
-/// config names none, so a provider for a faster chain polls too slowly until this runs. Call it
-/// once the chain ID is known, unless the user chose an interval. Local endpoints keep Alloy's
-/// default.
+/// [`ProviderBuilder`] picks the interval from its chain, which is mainnet unless
+/// [`ProviderBuilder::from_config`] found one in the config, so a provider for a faster chain polls
+/// too slowly until this runs. Call it once the chain ID is known, unless the user chose an
+/// interval. Local endpoints keep Alloy's default.
 pub fn set_chain_poll_interval<N: Network>(provider: &impl Provider<N>, chain_id: u64) {
     let client = provider.client();
     if !client.is_local() {
@@ -653,8 +653,7 @@ pub fn set_chain_poll_interval<N: Network>(provider: &impl Provider<N>, chain_id
     }
 }
 
-/// Returns 60% of `chain`'s average block time, capped at 3 seconds before scaling, which is also
-/// used for chains without a block time hint.
+/// Returns 60% of `chain`'s block time hint, or of 3 seconds when the hint is missing or longer.
 fn remote_poll_interval(chain: Chain) -> Duration {
     chain
         .average_blocktime_hint()
@@ -833,9 +832,9 @@ mod tests {
     #[test]
     fn chain_poll_interval_follows_the_detected_chain() {
         let remote = ProviderBuilder::<AnyNetwork>::new("https://rpc.example").build().unwrap();
-        assert!(remote.client().poll_interval() > Duration::from_secs(1));
+        assert_eq!(remote.client().poll_interval(), Duration::from_millis(1800));
         set_chain_poll_interval(&remote, NamedChain::Tempo as u64);
-        assert!(remote.client().poll_interval() < Duration::from_millis(500));
+        assert_eq!(remote.client().poll_interval(), Duration::from_millis(300));
 
         let local = ProviderBuilder::<AnyNetwork>::new("http://localhost:8545").build().unwrap();
         let default = local.client().poll_interval();
