@@ -1,0 +1,124 @@
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful with warnings:
+Warning (2519): This declaration shadows an existing declaration.
+  [FILE]:17:5:
+   |
+17 |     struct Signed {
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+Note: The shadowed declaration is here:
+  [FILE]:11:1:
+   |
+11 | struct Signed {
+   | ^ (Relevant source part starts here and spans across multiple lines).
+
+Warning (8760): This declaration has the same name as another declaration.
+  [FILE]:77:9:
+   |
+77 |         function() internal f = kept;
+   |         ^^^^^^^^^^^^^^^^^^^^^
+Note: The other declaration is here:
+  [FILE]:40:5:
+   |
+40 |     function f(uint256 x) external pure returns (uint256) {
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
+Warning (2519): This declaration shadows an existing declaration.
+  [FILE]:77:9:
+   |
+77 |         function() internal f = kept;
+   |         ^^^^^^^^^^^^^^^^^^^^^
+Note: The shadowed declaration is here:
+  [FILE]:44:5:
+   |
+44 |     function f(uint256 x, uint256 y) public pure returns (uint256) {
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
+
+Ran 7 tests for test/Public.t.sol:PublicTest
+[PASS] test_getter_and_unrelated_function_of_the_same_name() ([GAS])
+Traces:
+  [..] PublicTest::test_getter_and_unrelated_function_of_the_same_name()
+    ├─ [..] → new Public@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 1331 bytes of code
+    ├─ [..] Public::viaPointer()
+    │   ├─ [..] Public::kept()()
+    │   │   └─ ← 
+    │   └─ ← [Stop]
+    └─ ← [Stop]
+
+[PASS] test_nested_fixed_array_argument() ([GAS])
+Traces:
+  [..] PublicTest::test_nested_fixed_array_argument()
+    ├─ [..] → new Public@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 1331 bytes of code
+    ├─ [..] Public::read([[1, 2], [3, 4]]) [staticcall]
+    │   └─ ← [Return] 5
+    └─ ← [Stop]
+
+[PASS] test_overloads_with_a_struct() ([GAS])
+Traces:
+  [..] PublicTest::test_overloads_with_a_struct()
+    ├─ [..] → new Public@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 1331 bytes of code
+    ├─ [..] Public::k(3) [staticcall]
+    │   ├─ [..] Public::k(<unknown>)
+    │   │   └─ ← 4
+    │   └─ ← [Return] 4
+    └─ ← [Stop]
+
+[PASS] test_overloads_with_the_same_argument() ([GAS])
+Traces:
+  [..] PublicTest::test_overloads_with_the_same_argument()
+    ├─ [..] → new Public@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 1331 bytes of code
+    ├─ [..] Public::h(3) [staticcall]
+    │   ├─ [..] Public::h(int256)(3)
+    │   │   └─ ← 4
+    │   └─ ← [Return] 4
+    └─ ← [Stop]
+
+[PASS] test_overloads_with_two_structs() ([GAS])
+Traces:
+  [..] PublicTest::test_overloads_with_two_structs()
+    ├─ [..] → new Public@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 1331 bytes of code
+    ├─ [..] Public::w(Unsigned({ v: 3 })) [staticcall]
+    │   ├─ [..] Public::w(<unknown>)
+    │   │   ├─ [..] Public::w(<unknown>)
+    │   │   │   ├─ [..] Public::w(<unknown>)
+    │   │   │   │   └─ ← 1
+    │   │   │   └─ ← 2
+    │   │   └─ ← 3
+    │   └─ ← [Return] 4
+    └─ ← [Stop]
+
+[PASS] test_public_overload() ([GAS])
+Traces:
+  [..] PublicTest::test_public_overload()
+    ├─ [..] → new Public@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 1331 bytes of code
+    ├─ [..] Public::f(4) [staticcall]
+    │   ├─ [..] Public::f(uint256,uint256)(4, 2)
+    │   │   └─ ← 8
+    │   └─ ← [Return] 9
+    └─ ← [Stop]
+
+[PASS] test_recursive_public_function() ([GAS])
+Traces:
+  [..] PublicTest::test_recursive_public_function()
+    ├─ [..] → new Public@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 1331 bytes of code
+    ├─ [..] Public::fact(3) [staticcall]
+    │   ├─ [..] Public::fact(uint256)(2)
+    │   │   ├─ [..] Public::fact(uint256)(1)
+    │   │   │   ├─ [..] Public::fact(uint256)(0)
+    │   │   │   │   └─ ← 1
+    │   │   │   └─ ← 1
+    │   │   └─ ← 2
+    │   └─ ← [Return] 6
+    └─ ← [Stop]
+
+Suite result: ok. 7 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 7 tests passed, 0 failed, 0 skipped (7 total tests)

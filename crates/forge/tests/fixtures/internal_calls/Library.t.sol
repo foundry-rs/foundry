@@ -1,0 +1,103 @@
+type Signed is int256;
+
+library Lib {
+    enum K {
+        A,
+        B
+    }
+
+    struct D {
+        uint256 v;
+    }
+
+    struct S {
+        uint256 v;
+    }
+
+    struct T {
+        uint256 v;
+    }
+
+    function kind(K k, uint256 x) public pure returns (uint256) {
+        return uint256(uint8(k)) + x;
+    }
+
+    function set(D storage d, uint256 x) public {
+        d.v = x;
+    }
+
+    function invoke(D storage d, function(uint256) external returns (uint256) cb, uint256 x) public {
+        d.v = cb(x);
+    }
+
+    function mark(mapping(Signed => Signed) storage m, Signed k) public {
+        m[k] = Signed.wrap(Signed.unwrap(k) + 1);
+    }
+
+    function plain(uint256 x) public pure returns (uint256) {
+        return x + 1;
+    }
+
+    function g(S memory s) public pure returns (uint256) {
+        return g(T(s.v));
+    }
+
+    function g(T memory t) public pure returns (uint256) {
+        return t.v == 0 ? 1 : g(T(t.v - 1)) + 1;
+    }
+
+    function f(uint256 x) public pure returns (uint256) {
+        return uint256(Signed.unwrap(f(Signed.wrap(int256(x)))));
+    }
+
+    function f(Signed x) public pure returns (Signed) {
+        int256 n = Signed.unwrap(x);
+        return n <= 0 ? Signed.wrap(1) : Signed.wrap(Signed.unwrap(f(Signed.wrap(n - 1))) + 1);
+    }
+}
+
+// Every public function takes a storage reference, so the JSON ABI is empty.
+library Store {
+    struct Inner {
+        uint256 v;
+        mapping(uint256 => Inner) next;
+    }
+
+    struct Outer {
+        Inner inner;
+    }
+
+    function h(Outer storage o) public view returns (uint256) {
+        return h(o.inner);
+    }
+
+    function h(Inner storage i) public view returns (uint256) {
+        return i.v == 0 ? 1 : h(i.next[i.v - 1]) + 1;
+    }
+}
+
+contract User {
+    Lib.D d;
+    Store.Outer o;
+    mapping(Signed => Signed) m;
+
+    function cb(uint256 x) external pure returns (uint256) {
+        return x + 1;
+    }
+
+    function run() external returns (uint256) {
+        Lib.set(d, 5);
+        Lib.invoke(d, this.cb, 3);
+        Lib.mark(m, Signed.wrap(4));
+        o.inner.v = 2;
+        o.inner.next[0].v = 1;
+        Store.h(o);
+        return Lib.kind(Lib.K.B, 5) + Lib.plain(7) + Lib.f(uint256(3)) + Lib.g(Lib.S(3)) + d.v;
+    }
+}
+
+contract LibraryTest {
+    function test_library_functions() public {
+        new User().run();
+    }
+}

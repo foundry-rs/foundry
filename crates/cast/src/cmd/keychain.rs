@@ -3136,7 +3136,6 @@ pub(crate) async fn send_precompile_tx_with_root_signer(
         if print_sponsor_hash { None } else { tx_opts.tempo.sponsor_config().await? };
 
     let (config, provider) = tempo_provider(&send_tx.eth)?;
-    apply_poll_interval(&provider, send_tx.poll_interval);
     // `--curl` must preserve the first RPC request for the user's intended action.
     let fee_provider = (!config.eth_rpc_curl).then_some(&provider);
 
@@ -3150,6 +3149,7 @@ pub(crate) async fn send_precompile_tx_with_root_signer(
         .await?
         .with_code_sig_and_args(None, Some(hex::encode_prefixed(&calldata)), vec![])
         .await?;
+    apply_poll_interval(&provider, send_tx.poll_interval, builder.chain().id());
 
     let from = root_signer.address();
     if print_sponsor_hash {

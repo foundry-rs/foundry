@@ -14,7 +14,7 @@ use alloy_consensus::{
 };
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_genesis::{Genesis, GenesisAccount};
-use alloy_network::{ReceiptResponse, TransactionBuilder, TransactionResponse};
+use alloy_network::{Network, ReceiptResponse, TransactionBuilder, TransactionResponse};
 use alloy_primitives::{
     Address, B256, Bytes, Signature, TxKind, U256, address, aliases::U96, b256, bytes, hex,
     keccak256,
@@ -27,6 +27,7 @@ use alloy_rlp::Decodable;
 use alloy_rpc_types::{
     Authorization, BlockId, BlockNumberOrTag, EIP1186AccountProofResponse, TransactionRequest,
     anvil::Forking,
+    simulate::SimulatedBlock,
     trace::{
         geth::{CallConfig, GethDebugTracingOptions, GethTrace, TraceResult},
         parity::Action,
@@ -74,6 +75,7 @@ use foundry_test_utils::rpc::{
 use futures::StreamExt;
 use serde::Deserialize;
 use std::{
+    collections::BTreeMap,
     num::NonZeroU64,
     sync::{Arc, atomic::Ordering},
     time::Duration,
@@ -205,7 +207,8 @@ async fn sponsored_tempo_request(
 fn assert_tempo_header_fields(header: &TempoHeaderResponse) {
     let inner: &TempoHeader = header.as_ref();
     assert_eq!(header.timestamp_millis, inner.timestamp_millis());
-    assert_eq!(inner.general_gas_limit, inner.inner.gas_limit);
+    // From T1, Tempo's general lane is fixed below the block gas limit.
+    assert_eq!(inner.general_gas_limit, 30_000_000);
     assert_eq!(inner.shared_gas_limit, 0);
     assert_eq!(inner.timestamp_millis_part, 0);
 }
@@ -710,22 +713,11 @@ async fn test_tempo_fork_funds_dev_account_fee_tokens() {
     // Prefers AlphaUSD.
     let from = accounts.next().unwrap();
     source_api.anvil_deal_tip20(from, ALPHA_USD, U256::ZERO).await.unwrap();
-    // Prefers a fee token outside the standard set.
+    // Prefers OUSD, which it lacks.
     let prefers_ousd = accounts.nth(2).unwrap();
+    source_api.anvil_deal_tip20(prefers_ousd, OUSD_ADDRESS, U256::ZERO).await.unwrap();
     // Has no preference and holds OUSD, so it pays with OUSD rather than PathUSD.
     let no_preference = accounts.next().unwrap();
-    source_api
-        .anvil_tempo_create_token(TempoCreateTokenRequest {
-            address: OUSD_ADDRESS,
-            name: "OUSD".into(),
-            symbol: "OUSD".into(),
-            currency: "USD".into(),
-            quote_token: PATH_USD,
-            admin: from,
-            mint: vec![],
-        })
-        .await
-        .unwrap();
     for (account, token) in [(prefers_ousd, OUSD_ADDRESS), (no_preference, Address::ZERO)] {
         let slot = TipFeeManager::new().user_tokens[account].slot();
         source_api
@@ -743,6 +735,7 @@ async fn test_tempo_fork_funds_dev_account_fee_tokens() {
     source_api.mine_one().await.unwrap();
 
     let source = source_handle.http_provider();
+    let ousd_supply = IERC20::new(OUSD_ADDRESS, &source).totalSupply().call().await.unwrap();
     let mut genesis = Genesis::default();
     for (address, slot, value) in [
         (
@@ -796,7 +789,7 @@ async fn test_tempo_fork_funds_dev_account_fee_tokens() {
         assert_eq!(balance(PATH_USD, allocated).await, U256::from(7));
         assert_eq!(
             IERC20::new(OUSD_ADDRESS, &provider).totalSupply().call().await.unwrap(),
-            funded * U256::from(2) - U256::from(1000),
+            ousd_supply + funded * U256::from(2) - U256::from(1000),
         );
         let tx = TransactionRequest::default().from(from).to(Address::random());
         let receipt =
@@ -3722,6 +3715,196 @@ async fn test_tempo_simulate_executes_and_returns_the_same_batch() {
         Receipt { status: Eip658Value::Eip658(true), cumulative_gas_used, logs }.with_bloom(),
     );
     assert_eq!(response[0]["receiptsRoot"], serde_json::json!(calculate_receipt_root(&[receipt])));
+}
+
+/// `tempo_simulateV1` adds the metadata of each deployed TIP-20 token a simulation calls, pays fees
+/// with, or moves through a contract, like a Tempo node.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_simulate_v1_reports_token_metadata() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let mut accounts = handle.dev_accounts();
+    let (from, ousd_payer) = (accounts.next().unwrap(), accounts.next().unwrap());
+    api.anvil_deal_tip20(ousd_payer, OUSD_ADDRESS, U256::from(10u64.pow(12))).await.unwrap();
+    // Forwards its calldata to PathUSD and reverts if that call fails.
+    let forwarder = Address::random();
+    let forwarder_code = [
+        &bytes!("365f5f375f5f365f5f73")[..],
+        PATH_USD.as_slice(),
+        &bytes!("5af115602557005b5f5ffd"),
+    ]
+    .concat();
+    let balance_of = IERC20::balanceOfCall { account: from }.abi_encode();
+    let transfer = IERC20::transferCall { to: Address::random(), amount: U256::ZERO }.abi_encode();
+    let undeployed_tip20 = address!("0x20C000000000000000000000ffffffffffffffff");
+    let payload = serde_json::json!({
+        "blockStateCalls": [{
+            "stateOverrides": { (forwarder.to_string()): { "code": Bytes::from(forwarder_code) } },
+            "calls": [
+                { "from": from, "to": THETA_USD, "input": Bytes::from(balance_of.clone()) },
+                tempo_call_request(from, [Call {
+                    to: TxKind::Call(BETA_USD),
+                    value: U256::ZERO,
+                    input: balance_of.into(),
+                }]),
+                { "from": ousd_payer, "to": Address::random(), "feeToken": OUSD_ADDRESS },
+                // The PathUSD transfer is only visible through its `Transfer` log.
+                { "from": from, "to": forwarder, "input": Bytes::from(transfer) },
+                { "from": from, "to": undeployed_tip20 },
+            ],
+        }],
+    });
+
+    let response = provider
+        .raw_request::<_, serde_json::Value>("tempo_simulateV1".into(), (payload,))
+        .await
+        .unwrap();
+
+    // Tempo clients decode the blocks with Tempo's header.
+    let blocks = serde_json::from_value::<
+        Vec<SimulatedBlock<<TempoNetwork as Network>::BlockResponse>>,
+    >(response["blocks"].clone())
+    .unwrap();
+    let parent = provider
+        .raw_request::<_, <TempoNetwork as Network>::BlockResponse>(
+            "eth_getBlockByNumber".into(),
+            ("latest", false),
+        )
+        .await
+        .unwrap()
+        .header;
+    let header = &blocks[0].inner.header;
+    assert_eq!(header.parent_hash(), parent.hash);
+    assert_eq!(header.hash, header.inner.inner.hash_slow());
+    assert_eq!(header.inner.general_gas_limit, parent.inner.general_gas_limit);
+    assert_eq!(header.inner.shared_gas_limit, parent.inner.shared_gas_limit);
+    assert_eq!(header.timestamp_millis, header.inner.timestamp_millis());
+    let calls = response["blocks"][0]["calls"].as_array().unwrap();
+    assert!(calls[..4].iter().all(|call| call["status"] == "0x1"), "{calls:#?}");
+    assert_eq!(calls[3]["logs"][0]["address"], serde_json::json!(PATH_USD));
+    let metadata = serde_json::from_value::<BTreeMap<Address, serde_json::Value>>(
+        response["tokenMetadata"].clone(),
+    )
+    .unwrap();
+    let usd = |name: &str, symbol: &str| serde_json::json!({ "name": name, "symbol": symbol, "currency": "USD" });
+    assert_eq!(
+        metadata,
+        BTreeMap::from([
+            (PATH_USD, usd("PathUSD", "PathUSD")),
+            (BETA_USD, usd("BetaUSD", "BetaUSD")),
+            (THETA_USD, usd("ThetaUSD", "ThetaUSD")),
+            (OUSD_ADDRESS, usd("OpenUSD", "OUSD")),
+        ])
+    );
+}
+
+/// `tempo_simulateV1` reads token metadata at the simulation's base block, so a token created
+/// after that block or only by a state override has none, like on a Tempo node.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_simulate_v1_reads_metadata_at_base_block() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let from = handle.dev_accounts().next().unwrap();
+    api.mine_one().await.unwrap();
+    create_test_usd(&api, from).await;
+    // Code deployed by an override does not count: metadata comes from the base state.
+    let payload = serde_json::json!({
+        "blockStateCalls": [{
+            "stateOverrides": { (TEST_USD.to_string()): { "code": "0x00" } },
+            "calls": [{ "from": from, "to": TEST_USD }],
+        }],
+    });
+
+    let metadata = |block: BlockId| {
+        let provider = handle.http_provider();
+        let payload = payload.clone();
+        async move {
+            provider
+                .raw_request::<_, serde_json::Value>("tempo_simulateV1".into(), (payload, block))
+                .await
+                .unwrap()["tokenMetadata"]
+                .clone()
+        }
+    };
+
+    assert_eq!(metadata(BlockId::number(0)).await, serde_json::json!({}));
+    assert_eq!(metadata(BlockId::latest()).await, test_usd_metadata());
+}
+
+/// A fork simulating a block that predates it forwards `tempo_simulateV1`, so the upstream
+/// resolves metadata at that block.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_simulate_v1_fork_forwards_pre_fork_blocks() {
+    let (source_api, source_handle) = spawn(NodeConfig::test_tempo()).await;
+    let from = source_handle.dev_accounts().next().unwrap();
+    source_api.mine_one().await.unwrap();
+    create_test_usd(&source_api, from).await;
+    source_api.mine_one().await.unwrap();
+    let (_api, handle) =
+        spawn(NodeConfig::test_tempo().with_eth_rpc_url(Some(source_handle.http_endpoint()))).await;
+    let payload =
+        serde_json::json!({ "blockStateCalls": [{ "calls": [{ "from": from, "to": TEST_USD }] }] });
+
+    let simulate = |block: BlockId| {
+        let provider = handle.http_provider();
+        let payload = payload.clone();
+        async move {
+            provider
+                .raw_request::<_, serde_json::Value>("tempo_simulateV1".into(), (payload, block))
+                .await
+                .unwrap()
+        }
+    };
+
+    let before_token = simulate(BlockId::number(0)).await;
+    assert_eq!(before_token["tokenMetadata"], serde_json::json!({}));
+    assert_eq!(before_token["blocks"][0]["number"], "0x1");
+    serde_json::from_value::<Vec<SimulatedBlock<<TempoNetwork as Network>::BlockResponse>>>(
+        before_token["blocks"].clone(),
+    )
+    .unwrap();
+    assert_eq!(simulate(BlockId::number(1)).await["tokenMetadata"], test_usd_metadata());
+    assert_eq!(simulate(BlockId::latest()).await["tokenMetadata"], test_usd_metadata());
+}
+
+/// A TIP-20 token outside Tempo's genesis, created by [`create_test_usd`].
+const TEST_USD: Address = address!("0x20c000000000000000000000c0ffeec0ffeec0ff");
+
+async fn create_test_usd(api: &EthApi<FoundryNetwork>, admin: Address) {
+    api.anvil_tempo_create_token(TempoCreateTokenRequest {
+        address: TEST_USD,
+        name: "Test USD".into(),
+        symbol: "TUSD".into(),
+        currency: "USD".into(),
+        quote_token: PATH_USD,
+        admin,
+        mint: vec![],
+    })
+    .await
+    .unwrap();
+}
+
+fn test_usd_metadata() -> serde_json::Value {
+    serde_json::json!({
+        (format!("{TEST_USD:#x}")): { "name": "Test USD", "symbol": "TUSD", "currency": "USD" },
+    })
+}
+
+/// `tempo_simulateV1` is unavailable outside Tempo mode.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_simulate_v1_rejects_non_tempo() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let payload = serde_json::json!({ "blockStateCalls": [{ "calls": [{}] }] });
+
+    let error = handle
+        .http_provider()
+        .raw_request::<_, serde_json::Value>("tempo_simulateV1".into(), (payload,))
+        .await
+        .unwrap_err();
+
+    assert_eq!(
+        serde_json::to_value(error.as_error_resp().unwrap()).unwrap(),
+        serde_json::json!({ "code": -32603, "message": "Not implemented", "data": null }),
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -9450,6 +9633,7 @@ async fn test_tempo_genesis_contract_nonces() {
             ALPHA_USD_ADDRESS,
             BETA_USD_ADDRESS,
             THETA_USD_ADDRESS,
+            OUSD_ADDRESS,
         ]) {
             assert_eq!(provider.get_transaction_count(address).await.unwrap(), 1, "{address}");
         }
@@ -9496,7 +9680,252 @@ mod subscriptions;
 
 mod create_token;
 
+// `tempo_forkSchedule` reports the forks the node runs as active from time 0, as Tempo's localnet
+// genesis does.
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_fork_schedule_lists_active_forks() {
+    let (_api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T5.into()))).await;
+    let schedule = handle
+        .http_provider()
+        .raw_request::<_, tempo_alloy::rpc::ForkSchedule>("tempo_forkSchedule".into(), ())
+        .await
+        .unwrap();
+
+    assert_eq!(schedule.active, "T5");
+    let names = schedule.schedule.iter().map(|fork| fork.name.as_str()).collect::<Vec<_>>();
+    assert_eq!(names, ["T0", "T1", "T1A", "T1B", "T1C", "T2", "T3", "T4", "T5"]);
+    assert!(schedule.schedule.iter().all(|fork| fork.active && fork.activation_time == 0));
+}
+
+// On Moderato's chain, a fork is active exactly when its activation time is at or before the head,
+// as Tempo clients check: a fork the node runs before Moderato does activates at the head, and one
+// Moderato schedules after the head stays inactive at its activation time.
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_fork_schedule_matches_moderato_head() {
+    let head = TempoHardfork::T13.moderato_activation_timestamp().unwrap() - 1;
+    for (hardfork, active_t13) in [(TempoHardfork::T12, false), (TempoHardfork::T13, true)] {
+        let (_api, handle) = spawn(
+            NodeConfig::test_tempo()
+                .with_chain_id(Some(alloy_chains::NamedChain::TempoModerato as u64))
+                .with_genesis_timestamp(Some(head))
+                .with_hardfork(Some(hardfork.into())),
+        )
+        .await;
+        let schedule = handle
+            .http_provider()
+            .raw_request::<_, tempo_alloy::rpc::ForkSchedule>("tempo_forkSchedule".into(), ())
+            .await
+            .unwrap();
+
+        assert_eq!(schedule.active, hardfork.to_string());
+        let forks = schedule
+            .schedule
+            .iter()
+            .map(|fork| (fork.name.as_str(), fork.activation_time, fork.active))
+            .collect::<Vec<_>>();
+        let t12 = TempoHardfork::T12.moderato_activation_timestamp().unwrap();
+        let t14 = TempoHardfork::T14.moderato_activation_timestamp().unwrap();
+        let t13 = if active_t13 { head } else { head + 1 };
+        assert_eq!(
+            forks[forks.len() - 3..],
+            [("T12", t12, true), ("T13", t13, active_t13), ("T14", t14, false)],
+            "{hardfork}"
+        );
+        assert!(forks.iter().all(|&(_, time, active)| active == (time <= head)), "{hardfork}");
+    }
+}
+
+// `tempo_fundAddress` mints each faucet token like Moderato's faucet, without a transaction.
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_fund_address_mints_faucet_tokens() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let account = Address::repeat_byte(0xfa);
+    let path_usd = tempo_precompiles::tip20::ITIP20::new(PATH_USD, &provider);
+    let supply = path_usd.totalSupply().call().await.unwrap();
+
+    let hashes =
+        provider.raw_request::<_, Vec<B256>>("tempo_fundAddress".into(), (account,)).await.unwrap();
+
+    assert!(hashes.is_empty());
+    let amount = U256::from(1_000_000_000_000u64);
+    for token in [PATH_USD, ALPHA_USD, BETA_USD, THETA_USD, OUSD_ADDRESS] {
+        let token = tempo_precompiles::tip20::ITIP20::new(token, &provider);
+        assert_eq!(token.balanceOf(account).call().await.unwrap(), amount);
+    }
+    assert_eq!(path_usd.totalSupply().call().await.unwrap(), supply + amount);
+}
+
+// A local Tempo node has Tempo's 500M block gas limit and its 30M cap per transaction, rather than
+// EIP-7825's, so a transaction above the cap fails as it would on Tempo, and OUSD is deployed as on
+// Tempo.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_genesis_matches_tempo_limits_and_tokens() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(block.header.gas_limit(), 500_000_000);
+
+    let ousd = tempo_precompiles::tip20::ITIP20::new(OUSD_ADDRESS, &provider);
+    assert_eq!(ousd.symbol().call().await.unwrap(), "OUSD");
+    assert!(!ousd.balanceOf(sender).call().await.unwrap().is_zero());
+
+    let tx = |gas_limit| {
+        WithOtherFields::new(
+            TransactionRequest::default()
+                .from(sender)
+                .to(Address::repeat_byte(0x42))
+                .gas_limit(gas_limit),
+        )
+    };
+    let receipt = provider.send_transaction(tx(30_000_000)).await.unwrap().get_receipt().await;
+    assert!(receipt.unwrap().status());
+    let err = provider.send_transaction(tx(30_000_001)).await.unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "server returned an error response: error code -32000: intrinsic gas too high -- \
+         tx.gas_limit > resolved tx gas limit cap"
+    );
+}
+
+// Local blocks report the general and shared gas limits of the node's hardfork, as Tempo's
+// consensus requires them: at T0 a tenth of the 500M block is shared and the general lane is half
+// of the rest, from T1 the general lane is a fixed 30M, and from T4 nothing is shared. The header
+// hash covers the values.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_blocks_report_hardfork_general_gas_limit() {
+    for (hardfork, general_gas_limit, shared_gas_limit) in [
+        (TempoHardfork::T0, 225_000_000u64, 50_000_000u64),
+        (TempoHardfork::T1, 30_000_000, 50_000_000),
+        (TempoHardfork::T4, 30_000_000, 0),
+    ] {
+        let (api, handle) =
+            spawn(NodeConfig::test_tempo().with_hardfork(Some(hardfork.into()))).await;
+        api.mine_one().await.unwrap();
+        let provider = handle.http_provider();
+        for number in ["0x0", "0x1"] {
+            let block: serde_json::Value =
+                provider.client().request("eth_getBlockByNumber", (number, false)).await.unwrap();
+            assert_eq!(
+                block["mainBlockGeneralGasLimit"],
+                format!("{general_gas_limit:#x}"),
+                "{hardfork} block {number}"
+            );
+            let header: TempoHeaderResponse =
+                provider.client().request("eth_getHeaderByNumber", (number,)).await.unwrap();
+            assert_eq!(header.as_ref().general_gas_limit, general_gas_limit);
+            assert_eq!(header.as_ref().shared_gas_limit, shared_gas_limit);
+            assert_eq!(header.hash, header.as_ref().hash_slow(), "{hardfork} block {number}");
+        }
+    }
+}
+
+// Gas estimation and the gas limit of a transaction sent without one stay within Tempo's 30M cap.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_gas_bounds_stay_within_tx_cap() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    // Stores to a new slot in an endless loop, so no gas limit is enough.
+    let endless = Address::repeat_byte(0x51);
+    api.anvil_set_code(endless, bytes!("60005b600101808055600256")).await.unwrap();
+    let reverts = Address::repeat_byte(0x52);
+    api.anvil_set_code(reverts, bytes!("60006000fd")).await.unwrap();
+    let call = |to| WithOtherFields::new(TransactionRequest::default().from(sender).to(to));
+
+    let err = provider.estimate_gas(call(endless)).await.unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "server returned an error response: error code -32003: Out of gas: gas required exceeds \
+         allowance: 30000000"
+    );
+
+    let reverting_call = WithOtherFields::new(
+        TransactionRequest::default().from(sender).to(reverts).input(bytes!("01").into()),
+    );
+    let receipt = provider.send_transaction(reverting_call).await.unwrap().get_receipt().await;
+    let receipt = receipt.unwrap();
+    assert!(!receipt.status());
+}
+
+// A fork serves the schedule before it mines a block, as forge reads it to pick the hardfork.
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_fork_schedule_on_unmined_fork() {
+    let (_source_api, source_handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T5.into()))).await;
+    let (_api, handle) =
+        spawn(NodeConfig::test_tempo().with_eth_rpc_url(Some(source_handle.http_endpoint()))).await;
+    let schedule = handle
+        .http_provider()
+        .raw_request::<_, tempo_alloy::rpc::ForkSchedule>("tempo_forkSchedule".into(), ())
+        .await
+        .unwrap();
+
+    assert_eq!(schedule.active, "T5");
+    assert!(schedule.schedule.iter().all(|fork| fork.active && fork.activation_time == 0));
+}
+
+// A fork applies the cap of the forked chain's hardfork: EIP-7825's before T1A.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_fork_applies_source_hardfork_tx_cap() {
+    let (_source_api, source_handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T0.into()))).await;
+    let (_api, handle) =
+        spawn(NodeConfig::test_tempo().with_eth_rpc_url(Some(source_handle.http_endpoint()))).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    let tx = WithOtherFields::new(
+        TransactionRequest::default()
+            .from(sender)
+            .to(Address::repeat_byte(0x42))
+            .gas_limit(20_000_000),
+    );
+
+    let err = provider.send_transaction(tx).await.unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "server returned an error response: error code -32000: intrinsic gas too high -- \
+         tx.gas_limit > resolved tx gas limit cap"
+    );
+}
+
 #[cfg(feature = "cli")]
 mod epoch_warning;
 
 mod set_code;
+
+// A genesis that already has Tempo's tokens but predates OUSD, such as an `--init` genesis exported
+// from an earlier node, still starts, without OUSD.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_init_genesis_without_ousd() {
+    let (source_api, _source_handle) = spawn(NodeConfig::test_tempo()).await;
+    let state = source_api.serialized_state(false).await.unwrap();
+    let mut genesis = Genesis::default();
+    // The dev accounts' keys are registered again at startup.
+    for (&address, account) in state
+        .accounts
+        .iter()
+        .filter(|(address, _)| ![OUSD_ADDRESS, ACCOUNT_KEYCHAIN_ADDRESS].contains(address))
+    {
+        genesis.alloc.insert(
+            address,
+            GenesisAccount::default()
+                .with_code(Some(account.code.clone()))
+                .with_nonce(Some(account.nonce))
+                .with_storage(Some(
+                    account.storage.iter().map(|(&slot, &value)| (slot, value)).collect(),
+                )),
+        );
+    }
+
+    let (_api, handle) = spawn(NodeConfig::test_tempo().with_genesis(Some(genesis))).await;
+    let provider = handle.http_provider();
+    assert!(provider.get_code_at(OUSD_ADDRESS).await.unwrap().is_empty());
+    let sender = handle.dev_accounts().next().unwrap();
+    let tx = TransactionRequest::default().from(sender).to(Address::random());
+    let receipt = provider.send_transaction(tx.into()).await.unwrap().get_receipt().await.unwrap();
+    assert!(receipt.status());
+}

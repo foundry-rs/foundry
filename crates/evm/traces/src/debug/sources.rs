@@ -1,25 +1,34 @@
+use super::{
+    CodeFunctions, FunctionEntry, UnlistedFunction,
+    functions::{
+        Declarations, SourceFunction, collect, collect_call_sites, name_of_key, resolve_types,
+    },
+};
+use evm2::interpreter::opcode::OpCode;
 use eyre::{Context, Result};
 use foundry_common::{
     compact_to_contract, external_compiler::is_external_artifact, is_deploy_helper_path,
-    strip_bytecode_placeholders,
+    namespaced_storage, strip_bytecode_placeholders,
 };
 use foundry_compilers::{
     Artifact, ProjectCompileOutput,
     artifacts::{
-        Bytecode, ContractBytecodeSome, Libraries, Source, Sources,
+        Bytecode, ConfigurableContractArtifact, ContractBytecodeSome, FunctionDebugData, Libraries,
+        Source, Sources,
         sourcemap::{SourceElement, SourceMap},
     },
+    buildinfo::SourceEdit,
     multi::MultiCompilerLanguage,
 };
 use foundry_config::read_build_info_input;
-use foundry_evm_core::ic::PcIcMap;
+use foundry_evm_core::{bytecode::InstIter, ic::PcIcMap};
 use foundry_linking::Linker;
 use rayon::prelude::*;
 use serde::Deserialize;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fmt::Write,
-    ops::Range,
+    hash::{DefaultHasher, Hash, Hasher},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -29,9 +38,17 @@ pub struct SourceData {
     pub source: Arc<String>,
     pub language: MultiCompilerLanguage,
     pub path: PathBuf,
-    /// Maps contract name to (start, end) of the contract definition in the source code.
-    /// This is useful for determining which contract contains given function definition.
-    pub contract_definitions: Vec<(String, Range<usize>)>,
+    /// Maps the byte offset of a function, modifier, or public state variable definition to it.
+    pub functions: HashMap<usize, Arc<SourceFunction>>,
+    /// The name that each call expression calls, by the byte offset where it starts.
+    pub call_sites: HashMap<usize, String>,
+    /// The base contracts of the contracts that the source declares, by name.
+    pub contract_bases: Vec<(String, Vec<String>)>,
+    /// The contracts that the source declares by name, and whether they are libraries.
+    pub contract_libraries: Vec<(String, bool)>,
+    /// The edits that a preprocessor made to the source before compilation, sorted by start
+    /// offset. The compiler's source locations refer to the edited source.
+    pub source_edits: Vec<SourceEdit>,
 }
 
 impl SourceData {
@@ -41,53 +58,42 @@ impl SourceData {
         language: MultiCompilerLanguage,
         path: PathBuf,
         root: &Path,
+        source_edits: Vec<SourceEdit>,
     ) -> Self {
-        let mut contract_definitions = Vec::new();
+        let mut declarations = Declarations::default();
+        let mut call_sites = HashMap::new();
 
-        match language {
-            MultiCompilerLanguage::Vyper(_) => {
-                // Vyper contracts have the same name as the file name.
-                if let Some(name) = path.file_stem().map(|s| s.to_string_lossy().to_string()) {
-                    contract_definitions.push((name, 0..source.len()));
-                }
-            }
-            MultiCompilerLanguage::Solc(_) => {
-                let r = output.parser().solc().compiler().enter(|compiler| -> Option<()> {
-                    let (_, source) = compiler.gcx().get_ast_source(root.join(&path))?;
-                    let source_map = compiler.sess().source_map();
-                    for item in source.ast.as_ref()?.items.iter() {
-                        if let solar::ast::ItemKind::Contract(contract) = &item.kind {
-                            let Some(contract_range) = span_to_range(source_map, item.span) else {
-                                continue;
-                            };
-                            contract_definitions.push((contract.name.to_string(), contract_range));
-                        }
-                    }
-                    Some(())
-                });
-                if r.is_none() {
-                    warn!("failed to parse contract definitions for {}", path.display());
-                }
+        if matches!(language, MultiCompilerLanguage::Solc(_)) {
+            let r = output.parser().solc().compiler().enter(|compiler| -> Option<()> {
+                let gcx = compiler.gcx();
+                let (_, source) = gcx.get_ast_source(root.join(&path))?;
+                let ast = source.ast.as_ref()?;
+                let source_map = compiler.sess().source_map();
+                // The types are Solar's own, if the sources are lowered to HIR, and unknown
+                // otherwise.
+                let types = resolve_types(gcx, source_map, root.join(&path));
+                collect(ast, source_map, &types, &mut declarations);
+                collect_call_sites(ast, source_map, &mut call_sites);
+                Some(())
+            });
+            if r.is_none() {
+                warn!("failed to parse functions and types for {}", path.display());
             }
         }
 
-        Self { source, language, path, contract_definitions }
+        let Declarations { functions, bases: contract_bases, libraries: contract_libraries } =
+            declarations;
+        Self {
+            source,
+            language,
+            path,
+            functions,
+            call_sites,
+            contract_bases,
+            contract_libraries,
+            source_edits,
+        }
     }
-
-    /// Finds name of contract that contains given loc.
-    pub fn find_contract_name(&self, start: usize, end: usize) -> Option<&str> {
-        self.contract_definitions
-            .iter()
-            .find(|(_, r)| start >= r.start && end <= r.end)
-            .map(|(name, _)| name.as_str())
-    }
-}
-
-fn span_to_range(
-    source_map: &solar::interface::source_map::SourceMap,
-    span: solar::interface::Span,
-) -> Option<Range<usize>> {
-    source_map.span_to_range(span).ok()
 }
 
 #[derive(Clone, Debug)]
@@ -100,14 +106,20 @@ pub struct ArtifactData {
     pub file_id: u32,
     /// Whether the contract was compiled through the via-IR pipeline, if the metadata says.
     pub via_ir: Option<bool>,
+    /// The functions of the creation code.
+    pub functions: CodeFunctions,
+    /// The functions of the runtime code.
+    pub functions_runtime: CodeFunctions,
+    /// The signatures of the external functions by selector, from the ABI.
+    pub selectors: HashMap<[u8; 4], String>,
 }
 
 impl ArtifactData {
     fn new(
         bytecode: ContractBytecodeSome,
+        artifact: &ConfigurableContractArtifact,
         build_id: String,
         file_id: u32,
-        via_ir: Option<bool>,
     ) -> Result<Self> {
         let parse = |b: &Bytecode, name: &str| {
             // Only parse source map if it's not empty.
@@ -120,17 +132,18 @@ impl ArtifactData {
             };
 
             // Only parse bytecode if it's not empty, stripping placeholders if necessary.
-            let pc_ic_map = strip_bytecode_placeholders(&b.object)
-                .and_then(|bytes| (!bytes.is_empty()).then(|| PcIcMap::new(bytes.as_ref())));
+            let code = strip_bytecode_placeholders(&b.object).filter(|bytes| !bytes.is_empty());
+            let pc_ic_map = code.as_ref().map(|bytes| PcIcMap::new(bytes.as_ref()));
+            let jumpdests = code.as_ref().map_or_default(|bytes| jumpdests(bytes.as_ref()));
 
-            source_map.map(|source_map| (source_map, pc_ic_map))
+            source_map.map(|source_map| (source_map, pc_ic_map, jumpdests))
         };
-        let (source_map, pc_ic_map) = parse(&bytecode.bytecode, "creation")?;
-        let (source_map_runtime, pc_ic_map_runtime) = bytecode
+        let (source_map, pc_ic_map, jumpdests) = parse(&bytecode.bytecode, "creation")?;
+        let (source_map_runtime, pc_ic_map_runtime, jumpdests_runtime) = bytecode
             .deployed_bytecode
             .bytecode
             .map(|b| parse(&b, "runtime"))
-            .unwrap_or_else(|| Ok((None, None)))?;
+            .unwrap_or_else(|| Ok((None, None, HashSet::new())))?;
 
         Ok(Self {
             source_map,
@@ -139,9 +152,97 @@ impl ArtifactData {
             pc_ic_map_runtime,
             build_id,
             file_id,
-            via_ir,
+            // Solc records `viaIR` in the metadata settings only when it is enabled.
+            via_ir: artifact
+                .metadata
+                .as_ref()
+                .map(|metadata| metadata.settings.via_ir.unwrap_or_default()),
+            functions: code_functions(artifact.function_debug_data.as_ref(), jumpdests),
+            functions_runtime: code_functions(
+                artifact.deployed_function_debug_data.as_ref(),
+                jumpdests_runtime,
+            ),
+            selectors: artifact
+                .abi
+                .iter()
+                .flat_map(|abi| abi.functions())
+                .map(|function| (function.selector().0, function.signature()))
+                .collect(),
         })
     }
+
+    /// The functions of the creation code if `init_code`, otherwise of the runtime code.
+    pub const fn functions(&self, init_code: bool) -> &CodeFunctions {
+        if init_code { &self.functions } else { &self.functions_runtime }
+    }
+}
+
+/// Tells a function of the sources apart from the others by its file and offset.
+pub fn function_id(path: &Path, offset: usize) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    (path, offset).hash(&mut hasher);
+    hasher.finish()
+}
+
+/// The offsets of the `JUMPDEST`s in `code`.
+fn jumpdests(code: &[u8]) -> HashSet<u32> {
+    InstIter::new(code)
+        .with_pc()
+        .filter(|(_, inst)| inst.opcode == OpCode::JUMPDEST)
+        .map(|(pc, _)| pc as u32)
+        .collect()
+}
+
+/// The functions that `functionDebugData` places in the code, by entry offset, and the functions
+/// of the contract that it lists without one.
+///
+/// A function the compiler inlined, or merged into another function with the same code, has no
+/// offset.
+fn code_functions(
+    data: Option<&BTreeMap<String, FunctionDebugData>>,
+    jumpdests: HashSet<u32>,
+) -> CodeFunctions {
+    let mut code = CodeFunctions { jumpdests, ..Default::default() };
+    for (key, function) in data.into_iter().flatten() {
+        let (Some(parameter_slots), Some(return_slots)) =
+            (function.parameter_slots, function.return_slots)
+        else {
+            continue;
+        };
+        let name = function.id.and_then(|id| name_of_key(key, id));
+        let (parameter_slots, return_slots) = (parameter_slots as usize, return_slots as usize);
+        match (function.entry_point, name) {
+            (Some(entry_point), name) => code
+                .entries
+                .entry(entry_point)
+                .or_default()
+                .push(FunctionEntry { name, parameter_slots, return_slots }),
+            (None, Some(name)) => {
+                code.unlisted.push(UnlistedFunction { name, parameter_slots, return_slots });
+            }
+            (None, None) => {}
+        }
+    }
+    code
+}
+
+/// Lowers the parsed Solidity sources of `output` to Solar's HIR, which resolves the types of the
+/// functions, unless that has happened. Call it before building [`ContractSources`] from `output`:
+/// if the sources are not lowered, or cannot be, the types of the functions are unknown.
+pub fn lower_sources(output: &mut ProjectCompileOutput) {
+    output.parser_mut().solc_mut().compiler_mut().enter_mut(|compiler| {
+        let _ = namespaced_storage::lower(compiler);
+    });
+}
+
+/// A function of the sources that has a body, for finding the functions that have the same code.
+#[derive(Clone, Debug)]
+pub struct BodyFunction {
+    pub name: String,
+    /// Tells it apart from the others by its file and offset.
+    pub id: u64,
+    /// The contract that declares it.
+    pub contract: Option<String>,
 }
 
 /// Container with artifacts data useful for identifying individual execution steps.
@@ -151,6 +252,11 @@ pub struct ContractSources {
     pub sources_by_id: HashMap<String, HashMap<u32, Arc<SourceData>>>,
     /// Map over contract name -> Vec<(bytecode, build_id, file_id)>
     pub artifacts_by_name: HashMap<String, Vec<ArtifactData>>,
+    /// The bases of the contracts by name.
+    pub bases: HashMap<String, Vec<String>>,
+    /// The functions of all sources by the hash of their body, which functions with the same code
+    /// share.
+    pub functions_by_body: HashMap<u64, Vec<BodyFunction>>,
 }
 
 impl ContractSources {
@@ -176,29 +282,25 @@ impl ContractSources {
             (linker, libraries)
         });
 
-        let artifacts: Vec<_> = output
+        let artifact_ids = output
             .artifact_ids()
             .filter(|(id, _)| !is_external_artifact(&id.build_id))
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>();
+        let artifacts: Vec<_> = artifact_ids
             .par_iter()
             .map(|(id, artifact)| {
                 let mut new_artifact = None;
                 if let Some(file_id) = artifact.id {
-                    // Solc records `viaIR` in the metadata settings only when it is enabled.
-                    let via_ir = artifact
-                        .metadata
-                        .as_ref()
-                        .map(|metadata| metadata.settings.via_ir.unwrap_or_default());
-                    let artifact = if let Some((linker, libraries)) = link_data.as_ref() {
+                    let linked = if let Some((linker, libraries)) = link_data.as_ref() {
                         linker.link(id, libraries)?
                     } else {
                         artifact.get_contract_bytecode()
                     };
-                    let bytecode = compact_to_contract(artifact.into_contract_bytecode())?;
+                    let bytecode = compact_to_contract(linked.into_contract_bytecode())?;
 
                     new_artifact = Some((
                         id.name.clone(),
-                        ArtifactData::new(bytecode, id.build_id.clone(), file_id, via_ir)?,
+                        ArtifactData::new(bytecode, artifact, id.build_id.clone(), file_id)?,
                     ));
                 } else {
                     warn!(id = id.identifier(), "source not found");
@@ -214,7 +316,7 @@ impl ContractSources {
 
         // Not all source files produce artifacts, so we are populating sources by using build
         // infos.
-        let mut files: BTreeMap<PathBuf, Arc<SourceData>> = BTreeMap::new();
+        let mut files: BTreeMap<PathBuf, Vec<Arc<SourceData>>> = BTreeMap::new();
         let mut removed_files = HashSet::new();
         for (build_id, build) in output.builds() {
             for (source_id, path) in &build.source_id_to_path {
@@ -226,8 +328,14 @@ impl ContractSources {
                     continue;
                 }
 
-                let source_data = match files.entry(path.clone()) {
-                    std::collections::btree_map::Entry::Vacant(entry) => {
+                // Builds of one file can edit it differently, such as two solc versions that
+                // compile a shared test file with different generated deployment code. The edits
+                // map the source locations of their build, so each set of edits has its own data.
+                let edits = build.source_edits.get(source_id).map_or(&[][..], Vec::as_slice);
+                let variants = files.entry(path.clone()).or_default();
+                let source_data = match variants.iter().find(|data| data.source_edits == edits) {
+                    Some(source_data) => source_data.clone(),
+                    None => {
                         let source = Source::read(path).wrap_err_with(|| {
                             format!("failed to read artifact source file for `{}`", path.display())
                         })?;
@@ -238,16 +346,38 @@ impl ContractSources {
                             build.language,
                             stripped,
                             root,
+                            edits.to_vec(),
                         ));
-                        entry.insert(source_data.clone());
+                        variants.push(source_data.clone());
                         source_data
                     }
-                    std::collections::btree_map::Entry::Occupied(entry) => entry.get().clone(),
                 };
                 self.sources_by_id
                     .entry(build_id.clone())
                     .or_default()
                     .insert(*source_id, source_data);
+            }
+        }
+
+        for source_data in files.values().filter_map(|variants| variants.first()) {
+            for (contract, bases) in &source_data.contract_bases {
+                let known = self.bases.entry(contract.clone()).or_default();
+                for base in bases {
+                    if !known.contains(base) {
+                        known.push(base.clone());
+                    }
+                }
+            }
+            for (offset, function) in &source_data.functions {
+                if let Some(hash) = function.body_hash {
+                    let id = function_id(&source_data.path, *offset);
+                    let function = BodyFunction {
+                        name: function.name.clone(),
+                        id,
+                        contract: function.contract.clone(),
+                    };
+                    self.add_function_by_body(hash, function);
+                }
             }
         }
 
@@ -294,9 +424,59 @@ impl ContractSources {
         }
     }
 
+    fn add_function_by_body(&mut self, hash: u64, function: BodyFunction) {
+        let functions = self.functions_by_body.entry(hash).or_default();
+        if !functions.iter().any(|known| known.id == function.id) {
+            functions.push(function);
+        }
+    }
+
+    /// Whether `contract`, the contract of `artifact`, is a library. The source of the artifact
+    /// tells: contracts of the same name in other sources are other contracts.
+    pub fn is_library(&self, artifact: &ArtifactData, contract: &str) -> bool {
+        self.sources_by_id
+            .get(&artifact.build_id)
+            .and_then(|sources| sources.get(&artifact.file_id))
+            .is_some_and(|source| {
+                source
+                    .contract_libraries
+                    .iter()
+                    .any(|(name, is_library)| name == contract && *is_library)
+            })
+    }
+
+    /// The contract and the contracts it inherits from.
+    pub fn contract_and_bases(&self, contract: &str) -> Vec<String> {
+        let mut contracts = vec![contract.to_string()];
+        let mut next = 0;
+        while let Some(contract) = contracts.get(next) {
+            let bases = self.bases.get(contract).into_iter().flatten().cloned().collect::<Vec<_>>();
+            for base in bases {
+                if !contracts.contains(&base) {
+                    contracts.push(base);
+                }
+            }
+            next += 1;
+        }
+        contracts
+    }
+
     /// Merges given contract sources.
     pub fn merge(&mut self, sources: Self) {
         self.sources_by_id.extend(sources.sources_by_id);
+        for (contract, bases) in sources.bases {
+            let known = self.bases.entry(contract).or_default();
+            for base in bases {
+                if !known.contains(&base) {
+                    known.push(base);
+                }
+            }
+        }
+        for (hash, functions) in sources.functions_by_body {
+            for function in functions {
+                self.add_function_by_body(hash, function);
+            }
+        }
         for (name, artifacts) in sources.artifacts_by_name {
             self.artifacts_by_name.entry(name).or_default().extend(artifacts);
         }
@@ -316,6 +496,23 @@ impl ContractSources {
         })
     }
 
+    /// Returns the artifact of a contract that has run. Artifacts can share a name, so among them
+    /// it is the first for which `ran` holds, with entry points for the code if one has them.
+    pub fn find_artifact(
+        &self,
+        name: &str,
+        init_code: bool,
+        ran: impl Fn(&ArtifactData) -> bool,
+    ) -> Option<&ArtifactData> {
+        let artifacts = self.artifacts_by_name.get(name)?;
+        if let [artifact] = artifacts.as_slice() {
+            return Some(artifact);
+        }
+        let mut candidates = artifacts.iter().filter(|artifact| ran(artifact)).peekable();
+        let first = candidates.peek().copied();
+        candidates.find(|artifact| !artifact.functions(init_code).entries.is_empty()).or(first)
+    }
+
     /// Returns all (name, bytecode, source) sets.
     pub fn entries(&self) -> impl Iterator<Item = (&str, &ArtifactData, &SourceData)> {
         self.artifacts_by_name.iter().flat_map(|(name, artifacts)| {
@@ -333,42 +530,61 @@ impl ContractSources {
         pc: u32,
         init_code: bool,
     ) -> Option<(SourceElement, &SourceData)> {
-        self.get_sources(contract_name)?.find_map(|(artifact, source)| {
-            let source_map = if init_code {
-                artifact.source_map.as_ref()
-            } else {
-                artifact.source_map_runtime.as_ref()
-            }?;
+        self.get_sources(contract_name)?
+            .find_map(|(artifact, source)| self.source_mapping(artifact, source, pc, init_code))
+    }
 
-            // Solc indexes source maps by instruction counter, but Vyper indexes by program
-            // counter.
-            let source_element = if matches!(source.language, MultiCompilerLanguage::Solc(_)) {
-                let pc_ic_map = if init_code {
-                    artifact.pc_ic_map.as_ref()
-                } else {
-                    artifact.pc_ic_map_runtime.as_ref()
-                }?;
-                let ic = pc_ic_map.get(pc)?;
+    /// Returns the source map element at `pc` of the code of `artifact`, with the source that it
+    /// points into.
+    pub fn source_mapping_in(
+        &self,
+        artifact: &ArtifactData,
+        pc: u32,
+        init_code: bool,
+    ) -> Option<(SourceElement, &SourceData)> {
+        let source = self.sources_by_id.get(&artifact.build_id)?.get(&artifact.file_id)?;
+        self.source_mapping(artifact, source, pc, init_code)
+    }
 
-                source_map.get(ic as usize)
+    fn source_mapping<'a>(
+        &'a self,
+        artifact: &ArtifactData,
+        source: &'a SourceData,
+        pc: u32,
+        init_code: bool,
+    ) -> Option<(SourceElement, &'a SourceData)> {
+        let source_map = if init_code {
+            artifact.source_map.as_ref()
+        } else {
+            artifact.source_map_runtime.as_ref()
+        }?;
+
+        // Solc indexes source maps by instruction counter, but Vyper indexes by program
+        // counter.
+        let source_element = if matches!(source.language, MultiCompilerLanguage::Solc(_)) {
+            let pc_ic_map = if init_code {
+                artifact.pc_ic_map.as_ref()
             } else {
-                source_map.get(pc as usize)
+                artifact.pc_ic_map_runtime.as_ref()
             }?;
-            // if the source element has an index, find the sourcemap for that index
-            source_element
-                .index()
-                // if index matches current file_id, return current source code
-                .and_then(|index| {
-                    (index == artifact.file_id).then(|| (source_element.clone(), source))
-                })
-                .or_else(|| {
-                    // otherwise find the source code for the element's index
-                    self.sources_by_id
-                        .get(&artifact.build_id)?
-                        .get(&source_element.index()?)
-                        .map(|source| (source_element.clone(), source.as_ref()))
-                })
-        })
+            let ic = pc_ic_map.get(pc)?;
+
+            source_map.get(ic as usize)
+        } else {
+            source_map.get(pc as usize)
+        }?;
+        // if the source element has an index, find the sourcemap for that index
+        source_element
+            .index()
+            // if index matches current file_id, return current source code
+            .and_then(|index| (index == artifact.file_id).then(|| (source_element.clone(), source)))
+            .or_else(|| {
+                // otherwise find the source code for the element's index
+                self.sources_by_id
+                    .get(&artifact.build_id)?
+                    .get(&source_element.index()?)
+                    .map(|source| (source_element.clone(), source.as_ref()))
+            })
     }
 }
 
@@ -389,7 +605,11 @@ mod tests {
                 source: Arc::new(text.to_string()),
                 language: Default::default(),
                 path: PathBuf::from(path),
-                contract_definitions: Vec::new(),
+                functions: HashMap::new(),
+                call_sites: HashMap::new(),
+                contract_bases: Vec::new(),
+                contract_libraries: Vec::new(),
+                source_edits: Vec::new(),
             })
         };
         let mut sources = ContractSources::default();

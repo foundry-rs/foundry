@@ -323,7 +323,6 @@ async fn update_config(command: OwnersSubcommand) -> Result<()> {
     );
     let signer = send_tx.eth.wallet.signer().await?;
     let (config, provider) = tempo_provider(&send_tx.eth)?;
-    apply_poll_interval(&provider, send_tx.poll_interval);
 
     let current =
         current_config(&provider, account, &[signer.address()]).await?.ok_or_else(|| {
@@ -391,6 +390,7 @@ async fn update_config(command: OwnersSubcommand) -> Result<()> {
         .await?
         .with_code_sig_and_args(None, Some(hex::encode_prefixed(&calldata)), vec![])
         .await?;
+    apply_poll_interval(&provider, send_tx.poll_interval, builder.chain().id());
     // The node models the owner quorum and, on the first transaction, the registration.
     builder.tx_mut().configurable_account_simulation = Some(simulation_spec(
         account,

@@ -11,7 +11,7 @@ use tempo_precompiles::{
     VALIDATOR_CONFIG_V2_ADDRESS, ZONE_FACTORY_ADDRESS, ZONE_VERIFIER_ADDRESS,
 };
 
-const UNINITIALIZED_TIP20: Address = address!("0x20c0000000000000000000006a37da5c996874be");
+const UNINITIALIZED_TIP20: Address = address!("0x20c000000000000000000000c0ffeec0ffeec0ff");
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_anvil_set_code_rejects_native_token() {

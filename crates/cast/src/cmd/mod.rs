@@ -16,7 +16,7 @@ use foundry_cli::{
     utils::{LoadConfig, get_provider, load_config_from_provider},
 };
 use foundry_common::{provider::RetryProvider, shell};
-use foundry_config::{Config, figment::Figment};
+use foundry_config::{Chain, Config, figment::Figment};
 use foundry_evm::{core::bytecode::InstIter, opts::EvmOpts};
 use foundry_evm_networks::NetworkVariant;
 use futures::StreamExt;
@@ -165,22 +165,31 @@ pub(crate) async fn resolve_transaction_network(
     config: &Config,
     requires_tempo: bool,
 ) -> Result<NetworkVariant> {
+    Ok(resolve_transaction_network_and_chain(config, requires_tempo).await?.0)
+}
+
+/// Resolves the RPC request family like [`resolve_transaction_network`], with the chain when it
+/// is configured or was read from the RPC to select the family.
+pub(crate) async fn resolve_transaction_network_and_chain(
+    config: &Config,
+    requires_tempo: bool,
+) -> Result<(NetworkVariant, Option<Chain>)> {
     validate_tempo_network(config, requires_tempo)?;
     if requires_tempo {
-        return Ok(NetworkVariant::Tempo);
+        return Ok((NetworkVariant::Tempo, config.chain));
     }
     if config.networks.has_network_selection() {
-        return Ok(config.networks.execution_network());
+        return Ok((config.networks.execution_network(), config.chain));
     }
     if let Some(chain) = config.chain {
-        return Ok(chain.id().into());
+        return Ok((chain.id().into(), Some(chain)));
     }
     if config.eth_rpc_curl {
-        return Ok(NetworkVariant::Ethereum);
+        return Ok((NetworkVariant::Ethereum, None));
     }
 
-    let provider = get_provider(config)?;
-    Ok(provider.get_chain_id().await?.into())
+    let chain = Chain::from_id(get_provider(config)?.get_chain_id().await?);
+    Ok((chain.id().into(), Some(chain)))
 }
 
 pub(crate) fn disassemble(code: &[u8]) -> Result<String> {
@@ -206,9 +215,6 @@ pub(crate) fn validate_base_transaction_options(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[cfg(feature = "base")]
-    use foundry_config::Chain;
 
     #[tokio::test]
     async fn transaction_network_respects_explicit_selection() {

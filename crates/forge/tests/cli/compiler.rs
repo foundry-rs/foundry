@@ -7,6 +7,9 @@ use foundry_test_utils::{
 };
 use path_slash::PathBufExt;
 
+#[cfg(unix)]
+use crate::cmd::write_fake_solar;
+
 const CONTRACT_A: &str = r#"
 // SPDX-license-identifier: MIT
 pragma solidity 0.8.4;
@@ -346,4 +349,68 @@ fn can_list_resolved_multiple_compiler_versions_verbose_json(prj: _, cmd: _) {
 "#]]
         .is_json(),
     );
+}
+
+#[forgetest]
+fn compiler_install_rejects_invalid_solar_pin(cmd: _) {
+    cmd.args(["compiler", "install", "solar:0.1.8"]).assert_failure().stderr_eq(str![[r#"
+error: invalid value 'solar:0.1.8' for '<COMPILER>...': expected a solc version such as `0.8.30`, `solar`, or `solar:<version>` naming a release 0.2.0 or later
+
+For more information, try '--help'.
+
+"#]]);
+}
+
+// Install, list and remove run offline against an installed release.
+#[cfg(unix)]
+#[forgetest]
+fn can_install_list_and_remove_solar(cmd: _) {
+    let home = tempfile::tempdir().unwrap();
+    let home = home.path();
+    write_fake_solar(&home.join(".foundry/solar/9.9.9/solar"), "0.8.38+commit.3a70399.solar.9.9.9");
+
+    cmd.env("HOME", home);
+    cmd.args(["compiler", "install", "solar:9.9.9"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[..]/.foundry/solar/9.9.9/solar
+
+"#]])
+        .stderr_eq("");
+
+    cmd.forge_fuse().env("HOME", home);
+    cmd.args(["compiler", "install", "solar:9.9.9", "--json"]).assert_success().stdout_eq(
+        str![[
+            r#"[{"compiler":"solar","version":"9.9.9","path":"[..]/.foundry/solar/9.9.9/solar"}]"#
+        ]]
+        .is_json(),
+    );
+
+    cmd.forge_fuse().env("HOME", home);
+    cmd.args(["compiler", "list", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"{"solc":"{...}","solar":["9.9.9"]}"#]].is_json());
+
+    // Only a pinned Solar release can be removed.
+    for compiler in ["solar", "0.8.30"] {
+        cmd.forge_fuse().env("HOME", home);
+        cmd.args(["compiler", "remove", compiler]).assert_failure().stderr_eq(format!(
+            "error: invalid value '{compiler}' for '<COMPILER>...': expected `solar:<version>`; use \
+             `svm remove` for solc releases\n\nFor more information, try '--help'.\n"
+        ));
+    }
+
+    cmd.forge_fuse().env("HOME", home);
+    cmd.args(["compiler", "remove", "solar:9.9.9"]).assert_success().stdout_eq("").stderr_eq(str![
+        [r#"
+Removed solar 9.9.9
+
+"#]
+    ]);
+
+    cmd.forge_fuse().env("HOME", home);
+    cmd.args(["compiler", "remove", "solar:9.9.9"]).assert_failure().stderr_eq(str![[r#"
+Error: solar 9.9.9 is not installed
+
+"#]]);
 }

@@ -73,9 +73,8 @@ impl BatchSendArgs {
         let resolved_lane = resolve_lane(&mut tx.tempo, &config.root)?;
         let lane = resolved_lane.as_ref();
 
-        apply_poll_interval(&provider, send_tx.poll_interval);
-
         let chain = utils::get_chain(config.chain, &provider).await?;
+        apply_poll_interval(&provider, send_tx.poll_interval, chain.id());
         let (mut signer, tempo_access_key) =
             tempo::resolve_session_or_wallet_signer(&tx.tempo, &send_tx.eth.wallet, chain.id())
                 .await?;

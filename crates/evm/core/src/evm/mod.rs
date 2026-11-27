@@ -274,10 +274,18 @@ pub type FoundryEvmFor<'a, FEN> = Evm<'a, TypesFor<FEN>>;
 pub type InterpreterFor<'frame, 'host, FEN> =
     evm2::interpreter::Interpreter<'frame, 'host, TypesFor<FEN>>;
 
-/// Returns the most gas one transaction may use on a known chain at `timestamp`, as the chain's
-/// execution factory enforces it, or `None` for an unknown chain or one without such a cap.
-pub fn tx_gas_limit_cap(chain_id: u64, timestamp: u64) -> Option<u64> {
-    let hardfork = FoundryHardfork::from_chain_and_timestamp(chain_id, timestamp)?;
+/// Returns the most gas one transaction may use on `chain_id` at `timestamp`, as the chain's
+/// execution factory enforces it.
+///
+/// A chain whose hardfork schedule this build does not know, such as a local or development node,
+/// uses `fallback`, the hardfork its node reports or the transaction was simulated under. Returns
+/// `None` when neither is known, or when the hardfork has no such cap.
+pub fn tx_gas_limit_cap(
+    chain_id: u64,
+    timestamp: u64,
+    fallback: Option<FoundryHardfork>,
+) -> Option<u64> {
+    let hardfork = FoundryHardfork::from_chain_and_timestamp(chain_id, timestamp).or(fallback)?;
     // Under EIP-8037 the cap only bounds regular gas, not the transaction's gas limit.
     if evm2::SpecId::from(hardfork) >= evm2::SpecId::AMSTERDAM {
         return None;
