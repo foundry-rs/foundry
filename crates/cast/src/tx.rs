@@ -534,9 +534,9 @@ impl<N: Network, P, S> CastTxBuilder<N, P, S> {
 
     /// Resolves the Tempo fee token the sender pays with while filling, as sending an unsponsored
     /// transaction does, so that callers do not resolve it again. The lookup runs alongside the
-    /// nonce and fee requests when those are concurrent, and the fee token is set after gas
-    /// estimation, which runs without it. Ignored for sponsored transactions, whose fee payer
-    /// selects the fee token.
+    /// nonce and fee requests when those are concurrent, and a fee token it resolves is only set
+    /// after gas estimation. Ignored for sponsored transactions, whose fee payer selects the fee
+    /// token.
     pub const fn with_fee_token_resolution(mut self) -> Self {
         self.inner.resolve_fee_token = true;
         self
@@ -777,13 +777,17 @@ where
                     (Some(max_fee), Some(priority_fee)) if priority_fee <= max_fee
                 )
             } && (!self.blob || self.tx.max_fee_per_blob_gas().is_some());
-            // The concurrent estimate has no nonce yet, which nodes fill from the sender's protocol
-            // nonce, while a Tempo nonce lane's intrinsic gas depends on the lane's own nonce.
+            // Without a given nonce, the concurrent estimate leaves it to the node, which fills the
+            // sender's protocol nonce, while a Tempo nonce lane's intrinsic gas depends on the
+            // lane's own nonce.
             let gas_request = (fees_are_complete
                 && self.access_list.is_none()
                 && self.tx.gas_limit().is_none()
-                && self.tx.nonce_key().is_none_or(|key| key.is_zero()))
+                && (self.tx.nonce().is_some()
+                    || self.tx.nonce_key().is_none_or(|key| key.is_zero())))
             .then(|| self.gas_estimation_request());
+            // The fee token only depends on fields that are final before filling, since this path
+            // requires no EIP-7702 authorizations and no Tempo wallet key authorization.
             let fee_token_request = resolve_fee_token.then(|| self.tx.clone());
             let (blob, legacy, browser, eip1559_fee_estimate, gas_estimate_multiplier, sponsored) = (
                 self.blob,
@@ -814,7 +818,7 @@ where
                 async {
                     let Some(mut request) = fee_token_request else { return Ok(None) };
                     let provider = provider as &dyn Provider<N>;
-                    resolve_and_set_fee_token(Some(provider), &mut request, None).await.map(Some)
+                    resolve_and_set_fee_token(Some(provider), &mut request, None).await
                 },
             )?;
             if let Some(gas_limit) = gas_limit {
@@ -868,15 +872,13 @@ where
             .await?;
             self.tx.set_gas_limit(estimated);
         }
-        // A fee token can make the request a Tempo AA transaction, so it is only set once the gas
-        // was estimated without it, as when sending resolves it.
-        match fee_token {
-            Some(Some(fee_token)) => self.tx.set_fee_token(fee_token),
-            None if resolve_fee_token => {
-                let provider = &self.provider as &dyn Provider<N>;
-                resolve_and_set_fee_token(Some(provider), &mut self.tx, None).await?;
-            }
-            _ => {}
+        // A resolved fee token can make the request a Tempo AA transaction, so it is only set once
+        // the gas was estimated, as when sending resolves it.
+        if let Some(fee_token) = fee_token {
+            self.tx.set_fee_token(fee_token);
+        } else if resolve_fee_token && !resolve_in_parallel {
+            let provider = &self.provider as &dyn Provider<N>;
+            resolve_and_set_fee_token(Some(provider), &mut self.tx, None).await?;
         }
 
         Ok((self.tx, state.func))
@@ -1420,6 +1422,47 @@ mod tests {
         let methods = requests.iter().map(|(method, _)| method.as_str()).collect::<Vec<_>>();
         assert_eq!(methods, ["eth_call", "eth_estimateGas"]);
         assert_eq!(requests[1].1[0]["nonce"], "0x7");
+    }
+
+    /// A nonce lane transaction with a given nonce estimates its gas with that nonce, alongside the
+    /// fee token lookup.
+    #[tokio::test]
+    async fn tempo_nonce_lane_with_nonce_estimates_concurrently() {
+        let token = Address::repeat_byte(0x42);
+        let transport = BarrierTransport::new(
+            &[
+                ("eth_call", serde_json::json!(Bytes::from(token.abi_encode()))),
+                ("eth_estimateGas", serde_json::json!("0x5208")),
+            ],
+            &["eth_call", "eth_estimateGas"],
+        );
+        let requests = transport.requests.clone();
+        let provider = ProviderBuilder::new_with_network::<TempoNetwork>()
+            .connect_client(RpcClient::new(transport, true));
+
+        let args = [
+            "--tempo.nonce-key",
+            "42",
+            "--nonce",
+            "3",
+            "--gas-price",
+            "1",
+            "--priority-gas-price",
+            "1",
+        ];
+        let builder = tempo_builder(&provider, &args).await.with_fee_token_resolution();
+        let (tx, _) = timeout(Duration::from_secs(1), builder.build(Address::repeat_byte(0x22)))
+            .await
+            .expect("fee token and gas requests were not in flight together")
+            .unwrap();
+
+        assert_eq!(tx.nonce(), Some(3));
+        assert_eq!(tx.fee_token, Some(token));
+        let requests = requests.lock().unwrap();
+        let (_, estimate) =
+            requests.iter().find(|(method, _)| method == "eth_estimateGas").unwrap();
+        assert_eq!(estimate[0]["nonce"], "0x3");
+        assert!(estimate[0]["feeToken"].is_null());
     }
 
     #[tokio::test]
