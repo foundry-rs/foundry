@@ -950,7 +950,7 @@ impl SymbolicExecutor {
         words: &[(SymExpr, Vec<Address>)],
     ) {
         for (word, candidates) in words {
-            state.world.guard_symbolic_address(word, candidates);
+            state.world.guard_symbolic_address(word, candidates, false);
         }
     }
 
