@@ -62,11 +62,20 @@ impl BroadcastReader {
     where
         N::TxEnvelope: for<'d> Deserialize<'d>,
     {
-        Ok(self.filter_and_sort(self.read_all()?))
+        let broadcasts = self.read_runs(false)?.into_iter().flat_map(|(_, run)| run).collect();
+        Ok(self.filter_and_sort(broadcasts))
     }
 
-    /// Reads every broadcast in the broadcast directory without applying the filters.
-    fn read_all<N: Network>(&self) -> eyre::Result<Vec<ScriptSequence<N>>>
+    /// Reads every run file in the broadcast directory, without applying the filters, as its
+    /// timestamp and the broadcasts it holds: one for a single-chain run, one per chain switch for
+    /// a multichain run.
+    ///
+    /// `-latest` files are skipped unless `include_latest` is set. They are copies of the newest
+    /// timestamped run, except after an interruption, when only they hold the latest checkpoint.
+    fn read_runs<N: Network>(
+        &self,
+        include_latest: bool,
+    ) -> eyre::Result<Vec<(u128, Vec<ScriptSequence<N>>)>>
     where
         N::TxEnvelope: for<'d> Deserialize<'d>,
     {
@@ -78,7 +87,11 @@ impl BroadcastReader {
 
             if path.is_file() && path.extension().is_some_and(|ext| ext == "json") {
                 // Ignore -latest to avoid duplicating broadcast entries
-                if path.components().any(|c| c.as_os_str().to_string_lossy().contains("-latest")) {
+                if !include_latest
+                    && path
+                        .components()
+                        .any(|c| c.as_os_str().to_string_lossy().contains("-latest"))
+                {
                     continue;
                 }
 
@@ -99,14 +112,19 @@ impl BroadcastReader {
                                 .ok()
                         })
                         .unwrap_or_default();
+                    let timestamp = broadcast
+                        .get("timestamp")
+                        .and_then(Value::as_u64)
+                        .map(u128::from)
+                        .unwrap_or_default();
 
-                    broadcasts.extend(multichain_deployments);
+                    broadcasts.push((timestamp, multichain_deployments));
                     continue;
                 }
 
-                let broadcast = parse_sequence(fs::read_json_file(path)?)
+                let broadcast: ScriptSequence<N> = parse_sequence(fs::read_json_file(path)?)
                     .map_err(|source| FsPathError::ReadJson { source, path: path.into() })?;
-                broadcasts.push(broadcast);
+                broadcasts.push((broadcast.timestamp, vec![broadcast]));
             }
         }
 
@@ -187,41 +205,43 @@ impl BroadcastReader {
     }
 
     /// Returns the address of the deployment whose recorded `vm.label` is `label`, in the latest
-    /// broadcast on this reader's chain that has a confirmed deployment with that label.
+    /// run with a confirmed deployment with that label on this reader's chain.
     ///
     /// Deployments include CREATE and CREATE2 transactions and the contracts they or calls create
-    /// (`additionalContracts`). The contract name and transaction type filters do not apply.
-    /// Errors when the label names several addresses in that broadcast.
+    /// (`additionalContracts`). A run covers every broadcast it holds for the chain, and includes
+    /// the `-latest` checkpoint of an interrupted run. The contract name and transaction type
+    /// filters do not apply. Errors when the label names several addresses in that run.
     pub fn read_latest_deployment_by_label<N: Network>(&self, label: &str) -> Result<Address>
     where
         N::TxEnvelope: for<'d> Deserialize<'d>,
     {
         let addresses = self
-            .read_all::<N>()?
+            .read_runs::<N>(true)?
             .into_iter()
-            .filter(|broadcast| broadcast.chain == self.chain_id)
-            .filter_map(|broadcast| {
+            .filter_map(|(timestamp, run)| {
                 let mut addresses = Vec::new();
-                for tx in &broadcast.transactions {
-                    if !tx.hash.is_some_and(|hash| {
-                        broadcast.receipts.iter().any(|r| r.transaction_hash() == hash)
-                    }) {
-                        continue;
+                for broadcast in run.iter().filter(|broadcast| broadcast.chain == self.chain_id) {
+                    for tx in &broadcast.transactions {
+                        if !tx.hash.is_some_and(|hash| {
+                            broadcast.receipts.iter().any(|r| r.transaction_hash() == hash)
+                        }) {
+                            continue;
+                        }
+                        if tx.call_kind.is_any_create()
+                            && tx.label.as_deref() == Some(label)
+                            && let Some(address) = tx.contract_address
+                        {
+                            addresses.push(address);
+                        }
+                        addresses.extend(
+                            tx.additional_contracts
+                                .iter()
+                                .filter(|contract| contract.label.as_deref() == Some(label))
+                                .map(|contract| contract.address),
+                        );
                     }
-                    if tx.call_kind.is_any_create()
-                        && tx.label.as_deref() == Some(label)
-                        && let Some(address) = tx.contract_address
-                    {
-                        addresses.push(address);
-                    }
-                    addresses.extend(
-                        tx.additional_contracts
-                            .iter()
-                            .filter(|contract| contract.label.as_deref() == Some(label))
-                            .map(|contract| contract.address),
-                    );
                 }
-                (!addresses.is_empty()).then_some((broadcast.timestamp, addresses))
+                (!addresses.is_empty()).then_some((timestamp, addresses))
             })
             .max_by_key(|(timestamp, _)| *timestamp)
             .map(|(_, addresses)| addresses)
@@ -421,7 +441,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("broadcast-label-{}", std::process::id()));
         let dir = root.join("Counter.s.sol").join("1");
         std::fs::create_dir_all(&dir).unwrap();
-        for (index, run) in [first, second, other_chain].iter().enumerate() {
+        for (index, run) in [&first, &second, &other_chain].into_iter().enumerate() {
             fs::write_json_file(&dir.join(format!("run-{index}.json")), run).unwrap();
         }
         let reader = BroadcastReader::new("Counter".to_string(), 1, &root).unwrap();
@@ -447,6 +467,39 @@ mod tests {
         assert_eq!(
             lookup("usdcpool"),
             Err("no deployment labeled \"usdcpool\" on chain 1; use getDeployment for contract names"
+                .to_string())
+        );
+
+        // The `-latest` copy of the newest run must not count twice.
+        fs::write_json_file(&dir.join("run-latest.json"), &second).unwrap();
+        assert_eq!(lookup("Dup").unwrap_err().matches("0x").count(), 2);
+        // An interrupted run's checkpoint exists only as `-latest`.
+        let checkpoint = run(4, vec![confirmed(0x13, Some("WethPool"))]);
+        let other_script = root.join("Other.s.sol").join("1");
+        std::fs::create_dir_all(&other_script).unwrap();
+        fs::write_json_file(&other_script.join("run-latest.json"), &checkpoint).unwrap();
+        assert_eq!(lookup("WethPool"), Ok(address(0x13)));
+        // A multichain run that returns to chain 1 holds two chain 1 broadcasts. It is ordered by
+        // its own timestamp, not those of its broadcasts.
+        let mut chain_two = run(0, vec![confirmed(0x14, Some("Split"))]);
+        chain_two.chain = 2;
+        let multi = serde_json::json!({
+            "deployments": [
+                run(0, vec![confirmed(0x10, Some("Split")), confirmed(0x12, Some("WethPool"))]),
+                chain_two,
+                run(0, vec![confirmed(0x11, Some("Split"))]),
+            ],
+            "timestamp": 5,
+        });
+        let multi_dir = root.join("multi").join("Pools.s.sol-5");
+        std::fs::create_dir_all(&multi_dir).unwrap();
+        fs::write_json_file(&multi_dir.join("run.json"), &multi).unwrap();
+        assert_eq!(lookup("WethPool"), Ok(address(0x12)));
+        assert_eq!(
+            lookup("Split"),
+            Err("label \"Split\" matches multiple deployments on chain 1: \
+                 0x0000000000000000000000000000000000000010, \
+                 0x0000000000000000000000000000000000000011"
                 .to_string())
         );
 
