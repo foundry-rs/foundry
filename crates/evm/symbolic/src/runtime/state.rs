@@ -1362,6 +1362,7 @@ impl PathState {
         // A precompile nothing touched yet is left out: guarding a word for every precompile
         // would make each later cheatcode or pranked call that takes it fork over all of them.
         let candidates = self.world.concrete_alias_candidates(executor);
+        self.world.mark_unreached_guards(word, &candidates);
         self.world.guard_symbolic_address(word, &candidates);
         candidates
             .into_iter()
@@ -2350,8 +2351,8 @@ pub(crate) struct SymbolicWorldState {
     /// each may still denote. Such a word does not resolve to its representative account,
     /// which only stands for it where it names none of these accounts.
     guarded_symbolic_addresses: HashMap<SymExpr, BTreeSet<Address>>,
-    /// Accounts a guarded write reached only after state was written through the word, which
-    /// therefore missed the earlier writes.
+    /// Accounts that missed some state written through the word: a guarded write reached them
+    /// only after earlier writes, or a guarded write did not reach them.
     late_guarded_symbolic_addresses: HashMap<SymExpr, BTreeSet<Address>>,
     replay_storage_slots: HashMap<Symbol, Vec<SymbolicReplayStorageSlot>>,
     replay_symbolic_storage_keys: HashMap<Symbol, Vec<(Address, SymExpr)>>,
@@ -2684,6 +2685,25 @@ impl SymbolicWorld {
         if !late.is_empty() {
             state.late_guarded_symbolic_addresses.entry(alias).or_default().extend(late);
         }
+    }
+
+    /// Marks the accounts `expr` is guarded against that a guarded write landing on `reached`
+    /// misses, such as a precompile a pranked call guarded, so its state stays on the
+    /// representative account.
+    pub(crate) fn mark_unreached_guards(&mut self, expr: &SymExpr, reached: &[Address]) {
+        let Some((alias, _)) = self.alias_entry(expr) else { return };
+        let Some(guarded) = self.guarded_symbolic_addresses.get(alias) else { return };
+        let missed = guarded
+            .iter()
+            .copied()
+            .filter(|address| !reached.contains(address))
+            .collect::<Vec<_>>();
+        if missed.is_empty() {
+            return;
+        }
+        let alias = alias.clone();
+        let state = Arc::make_mut(&mut self.state);
+        state.late_guarded_symbolic_addresses.entry(alias).or_default().extend(missed);
     }
 
     /// Returns whether the address word `expr` has an alias whose representative account holds

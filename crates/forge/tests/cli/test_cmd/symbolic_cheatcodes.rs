@@ -3720,6 +3720,8 @@ import "forge-std/Test.sol";
 
 contract Target {
     function ping() external payable {}
+
+    function peek() external view {}
 }
 
 contract Salted {
@@ -3831,6 +3833,14 @@ contract SymbolicFixedAddress is Test {
         vm.assume(who == address(0xB0B));
         assert(uint256(vm.load(address(0xB0B), 0)) != 42);
     }
+
+    // The pranked static call guards the untouched precompiles, which `vm.deal` does not reach.
+    function checkPrankThenDeal(address who) public {
+        vm.prank(who);
+        target.peek();
+        vm.deal(who, 5);
+        if (who == address(4)) assert(who.balance != 5);
+    }
 }
 "#,
     );
@@ -3839,7 +3849,7 @@ contract SymbolicFixedAddress is Test {
         .failure()
         .stdout_eq(str![[r#"
 ...
-Ran 9 tests for test/SymbolicFixedAddress.t.sol:SymbolicFixedAddress
+Ran 10 tests for test/SymbolicFixedAddress.t.sol:SymbolicFixedAddress
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealSurvivesDroppedWrite(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealtInFailedCall(address) ([METRICS])
 [PASS] checkDealtSenderCannotOverpay(address) ([METRICS])
@@ -3847,9 +3857,10 @@ Ran 9 tests for test/SymbolicFixedAddress.t.sol:SymbolicFixedAddress
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic address with code fixed below the root frame] checkEtchedFixedInCall(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkNonceOnceFixed(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPersistentOnceFixed(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankThenDeal(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkSaltedCreate(uint8) ([METRICS])
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic address fixed to an account the run knew only after state was written through the address] checkStoreBeforeAccountKnown(address) ([METRICS])
-Suite result: FAILED. 1 passed; 8 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 1 passed; 9 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
