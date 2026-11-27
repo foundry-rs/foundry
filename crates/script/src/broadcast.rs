@@ -345,12 +345,15 @@ where
 
 /// Returns whether resubmitting a transaction after `error` could succeed.
 ///
-/// A JSON-RPC error response means the node validated the payload and rejected it, for example
-/// for a gas limit above the chain's cap, so the same payload fails again, unless Alloy classifies
-/// the error as transient, like a rate limit. Transport failures and other errors are retried.
-fn is_retryable_send_error(error: &eyre::Report) -> bool {
+/// A JSON-RPC error response means the node validated the payload and rejected it. While earlier
+/// transactions of the batch are unconfirmed, the rejection may depend on them, such as a pool's
+/// in-flight limit for an EIP-7702 delegated sender or funds an earlier transaction provides, so it
+/// is retried. Otherwise the same payload fails again, for example with a gas limit above the
+/// chain's cap, unless Alloy classifies the error as transient, like a rate limit. Transport
+/// failures and other errors are retried.
+fn is_retryable_send_error(error: &eyre::Report, earlier_unconfirmed: bool) -> bool {
     match error.downcast_ref::<TransportError>() {
-        Some(RpcError::ErrorResp(payload)) => payload.is_retry_err(),
+        Some(RpcError::ErrorResp(payload)) => earlier_unconfirmed || payload.is_retry_err(),
         _ => true,
     }
 }
@@ -1358,6 +1361,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                             prepared.push((kind, *index));
                         }
 
+                        let first_index = prepared.first().map(|(_, index)| *index);
                         let mut buffer = FuturesUnordered::new();
                         for (kind, index) in prepared {
                             if let Some(request) = kind.delegated_request() {
@@ -1415,7 +1419,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                             }
                             if attempt <= 3
                                 && let Err(error) = &res
-                                && is_retryable_send_error(error)
+                                && is_retryable_send_error(error, Some(index) != first_index)
                             {
                                 // Try to resubmit the transaction
                                 let provider = provider.clone();
@@ -2420,7 +2424,7 @@ mod tests {
     use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom, TxEnvelope};
     use alloy_network::Ethereum;
     use alloy_primitives::{B256, Bloom, address, hex};
-    use alloy_provider::mock::Asserter;
+    use alloy_provider::{mock::Asserter, transport::TransportErrorKind};
     use alloy_rpc_types::TransactionReceipt;
     use foundry_common::tempo::PATH_USD_ADDRESS;
     use foundry_evm::{backend::Backend, core::evm::EthEvmNetwork, opts::EvmOpts};
@@ -2435,6 +2439,24 @@ mod tests {
     const OTHER_SIGNED_TX: &[u8] = &hex!(
         "02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000018080c001a0cce9a61187b5d18a89ecd27ec675e3b3f10d37f165627ef89a15a7fe76395ce8a07537f5bffb358ffbef22cda84b1c92f7211723f9e09ae037e81686805d3e5505"
     );
+
+    #[test]
+    fn node_rejections_retry_only_behind_unconfirmed_transactions() {
+        let rejection = |payload: &str| {
+            let error: TransportError =
+                TransportError::ErrorResp(serde_json::from_str(payload).unwrap());
+            eyre::Report::new(error)
+        };
+        let in_flight = rejection(
+            r#"{"code":-32000,"message":"in-flight transaction limit reached for delegated accounts"}"#,
+        );
+        assert!(is_retryable_send_error(&in_flight, true));
+        assert!(!is_retryable_send_error(&in_flight, false));
+        let rate_limited = rejection(r#"{"code":429,"message":"rate limited"}"#);
+        assert!(is_retryable_send_error(&rate_limited, false));
+        let transport = eyre::Report::new(TransportErrorKind::backend_gone());
+        assert!(is_retryable_send_error(&transport, false));
+    }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn next_nonce_uses_exact_fork_hash() {
