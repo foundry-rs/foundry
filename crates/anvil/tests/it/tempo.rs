@@ -45,7 +45,7 @@ use anvil::{
 };
 use anvil_core::{
     eth::block::Block,
-    types::{ReorgOptions, TempoCreateTokenRequest, TempoTokenMint},
+    types::{ReorgOptions, TempoCreateTokenRequest},
 };
 use axum::{Json, Router, routing::post};
 use commonware_codec::{DecodeExt, Encode, ReadExt, varint::UInt};
@@ -3725,17 +3725,7 @@ async fn test_tempo_simulate_v1_reports_token_metadata() {
     let provider = handle.http_provider();
     let mut accounts = handle.dev_accounts();
     let (from, ousd_payer) = (accounts.next().unwrap(), accounts.next().unwrap());
-    api.anvil_tempo_create_token(TempoCreateTokenRequest {
-        address: OUSD_ADDRESS,
-        name: "Open USD".into(),
-        symbol: "OUSD".into(),
-        currency: "USD".into(),
-        quote_token: PATH_USD,
-        admin: from,
-        mint: vec![TempoTokenMint { to: ousd_payer, amount: U256::from(10u64.pow(12)) }],
-    })
-    .await
-    .unwrap();
+    api.anvil_deal_tip20(ousd_payer, OUSD_ADDRESS, U256::from(10u64.pow(12))).await.unwrap();
     // Forwards its calldata to PathUSD and reverts if that call fails.
     let forwarder = Address::random();
     let forwarder_code = [
@@ -3803,7 +3793,7 @@ async fn test_tempo_simulate_v1_reports_token_metadata() {
             (PATH_USD, usd("PathUSD", "PathUSD")),
             (BETA_USD, usd("BetaUSD", "BetaUSD")),
             (THETA_USD, usd("ThetaUSD", "ThetaUSD")),
-            (OUSD_ADDRESS, usd("Open USD", "OUSD")),
+            (OUSD_ADDRESS, usd("OpenUSD", "OUSD")),
         ])
     );
 }
@@ -3815,12 +3805,12 @@ async fn test_tempo_simulate_v1_reads_metadata_at_base_block() {
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
     let from = handle.dev_accounts().next().unwrap();
     api.mine_one().await.unwrap();
-    create_ousd(&api, from).await;
+    create_test_usd(&api, from).await;
     // Code deployed by an override does not count: metadata comes from the base state.
     let payload = serde_json::json!({
         "blockStateCalls": [{
-            "stateOverrides": { (OUSD_ADDRESS.to_string()): { "code": "0x00" } },
-            "calls": [{ "from": from, "to": OUSD_ADDRESS }],
+            "stateOverrides": { (TEST_USD.to_string()): { "code": "0x00" } },
+            "calls": [{ "from": from, "to": TEST_USD }],
         }],
     });
 
@@ -3837,7 +3827,7 @@ async fn test_tempo_simulate_v1_reads_metadata_at_base_block() {
     };
 
     assert_eq!(metadata(BlockId::number(0)).await, serde_json::json!({}));
-    assert_eq!(metadata(BlockId::latest()).await, ousd_metadata());
+    assert_eq!(metadata(BlockId::latest()).await, test_usd_metadata());
 }
 
 /// A fork simulating a block that predates it forwards `tempo_simulateV1`, so the upstream
@@ -3847,11 +3837,12 @@ async fn test_tempo_simulate_v1_fork_forwards_pre_fork_blocks() {
     let (source_api, source_handle) = spawn(NodeConfig::test_tempo()).await;
     let from = source_handle.dev_accounts().next().unwrap();
     source_api.mine_one().await.unwrap();
-    create_ousd(&source_api, from).await;
+    create_test_usd(&source_api, from).await;
     source_api.mine_one().await.unwrap();
     let (_api, handle) =
         spawn(NodeConfig::test_tempo().with_eth_rpc_url(Some(source_handle.http_endpoint()))).await;
-    let payload = serde_json::json!({ "blockStateCalls": [{ "calls": [{ "from": from, "to": OUSD_ADDRESS }] }] });
+    let payload =
+        serde_json::json!({ "blockStateCalls": [{ "calls": [{ "from": from, "to": TEST_USD }] }] });
 
     let simulate = |block: BlockId| {
         let provider = handle.http_provider();
@@ -3871,15 +3862,18 @@ async fn test_tempo_simulate_v1_fork_forwards_pre_fork_blocks() {
         before_token["blocks"].clone(),
     )
     .unwrap();
-    assert_eq!(simulate(BlockId::number(1)).await["tokenMetadata"], ousd_metadata());
-    assert_eq!(simulate(BlockId::latest()).await["tokenMetadata"], ousd_metadata());
+    assert_eq!(simulate(BlockId::number(1)).await["tokenMetadata"], test_usd_metadata());
+    assert_eq!(simulate(BlockId::latest()).await["tokenMetadata"], test_usd_metadata());
 }
 
-async fn create_ousd(api: &EthApi<FoundryNetwork>, admin: Address) {
+/// A TIP-20 token outside Tempo's genesis, created by [`create_test_usd`].
+const TEST_USD: Address = address!("0x20c000000000000000000000c0ffeec0ffeec0ff");
+
+async fn create_test_usd(api: &EthApi<FoundryNetwork>, admin: Address) {
     api.anvil_tempo_create_token(TempoCreateTokenRequest {
-        address: OUSD_ADDRESS,
-        name: "Open USD".into(),
-        symbol: "OUSD".into(),
+        address: TEST_USD,
+        name: "Test USD".into(),
+        symbol: "TUSD".into(),
         currency: "USD".into(),
         quote_token: PATH_USD,
         admin,
@@ -3889,9 +3883,9 @@ async fn create_ousd(api: &EthApi<FoundryNetwork>, admin: Address) {
     .unwrap();
 }
 
-fn ousd_metadata() -> serde_json::Value {
+fn test_usd_metadata() -> serde_json::Value {
     serde_json::json!({
-        (format!("{OUSD_ADDRESS:#x}")): { "name": "Open USD", "symbol": "OUSD", "currency": "USD" },
+        (format!("{TEST_USD:#x}")): { "name": "Test USD", "symbol": "TUSD", "currency": "USD" },
     })
 }
 
