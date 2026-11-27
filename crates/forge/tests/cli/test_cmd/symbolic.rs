@@ -9537,6 +9537,16 @@ contract SymbolicVestingSchedule {
         }
         assert(streamed == deposit);
     }
+
+    // A derived `b <= a` must not let the subtraction rewrite drop the `d <= a` it came from.
+    function checkNestedElapsedGuards(uint256 a, uint256 b, uint256 c) public pure {
+        unchecked {
+            uint256 t = a - b;
+            uint256 d = t - c;
+            if (c > t || b > d || d > a) return;
+            assert(b <= a);
+        }
+    }
 }
 "#,
     );
@@ -9556,6 +9566,7 @@ contract SymbolicVestingSchedule {
             "checkStreamedBelowDeposit(uint128,uint40,uint40,uint40)",
             "checkVestedAtTwoTimes(uint128,uint64,uint64,uint64,uint64)",
             "checkStreamThroughStrictChain(uint128,uint40,uint40,uint40,uint40)",
+            "checkNestedElapsedGuards(uint256,uint256,uint256)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");

@@ -647,7 +647,13 @@ impl ConstraintContext {
         constraints: impl Clone + Iterator<Item = &'a SymBoolExpr>,
         constraint_count: usize,
     ) -> Self {
-        Self::from_constraints_with_lower_bounds(constraints, constraint_count, true)
+        let mut context =
+            Self::from_constraints_with_lower_bounds(constraints, constraint_count, true);
+        // Only contexts that never remove a conjunct they were built from may chain order facts.
+        // The batch context also rewrites its own conjuncts, and a chain through a guard could
+        // prove that the guard itself is redundant.
+        context.close_order_facts();
+        context
     }
 
     /// Builds a rewrite context from the other retained conjuncts, never the predicate itself.
@@ -704,7 +710,6 @@ impl ConstraintContext {
             };
             context.order_facts.entry(small.clone()).or_default().push(large.clone());
         }
-        context.close_order_facts();
         // A bounded number of rounds closes ordinary order chains. Relational propagation keeps
         // strict comparisons weak (`a < b` propagates only `a <= upper(b)`), so inconsistent
         // cycles cannot tighten a bound one integer at a time across the uint256 domain.
