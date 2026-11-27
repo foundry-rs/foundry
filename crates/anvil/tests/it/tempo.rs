@@ -202,7 +202,8 @@ async fn sponsored_tempo_request(
 fn assert_tempo_header_fields(header: &TempoHeaderResponse) {
     let inner: &TempoHeader = header.as_ref();
     assert_eq!(header.timestamp_millis, inner.timestamp_millis());
-    assert_eq!(inner.general_gas_limit, inner.inner.gas_limit);
+    // From T1, Tempo's general lane is fixed below the block gas limit.
+    assert_eq!(inner.general_gas_limit, 30_000_000);
     assert_eq!(inner.shared_gas_limit, 0);
     assert_eq!(inner.timestamp_millis_part, 0);
 }
@@ -9593,6 +9594,38 @@ async fn test_tempo_genesis_matches_tempo_limits_and_tokens() {
         "server returned an error response: error code -32000: intrinsic gas too high -- \
          tx.gas_limit > resolved tx gas limit cap"
     );
+}
+
+// Local blocks report the general and shared gas limits of the node's hardfork, as Tempo's
+// consensus requires them: at T0 a tenth of the 500M block is shared and the general lane is half
+// of the rest, from T1 the general lane is a fixed 30M, and from T4 nothing is shared. The header
+// hash covers the values.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_blocks_report_hardfork_general_gas_limit() {
+    for (hardfork, general_gas_limit, shared_gas_limit) in [
+        (TempoHardfork::T0, 225_000_000u64, 50_000_000u64),
+        (TempoHardfork::T1, 30_000_000, 50_000_000),
+        (TempoHardfork::T4, 30_000_000, 0),
+    ] {
+        let (api, handle) =
+            spawn(NodeConfig::test_tempo().with_hardfork(Some(hardfork.into()))).await;
+        api.mine_one().await.unwrap();
+        let provider = handle.http_provider();
+        for number in ["0x0", "0x1"] {
+            let block: serde_json::Value =
+                provider.client().request("eth_getBlockByNumber", (number, false)).await.unwrap();
+            assert_eq!(
+                block["mainBlockGeneralGasLimit"],
+                format!("{general_gas_limit:#x}"),
+                "{hardfork} block {number}"
+            );
+            let header: TempoHeaderResponse =
+                provider.client().request("eth_getHeaderByNumber", (number,)).await.unwrap();
+            assert_eq!(header.as_ref().general_gas_limit, general_gas_limit);
+            assert_eq!(header.as_ref().shared_gas_limit, shared_gas_limit);
+            assert_eq!(header.hash, header.as_ref().hash_slow(), "{hardfork} block {number}");
+        }
+    }
 }
 
 // Gas estimation and the gas limit of a transaction sent without one stay within Tempo's 30M cap.
