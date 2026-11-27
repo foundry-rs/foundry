@@ -11,6 +11,7 @@ use alloy_network::{BlockResponse, Network};
 use alloy_provider::{Provider, utils::Eip1559Estimation};
 use eyre::{Result, WrapErr};
 use foundry_config::Eip1559FeeEstimatePreset;
+use tempo_alloy::chainspec::constants::gas::TEMPO_T7_BASE_FEE_CAP;
 
 /// The number of past blocks sampled from `eth_feeHistory` for fee estimation.
 const FEE_HISTORY_BLOCKS: u64 = 10;
@@ -46,6 +47,39 @@ impl ResolvedEip1559Fees {
             max_fee_per_gas: self.max_fee_per_gas,
             max_priority_fee_per_gas: self.max_priority_fee_per_gas,
         }
+    }
+
+    /// Adapts fees from [`estimate_eip1559_fees`] to Tempo's fee market.
+    ///
+    /// Under TIP-1067 the base fee prices congestion and a tip does not buy earlier inclusion, so
+    /// the tip is zero, as the node suggests, unless `preset` is
+    /// [`Eip1559FeeEstimatePreset::Aggressive`]. Tempo reserves `gas_limit * maxFeePerGas` from
+    /// the fee token before execution, so the base-fee buffer stops at [`TEMPO_T7_BASE_FEE_CAP`],
+    /// which the base fee never exceeds. The fixed base fee before T7 is above the cap and needs
+    /// no buffer.
+    pub fn for_tempo(self, preset: Eip1559FeeEstimatePreset) -> Self {
+        let max_priority_fee_per_gas = if preset == Eip1559FeeEstimatePreset::Aggressive {
+            self.max_priority_fee_per_gas
+        } else {
+            0
+        };
+        let base_fee_buffer = self
+            .max_fee_per_gas
+            .saturating_sub(self.max_priority_fee_per_gas)
+            .min(TEMPO_T7_BASE_FEE_CAP.into())
+            .max(self.base_fee_per_gas);
+        Self {
+            max_fee_per_gas: base_fee_buffer.saturating_add(max_priority_fee_per_gas),
+            max_priority_fee_per_gas,
+            base_fee_per_gas: self.base_fee_per_gas,
+        }
+    }
+
+    /// Replaces the tip in both `maxPriorityFeePerGas` and `maxFeePerGas`.
+    const fn set_tip(&mut self, tip: u128) {
+        self.max_fee_per_gas =
+            self.max_fee_per_gas.saturating_sub(self.max_priority_fee_per_gas).saturating_add(tip);
+        self.max_priority_fee_per_gas = tip;
     }
 }
 
@@ -105,34 +139,30 @@ where
     Ok(ResolvedEip1559Fees { max_fee_per_gas, max_priority_fee_per_gas, base_fee_per_gas })
 }
 
-/// Applies, in order, the optional `browser_suggested_tip`, `with_gas_price` and
-/// `priority_gas_price` overrides to estimated EIP-1559 fees.
+/// Applies, in order, the optional `browser_suggested_tip`, `priority_gas_price` and
+/// `with_gas_price` overrides to estimated EIP-1559 fees.
 ///
-/// `with_gas_price` overrides only `maxFeePerGas` and `priority_gas_price` only
-/// `maxPriorityFeePerGas`. Errors if the result has `maxPriorityFeePerGas` above
-/// `maxFeePerGas`.
+/// A tip, suggested or overridden, replaces the estimated tip in `maxFeePerGas` too, so the
+/// base-fee buffer stays the same. `with_gas_price` sets `maxFeePerGas` itself. Errors if the
+/// result has `maxPriorityFeePerGas` above `maxFeePerGas`.
 pub fn resolve_broadcast_eip1559_fees(
     mut fees: ResolvedEip1559Fees,
     with_gas_price: Option<u128>,
     priority_gas_price: Option<u128>,
     browser_suggested_tip: Option<u128>,
 ) -> Result<ResolvedEip1559Fees> {
-    // Raise both caps by the same delta so `maxFeePerGas` keeps its buffer above
-    // the higher tip.
     if let Some(suggested_tip) = browser_suggested_tip
         && suggested_tip > fees.max_priority_fee_per_gas
     {
-        let delta = suggested_tip - fees.max_priority_fee_per_gas;
-        fees.max_fee_per_gas = fees.max_fee_per_gas.saturating_add(delta);
-        fees.max_priority_fee_per_gas = suggested_tip;
+        fees.set_tip(suggested_tip);
+    }
+
+    if let Some(max_priority_fee_per_gas) = priority_gas_price {
+        fees.set_tip(max_priority_fee_per_gas);
     }
 
     if let Some(max_fee_per_gas) = with_gas_price {
         fees.max_fee_per_gas = max_fee_per_gas;
-    }
-
-    if let Some(max_priority_fee_per_gas) = priority_gas_price {
-        fees.max_priority_fee_per_gas = max_priority_fee_per_gas;
     }
 
     if fees.max_priority_fee_per_gas > fees.max_fee_per_gas {
@@ -309,20 +339,59 @@ mod tests {
     }
 
     #[test]
-    fn resolve_overrides_each_field_independently() {
+    fn resolve_overrides_rebuild_max_fee_from_tip() {
         // No overrides: passthrough.
         let r = resolve_broadcast_eip1559_fees(fees(300, 50), None, None, None).unwrap();
         assert_eq!((r.max_fee_per_gas, r.max_priority_fee_per_gas), (300, 50));
 
-        // `--with-gas-price` overrides only max, `--priority-gas-price` only priority.
+        // `--with-gas-price` sets max; `--priority-gas-price` replaces the tip in both.
         let r = resolve_broadcast_eip1559_fees(fees(300, 50), Some(500), None, None).unwrap();
         assert_eq!((r.max_fee_per_gas, r.max_priority_fee_per_gas), (500, 50));
         let r = resolve_broadcast_eip1559_fees(fees(300, 50), None, Some(80), None).unwrap();
-        assert_eq!((r.max_fee_per_gas, r.max_priority_fee_per_gas), (300, 80));
+        assert_eq!((r.max_fee_per_gas, r.max_priority_fee_per_gas), (330, 80));
+        let r = resolve_broadcast_eip1559_fees(fees(300, 50), None, Some(0), None).unwrap();
+        assert_eq!((r.max_fee_per_gas, r.max_priority_fee_per_gas), (250, 0));
+        let r = resolve_broadcast_eip1559_fees(fees(300, 50), Some(500), Some(80), None).unwrap();
+        assert_eq!((r.max_fee_per_gas, r.max_priority_fee_per_gas), (500, 80));
 
-        // Invalid when the resulting priority exceeds max.
-        let err = resolve_broadcast_eip1559_fees(fees(300, 50), None, Some(400), None).unwrap_err();
+        // Invalid when the pinned max is below the tip.
+        let err =
+            resolve_broadcast_eip1559_fees(fees(300, 50), Some(300), Some(400), None).unwrap_err();
         assert!(err.to_string().contains("cannot be higher than maxFeePerGas"));
+    }
+
+    #[test]
+    fn tempo_fees_drop_tip_and_cap_base_fee_buffer() {
+        let cap = u128::from(TEMPO_T7_BASE_FEE_CAP);
+        let estimate = |base: u128, tip: u128| ResolvedEip1559Fees {
+            max_fee_per_gas: base * 2 + tip,
+            max_priority_fee_per_gas: tip,
+            base_fee_per_gas: base,
+        };
+        let pair =
+            |fees: ResolvedEip1559Fees| (fees.max_fee_per_gas, fees.max_priority_fee_per_gas);
+
+        // Moderato's 0.6 gwei base fee with a 2 gwei tip estimated from fee history.
+        let moderato = estimate(600_000_000, 2_000_000_000);
+        assert_eq!(pair(moderato.for_tempo(Eip1559FeeEstimatePreset::Market)), (1_200_000_000, 0));
+        assert_eq!(pair(moderato.for_tempo(Eip1559FeeEstimatePreset::Low)), (1_200_000_000, 0));
+        assert_eq!(
+            pair(moderato.for_tempo(Eip1559FeeEstimatePreset::Aggressive)),
+            (3_200_000_000, 2_000_000_000)
+        );
+
+        // The buffer stops at the TIP-1067 cap.
+        assert_eq!(pair(estimate(cap, 1).for_tempo(Eip1559FeeEstimatePreset::Market)), (cap, 0));
+        assert_eq!(
+            pair(estimate(cap / 4 * 3, 7).for_tempo(Eip1559FeeEstimatePreset::Aggressive)),
+            (cap + 7, 7)
+        );
+        // The fixed base fee before T7 is above the cap.
+        let fixed = 20_000_000_000;
+        assert_eq!(
+            pair(estimate(fixed, 1).for_tempo(Eip1559FeeEstimatePreset::Market)),
+            (fixed, 0)
+        );
     }
 
     #[test]

@@ -1173,12 +1173,13 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                             })
                         }
                         (false, false, _, _) => {
-                            let fees = estimate_eip1559_fees(
-                                &provider,
-                                self.script_config.config.eip1559_fee_estimate,
-                            )
+                            let fee_estimate = self.script_config.config.eip1559_fee_estimate;
+                            let mut fees = estimate_eip1559_fees(&provider, fee_estimate)
                             .await
                             .wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
+                            if self.script_config.evm_opts.networks.is_tempo() {
+                                fees = fees.for_tempo(fee_estimate);
+                            }
 
                             // Browser wallets may suggest their own tip; query it best-effort.
                             let browser_suggested_tip = if matches!(
@@ -1947,8 +1948,8 @@ impl BundledState<TempoEvmNetwork> {
         let nonce = provider.get_transaction_count(sender).await?;
 
         // Batch transactions are Tempo-only and always use EIP-1559 style fees.
-        let fees = estimate_eip1559_fees(&provider, self.script_config.config.eip1559_fee_estimate)
-            .await?;
+        let fee_estimate = self.script_config.config.eip1559_fee_estimate;
+        let fees = estimate_eip1559_fees(&provider, fee_estimate).await?.for_tempo(fee_estimate);
         let fees = resolve_broadcast_eip1559_fees(
             fees,
             self.args.with_gas_price.map(|p| p.to()),

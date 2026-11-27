@@ -1,5 +1,6 @@
 //! CLI tests for shared Tempo transaction options.
 
+use alloy_consensus::Transaction;
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_network::{AnyNetwork, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, B256, U256, address, hex, keccak256};
@@ -21,7 +22,7 @@ use tempo_contracts::precompiles::{
     NONCE_PRECOMPILE_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS,
     TIP403_REGISTRY_ADDRESS,
 };
-use tempo_hardfork::TempoHardfork;
+use tempo_hardfork::{TempoHardfork, constants::gas::TEMPO_T7_BASE_FEE_CAP};
 use tempo_primitives::{
     TempoSignature, TempoTransaction, TempoTxEnvelope,
     transaction::{
@@ -2238,4 +2239,43 @@ async fn balance_warns_about_tempo_placeholder(cmd: _) {
 Warning: Tempo has no native token, so this balance is a placeholder; use `cast erc20 balance <TOKEN> 0x4242424242424242424242424242424242424242` for a TIP-20 balance, such as PathUSD (0x20C0000000000000000000000000000000000000) or OUSD (0x20c0000000000000000000006a37DA5C996874BE)
 
 "#]]);
+}
+
+/// Returns the transaction and receipt of a `cast send --json` output.
+async fn sent_transaction(
+    provider: &impl Provider<AnyNetwork>,
+    receipt: &str,
+) -> (TempoTxEnvelope, serde_json::Value) {
+    let receipt: serde_json::Value = serde_json::from_str(receipt.trim()).unwrap();
+    let hash = receipt["transactionHash"].as_str().unwrap().parse::<B256>().unwrap();
+    let raw = provider.get_raw_transaction_by_hash(hash).await.unwrap().unwrap();
+    (TempoTxEnvelope::decode_2718_exact(&raw).unwrap(), receipt)
+}
+
+/// TIP-1067's base fee prices congestion, so a tip does not buy earlier inclusion: Tempo sends pay
+/// none unless asked to. `maxFeePerGas`, which Tempo reserves from the fee token up front, stops at
+/// the base-fee cap plus the tip that is sent.
+#[casttest]
+async fn tempo_send_pays_no_tip_by_default(cmd: _) {
+    let (api, handle) = anvil::spawn(NodeConfig::test_tempo().with_chain_id(Some(42431u64))).await;
+    let provider = handle.http_provider();
+    let rpc = handle.http_endpoint();
+    let (_, key) = dev_account(&handle, 0);
+    let cap = u128::from(TEMPO_T7_BASE_FEE_CAP);
+
+    // The genesis header carries the fixed T1 base fee; later blocks follow TIP-1067 and their
+    // base fees stay above half the cap for a few blocks, so the base-fee buffer is the cap.
+    api.evm_mine(None).await.unwrap();
+    for (args, tip) in [(&[][..], 0), (&["--priority-gas-price", "5"][..], 5)] {
+        let receipt = cmd
+            .cast_fuse()
+            .args(["send", "0x7373737373737373737373737373737373737373", "--json"])
+            .args(["--private-key", &key, "--rpc-url", &rpc])
+            .args(args)
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let (tx, _) = sent_transaction(&provider, &receipt).await;
+        assert_eq!((tx.max_fee_per_gas(), tx.max_priority_fee_per_gas()), (cap + tip, Some(tip)));
+    }
 }

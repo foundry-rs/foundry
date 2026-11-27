@@ -588,7 +588,11 @@ impl CreateArgs {
             }
         } else {
             if self.tx.gas_price.is_none() || self.tx.priority_gas_price.is_none() {
-                let estimate = estimate_eip1559_fees(&provider, eip1559_fee_estimate).await.wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
+                let mut estimate = estimate_eip1559_fees(&provider, eip1559_fee_estimate).await.wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
+                // Only a Tempo network's request type pays fees in a fee token.
+                if deployer.tx.supports_fee_token() {
+                    estimate = estimate.for_tempo(eip1559_fee_estimate);
+                }
 
                 // Only honor the browser-suggested tip when the user has not pinned
                 // a priority fee; `resolve_broadcast_eip1559_fees` ignores a lower tip.
@@ -599,17 +603,16 @@ impl CreateArgs {
                         None
                     };
 
-                // User `--gas-price`/`--priority-gas-price` overrides are applied
-                // below only for unset fields; pass `None` to avoid double-applying.
-                let estimate =
-                    resolve_broadcast_eip1559_fees(estimate, None, None, browser_suggested_tip)?;
-
-                if self.tx.priority_gas_price.is_none() {
-                    deployer.tx.set_max_priority_fee_per_gas(estimate.max_priority_fee_per_gas);
-                }
-                if self.tx.gas_price.is_none() {
-                    deployer.tx.set_max_fee_per_gas(estimate.max_fee_per_gas);
-                }
+                // The user's `--gas-price`/`--priority-gas-price` are already set on the
+                // request; passing them builds `maxFeePerGas` from the tip that is sent.
+                let estimate = resolve_broadcast_eip1559_fees(
+                    estimate,
+                    deployer.tx.max_fee_per_gas(),
+                    deployer.tx.max_priority_fee_per_gas(),
+                    browser_suggested_tip,
+                )?;
+                deployer.tx.set_max_priority_fee_per_gas(estimate.max_priority_fee_per_gas);
+                deployer.tx.set_max_fee_per_gas(estimate.max_fee_per_gas);
             }
             if let (Some(max_fee), Some(priority)) =
                 (deployer.tx.max_fee_per_gas(), deployer.tx.max_priority_fee_per_gas())
