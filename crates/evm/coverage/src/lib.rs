@@ -58,8 +58,9 @@ pub struct CoverageReport {
     pub anchors: HashMap<ContractId, (ItemAnchors, ItemAnchors)>,
     /// Execution-based anchors for coverage items without source-mapped bytecode.
     execution_anchors: HashMap<ContractId, ContractExecutionAnchors>,
-    /// All the bytecode hits for the codebase.
-    pub bytecode_hits: HashMap<ContractId, HitMap>,
+    /// All the bytecode hits for the codebase, keyed by contract and by whether the hits are of
+    /// its deployed (runtime) code or of its creation code: the two are different bytecode.
+    pub bytecode_hits: HashMap<(ContractId, bool), HitMap>,
     /// The bytecode -> source mappings.
     pub source_maps: HashMap<ContractId, (SourceMap, SourceMap)>,
 }
@@ -170,10 +171,10 @@ impl CoverageReport {
         is_deployed_code: bool,
     ) -> Result<()> {
         // Add bytecode level hits.
-        match self.bytecode_hits.get_mut(contract_id) {
+        match self.bytecode_hits.get_mut(&(contract_id.clone(), is_deployed_code)) {
             Some(hits) => hits.merge(hit_map),
             None => {
-                self.bytecode_hits.insert(contract_id.clone(), hit_map.clone());
+                self.bytecode_hits.insert((contract_id.clone(), is_deployed_code), hit_map.clone());
             }
         }
 

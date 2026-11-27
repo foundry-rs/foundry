@@ -5770,19 +5770,44 @@ contract CounterTest {
 "#,
     );
     cmd.args(["coverage", "--report=bytecode"]).assert_success();
+    // The deployed code's hits, over its own listing: the creation code is a separate report.
     let asm = fs::read_to_string(prj.root().join("bytecode-coverage/Counter.asm")).unwrap();
     assert_data_eq!(
         asm,
         str![[r#"
-[002] 00000000: PUSH1 0x80                     // src/Counter.sol: 3:1-3:81 (71-151)
-[002] 00000002: PUSH1 0x40                     // src/Counter.sol: 3:1-3:81 (71-151)
-[002] 00000004: MSTORE                         // src/Counter.sol: 3:1-3:81 (71-151)
-[002] 00000005: CALLVALUE                      // src/Counter.sol: 3:1-3:81 (71-151)
-[002] 00000006: DUP1                           // src/Counter.sol: 3:1-3:81 (71-151)
-[002] 00000007: ISZERO                         // src/Counter.sol: 3:1-3:81 (71-151)
-[002] 00000008: PUSH1 0x0e                     // src/Counter.sol: 3:1-3:81 (71-151)
-[002] 0000000a: JUMPI                          // src/Counter.sol: 3:1-3:81 (71-151)
+[001] 00000000: PUSH1 0x80                     // src/Counter.sol: 3:1-3:81 (71-151)
+[001] 00000002: PUSH1 0x40                     // src/Counter.sol: 3:1-3:81 (71-151)
+[001] 00000004: MSTORE                         // src/Counter.sol: 3:1-3:81 (71-151)
+[001] 00000005: CALLVALUE                      // src/Counter.sol: 3:1-3:81 (71-151)
+[001] 00000006: DUP1                           // src/Counter.sol: 3:1-3:81 (71-151)
+[001] 00000007: ISZERO                         // src/Counter.sol: 3:1-3:81 (71-151)
+[001] 00000008: PUSH1 0x0e                     // src/Counter.sol: 3:1-3:81 (71-151)
+[001] 0000000a: JUMPI                          // src/Counter.sol: 3:1-3:81 (71-151)
       0000000b: PUSH0                          // src/Counter.sol: 3:1-3:81 (71-151)
+      0000000c: PUSH0                          // src/Counter.sol: 3:1-3:81 (71-151)
+      0000000d: REVERT                         // src/Counter.sol: 3:1-3:81 (71-151)
+[001] 0000000e: JUMPDEST                       // src/Counter.sol: 3:1-3:81 (71-151)
+[001] 0000000f: POP                            // src/Counter.sol: 3:1-3:81 (71-151)
+[001] 00000010: PUSH1 0x04                     // src/Counter.sol: 3:1-3:81 (71-151)
+[001] 00000012: CALLDATASIZE                   // src/Counter.sol: 3:1-3:81 (71-151)
+...
+"#]]
+    );
+    let creation =
+        fs::read_to_string(prj.root().join("bytecode-coverage/Counter.creation.asm")).unwrap();
+    assert_data_eq!(
+        creation,
+        str![[r#"
+...
+[001] 0000000e: JUMPDEST                       // src/Counter.sol: 3:1-3:81 (71-151)
+[001] 0000000f: POP                            // src/Counter.sol: 3:1-3:81 (71-151)
+[001] 00000010: PUSH1 0x[..]                   // src/Counter.sol: 3:1-3:81 (71-151)
+[001] 00000012: DUP1                           // src/Counter.sol: 3:1-3:81 (71-151)
+[001] 00000013: PUSH1 0x1a                     // src/Counter.sol: 3:1-3:81 (71-151)
+[001] 00000015: PUSH0                          // src/Counter.sol: 3:1-3:81 (71-151)
+[001] 00000016: CODECOPY                       // src/Counter.sol: 3:1-3:81 (71-151)
+[001] 00000017: PUSH0                          // src/Counter.sol: 3:1-3:81 (71-151)
+[001] 00000018: RETURN                         // src/Counter.sol: 3:1-3:81 (71-151)
 ...
 "#]]
     );
