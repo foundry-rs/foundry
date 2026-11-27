@@ -328,7 +328,7 @@ Error: [..] is not registered yet, so its owners and the gas of its registration
         .args(["--rpc-url", &rpc, "--tempo.fee-token", &fee_token])
         .assert_failure()
         .stderr_eq(str![[r#"
-Error: the wallet [..] has weight 1 in [..], which requires 2. Collect the owners' approvals instead:
+Error: [..] is a Tempo configurable account that needs owner weight 2, but the local owner keys [..] reach weight 1. Its owners are [..]. Pass additional signing keys with --tempo.owner, or collect the owners' approvals:
   cast mktx 0xAACC000000000000000000000000000000000000 [..] --from [..] --raw-unsigned --tempo.digest
 then `cast wallet sign --no-hash <DIGEST>` (adding `--p256` for a raw P-256 owner) on each owner's machine, `cast wallet assemble`, and `cast publish`
 
@@ -505,11 +505,90 @@ async fn tempo_t14_wallet_owners_remove_and_threshold(cmd: _) {
         .args(["--private-key", &key_arg, "--rpc-url", &rpc])
         .assert_failure()
         .stderr_eq(str![[r#"
-Error: the wallet 0x77952Ce83Ca3cad9F7AdcFabeDA85Bd2F1f52008 has weight 1 in 0xC114fe44bdC44dDE8b76b033D0C49ab350a80B20, which requires 3. Collect the owners' approvals instead:
+Error: 0xC114fe44bdC44dDE8b76b033D0C49ab350a80B20 is a Tempo configurable account that needs owner weight 3, but the local owner keys 0x77952Ce83Ca3cad9F7AdcFabeDA85Bd2F1f52008 reach weight 1. Its owners are [..]. Pass additional signing keys with --tempo.owner, or collect the owners' approvals:
   cast mktx 0xAACC000000000000000000000000000000000000 [..] --from 0xC114fe44bdC44dDE8b76b033D0C49ab350a80B20 --raw-unsigned --tempo.digest
 then `cast wallet sign --no-hash <DIGEST>` (adding `--p256` for a raw P-256 owner) on each owner's machine, `cast wallet assemble`, and `cast publish`
 
 "#]]);
+}
+
+/// The current quorum atomically replaces a registered account's owners, weights, and threshold.
+#[casttest]
+async fn tempo_t14_wallet_owners_set(cmd: _) {
+    let (api, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let provider = handle.http_provider();
+    let rpc = handle.http_endpoint();
+    let fee_token = ALPHA_USD_ADDRESS.to_string();
+    let options = ["--rpc-url", &rpc, "--tempo.fee-token", &fee_token];
+    let (account, config, [retired_a, retired_b, retained]) = two_of_three();
+    api.anvil_deal_tip20(account, ALPHA_USD_ADDRESS, U256::from(1_000_000_000_000u64))
+        .await
+        .unwrap();
+    let account_arg = account.to_string();
+    let target = Address::repeat_byte(0x73).to_string();
+    let send = ["send", &target, "--from", &account_arg];
+    let old_quorum = [
+        "--private-key",
+        &private_key(&retired_a),
+        "--tempo.owner",
+        &format!("private-key://{}", private_key(&retired_b)),
+    ];
+    cmd.cast_fuse()
+        .args(send)
+        .args(["--tempo.config", &config])
+        .args(old_quorum)
+        .args(options)
+        .assert_success();
+    let nonce = provider.get_transaction_count(account).await.unwrap();
+
+    let added = PrivateKeySigner::from_bytes(&B256::repeat_byte(0x64)).unwrap();
+    let added_address = added.address().to_string();
+    let retained_weight = format!("{}:2", retained.address());
+    let set = ["wallet", "owners", "set", &account_arg, "--threshold", "3"];
+    let owners = ["--owner", &retained_weight, "--owner", &added_address];
+    let new_quorum = [
+        "--private-key",
+        &private_key(&retained),
+        "--tempo.owner",
+        &format!("private-key://{}", private_key(&added)),
+    ];
+    cmd.cast_fuse().args(set).args(["--owner", &retained_weight, "--owner", &retained_weight])
+        .args(old_quorum).args(options).assert_failure().stderr_eq(
+            "Error: invalid new configuration: configurable account owners cannot contain duplicates\n"
+        );
+    // The proposed owners cannot approve their own installation.
+    cmd.cast_fuse().args(set).args(owners).args(new_quorum).args(options).assert_failure()
+        .stderr_eq(str![[r#"
+Error: [..] is a Tempo configurable account that needs owner weight 2, but the local owner keys [..] reach weight 1. Its owners are [..]. Pass additional signing keys with --tempo.owner, or collect the owners' approvals:
+  cast mktx 0xAACC000000000000000000000000000000000000 [..] --from [..] --raw-unsigned --tempo.digest
+then `cast wallet sign --no-hash <DIGEST>` (adding `--p256` for a raw P-256 owner) on each owner's machine, `cast wallet assemble`, and `cast publish`
+
+"#]]);
+    cmd.cast_fuse().args(set).args(owners).args(old_quorum).args(options).assert_success();
+    assert_eq!(provider.get_transaction_count(account).await.unwrap(), nonce + 1);
+    cmd.cast_fuse()
+        .args(["wallet", "owners", &account_arg, "--rpc-url", &rpc])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Account:    0x585CD46bf4b174BD78B0AFf14d3F3f2fD410828c
+Version:    1
+Threshold:  3
+Salt:       0x0707070707070707070707070707070707070707070707070707070707070707
+Commitment: 0xec9f973c62d2dcb8d8743e6ddbbc374fc1b5cb2c05daa52da296184d7c293891
+Owners:
+  0x1c5E6f6F6C7866EF146B0c0220D857D12a9058F0 (weight 1)
+  0xFC5E22C7bE9D60db4bbe0345709734A815fB0E40 (weight 2)
+
+"#]]);
+
+    cmd.cast_fuse().args(send).args(old_quorum).args(options).assert_failure()
+        .stderr_eq(str![[r#"
+Error: [..] is a Tempo configurable account that needs owner weight 3, but no local key is an owner. Its owners are [..]. Pass the other owner keys with --tempo.owner, or have each owner sign the digest from `cast mktx --raw-unsigned --tempo.digest` with `cast wallet sign --no-hash` and combine the signatures with `cast wallet assemble`.
+
+"#]]);
+    cmd.cast_fuse().args(send).args(new_quorum).args(options).assert_success();
+    assert_eq!(provider.get_transaction_count(account).await.unwrap(), nonce + 2);
 }
 
 /// `cast wallet upgrade` asks before converting an EOA, warns that the account can no longer

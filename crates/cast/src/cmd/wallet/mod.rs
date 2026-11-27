@@ -366,6 +366,7 @@ pub enum WalletSubcommands {
     /// - cast wallet owners add $ACCOUNT $OWNER --threshold 2 --account dev
     /// - cast wallet owners remove $ACCOUNT $OWNER --account dev
     /// - cast wallet owners threshold $ACCOUNT 1 --account dev
+    /// - cast wallet owners set $ACCOUNT --owner $A:2 --owner $B --threshold 3 --account dev
     #[command(verbatim_doc_comment)]
     Owners(OwnersArgs),
 

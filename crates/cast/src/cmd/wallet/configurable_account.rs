@@ -6,13 +6,13 @@ use crate::{
         auth::confirm_and_build,
         confirm_continue,
         keychain::{KeychainRootSigner, send_precompile_tx_with_root_signer},
-        send::{SendOptions, cast_send_raw},
+        send::{SendOptions, cast_send_with_configurable_account},
     },
     tempo::{apply_fee_payment, print_expires, tempo_provider},
     tx::{CastTxBuilder, SendTxOpts, apply_poll_interval},
 };
 use alloy_chains::Chain;
-use alloy_eips::{Decodable2718, Encodable2718};
+use alloy_eips::{BlockId, Decodable2718, Encodable2718};
 use alloy_ens::NameOrAddress;
 use alloy_primitives::{Address, hex, keccak256};
 use alloy_provider::Provider;
@@ -31,23 +31,21 @@ use foundry_common::{
     tempo::{
         active_tempo_hardfork,
         configurable_account::{
-            abi_owners, ca_error, combine_approvals, current_config, decode_unsigned_tx,
-            parse_owner_signature, simulation_spec,
+            ConfigurableAccountSigner, abi_owners, ca_error, combine_approvals, current_config,
+            decode_unsigned_tx, parse_owner_signature, simulation_spec,
         },
     },
 };
 use foundry_config::{Config, FoundryHardfork};
 use serde_json::{Value, json};
-use std::{str::FromStr, time::Duration};
+use std::{str::FromStr, sync::Arc, time::Duration};
 use tempo_alloy::{
-    TempoNetwork,
-    chainspec::hardfork::TempoHardfork,
-    rpc::{ConfigurableAccountSimulationSpec, PrimitiveSignatureType},
+    TempoNetwork, chainspec::hardfork::TempoHardfork, rpc::ConfigurableAccountSimulationSpec,
 };
 use tempo_contracts::precompiles::{CONFIGURABLE_ACCOUNT_ADDRESS, IConfigurableAccount};
 use tempo_primitives::transaction::{
     CONFIGURABLE_ACCOUNT_UPGRADE_DOMAIN, ConfigurableAccountConfig, ConfigurableAccountOwner,
-    PrimitiveSignature, TempoSignature, TempoTxEnvelope, configurable_account_digest,
+    TempoSignature, TempoTxEnvelope, configurable_account_digest,
 };
 
 /// Decides whether `cast wallet new` creates a configurable account.
@@ -217,9 +215,9 @@ pub struct OwnersArgs {
 
 /// Owner changes, each sent as an `updateConfig` transaction from the account itself.
 ///
-/// The configured wallet signs as an owner and must reach the threshold on its own. With more
-/// owners, the command prints the transaction to sign with the multi-party flow:
-/// `cast mktx --raw-unsigned --tempo.digest`, `cast wallet sign --no-hash` on each owner's
+/// The current owners authorize the change. Use `--tempo.owner` for additional signing keys.
+/// If the local keys cannot reach quorum, the command prints the transaction for the multi-party
+/// flow: `cast mktx --raw-unsigned --tempo.digest`, `cast wallet sign --no-hash` on each owner's
 /// machine, `cast wallet assemble`, then `cast publish`.
 #[derive(Clone, Debug, Parser)]
 pub enum OwnersSubcommand {
@@ -271,6 +269,24 @@ pub enum OwnersSubcommand {
         #[command(flatten)]
         send: OwnerSendArgs,
     },
+
+    /// Replace all owners, their weights, and the approval threshold in one transaction.
+    Set {
+        /// The configurable account.
+        account: Address,
+
+        /// An owner in the replacement set, as ADDRESS or ADDRESS:WEIGHT (default weight 1).
+        /// Repeat for every owner to retain or add. Omitted owners lose authority.
+        #[arg(long = "owner", value_name = "OWNER", value_parser = parse_owner, required = true)]
+        owners: Vec<ConfigurableAccountOwner>,
+
+        /// The total owner weight required after the rotation.
+        #[arg(long)]
+        threshold: u8,
+
+        #[command(flatten)]
+        send: OwnerSendArgs,
+    },
 }
 
 /// Transaction options for an owner change.
@@ -311,7 +327,8 @@ async fn update_config(command: OwnersSubcommand) -> Result<()> {
     let (account, OwnerSendArgs { force, mut tx, send_tx }) = match &command {
         OwnersSubcommand::Add { account, send, .. }
         | OwnersSubcommand::Remove { account, send, .. }
-        | OwnersSubcommand::Threshold { account, send, .. } => (*account, send.clone()),
+        | OwnersSubcommand::Threshold { account, send, .. }
+        | OwnersSubcommand::Set { account, send, .. } => (*account, send.clone()),
     };
     eyre::ensure!(
         tx.tempo.sponsor_url.is_none() && !tx.tempo.print_sponsor_hash,
@@ -321,17 +338,32 @@ async fn update_config(command: OwnersSubcommand) -> Result<()> {
         tx.tempo.session_id()?.is_none(),
         "configuration updates need an owner key; Tempo Accounts sessions cannot sign them"
     );
-    let signer = send_tx.eth.wallet.signer().await?;
+    eyre::ensure!(
+        !send_tx.browser.browser,
+        "browser wallets cannot approve as a configurable account owner"
+    );
     let (config, provider) = tempo_provider(&send_tx.eth)?;
-
-    let current =
-        current_config(&provider, account, &[signer.address()]).await?.ok_or_else(|| {
-            eyre::eyre!(
-                "{account} is not a registered configurable account, and the wallet {} does not \
-                 derive it",
-                signer.address()
-            )
-        })?;
+    // The positional account is the sender. Resolve the wallet separately as an owner key.
+    let mut wallet = send_tx.eth.wallet.clone();
+    wallet.from = None;
+    let (signer, access_key) = wallet.maybe_signer().await?;
+    eyre::ensure!(
+        access_key.is_none() && tx.tempo.configurable_access_key.is_none(),
+        "configuration updates must be signed by the account's owners"
+    );
+    let signer = signer.map(Arc::new);
+    tx.tempo.configurable_account.get_or_insert(account);
+    let (_, current, keys) = tx
+        .tempo
+        .configurable_account_owners(
+            &provider,
+            Some(account),
+            None,
+            signer.as_slice(),
+            BlockId::latest(),
+        )
+        .await?
+        .ok_or_else(|| eyre::eyre!("{account} is not a Tempo configurable account"))?;
     let mut next = current.clone();
     match command {
         OwnersSubcommand::Add { owner, weight, threshold, .. } => {
@@ -340,7 +372,6 @@ async fn update_config(command: OwnersSubcommand) -> Result<()> {
                 "{owner} is already an owner of {account}"
             );
             next.owners.push(ConfigurableAccountOwner { owner, weight });
-            next.owners.sort_by_key(|owner| owner.owner);
             next.threshold = threshold.unwrap_or(next.threshold);
         }
         OwnersSubcommand::Remove { owner, threshold, .. } => {
@@ -352,34 +383,35 @@ async fn update_config(command: OwnersSubcommand) -> Result<()> {
             next.threshold = threshold.unwrap_or(next.threshold);
         }
         OwnersSubcommand::Threshold { threshold, .. } => next.threshold = threshold,
+        OwnersSubcommand::Set { owners, threshold, .. } => {
+            next.owners = owners;
+            next.threshold = threshold;
+        }
     }
+    next.owners.sort_by_key(|owner| owner.owner);
     next.version = current.version.checked_add(1).ok_or_else(|| eyre::eyre!("version overflow"))?;
     next.validate().map_err(|err| eyre::eyre!("invalid new configuration: {err}"))?;
-    let calldata = IConfigurableAccount::updateConfigCall {
-        current: IConfigurableAccount::ConfigurableAccountConfig {
-            salt: current.salt,
-            version: current.version,
-            threshold: current.threshold,
-            owners: abi_owners(&current),
-        },
-        threshold: next.threshold,
-        owners: abi_owners(&next),
-    }
-    .abi_encode();
+    let calldata = hex::encode_prefixed(
+        IConfigurableAccount::updateConfigCall {
+            current: IConfigurableAccount::ConfigurableAccountConfig {
+                salt: current.salt,
+                version: current.version,
+                threshold: current.threshold,
+                owners: abi_owners(&current),
+            },
+            threshold: next.threshold,
+            owners: abi_owners(&next),
+        }
+        .abi_encode(),
+    );
 
-    let signer_weight = current.owner_weight(signer.address()).unwrap_or_default();
-    if signer_weight < current.threshold {
-        eyre::bail!(
-            "the wallet {} has weight {signer_weight} in {account}, which requires {}. Collect \
-             the owners' approvals instead:\n  cast mktx {CONFIGURABLE_ACCOUNT_ADDRESS} {} --from \
-             {account} --raw-unsigned --tempo.digest\nthen `cast wallet sign --no-hash <DIGEST>` \
-             (adding `--p256` for a raw P-256 owner) on each owner's machine, `cast wallet \
-             assemble`, and `cast publish`",
-            signer.address(),
-            current.threshold,
-            hex::encode_prefixed(&calldata),
-        );
-    }
+    let hint = format!(
+        "Pass additional signing keys with --tempo.owner, or collect the owners' approvals:\n  \
+         cast mktx {CONFIGURABLE_ACCOUNT_ADDRESS} {calldata} --from {account} --raw-unsigned \
+         --tempo.digest\nthen `cast wallet sign --no-hash <DIGEST>` (adding `--p256` for a raw \
+         P-256 owner) on each owner's machine, `cast wallet assemble`, and `cast publish`"
+    );
+    let signer = ConfigurableAccountSigner::new(account, current, keys, &hint)?;
 
     let print_expires_at = tx.tempo.resolve_expires();
     let tempo_sponsor = tx.tempo.sponsor_config().await?;
@@ -388,15 +420,11 @@ async fn update_config(command: OwnersSubcommand) -> Result<()> {
         .await?
         .with_to(Some(NameOrAddress::Address(CONFIGURABLE_ACCOUNT_ADDRESS)))
         .await?
-        .with_code_sig_and_args(None, Some(hex::encode_prefixed(&calldata)), vec![])
+        .with_code_sig_and_args(None, Some(calldata), vec![])
         .await?;
     apply_poll_interval(&provider, send_tx.poll_interval, builder.chain().id());
     // The node models the owner quorum and, on the first transaction, the registration.
-    builder.tx_mut().configurable_account_simulation = Some(simulation_spec(
-        account,
-        &current,
-        &[(signer.address(), PrimitiveSignatureType::Secp256k1)],
-    ));
+    signer.prepare_request::<TempoNetwork>(builder.tx_mut());
     let Some(mut request) =
         confirm_and_build(builder, account, force, resolved_lane.as_ref(), false).await?
     else {
@@ -411,19 +439,13 @@ async fn update_config(command: OwnersSubcommand) -> Result<()> {
     )
     .await?;
 
-    let unsigned = request.build_aa().map_err(|err| eyre::eyre!("{err}"))?;
-    let inner = unsigned.signature_hash();
-    let approval =
-        signer.sign_hash(&configurable_account_digest(inner, account, current.version)).await?;
-    let signature =
-        combine_approvals(account, &current, inner, vec![PrimitiveSignature::Secp256k1(approval)])?;
-    let raw =
-        TempoTxEnvelope::AA(unsigned.into_signed(TempoSignature::ConfigurableAccount(signature)))
-            .encoded_2718();
-
-    let send_opts = SendOptions::new(&send_tx, &config);
-    let (tx_hash, receipt) = cast_send_raw(&provider, &raw, send_tx.sync).await?;
-    send_opts.print_send_result(&provider, tx_hash, receipt).await?;
+    cast_send_with_configurable_account(
+        &provider,
+        request,
+        &signer,
+        &SendOptions::new(&send_tx, &config),
+    )
+    .await?;
     Ok(())
 }
 
