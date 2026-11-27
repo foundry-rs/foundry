@@ -711,8 +711,6 @@ fn sign_typed_data_with_wallet(
 ) -> Result<alloy_primitives::Signature> {
     let typed_data = serde_json::from_str::<TypedData>(json_data)?;
     with_wallet_signer(state, signer, "vm.signTypedData(signer, jsonData)", |signer, wallet| {
-        // Hand over the typed data instead of its digest: hardware wallets display it and
-        // reject blind signing of a bare hash.
         let sig = foundry_common::block_on(wallet.sign_dynamic_typed_data(&typed_data))?;
         debug_assert_eq!(
             sig.recover_address_from_prehash(&typed_data.eip712_signing_hash()?)?,

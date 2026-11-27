@@ -3348,8 +3348,8 @@ interface Vm {
     /// Signs human-readable typed data `jsonData` following the EIP-712 standard with signer
     /// provided to script using the secp256k1 curve.
     ///
-    /// The signer receives the typed data rather than its digest, so hardware wallets can display
-    /// what is being signed and do not require blind signing.
+    /// The wallet backend controls what the device displays. The Ledger backend signs the domain
+    /// separator and message hash and may require blind signing.
     ///
     /// If `--sender` is provided, the signer with provided address is used, otherwise,
     /// if exactly one signer is provided to the script, that signer is used.
@@ -3362,8 +3362,8 @@ interface Vm {
     /// Signs human-readable typed data `jsonData` following the EIP-712 standard with signer
     /// provided to script using the secp256k1 curve.
     ///
-    /// The signer receives the typed data rather than its digest, so hardware wallets can display
-    /// what is being signed and do not require blind signing.
+    /// The wallet backend controls what the device displays. The Ledger backend signs the domain
+    /// separator and message hash and may require blind signing.
     ///
     /// Raises error if none of the signers passed into the script have provided address.
     #[cheatcode(group = Crypto)]

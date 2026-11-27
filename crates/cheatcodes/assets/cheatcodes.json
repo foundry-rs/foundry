@@ -11822,7 +11822,7 @@
     {
       "func": {
         "id": "signTypedData_1",
-        "description": "Signs human-readable typed data `jsonData` following the EIP-712 standard with signer\nprovided to script using the secp256k1 curve.\nThe signer receives the typed data rather than its digest, so hardware wallets can display\nwhat is being signed and do not require blind signing.\nIf `--sender` is provided, the signer with provided address is used, otherwise,\nif exactly one signer is provided to the script, that signer is used.\nRaises error if signer passed through `--sender` does not match any unlocked signers or\nif `--sender` is not provided and not exactly one signer is passed to the script.",
+        "description": "Signs human-readable typed data `jsonData` following the EIP-712 standard with signer\nprovided to script using the secp256k1 curve.\nThe wallet backend controls what the device displays. The Ledger backend signs the domain\nseparator and message hash and may require blind signing.\nIf `--sender` is provided, the signer with provided address is used, otherwise,\nif exactly one signer is provided to the script, that signer is used.\nRaises error if signer passed through `--sender` does not match any unlocked signers or\nif `--sender` is not provided and not exactly one signer is passed to the script.",
         "declaration": "function signTypedData(string calldata jsonData) external pure returns (uint8 v, bytes32 r, bytes32 s);",
         "visibility": "external",
         "mutability": "pure",
@@ -11842,7 +11842,7 @@
     {
       "func": {
         "id": "signTypedData_2",
-        "description": "Signs human-readable typed data `jsonData` following the EIP-712 standard with signer\nprovided to script using the secp256k1 curve.\nThe signer receives the typed data rather than its digest, so hardware wallets can display\nwhat is being signed and do not require blind signing.\nRaises error if none of the signers passed into the script have provided address.",
+        "description": "Signs human-readable typed data `jsonData` following the EIP-712 standard with signer\nprovided to script using the secp256k1 curve.\nThe wallet backend controls what the device displays. The Ledger backend signs the domain\nseparator and message hash and may require blind signing.\nRaises error if none of the signers passed into the script have provided address.",
         "declaration": "function signTypedData(address signer, string calldata jsonData) external pure returns (uint8 v, bytes32 r, bytes32 s);",
         "visibility": "external",
         "mutability": "pure",
