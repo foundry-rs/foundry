@@ -2606,12 +2606,17 @@ impl TestArgs {
                     &mut results,
                     verbosity,
                     tracing.trace_depth,
-                    // The debugger reads traces from these results.
+                    // The debugger reads traces from these results, so `-s` then applies only to
+                    // the printed copy below.
                     self.suppress_successful_traces && !self.debug,
                 );
             }
             self.emit_symbolic_regressions(&config, &runner.known_contracts, &mut results)?;
-            let rendered = if serialize_json {
+            let rendered = if serialize_json && self.debug && self.suppress_successful_traces {
+                let mut printed = results.clone();
+                prepare_results_for_json(&mut printed, verbosity, None, true);
+                serde_json::to_string(&printed)?
+            } else if serialize_json {
                 serde_json::to_string(&results)?
             } else {
                 junit_xml_report(&results, verbosity).to_string()?

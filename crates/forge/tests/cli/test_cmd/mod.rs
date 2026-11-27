@@ -1613,6 +1613,27 @@ contract MixedTest {
         serde_json::from_slice(&std::fs::read(&json_path).unwrap()).unwrap();
     assert_eq!(traces(&results, "test_Pass()"), 0);
     assert_ne!(traces(&results, "test_Reverts()"), 0);
+
+    // With `--debug`, both JSON outputs still suppress traces while the debugger keeps them.
+    let dump_dir = prj.root().join("dump");
+    let output = cmd
+        .forge_fuse()
+        .args(["test", "-vvv", "-s", "--json", "--mt", "test_Pass", "--debug", "--dump"])
+        .arg(&dump_dir)
+        .arg("--json-file")
+        .arg(&json_path)
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let results: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(traces(&results, "test_Pass()"), 0);
+    let results: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&json_path).unwrap()).unwrap();
+    assert_eq!(traces(&results, "test_Pass()"), 0);
+    let dump: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dump_dir.join("trace.json")).unwrap()).unwrap();
+    assert_ne!(dump, serde_json::Value::Null);
 }
 
 #[forgetest]
