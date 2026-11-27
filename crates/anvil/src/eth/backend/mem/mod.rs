@@ -10514,6 +10514,14 @@ impl Backend<FoundryNetwork> {
         .await
     }
 
+    /// Mints the testnet faucet tokens to `address`, like `tempo_fundAddress` (Tempo-only).
+    pub async fn fund_tempo_faucet_account(&self, address: Address) -> DatabaseResult<()> {
+        self.with_tempo_storage(|| {
+            crate::eth::backend::tempo::fund_faucet_account(address).map_err(tempo_db_err)
+        })
+        .await
+    }
+
     /// Creates a native TIP-20 at the requested address with optional initial minting.
     pub async fn create_tempo_token(
         &self,

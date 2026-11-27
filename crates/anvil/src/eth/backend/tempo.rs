@@ -20,7 +20,7 @@ use evm2::evm::{AccountChangeRef, BlockStateAccumulator, StateChangeSink, Storag
 use foundry_evm_core::{
     backend::DatabaseResult,
     tempo::{
-        ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
+        ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, OUSD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
         active_tempo_precompile_addresses, initialize_tempo_genesis_inner, tempo_genesis_contracts,
     },
 };
@@ -51,6 +51,13 @@ const ADMIN: Address = address!("0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f");
 /// Fee token balance each test account gets: u64::MAX, safe since u128::MAX can hold ~18
 /// quintillion u64::MAX values.
 const TEST_ACCOUNT_FEE_TOKEN_BALANCE: U256 = U256::from_limbs([u64::MAX, 0, 0, 0]);
+
+/// The tokens Tempo's testnet faucet mints, as `tempo_fundAddress` does.
+const FAUCET_TOKENS: [Address; 5] =
+    [PATH_USD_ADDRESS, ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, THETA_USD_ADDRESS, OUSD_ADDRESS];
+
+/// The amount of each token the testnet faucet mints: one million units with 6 decimals.
+const FAUCET_AMOUNT: U256 = U256::from_limbs([1_000_000_000_000, 0, 0, 0]);
 
 /// Runs `f` in a Tempo precompile storage context over `db` at `env`, then writes the state it
 /// changed back to `db` only if every operation succeeds.
@@ -208,13 +215,7 @@ pub fn fund_fork_test_accounts(
                 if amount.is_zero() {
                     continue;
                 }
-                token.handle_rewards_on_mint(account, amount)?;
-                let supply = token
-                    .total_supply()?
-                    .checked_add(amount)
-                    .ok_or_else(TempoPrecompileError::under_overflow)?;
-                token.total_supply.write(supply)?;
-                token.increment_balance(account, amount)?;
+                mint_without_issuer(&mut token, account, amount)?;
             }
             Ok(())
         })()
@@ -222,6 +223,36 @@ pub fn fund_fork_test_accounts(
             BlockchainError::Message(format!("failed to fund Tempo fork accounts: {err}"))
         })
     })
+}
+
+/// Mints each deployed testnet faucet token to `account`, like `tempo_fundAddress` on Moderato.
+///
+/// Must run within a [`StorageCtx`] scope. Tokens the chain lacks, such as OUSD on a fork of an
+/// earlier block, are skipped.
+pub fn fund_faucet_account(account: Address) -> Result<(), TempoPrecompileError> {
+    let factory = TIP20Factory::new();
+    for token in FAUCET_TOKENS {
+        if factory.is_tip20(token)? {
+            mint_without_issuer(&mut TIP20Token::from_address(token)?, account, FAUCET_AMOUNT)?;
+        }
+    }
+    Ok(())
+}
+
+/// Credits `amount` to `account` like a mint, keeping the total supply and reward accounting
+/// consistent, without the issuer role or the supply cap that a local node may lack on a fork.
+fn mint_without_issuer(
+    token: &mut TIP20Token,
+    account: Address,
+    amount: U256,
+) -> Result<(), TempoPrecompileError> {
+    token.handle_rewards_on_mint(account, amount)?;
+    let supply = token
+        .total_supply()?
+        .checked_add(amount)
+        .ok_or_else(TempoPrecompileError::under_overflow)?;
+    token.total_supply.write(supply)?;
+    token.increment_balance(account, amount)
 }
 
 fn initialize_tempo_genesis(

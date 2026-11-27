@@ -23,7 +23,7 @@ use tempo_precompiles::{
 use crate::constants::SYSTEM_PRECOMPILE_STUB;
 
 pub use foundry_common::tempo::{
-    ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
+    ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, OUSD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
 };
 pub use foundry_evm_networks::{
     TEMPO_PRECOMPILE_ADDRESSES, active_tempo_precompile_addresses, is_tempo_precompile_active_at,

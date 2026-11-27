@@ -9496,6 +9496,47 @@ mod subscriptions;
 
 mod create_token;
 
+// `tempo_forkSchedule` reports the forks the node runs, active from genesis.
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_fork_schedule_lists_active_forks() {
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T5.into()))).await;
+    let schedule = handle
+        .http_provider()
+        .raw_request::<_, tempo_alloy::rpc::ForkSchedule>("tempo_forkSchedule".into(), ())
+        .await
+        .unwrap();
+
+    assert_eq!(schedule.active, "T5");
+    let names = schedule.schedule.iter().map(|fork| fork.name.as_str()).collect::<Vec<_>>();
+    assert_eq!(names, ["T0", "T1", "T1A", "T1B", "T1C", "T2", "T3", "T4", "T5"]);
+    let genesis_time = api.anvil_get_genesis_time().unwrap();
+    assert!(
+        schedule.schedule.iter().all(|fork| fork.active && fork.activation_time == genesis_time)
+    );
+}
+
+// `tempo_fundAddress` mints each faucet token like Moderato's faucet, without a transaction.
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_fund_address_mints_faucet_tokens() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let account = Address::repeat_byte(0xfa);
+    let path_usd = tempo_precompiles::tip20::ITIP20::new(PATH_USD, &provider);
+    let supply = path_usd.totalSupply().call().await.unwrap();
+
+    let hashes =
+        provider.raw_request::<_, Vec<B256>>("tempo_fundAddress".into(), (account,)).await.unwrap();
+
+    assert!(hashes.is_empty());
+    let amount = U256::from(1_000_000_000_000u64);
+    for token in [PATH_USD, ALPHA_USD, BETA_USD, THETA_USD] {
+        let token = tempo_precompiles::tip20::ITIP20::new(token, &provider);
+        assert_eq!(token.balanceOf(account).call().await.unwrap(), amount);
+    }
+    assert_eq!(path_usd.totalSupply().call().await.unwrap(), supply + amount);
+}
+
 #[cfg(feature = "cli")]
 mod epoch_warning;
 
