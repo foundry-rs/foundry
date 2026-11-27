@@ -179,7 +179,7 @@ impl MonadSimulation {
 
 impl PreSimulationState<MonadEvmNetwork> {
     pub(crate) async fn fill_monad_metadata(
-        self,
+        mut self,
     ) -> Result<FilledTransactionsState<MonadEvmNetwork>> {
         if self.args.skip_simulation {
             return self.fill_without_simulation().await;
@@ -230,6 +230,7 @@ impl PreSimulationState<MonadEvmNetwork> {
                         &result,
                         self.args.gas_estimate_multiplier,
                         self.execution_artifacts.rpc_data.chain_ids.get(&rpc).copied(),
+                        self.execution_artifacts.rpc_data.hardforks.get(&rpc).copied(),
                         &self.build_data,
                     )?
                     .build();
