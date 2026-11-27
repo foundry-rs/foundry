@@ -7807,6 +7807,143 @@ contract RoundedProductTest {
             assert(balances[from] + balances[to] == fromBefore + toBefore);
         }
     }
+
+    function checkExactTickSpacing(uint24 tick, uint24 spacing) external pure {
+        require(spacing > 0);
+        require(tick % spacing == 0);
+        assert(tick / spacing * spacing == tick);
+    }
+
+    // The checked product's overflow guard divides the rounded product by the quotient.
+    function checkExactLot(uint256 amount, uint128 lot) external pure {
+        require(lot != 0);
+        require(amount % lot == 0);
+        assert(amount / lot * lot == amount);
+    }
+
+    function checkExactConstantLot(uint256 amount) external pure {
+        require(amount % 1e6 == 0);
+        assert(amount / 1e6 * 1e6 == amount);
+    }
+
+    function checkExactGranularity(uint256 amount, uint256 granularity) external pure {
+        require(granularity != 0);
+        require(amount % granularity == 0);
+        assert(amount == (amount / granularity) * granularity);
+    }
+
+    function checkExactEarlyReturn(uint256 x, uint256 d) external pure {
+        if (d == 0) return;
+        if (x % d != 0) return;
+        assert(x / d * d == x);
+    }
+
+    function checkExactAssembly(uint256 x, uint256 d) external pure {
+        bool ok = true;
+        assembly {
+            if iszero(iszero(d)) {
+                if iszero(mod(x, d)) { ok := eq(mul(div(x, d), d), x) }
+            }
+        }
+        assert(ok);
+    }
+
+    function checkExactDownstream(uint256 x, uint256 d) external pure {
+        require(d != 0);
+        require(x % d == 0);
+        uint256 q = x / d;
+        assert(q * d == x && q <= x);
+    }
+
+    // The guard `d == 0 || x % d == 0` and a separate `d != 0` make `x` a multiple of `d`.
+    function checkExactGuard(uint256 x, uint256 d) external pure {
+        require(d != 0);
+        bool ok = true;
+        assembly {
+            if or(iszero(d), iszero(mod(x, d))) { ok := eq(mul(div(x, d), d), x) }
+        }
+        assert(ok);
+    }
+
+    // Divisibility must not hide the rounded product from the enclosing quotient.
+    function checkExactCeilingRoundTrip(uint128 value, uint128 rate) external pure {
+        require(rate >= 37);
+        require((uint256(value) * rate + 36) % 37 == 0);
+        uint256 rounded = (uint256(value) * rate + 36) / 37 * 37;
+        assert(rounded / rate == value);
+    }
+
+    // Divisibility must not fold the remainder before `x - x % d` becomes `(x / d) * d`.
+    function checkExactRemainderSubtractionQuotient(uint256 x, uint8 d) external pure {
+        require(d != 0);
+        require(x >= 256);
+        require(x % d == 0);
+        unchecked {
+            uint256 rounded = x - x % d;
+            assert(rounded / (x / d) == d);
+        }
+    }
+
+    function checkExactConverse(uint256 x, uint256 d) external pure {
+        require(d != 0);
+        require(x / d * d == x);
+        assert(x % d == 0);
+    }
+
+    function checkExactWithoutDivisibility(uint256 x, uint256 d) external pure {
+        require(d != 0);
+        assert(x / d * d == x);
+    }
+
+    function checkExactOtherDivisor(uint256 x, uint256 d, uint256 e) external pure {
+        require(d != 0 && e != 0);
+        require(x % e == 0);
+        assert(x / d * d == x);
+    }
+
+    // EVM `mod(x, 0)` is zero, so a zero divisor passes the check but rounds `x` down to zero.
+    function checkExactZeroDivisor(uint256 x, uint256 d) external pure {
+        bool ok = true;
+        assembly {
+            if iszero(mod(x, d)) { ok := eq(mul(div(x, d), d), x) }
+        }
+        assert(ok);
+    }
+
+    // `flag || d == 0 || x % d == 0` holds without divisibility.
+    function checkExactThreeWayCheck(uint256 x, uint256 d, bool flag) external pure {
+        require(d != 0);
+        bool ok = true;
+        assembly {
+            if or(flag, or(iszero(d), iszero(mod(x, d)))) { ok := eq(mul(div(x, d), d), x) }
+        }
+        assert(ok);
+    }
+
+    // `d == 0 || x % 7 == 0` says nothing about multiples of `d`.
+    function checkExactMismatchedDivisor(uint256 x, uint256 d) external pure {
+        require(d != 0);
+        bool ok = true;
+        assembly {
+            if or(iszero(d), iszero(mod(x, 7))) { ok := eq(mul(div(x, d), d), x) }
+        }
+        assert(ok);
+    }
+
+    // Nor does it make `x` a multiple of 7 when `d` is zero.
+    function checkExactMismatchedZeroCheck(uint256 x, uint256 d) external pure {
+        bool ok = true;
+        assembly {
+            if or(iszero(d), iszero(mod(x, 7))) { ok := eq(mul(div(x, 7), 7), x) }
+        }
+        assert(ok);
+    }
+
+    function checkExactBoundedConverse(uint256 x, uint256 d) external pure {
+        require(d != 0);
+        require(x / d * d <= x);
+        assert(x % d == 0);
+    }
 }
 "#,
     );
@@ -7821,7 +7958,7 @@ contract RoundedProductTest {
                 "--symbolic-timeout",
                 "30",
                 "--match-test",
-                "check(FloorError|DividendRelation|WrappingDividendRelation|CeilingError|CeilingRoundTrip|SymbolicDivisorFacts|EuclideanIdentities|SymbolicEuclideanIdentity|NarrowFloorError|NestedConstantQuotient|ReversedNestedConstantQuotient|NestedFeeEuclideanIdentity|NestedFeeCeiling|BasisPointsFee|SlippageMinimum|TransferConservation)",
+                "check(Exact(TickSpacing|Lot|ConstantLot|Granularity|EarlyReturn|Assembly|Downstream|Guard|CeilingRoundTrip|RemainderSubtractionQuotient|Converse)|FloorError|DividendRelation|WrappingDividendRelation|CeilingError|CeilingRoundTrip|SymbolicDivisorFacts|EuclideanIdentities|SymbolicEuclideanIdentity|NarrowFloorError|NestedConstantQuotient|ReversedNestedConstantQuotient|NestedFeeEuclideanIdentity|NestedFeeCeiling|BasisPointsFee|SlippageMinimum|TransferConservation)",
             ])
             .assert_success()
             .get_output()
@@ -7832,6 +7969,17 @@ contract RoundedProductTest {
             "checkReversedNestedConstantQuotient(uint256)",
             "checkNestedFeeEuclideanIdentity(uint128,uint16)",
             "checkNestedFeeCeiling(uint128,uint16)",
+            "checkExactTickSpacing(uint24,uint24)",
+            "checkExactLot(uint256,uint128)",
+            "checkExactConstantLot(uint256)",
+            "checkExactGranularity(uint256,uint256)",
+            "checkExactEarlyReturn(uint256,uint256)",
+            "checkExactAssembly(uint256,uint256)",
+            "checkExactDownstream(uint256,uint256)",
+            "checkExactGuard(uint256,uint256)",
+            "checkExactCeilingRoundTrip(uint128,uint128)",
+            "checkExactRemainderSubtractionQuotient(uint256,uint8)",
+            "checkExactConverse(uint256,uint256)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(
@@ -7848,7 +7996,7 @@ contract RoundedProductTest {
                 "--symbolic-timeout",
                 "30",
                 "--match-test",
-                "check(CeilingIsNotExact|WrappingCeiling|ReversedFloorError|NestedQuotientIsNotFiner|NestedQuotientOfOtherValue|WrappedNestedDivisor|MixedEuclideanSum)",
+                "check(CeilingIsNotExact|WrappingCeiling|ReversedFloorError|NestedQuotientIsNotFiner|NestedQuotientOfOtherValue|WrappedNestedDivisor|MixedEuclideanSum|Exact(WithoutDivisibility|OtherDivisor|ZeroDivisor|ThreeWayCheck|MismatchedDivisor|MismatchedZeroCheck|BoundedConverse))",
             ])
             .assert_failure()
             .get_output()
@@ -7871,6 +8019,13 @@ contract RoundedProductTest {
         for signature in [
             "checkMixedEuclideanSum(uint256,uint256,uint256)",
             "checkNestedQuotientOfOtherValue(uint256,uint256)",
+            "checkExactWithoutDivisibility(uint256,uint256)",
+            "checkExactOtherDivisor(uint256,uint256,uint256)",
+            "checkExactZeroDivisor(uint256,uint256)",
+            "checkExactThreeWayCheck(uint256,uint256,bool)",
+            "checkExactMismatchedDivisor(uint256,uint256)",
+            "checkExactMismatchedZeroCheck(uint256,uint256)",
+            "checkExactBoundedConverse(uint256,uint256)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(
