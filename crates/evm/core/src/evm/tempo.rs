@@ -180,14 +180,15 @@ impl FoundryEvmFactory for TempoEvmFactory {
 
     fn initialize_evm(&self, evm: &mut Evm<'_, TempoEvmTypes>, is_forked: bool) {
         if is_forked {
-            // Tempo precompile accounts hold no balance or nonce, and at most the sentinel code, so
-            // they are seeded without fetching each one from the fork. PathUSD is in every Tempo
-            // genesis; tokens created later, such as OUSD, are not seeded, since a fork of a
-            // devnet or of an earlier block may lack them.
+            // On Tempo networks these accounts hold only the sentinel code, with no balance or
+            // nonce (Anvil's Tempo genesis sets nonce 1, which execution does not read), so they
+            // are seeded without fetching each one from the fork; their storage still reads from
+            // the fork. PathUSD is in every Tempo genesis, unlike later tokens.
             let sentinel = Bytecode::new_legacy(Bytes::from_static(SYSTEM_PRECOMPILE_STUB));
             let db = evm.overlay_db_mut();
             for address in TEMPO_PRECOMPILE_ADDRESSES.iter().chain([&PATH_USD_ADDRESS]) {
-                if !db.cache.accounts.contains_key(address) {
+                // An account cached as absent is seeded too, so the precompile has code.
+                if !matches!(db.cache.accounts.get(address), Some(Some(_))) {
                     db.insert_account_info(
                         address,
                         AccountInfo::default().with_code(sentinel.clone()),
