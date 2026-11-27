@@ -47,6 +47,15 @@ const DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME: Duration = Duration::from_secs(3);
 /// The factor to scale the block time by to get the poll interval.
 const POLL_INTERVAL_BLOCK_TIME_SCALE_FACTOR: f32 = 0.6;
 
+/// The lowest poll interval picked from a chain's block time.
+///
+/// `forge script` waits on up to 10 receipts at once and each wait polls on its own, so the
+/// interval multiplies its request rate. Of the alloy-chains block time hints, this only raises
+/// those under about 417ms, for example the Arbitrum family's 260ms (156ms scaled) and Monad's
+/// 400ms (240ms scaled). BSC's 450ms and Tempo's 500ms still poll at 270ms and 300ms. An explicit
+/// `--poll-interval` is in whole seconds, so it never reaches this floor.
+const MIN_REMOTE_POLL_INTERVAL: Duration = Duration::from_millis(250);
+
 /// Helper type alias for a retry provider
 pub type RetryProvider<N = AnyNetwork> = RootProvider<N>;
 
@@ -633,8 +642,8 @@ pub fn get_http_provider(builder: impl AsRef<str>) -> RetryProvider {
 /// Constructs a provider, retaining Alloy's default polling interval for local URLs.
 ///
 /// For non-local URLs, the polling interval is 60% of the chain's average block time hint, capped
-/// at 3 seconds before scaling (at most 1.8 seconds). If no hint is available, 3 seconds is used
-/// before scaling.
+/// at 3 seconds before scaling (at most 1.8 seconds) and at least 250 milliseconds. If no hint is
+/// available, 3 seconds is used before scaling.
 #[inline]
 pub fn try_get_http_provider(builder: impl AsRef<str>) -> Result<RetryProvider> {
     ProviderBuilder::new(builder.as_ref()).build()
@@ -653,13 +662,15 @@ pub fn set_chain_poll_interval<N: Network>(provider: &impl Provider<N>, chain_id
     }
 }
 
-/// Returns 60% of `chain`'s block time hint, or of 3 seconds when the hint is missing or longer.
+/// Returns 60% of `chain`'s block time hint, or of 3 seconds when the hint is missing or longer,
+/// and at least [`MIN_REMOTE_POLL_INTERVAL`].
 fn remote_poll_interval(chain: Chain) -> Duration {
     chain
         .average_blocktime_hint()
         .map(|hint| hint.min(DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME))
         .unwrap_or(DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME)
         .mul_f32(POLL_INTERVAL_BLOCK_TIME_SCALE_FACTOR)
+        .max(MIN_REMOTE_POLL_INTERVAL)
 }
 
 #[cfg(not(windows))]
@@ -835,6 +846,9 @@ mod tests {
         assert_eq!(remote.client().poll_interval(), Duration::from_millis(1800));
         set_chain_poll_interval(&remote, NamedChain::Tempo as u64);
         assert_eq!(remote.client().poll_interval(), Duration::from_millis(300));
+        // Arbitrum's 260ms hint scales to 156ms, below the floor.
+        set_chain_poll_interval(&remote, NamedChain::Arbitrum as u64);
+        assert_eq!(remote.client().poll_interval(), Duration::from_millis(250));
 
         let local = ProviderBuilder::<AnyNetwork>::new("http://localhost:8545").build().unwrap();
         let default = local.client().poll_interval();
