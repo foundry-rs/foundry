@@ -438,7 +438,7 @@ pub enum KeyAuthorizationSubcommand {
         authorization: KeyAuthorizationArgs,
 
         #[command(flatten)]
-        configurable: ConfigurableAccountArgs,
+        configurable: Box<ConfigurableAccountArgs>,
 
         #[command(flatten)]
         rpc: RpcOpts,
@@ -934,7 +934,7 @@ impl KeyAuthorizationSubcommand {
                     );
                     return sign_configurable_key_authorization(
                         authorization,
-                        configurable,
+                        *configurable,
                         configurable_account,
                         account,
                         &wallet,
