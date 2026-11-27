@@ -1780,8 +1780,26 @@ impl<N: Network> Backend<N> {
         if self.is_base() && self.base_upgrade() >= BaseUpgrade::Denim {
             return base::prepare_block_timestamp(db, &self.time, parent_timestamp);
         }
+        if self.is_tempo() {
+            return Ok(self
+                .time
+                .prepare_next_timestamp_millis(pin_timestamp, self.tempo_head_timestamp_millis()));
+        }
         let _ = (db, parent_timestamp);
         Ok(self.time.prepare_next_timestamp(pin_timestamp))
+    }
+
+    /// Returns the millisecond timestamp of the Tempo head, which may be the fork root.
+    fn tempo_head_timestamp_millis(&self) -> Option<u64> {
+        let best_hash = {
+            let storage = self.blockchain.storage.read();
+            if let Some(block) = storage.blocks.get(&storage.best_hash) {
+                return block.header.as_tempo().map(|header| header.timestamp_millis());
+            }
+            storage.best_hash
+        };
+        let fork = self.get_fork().filter(|fork| fork.block_hash() == best_hash)?;
+        fork.cached_root_header()?.as_tempo().map(|header| header.timestamp_millis())
     }
 
     /// Builds the required deposits from the same parent state used to prepare the clock.
@@ -6874,6 +6892,7 @@ where
                 );
 
                 if let FoundryHeader::Tempo(header) = &mut block_info.block.header {
+                    header.timestamp_millis_part = pending_timestamp.millis_part;
                     let storage = self.blockchain.storage.read();
                     let tempo = storage.tempo.as_ref().expect("Tempo chain is initialized");
                     tempo.prepare(header, TempoHardfork::from(hardfork))?;

@@ -1025,6 +1025,12 @@ impl ClientFork {
         Ok(uncles.get(index).cloned())
     }
 
+    /// Returns the fork root's native header if [`Self::root_header`] already cached it.
+    pub(crate) fn cached_root_header(&self) -> Option<FoundryHeader> {
+        let block = self.storage_read().blocks.get(&self.block_hash()).cloned()?;
+        serde_json::to_value(&block).and_then(serde_json::from_value).ok()
+    }
+
     /// Returns the pinned fork root's native header, validating it before caching fetched data.
     pub(crate) async fn root_header(&self) -> Result<Option<FoundryHeader>, BlockchainError> {
         let (number, hash, provider) = {

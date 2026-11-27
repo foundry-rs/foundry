@@ -40,6 +40,8 @@ struct TimestampOverride {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PendingBlockTimestamp {
     pub(crate) timestamp: u64,
+    /// Milliseconds past `timestamp`, non-zero only on a millisecond clock.
+    pub(crate) millis_part: u64,
     exact_generation: Option<u64>,
     prepared_offset: i128,
     offset_reset_generation: u64,
@@ -229,19 +231,36 @@ impl TimeManager {
         current: i128,
         pin_timestamp: bool,
     ) -> (u64, Option<u64>, Option<i128>) {
+        Self::compute_next_ticks(state, current, 1, 0, pin_timestamp)
+    }
+
+    /// Computes the next block time in ticks of `1 / ticks_per_second` seconds.
+    ///
+    /// `current` is the wall clock and `last_part` the parent's sub-second part, both in ticks.
+    /// Offsets, increases, intervals and overrides stay in whole seconds.
+    fn compute_next_ticks(
+        state: &TimeState,
+        current: i128,
+        ticks_per_second: u64,
+        last_part: u64,
+        pin_timestamp: bool,
+    ) -> (u64, Option<u64>, Option<i128>) {
         let exact_timestamp = state.next_exact_timestamp;
-        let last_timestamp = state.last_timestamp;
+        let last_timestamp =
+            state.last_timestamp.saturating_mul(ticks_per_second).saturating_add(last_part);
 
         let (mut next_timestamp, update_offset) = if let Some(next) = exact_timestamp {
-            (next.timestamp, true)
+            (next.timestamp.saturating_mul(ticks_per_second), true)
         } else if let Some(interval) = state.interval {
-            (last_timestamp.saturating_add(interval), false)
+            (last_timestamp.saturating_add(interval.saturating_mul(ticks_per_second)), false)
         } else {
             // A burst of blocks within one wall-clock second leaves `last_timestamp` ahead of
             // `wall + offset`; keep a pending explicit increase on top of the logical clock so the
             // monotonicity clamp below does not swallow it.
-            let wall = current.saturating_add(state.offset) as u64;
-            (wall.max(last_timestamp.saturating_add(state.time_increase)), false)
+            let wall = current.saturating_add(state.offset.saturating_mul(ticks_per_second as i128))
+                as u64;
+            let increase = state.time_increase.saturating_mul(ticks_per_second);
+            (wall.max(last_timestamp.saturating_add(increase)), false)
         };
         // Equal timestamps are only allowed when explicitly requested (exact override, an
         // interval, a zero-interval mine such as `anvil_mine(n, 0)`, or the first block after
@@ -260,13 +279,43 @@ impl TimeManager {
         if too_low {
             next_timestamp = last_timestamp.saturating_add(1);
         }
-        let next_offset = update_offset.then_some((next_timestamp as i128) - current);
+        let ticks_per_second = i128::from(ticks_per_second);
+        let next_offset = update_offset
+            .then_some((next_timestamp as i128) / ticks_per_second - current / ticks_per_second);
         (next_timestamp, exact_timestamp.map(|exact| exact.generation), next_offset)
     }
 
     /// Prepares the next timestamp without consuming a one-shot override.
     pub(crate) fn prepare_next_timestamp(&self, pin_timestamp: bool) -> PendingBlockTimestamp {
         self.prepare_next_timestamp_inner(None, pin_timestamp)
+    }
+
+    /// Prepares a millisecond wall clock, as Tempo proposers stamp blocks: the next block is
+    /// at least one millisecond after its parent, so several blocks can share a second.
+    ///
+    /// `parent_millis` is the parent header's millisecond timestamp. Its sub-second part is used
+    /// only while the clock still stands on the parent's second, which `evm_setTime` can move.
+    pub(crate) fn prepare_next_timestamp_millis(
+        &self,
+        pin_timestamp: bool,
+        parent_millis: Option<u64>,
+    ) -> PendingBlockTimestamp {
+        let current = duration_since_unix_epoch().as_millis() as i128;
+        let state = self.state.read();
+        let last_part = parent_millis
+            .filter(|millis| millis / 1000 == state.last_timestamp)
+            .map_or(0, |millis| millis % 1000);
+        let (millis, exact_generation, next_offset) =
+            Self::compute_next_ticks(&state, current, 1000, last_part, pin_timestamp);
+        PendingBlockTimestamp {
+            timestamp: millis / 1000,
+            millis_part: millis % 1000,
+            exact_generation,
+            prepared_offset: state.offset,
+            offset_reset_generation: state.offset_reset_generation,
+            next_offset,
+            time_increase: state.time_increase,
+        }
     }
 
     /// Prepares a logical block clock, using explicit controls instead of elapsed wall time.
@@ -313,6 +362,7 @@ impl TimeManager {
             };
         PendingBlockTimestamp {
             timestamp,
+            millis_part: 0,
             exact_generation,
             prepared_offset: state.offset,
             offset_reset_generation: state.offset_reset_generation,

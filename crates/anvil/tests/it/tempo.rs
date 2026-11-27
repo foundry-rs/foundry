@@ -73,7 +73,7 @@ use serde::Deserialize;
 use std::{
     num::NonZeroU64,
     sync::{Arc, atomic::Ordering},
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tempo_alloy::{TempoNetwork, primitives::TempoTxEnvelope, rpc::TempoHeaderResponse};
 use tempo_contracts::{
@@ -205,7 +205,7 @@ fn assert_tempo_header_fields(header: &TempoHeaderResponse) {
     // From T1, Tempo's general lane is fixed below the block gas limit.
     assert_eq!(inner.general_gas_limit, 30_000_000);
     assert_eq!(inner.shared_gas_limit, 0);
-    assert_eq!(inner.timestamp_millis_part, 0);
+    assert!(inner.timestamp_millis_part < 1000);
 }
 
 #[cfg(feature = "cli")]
@@ -6030,6 +6030,54 @@ async fn test_block_timestamps_are_monotonic() {
         "Block timestamps must be strictly increasing: {timestamp2} should be > {timestamp1}",
     );
     assert_eq!(timestamp2, future_timestamp, "Block timestamp should match the set value");
+}
+
+// ============================================================================
+// Block & Chain: Millisecond Block Clock
+// ============================================================================
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_blocks_share_a_second_on_the_wall_clock() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let header = async |number: u64| -> TempoHeader {
+        let header: TempoHeaderResponse = provider
+            .client()
+            .request("eth_getHeaderByNumber", (format!("0x{number:x}"),))
+            .await
+            .unwrap();
+        header.as_ref().clone()
+    };
+
+    for _ in 0..10 {
+        api.mine_one().await.unwrap();
+    }
+    let now_millis = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+
+    let mut parent = header(0).await;
+    let mut shared_second = false;
+    for number in 1..=10 {
+        let header = header(number).await;
+        assert!(header.timestamp_millis() > parent.timestamp_millis(), "block {number}");
+        shared_second |= header.inner.timestamp == parent.inner.timestamp;
+        parent = header;
+    }
+    // A burst of blocks moves chain time at most a millisecond per block past the wall clock.
+    let ahead = parent.timestamp_millis().saturating_sub(now_millis);
+    assert!(ahead <= 10, "chain time is {ahead}ms ahead of the wall clock");
+    assert!(shared_second);
+
+    // Explicit time controls still move the clock by whole seconds.
+    api.evm_increase_time(U256::from(100)).await.unwrap();
+    api.mine_one().await.unwrap();
+    let increased = header(11).await;
+    assert!(increased.timestamp_millis() >= parent.timestamp_millis() + 100_000);
+
+    api.evm_set_next_block_timestamp(increased.inner.timestamp).unwrap();
+    api.mine_one().await.unwrap();
+    let repeated = header(12).await;
+    assert_eq!(repeated.inner.timestamp, increased.inner.timestamp);
+    assert!(repeated.timestamp_millis() > increased.timestamp_millis());
 }
 
 // ============================================================================
