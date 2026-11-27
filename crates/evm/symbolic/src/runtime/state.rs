@@ -2965,7 +2965,10 @@ impl SymbolicWorld {
     /// Restores the world state of snapshot `id` and returns its block environment and gas price.
     pub(crate) fn restore_snapshot(&mut self, id: U256) -> Option<(SymbolicBlock, SymExpr)> {
         let snapshot = self.snapshots.get(&id)?;
+        // Reverting state does not undo what the run observed.
+        let reads = std::mem::take(&mut Arc::make_mut(&mut self.state).state_reads);
         self.state = Arc::clone(&snapshot.state);
+        Arc::make_mut(&mut self.state).state_reads.extend(reads);
         Some((snapshot.block.clone(), snapshot.gas_price.clone()))
     }
 
@@ -3152,6 +3155,7 @@ impl SymbolicWorld {
             }
         }
         let state = Arc::make_mut(&mut self.state);
+        state.state_reads.extend(&other.state_reads);
         for (expr, address) in &other.symbolic_address_aliases {
             state.symbolic_address_aliases.entry(expr.clone()).or_insert(*address);
         }
@@ -3311,6 +3315,7 @@ impl SymbolicWorld {
         if self.destroyed_accounts.contains(&address) {
             return Ok(false);
         }
+        self.record_state_read(address);
         Ok(!self.extcode(cx, executor, address)?.is_empty() || self.nonce(executor, address)? != 0)
     }
 
