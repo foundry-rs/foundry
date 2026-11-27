@@ -767,10 +767,8 @@ impl Provider for DappEnvCompatProvider {
             dict.insert("optimizer".to_string(), (val == 1).into());
         }
 
-        // libraries in env vars either as `[..]` or single string separated by comma
-        if let Some(val) =
-            non_empty_env("DAPP_LIBRARIES").or_else(|| non_empty_env("FOUNDRY_LIBRARIES"))
-        {
+        // An empty library list explicitly clears libraries set by a lower-priority provider.
+        if let Ok(val) = env::var("DAPP_LIBRARIES").or_else(|_| env::var("FOUNDRY_LIBRARIES")) {
             dict.insert("libraries".to_string(), utils::to_array_value(&val)?);
         }
 

@@ -11761,8 +11761,6 @@ mod tests {
                 "DAPP_TEST_TIMESTAMP",
                 "DAPP_TEST_FUZZ_RUNS",
                 "DAPP_TEST_DEPTH",
-                "DAPP_LIBRARIES",
-                "FOUNDRY_LIBRARIES",
             ] {
                 jail.clear_env();
                 jail.set_env(env, "");
