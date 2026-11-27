@@ -8393,11 +8393,7 @@ contract TempoFeeTokenSwitch is Script {
         ("TempoFeeTokenCalls", 1, vec![alpha_usd.clone(); 4]),
         // The protocol charges the stored fee token for the CREATE, which stays an Ethereum
         // transaction.
-        (
-            "TempoFeeTokenSwitch",
-            2,
-            vec![alpha_usd.clone(), alpha_usd.clone(), path_usd.clone(), path_usd.clone()],
-        ),
+        ("TempoFeeTokenSwitch", 2, vec![alpha_usd.clone(), alpha_usd, path_usd.clone(), path_usd]),
     ] {
         cmd.forge_fuse()
             .arg("script")
