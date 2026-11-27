@@ -14,6 +14,7 @@ pub mod otterscan;
 pub mod pool;
 pub mod sign;
 pub mod tempo_consensus;
+pub mod tempo_simulate;
 pub mod util;
 
 pub use api::EthApi;

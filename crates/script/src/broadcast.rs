@@ -1016,7 +1016,8 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 eyre::bail!(message);
             }
 
-            // An owner key that a configurable account holds cannot also send on its own.
+            // An owner key that a configurable account holds cannot also sign as a plain wallet
+            // for a sender, which `for_sender` picks for a scope without another signer.
             let mut eth_wallets = AddressHashMap::<EthereumWallet>::default();
             for signer in wallet_signers {
                 let address = signer.address();
@@ -1024,11 +1025,19 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     Some(signer) => {
                         eth_wallets.insert(address, signer.into());
                     }
-                    None if required_addresses.contains(&address) => eyre::bail!(
-                        "{address} signs both as a sender and as an owner of a Tempo \
-                         configurable account in this script, which is not supported; broadcast \
-                         them in separate scripts"
-                    ),
+                    None if remaining_transactions.iter().any(|scope| {
+                        scope.sender == address
+                            && !access_keys.contains_key(scope)
+                            && !configurable_accounts.contains_key(scope)
+                            && !offline_owners.contains_key(scope)
+                    }) =>
+                    {
+                        eyre::bail!(
+                            "{address} signs both as a sender and as an owner of a Tempo \
+                             configurable account in this script, which is not supported; \
+                             broadcast them in separate scripts"
+                        )
+                    }
                     None => {}
                 }
             }
@@ -2248,7 +2257,11 @@ where
     }
     let estimate =
         provider.estimate_gas(request).await.wrap_err("Failed to estimate gas for tx")?;
-    tx.set_gas_limit(apply_gas_estimate_multiplier(estimate, Some(estimate_multiplier))?);
+    tx.set_gas_limit(apply_gas_estimate_multiplier(
+        estimate,
+        Some(estimate_multiplier),
+        tx.chain_id(),
+    )?);
     Ok(())
 }
 

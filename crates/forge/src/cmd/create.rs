@@ -643,6 +643,7 @@ impl CreateArgs {
             deployer.tx.set_gas_limit(apply_gas_estimate_multiplier(
                 estimated,
                 self.gas_estimate_multiplier,
+                Some(chain.id()),
             )?);
         }
 
