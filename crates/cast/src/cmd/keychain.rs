@@ -3043,6 +3043,7 @@ pub(crate) async fn resolve_keychain_root_signer(
     print_sponsor_hash: bool,
 ) -> Result<KeychainRootSigner> {
     const WHAT: &str = "AccountKeychain transaction";
+    let expected_from = expected_from.or(send_tx.eth.wallet.from);
     let (signer, tempo_access_key) =
         foundry_common::tempo::maybe_signer(&send_tx.eth.wallet, None).await?;
     if let Some(browser) = send_tx.browser.run::<TempoNetwork>().await? {

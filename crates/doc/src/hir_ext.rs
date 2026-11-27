@@ -19,6 +19,7 @@ use solar::{
 };
 use std::{
     collections::{HashMap, HashSet, hash_map::Entry},
+    fmt::Write,
     path::{Path, PathBuf},
 };
 use tracing::warn;
@@ -161,11 +162,11 @@ pub fn inheritance_links(
             // Prefer the exact base id; only fall back to the ambiguous name
             // index when the base has no rendered page of its own.
             if let Some(page) = name_to_page.get_contract(base_id) {
-                let link = page_link(page, current_page);
+                let link = page_link(page);
                 format!("[{name}]({link})")
             } else if let Some(candidates) = name_to_page.get(name) {
                 let page = resolve_page(candidates, current_page);
-                let link = page_link(page, current_page);
+                let link = page_link(page);
                 format!("[{name}]({link})")
             } else {
                 name.to_string()
@@ -833,30 +834,26 @@ impl LocalMembers {
     ///
     /// The outer option indicates whether the name is inherited; the inner option is absent when
     /// the effective declaration has no rendered page.
-    fn inherited_member_link(&self, member: &str, current_page: &Path) -> Option<Option<String>> {
+    fn inherited_member_link(&self, member: &str) -> Option<Option<String>> {
         let page = self.inherited.get(member)?;
-        Some(page.as_ref().map(|page| {
-            format!("{}#{}", page_link(page, current_page), slug_anchor_segment(member))
-        }))
+        Some(
+            page.as_ref()
+                .map(|page| format!("{}#{}", page_link(page), slug_anchor_segment(member))),
+        )
     }
 
     /// Exact page and anchor for a qualified inherited-contract member reference.
     ///
     /// The outer option indicates whether the contract is an inherited base; the inner option is
     /// absent when that base has no rendered page or the named member has no rendered heading.
-    fn inherited_contract_member_link(
-        &self,
-        contract: &str,
-        part: &str,
-        current_page: &Path,
-    ) -> Option<Option<String>> {
+    fn inherited_contract_member_link(&self, contract: &str, part: &str) -> Option<Option<String>> {
         let base = self.inherited_contracts.get(contract)?;
         let InheritedContract::Unique { page, anchors, .. } = base else {
             return Some(None);
         };
         let anchor = xref_part_anchor(part);
         Some(page.as_ref().and_then(|page| {
-            anchors.contains(&anchor).then(|| format!("{}#{anchor}", page_link(page, current_page)))
+            anchors.contains(&anchor).then(|| format!("{}#{anchor}", page_link(page)))
         }))
     }
 }
@@ -918,20 +915,18 @@ pub fn replace_inline_links(
                                 None => lookup_name.to_string(),
                             };
                             let display = escape_link_label(label.unwrap_or(&default_display));
-                            out.push_str(&format!("[{display}](#{anchor})"));
+                            write!(out, "[{display}](#{anchor})").unwrap();
                         } else {
                             let safe_name = lookup_name.replace('`', "'");
-                            out.push_str(&format!("`{safe_name}`"));
+                            write!(out, "`{safe_name}`").unwrap();
                         }
                         i += end;
                         continue;
                     }
 
                     let inherited_link = match part {
-                        None => local.inherited_member_link(lookup_name, current_page),
-                        Some(member) => {
-                            local.inherited_contract_member_link(lookup_name, member, current_page)
-                        }
+                        None => local.inherited_member_link(lookup_name),
+                        Some(member) => local.inherited_contract_member_link(lookup_name, member),
                     };
                     if let Some(link) = inherited_link {
                         if let Some(link) = link {
@@ -940,10 +935,10 @@ pub fn replace_inline_links(
                                 None => lookup_name.to_string(),
                             };
                             let display = escape_link_label(label.unwrap_or(&default_display));
-                            out.push_str(&format!("[{display}]({link})"));
+                            write!(out, "[{display}]({link})").unwrap();
                         } else {
                             let safe_name = lookup_name.replace('`', "'");
-                            out.push_str(&format!("`{safe_name}`"));
+                            write!(out, "`{safe_name}`").unwrap();
                         }
                         i += end;
                         continue;
@@ -952,7 +947,7 @@ pub fn replace_inline_links(
 
                 if let Some(candidates) = name_to_page.get(lookup_name) {
                     let page = resolve_page(candidates, current_page);
-                    let mut link = page_link(page, current_page);
+                    let mut link = page_link(page);
                     // Append the member anchor when the pattern is `{Type-member}`.
                     // Sanitize to ASCII alphanumerics and `_` only, Solidity identifiers
                     // never contain other characters, so this drops any injection attempt.
@@ -970,7 +965,7 @@ pub fn replace_inline_links(
                         lookup_name.to_string()
                     };
                     let display = escape_link_label(label.unwrap_or(&default_display));
-                    out.push_str(&format!("[{display}]({link})"));
+                    write!(out, "[{display}]({link})").unwrap();
                     i += end;
                     continue;
                 }
@@ -978,7 +973,7 @@ pub fn replace_inline_links(
                 // Unresolved {Ident}, emit as inline code to avoid MDX treating it as a
                 // JS expression. Strip backticks to avoid breaking the fence.
                 let safe_name = lookup_name.replace('`', "'");
-                out.push_str(&format!("`{safe_name}`"));
+                write!(out, "`{safe_name}`").unwrap();
                 i += end;
                 continue;
             }
@@ -1101,7 +1096,7 @@ fn parse_inline_link(s: &str) -> Option<(usize, &str, Option<&str>, Option<&str>
 ///
 /// vocs uses root-relative links (starting with `/`). Forward slashes are
 /// always used so the URL stays correct on Windows.
-fn page_link(page: &Path, _current_page: &Path) -> String {
+fn page_link(page: &Path) -> String {
     // Strip .mdx extension and produce an absolute path from the pages root.
     let without_ext = page.with_extension("");
     format!("/{}", without_ext.to_slash_lossy())

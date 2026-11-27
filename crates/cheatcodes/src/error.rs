@@ -3,9 +3,9 @@ use alloy_primitives::{Bytes, hex};
 use alloy_signer::Error as SignerError;
 use alloy_signer_local::LocalSignerError;
 use alloy_sol_types::SolError;
-use foundry_common::errors::FsPathError;
+use foundry_common::{errors::FsPathError, provider::RpcFailure};
 use foundry_config::UnresolvedEnvVarError;
-use foundry_evm_core::backend::{BackendError, DatabaseError};
+use foundry_evm_core::backend::{BackendError, DatabaseError, rpc_failure_in};
 use foundry_wallets::error::WalletSignerError;
 use k256::ecdsa::signature::Error as SignatureError;
 use std::{borrow::Cow, fmt};
@@ -75,6 +75,8 @@ pub struct Error {
     drop: bool,
     /// The error data. Always a valid pointer, and never modified.
     data: *const [u8],
+    /// How the RPC request behind this error failed, if one did.
+    rpc: Option<Box<RpcFailure>>,
 }
 
 impl std::error::Error for Error {}
@@ -161,14 +163,27 @@ impl Error {
         self.is_str
     }
 
+    /// Returns how the RPC request behind this error failed, if one did.
+    pub(crate) fn rpc_failure(&self) -> Option<&RpcFailure> {
+        self.rpc.as_deref()
+    }
+
+    /// Records how the RPC request behind `cause` failed, if one did.
+    pub(crate) fn with_rpc_failure_of(mut self, cause: &(dyn std::error::Error + 'static)) -> Self {
+        self.rpc = rpc_failure_in(cause).map(Box::new);
+        self
+    }
+
     /// Prefixes a string error with the name of the cheatcode that produced it.
-    pub(crate) fn with_cheatcode_name(self, cheat: &spec::Cheatcode<'static>) -> Self {
+    pub(crate) fn with_cheatcode_name(mut self, cheat: &spec::Cheatcode<'static>) -> Self {
         let name = cheat.func.signature.split('(').next().unwrap();
         // Skip showing the cheatcode name for:
         // - assertions: too verbose, and can already be inferred from the error message
         // - `rpcUrl`: forge-std relies on it in `getChainWithUpdatedRpcUrl`
         if self.is_str && !name.contains("assert") && name != "rpcUrl" {
-            fmt_err!("vm.{name}: {self}")
+            let mut named = fmt_err!("vm.{name}: {self}");
+            named.rpc = self.rpc.take();
+            named
         } else {
             self
         }
@@ -192,7 +207,7 @@ impl Error {
 
     fn _new(is_str: bool, drop: bool, data: *const [u8]) -> Self {
         debug_assert!(!data.is_null());
-        Self { is_str, drop, data }
+        Self { is_str, drop, data, rpc: None }
     }
 }
 
@@ -276,8 +291,6 @@ impl_from!(
     alloy_consensus::crypto::RecoveryError,
     FsPathError,
     hex::FromHexError,
-    BackendError,
-    DatabaseError,
     jsonpath_lib::JsonPathError,
     serde_json::Error,
     SignatureError,
@@ -291,21 +304,34 @@ impl_from!(
     WalletSignerError,
 );
 
+impl From<BackendError> for Error {
+    fn from(err: BackendError) -> Self {
+        Self::display(&err).with_rpc_failure_of(&err)
+    }
+}
+
+impl From<DatabaseError> for Error {
+    fn from(err: DatabaseError) -> Self {
+        Self::display(&err).with_rpc_failure_of(&err)
+    }
+}
+
 impl From<evm2::DatabaseError> for Error {
     fn from(err: evm2::DatabaseError) -> Self {
-        Self::display(BackendError::from(err))
+        BackendError::from(err).into()
     }
 }
 
 impl From<evm2::ExecutionError> for Error {
     fn from(err: evm2::ExecutionError) -> Self {
-        Self::new_string(format!("{err:?}"))
+        Self::new_string(format!("{err:?}")).with_rpc_failure_of(&err)
     }
 }
 
 impl From<eyre::Report> for Error {
     fn from(err: eyre::Report) -> Self {
         Self::new_string(foundry_common::errors::display_chain(&err))
+            .with_rpc_failure_of(err.as_ref())
     }
 }
 

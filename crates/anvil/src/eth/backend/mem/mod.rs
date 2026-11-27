@@ -17,6 +17,7 @@ use crate::{
             },
             env::{
                 BlobExcessGasAndPrice, BlockEnv, CfgEnv, EvmEnv, SpecId,
+                apply_chain_and_block_specific_env_changes_for_chain,
                 apply_chain_specific_tx_replay_env_changes_for_chain, block_env_from_header,
             },
             evm::{
@@ -61,7 +62,7 @@ use alloy_chains::NamedChain;
 use alloy_consensus::{
     Blob, BlockBody, BlockHeader, EnvKzgSettings, Header, Signed, Transaction as TransactionTrait,
     TransactionEnvelope, TrieAccount, TxEip4844Variant, TxEnvelope, TxReceipt, Typed2718,
-    constants::EMPTY_WITHDRAWALS,
+    constants::{EMPTY_ROOT_HASH, EMPTY_WITHDRAWALS},
     proofs::{calculate_receipt_root, calculate_transaction_root},
     transaction::Recovered,
 };
@@ -77,7 +78,7 @@ use alloy_eips::{
 };
 use alloy_genesis::Genesis;
 use alloy_network::{
-    AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType,
+    AnyHeader, AnyNetwork, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType,
     BlockResponse, Network, NetworkTransactionBuilder, ReceiptResponse, UnknownTxEnvelope,
     UnknownTypedTransaction,
 };
@@ -101,7 +102,7 @@ use alloy_rpc_types::{
     },
     state::{EvmOverrides, StateOverride},
     trace::{
-        filter::TraceFilter,
+        filter::{TraceFilter, TraceFilterBlockOption},
         geth::{
             CallConfig, FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerConfig,
             GethDebugTracerType, GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace,
@@ -1213,6 +1214,8 @@ struct StateSnapshot {
     fees: FeeSnapshot,
     time: TimeSnapshot,
     next_block: NextBlockOverrides,
+    /// Local gas limit of the snapshot block, when it is a transaction-hash fork replay block.
+    replayed_gas_limit: Option<u64>,
 }
 
 #[cfg(test)]
@@ -1281,6 +1284,8 @@ pub struct Backend<N: Network> {
     new_block_listeners: Arc<Mutex<Vec<UnboundedSender<ChainNotification>>>>,
     /// Keeps track of active state snapshots at a specific block.
     active_state_snapshots: Arc<Mutex<HashMap<U256, StateSnapshot>>>,
+    /// Local gas limits that transaction-hash fork replays executed with, by replayed block hash.
+    fork_replayed_blocks: Arc<Mutex<BTreeMap<B256, u64>>>,
     enable_steps_tracing: bool,
     print_logs: bool,
     print_traces: bool,
@@ -1335,6 +1340,7 @@ impl<N: Network> Clone for Backend<N> {
             genesis: self.genesis.clone(),
             new_block_listeners: self.new_block_listeners.clone(),
             active_state_snapshots: self.active_state_snapshots.clone(),
+            fork_replayed_blocks: self.fork_replayed_blocks.clone(),
             enable_steps_tracing: self.enable_steps_tracing,
             print_logs: self.print_logs,
             print_traces: self.print_traces,
@@ -2159,6 +2165,7 @@ impl<N: Network> Backend<N> {
                 fees: self.fees.snapshot(),
                 time: self.time.snapshot(),
                 next_block: self.cheats.next_block_overrides(),
+                replayed_gas_limit: self.fork_replayed_blocks.lock().get(&hash).copied(),
             },
         );
         id
@@ -4557,37 +4564,77 @@ impl<N: Network> Backend<N> {
         &self,
         filter: TraceFilter,
     ) -> Result<Vec<LocalizedTransactionTrace>, BlockchainError> {
+        let block_option = filter
+            .block_option()
+            .map_err(|err| BlockchainError::RpcError(RpcError::invalid_params(err.to_string())))?;
         let matcher = filter.matcher();
-        let best_number = self.best_number();
-        let start = filter.from_block.unwrap_or(best_number);
-        let end = filter.to_block.unwrap_or(best_number);
-
-        if start > best_number || end > best_number {
-            return Err(BlockchainError::BlockNotFound);
-        }
-        if start > end {
-            return Err(BlockchainError::RpcError(RpcError::invalid_params(
-                "invalid block range, ensure that to block is greater than from block".to_string(),
-            )));
-        }
-
-        let dist = end - start;
-        if dist > 300 {
-            return Err(BlockchainError::RpcError(RpcError::invalid_params(
-                "block range too large, currently limited to 300".to_string(),
-            )));
-        }
-
-        // Accumulate tasks for block range
-        let mut trace_tasks = vec![];
-        for num in start..=end {
-            trace_tasks.push(self.trace_block(num.into()));
-        }
-
-        // Execute tasks and filter traces
-        let traces = futures::future::try_join_all(trace_tasks).await?;
-        let filtered_traces =
-            traces.into_iter().flatten().filter(|trace| matcher.matches(&trace.trace));
+        let traces = match block_option {
+            TraceFilterBlockOption::AtBlockHash(hash) => {
+                // Resolve canonicality and collect the traces in the same chain view.
+                let traces = {
+                    let storage = self.blockchain.storage.read();
+                    if let Some(block) = storage.blocks.get(&hash) {
+                        let number = block.header.number();
+                        if number > storage.best_number
+                            || storage.hashes.get(&number) != Some(&hash)
+                        {
+                            return Err(BlockchainError::BlockNotFound);
+                        }
+                        if block.body.transactions.is_empty()
+                            && block.header.transactions_root() != EMPTY_ROOT_HASH
+                        {
+                            return Err(BlockchainError::DataUnavailable);
+                        }
+                        let mut traces = Vec::new();
+                        for tx in &block.body.transactions {
+                            let mined = storage
+                                .transactions
+                                .get(&tx.hash())
+                                .ok_or(BlockchainError::DataUnavailable)?;
+                            if mined.block_hash != hash {
+                                return Err(BlockchainError::DataUnavailable);
+                            }
+                            traces.extend(mined.parity_traces());
+                        }
+                        Some(traces)
+                    } else {
+                        None
+                    }
+                };
+                if let Some(traces) = traces {
+                    traces
+                } else if let Some(fork) = self.get_fork() {
+                    fork.trace_block_by_hash(hash).await?
+                } else {
+                    return Err(BlockchainError::BlockNotFound);
+                }
+            }
+            TraceFilterBlockOption::Range { from_block, to_block } => {
+                let best_number = self.best_number();
+                let start = from_block.unwrap_or(best_number);
+                let end = to_block.unwrap_or(best_number);
+                if start > best_number || end > best_number {
+                    return Err(BlockchainError::BlockNotFound);
+                }
+                if start > end {
+                    return Err(BlockchainError::RpcError(RpcError::invalid_params(
+                        "invalid block range, ensure that to block is greater than from block"
+                            .to_string(),
+                    )));
+                }
+                if end - start > 300 {
+                    return Err(BlockchainError::RpcError(RpcError::invalid_params(
+                        "block range too large, currently limited to 300".to_string(),
+                    )));
+                }
+                let mut trace_tasks = vec![];
+                for num in start..=end {
+                    trace_tasks.push(self.trace_block(num.into()));
+                }
+                futures::future::try_join_all(trace_tasks).await?.into_iter().flatten().collect()
+            }
+        };
+        let filtered_traces = traces.into_iter().filter(|trace| matcher.matches(&trace.trace));
 
         // Apply after and count
         let filtered_traces: Vec<_> = if let Some(after) = filter.after {
@@ -4845,6 +4892,7 @@ impl<N: Network> Backend<N> {
             fees,
             genesis,
             active_state_snapshots: Arc::new(Mutex::new(Default::default())),
+            fork_replayed_blocks: Arc::new(Mutex::new(Default::default())),
             enable_steps_tracing,
             print_logs,
             print_traces,
@@ -5764,7 +5812,7 @@ impl<N: Network> Backend<N> {
     where
         N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
     {
-        let Some((num, hash, fees, time, next_block)) =
+        let Some((num, hash, fees, time, next_block, replayed_gas_limit)) =
             self.active_state_snapshots.lock().get(&id).map(|snapshot| {
                 (
                     snapshot.block_number,
@@ -5772,12 +5820,16 @@ impl<N: Network> Backend<N> {
                     snapshot.fees,
                     snapshot.time,
                     snapshot.next_block,
+                    snapshot.replayed_gas_limit,
                 )
             })
         else {
             return Ok(false);
         };
         let block = self.block_by_hash(hash).await?.ok_or(BlockchainError::BlockNotFound)?;
+        if let Some(gas_limit) = replayed_gas_limit {
+            self.fork_replayed_blocks.lock().insert(hash, gas_limit);
+        }
         let removed_logs = self.removed_logs_since(num);
         let mut db = self.db.write().await;
         let tempo_anchor = {
@@ -5841,8 +5893,8 @@ impl<N: Network> Backend<N> {
                 difficulty: block.header.difficulty(),
                 // ensures prevrandao is set
                 prevrandao: Some(block.header.mix_hash().unwrap_or_default()),
-                gas_limit: block.header.gas_limit(),
                 // Keep previous `beneficiary` and `basefee` value
+                gas_limit: replayed_gas_limit.unwrap_or_else(|| block.header.gas_limit()),
                 beneficiary: env.block_env.beneficiary,
                 basefee: env.block_env.basefee,
                 ..Default::default()
@@ -6267,6 +6319,9 @@ where
         let PreparedForkTransactionReplay {
             transactions,
             beneficiary,
+            gas_limit,
+            prevrandao,
+            source_block,
             timestamp,
             parent_beacon_block_root,
         } = prepared;
@@ -6302,6 +6357,21 @@ where
         // Execute the prefix with the source block's coinbase so priority fees, COINBASE, and the
         // header miner match the source. Later blocks keep the local beneficiary.
         replay_env.block_env.beneficiary = beneficiary;
+        let local_gas_limit = replay_env.block_env.gas_limit;
+        if gas_limit != 0 {
+            replay_env.block_env.gas_limit = gas_limit;
+        }
+        replay_env.block_env.prevrandao = prevrandao;
+        let blob_excess_gas_and_price = replay_env.block_env.blob_excess_gas_and_price;
+        replay_env.block_env.difficulty = source_block.header().difficulty();
+        apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork>(
+            &mut replay_env,
+            &source_block,
+            source_chain_id,
+            self.networks,
+        );
+        replay_env.block_env.difficulty = source_block.header().difficulty();
+        replay_env.block_env.blob_excess_gas_and_price = blob_excess_gas_and_price;
         let arbitrum_rpc_block_number = arbitrum_block_numbers.map(|(rpc, evm)| {
             replay_env.block_env.number = evm;
             rpc
@@ -6456,6 +6526,7 @@ where
 
         evm_env.block_env.difficulty = U256::ZERO;
         *self.evm_env.write() = evm_env;
+        self.fork_replayed_blocks.lock().insert(block_hash, local_gas_limit);
         self.time.reset(timestamp);
         self.time.set_next_block_timestamp(next_timestamp)?;
 
@@ -7121,7 +7192,13 @@ where
             self.cheats.next_block_overrides().parent_beacon_block_root.value.unwrap_or_default(),
         );
 
-        let inspector_tx_config = self.inspector_tx_config();
+        // The pending block is rebuilt for every request that reads it, and its transactions are
+        // printed when they are mined, so don't print their logs and traces here.
+        let inspector_tx_config = InspectorTxConfig {
+            print_traces: false,
+            print_logs: false,
+            ..self.inspector_tx_config()
+        };
         let gas_config = self.pool_tx_gas_config(&evm_env);
 
         let ExecutedBlock { pool: pool_result, result: block_result, state, .. } = self
@@ -8235,20 +8312,30 @@ where
         };
 
         // Acquire the only awaited mutation lock before publishing any part of the rewind.
+        let replayed_gas_limit =
+            self.fork_replayed_blocks.lock().get(&common_block.header.hash_slow()).copied();
         let (rollback_gas_limit, rollback_base_fee) = if self
             .get_fork()
             .is_some_and(|fork| fork.block_number() == common_block.header.number())
         {
             let node_config = self.node_config.read().await;
             (
-                self.get_block(common_block.header.number().saturating_add(1))
-                    .map(|child| child.header.gas_limit())
-                    .unwrap_or_else(|| node_config.gas_limit()),
+                replayed_gas_limit.unwrap_or_else(|| {
+                    self.get_block(common_block.header.number().saturating_add(1))
+                        .filter(|child| {
+                            !self
+                                .fork_replayed_blocks
+                                .lock()
+                                .contains_key(&child.header.hash_slow())
+                        })
+                        .map(|child| child.header.gas_limit())
+                        .unwrap_or_else(|| node_config.gas_limit())
+                }),
                 node_config.base_fee.unwrap_or_default(),
             )
         } else {
             (
-                common_block.header.gas_limit(),
+                replayed_gas_limit.unwrap_or_else(|| common_block.header.gas_limit()),
                 common_block.header.base_fee_per_gas().unwrap_or_default(),
             )
         };
@@ -8962,6 +9049,8 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
             state.monad_block_replay_profiles = monad_block_replay_profiles;
             state
         };
+        let mut state = state;
+        state.fork_replayed_blocks = self.fork_replayed_blocks.lock().clone();
         Ok(state)
     }
 
@@ -8982,6 +9071,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
     pub async fn load_state(&self, mut state: SerializableState) -> Result<bool, BlockchainError> {
         let _mining_guard = self.mining.lock().await;
         let mut block_env = state.block.take();
+        let replayed_blocks = std::mem::take(&mut state.fork_replayed_blocks);
         let mut fork_block_boundary = None;
         let mut selected_head = None;
         let mut selected_header = None;
@@ -9270,6 +9360,8 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
             }
         }
 
+        // A dump without the marker keeps the current one; the hash check ignores stale markers.
+        self.fork_replayed_blocks.lock().extend(replayed_blocks);
         Ok(true)
     }
 
