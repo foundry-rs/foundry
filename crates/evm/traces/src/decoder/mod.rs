@@ -913,21 +913,18 @@ impl CallTraceDecoder {
         {
             return functions
                 .iter()
-                .position(|func| is_abi_encoded_input(func, args))
-                .map_or(&[], |i| &functions[i..=i]);
+                .find(|func| is_abi_encoded_input(func, args))
+                .map_or(&[], std::slice::from_ref);
         }
 
         // When there are selector collisions, try to decode the calldata with each function
         // to determine which one is actually being called. The correct function should
         // decode successfully while the wrong ones will fail due to parameter type mismatches.
-        if functions.len() > 1 {
-            for (i, func) in functions.iter().enumerate() {
-                if trace.data.len() >= SELECTOR_LEN
-                    && func.abi_decode_input(&trace.data[SELECTOR_LEN..]).is_ok()
-                {
-                    return &functions[i..i + 1];
-                }
-            }
+        if functions.len() > 1
+            && let Some(args) = trace.data.get(SELECTOR_LEN..)
+            && let Some(func) = functions.iter().find(|func| func.abi_decode_input(args).is_ok())
+        {
+            return std::slice::from_ref(func);
         }
         functions
     }
@@ -1146,7 +1143,7 @@ impl CallTraceDecoder {
         }
 
         if is_abi_call_data(cdata) {
-            let selector = Selector::try_from(&cdata[..SELECTOR_LEN]).unwrap();
+            let selector = Selector::from_slice(&cdata[..SELECTOR_LEN]);
             let mut identified_functions = Vec::new();
             let functions = match self.functions_for_selector(trace.address, &selector) {
                 Some(functions) => functions,
@@ -1252,9 +1249,7 @@ impl CallTraceDecoder {
         if trace.data.len() >= SELECTOR_LEN {
             if trace.address == CHEATCODE_ADDRESS {
                 // Try to decode cheatcode inputs in a more custom way
-                if let Some(v) = self.decode_cheatcode_inputs(func, &trace.data) {
-                    args = Some(v);
-                }
+                args = self.decode_cheatcode_inputs(func, &trace.data);
             }
 
             if args.is_none()
@@ -1311,14 +1306,14 @@ impl CallTraceDecoder {
         }
         match func.name.as_str() {
             "expectRevert" => {
-                let decoded =
-                    data.get(SELECTOR_LEN..).and_then(|data| func.abi_decode_input(data).ok());
+                let decoded = data
+                    .get(SELECTOR_LEN..)
+                    .and_then(|data| func.abi_decode_input(data).ok())
+                    .filter(|decoded| !decoded.is_empty());
                 let Some(decoded) = decoded else {
                     return Some(vec![self.revert_decoder.decode(data, None)]);
                 };
-                let Some(first) = decoded.first() else {
-                    return Some(vec![self.revert_decoder.decode(data, None)]);
-                };
+                let first = &decoded[0];
                 let expected_revert = match first {
                     DynSolValue::Bytes(bytes) => bytes.as_slice(),
                     DynSolValue::FixedBytes(word, size) => &word[..*size],
@@ -1420,13 +1415,17 @@ impl CallTraceDecoder {
             "broadcast" | "startBroadcast" => {
                 // Redact private key if defined
                 // broadcast(uint256) / startBroadcast(uint256)
-                (!func.inputs.is_empty() && func.inputs[0].ty == "uint256")
+                func.inputs
+                    .first()
+                    .is_some_and(|input| input.ty == "uint256")
                     .then(|| vec!["<pk>".to_string()])
             }
             "getNonce" => {
                 // Redact private key if defined
                 // getNonce(Wallet)
-                (!func.inputs.is_empty() && func.inputs[0].ty == "tuple")
+                func.inputs
+                    .first()
+                    .is_some_and(|input| input.ty == "tuple")
                     .then(|| vec!["<pk>".to_string()])
             }
             "sign"
@@ -1517,21 +1516,13 @@ impl CallTraceDecoder {
             return Some(decoded);
         }
 
-        if let Some(values) =
-            funcs.iter().find_map(|func| func.abi_decode_output(&trace.output).ok())
-        {
-            // Functions coming from an external database do not have any outputs specified,
-            // and will lead to returning an empty list of values.
-            if values.is_empty() {
-                return None;
-            }
-
-            return Some(
-                values.iter().map(|value| self.format_value(value)).format(", ").to_string(),
-            );
-        }
-
-        None
+        // Functions coming from an external database do not have any outputs specified,
+        // and will lead to returning an empty list of values.
+        let values = funcs
+            .iter()
+            .find_map(|func| func.abi_decode_output(&trace.output).ok())
+            .filter(|values| !values.is_empty())?;
+        Some(values.iter().map(|value| self.format_value(value)).format(", ").to_string())
     }
 
     /// Custom decoding for cheatcode outputs.
@@ -1717,12 +1708,10 @@ impl CallTraceDecoder {
             }
             let mut decoded = indexed_event_candidates(event, log)
                 .filter_map(|event| self.decode_event_candidates(address, log, [&event], true));
-            let event = decoded.next();
-            if event.is_some() && decoded.next().is_some() {
-                return DecodedEvent::default();
-            }
-            if let Some(decoded) = event {
-                return decoded;
+            if let Some(event) = decoded.next()
+                && decoded.next().is_none()
+            {
+                return event;
             }
         }
 
@@ -1927,25 +1916,16 @@ impl CallTraceDecoder {
 /// attribution suffix is ignored.
 fn is_abi_call_data(data: &[u8]) -> bool {
     let data = erc8021::strip_suffix(data);
-    match data.len().cmp(&SELECTOR_LEN) {
-        std::cmp::Ordering::Less => false,
-        std::cmp::Ordering::Equal => true,
-        std::cmp::Ordering::Greater => {
-            is_abi_data(&data[SELECTOR_LEN..]) || suffixed_abi_args(data).is_some()
-        }
-    }
+    data.get(SELECTOR_LEN..)
+        .is_some_and(|args| is_abi_data(args) || suffixed_abi_args(data).is_some())
 }
 
 /// Returns `true` if the given data is ABI-encoded.
 ///
 /// See [`is_abi_call_data`] for more details.
 fn is_abi_data(data: &[u8]) -> bool {
-    let rem = data.len() % 32;
-    if rem == 0 || data.is_empty() {
-        return true;
-    }
     // If the length is not a multiple of 32, also accept when the last remainder bytes are all 0.
-    data[data.len() - rem..].iter().all(|byte| *byte == 0)
+    data.as_chunks::<32>().1.iter().all(|byte| *byte == 0)
 }
 
 /// Returns the word-aligned arguments of the given function calldata if they are followed by a
@@ -3892,16 +3872,12 @@ mod tests {
 
     #[cfg(feature = "monad")]
     fn topic_from_u64(value: u64) -> B256 {
-        let mut topic = [0u8; 32];
-        topic[24..].copy_from_slice(&value.to_be_bytes());
-        B256::from(topic)
+        B256::left_padding_from(&value.to_be_bytes())
     }
 
     #[cfg(feature = "monad")]
     fn topic_from_address(address: Address) -> B256 {
-        let mut topic = [0u8; 32];
-        topic[12..].copy_from_slice(address.as_slice());
-        B256::from(topic)
+        address.into_word()
     }
 
     #[tokio::test]

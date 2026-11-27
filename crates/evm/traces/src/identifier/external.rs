@@ -201,13 +201,7 @@ impl ExternalIdentifier {
             .iter()
             // filter out vyper files and contracts without metadata
             .filter_map(|(addr, (_, metadata))| {
-                if let Some(metadata) = metadata.as_ref()
-                    && !metadata.is_vyper()
-                {
-                    Some((*addr, metadata))
-                } else {
-                    None
-                }
+                metadata.as_ref().filter(|metadata| !metadata.is_vyper()).map(|m| (*addr, m))
             })
             .collect();
 
@@ -233,8 +227,7 @@ impl ExternalIdentifier {
         let mut sources: ContractSources = Default::default();
 
         // construct the map
-        for (idx, res) in outputs.into_iter().enumerate() {
-            let (addr, metadata) = &contracts_info[idx];
+        for ((addr, metadata), res) in contracts_info.iter().zip(outputs) {
             let name = &metadata.contract_name;
             let (project, mut output, _) =
                 res.wrap_err_with(|| format!("Failed to compile contract {name} at {addr}"))?;
@@ -821,9 +814,8 @@ struct Compilation {
 impl From<SourcifyMetadata> for Metadata {
     fn from(metadata: SourcifyMetadata) -> Self {
         let SourcifyMetadata { abi, compilation } = metadata;
-        let (contract_name, compiler_version) = compilation
-            .map(|c| (c.name, c.compiler_version))
-            .unwrap_or_else(|| (String::new(), String::new()));
+        let (contract_name, compiler_version) =
+            compilation.map(|c| (c.name, c.compiler_version)).unwrap_or_default();
         // Defaulted fields may be fetched from sourcify but we don't make use of them.
         Self {
             source_code: foundry_block_explorers::contract::SourceCodeMetadata::Sources(

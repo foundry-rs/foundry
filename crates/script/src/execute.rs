@@ -1,4 +1,4 @@
-use super::{JsonResult, NestedValue, ScriptResult, runner::ScriptRunner};
+use super::{JsonResult, NestedValue, ScriptResult, revert_error, runner::ScriptRunner};
 use crate::{
     ScriptArgs, ScriptConfig,
     build::{CompiledState, LinkedBuildData},
@@ -25,7 +25,7 @@ use foundry_config::{Chain, NamedChain};
 use foundry_debugger::DebuggerBuilder;
 use foundry_evm::{
     core::evm::FoundryEvmNetwork,
-    decode::decode_console_logs,
+    decode::{RevertDecoder, decode_console_logs},
     inspectors::cheatcodes::BroadcastableTransactions,
     traces::{
         CallTraceDecoder, CallTraceDecoderBuilder, DebugTraceIdentifier, TraceKind,
@@ -177,6 +177,8 @@ impl<FEN: FoundryEvmNetwork> PreExecutionState<FEN> {
         let (address, mut setup_result) = runner.setup(
             &self.build_data.predeploy_libraries,
             self.execution_data.bytecode.clone(),
+            &RevertDecoder::new()
+                .with_abis(self.build_data.known_contracts.values().map(|contract| &contract.abi)),
             needs_setup(&self.execution_data.abi),
             &self.script_config,
             self.args.broadcast,
@@ -194,6 +196,7 @@ impl<FEN: FoundryEvmNetwork> PreExecutionState<FEN> {
             setup_result.returned = script_result.returned;
             setup_result.exit_reason = script_result.exit_reason;
             setup_result.breakpoints = script_result.breakpoints;
+            setup_result.rpc_failure = script_result.rpc_failure;
 
             match (&mut setup_result.transactions, script_result.transactions) {
                 (Some(txs), Some(new_txs)) => {
@@ -519,13 +522,17 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
         sh_println!("{json}")?;
 
         if !self.execution_result.success {
-            return Err(eyre::eyre!(
-                "script failed: {}",
-                &self
-                    .execution_artifacts
-                    .decoder
-                    .revert_decoder
-                    .decode(&result.returned[..], result.exit_reason)
+            let reason = self
+                .execution_artifacts
+                .decoder
+                .revert_decoder
+                .decode(&result.returned[..], result.exit_reason);
+            return Err(revert_error(
+                format!("script failed: {reason}"),
+                &result.returned,
+                &reason,
+                result.exit_reason,
+                result.rpc_failure.as_ref(),
             ));
         }
 

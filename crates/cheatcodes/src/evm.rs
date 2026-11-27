@@ -336,11 +336,9 @@ impl Cheatcode for loadCall {
 
         ccx.evm.state_mut().account(&target)?.warm();
         let (is_cold, mut value) = {
-            let mut slot = ccx
-                .evm
-                .state_mut()
-                .storage_slot(&target, slot.into())
-                .map_err(|e| fmt_err!("failed to load storage slot: {e}"))?;
+            let mut slot = ccx.evm.state_mut().storage_slot(&target, slot.into()).map_err(|e| {
+                fmt_err!("failed to load storage slot: {e}").with_rpc_failure_of(&e)
+            })?;
             (slot.warm(), slot.current())
         };
 
@@ -408,7 +406,8 @@ impl Cheatcode for loadAllocsCall {
         // Then, load the allocs into the database.
         TypesFor::<FEN>::sync_transaction(ccx.evm);
         let (evm, db) = ccx.evm_db_mut();
-        db.load_allocs(&allocs, evm).map_err(|e| fmt_err!("failed to load allocs: {e}"))?;
+        db.load_allocs(&allocs, evm)
+            .map_err(|e| fmt_err!("failed to load allocs: {e}").with_rpc_failure_of(&e))?;
         TypesFor::<FEN>::refresh_transaction(ccx.evm);
         Ok(Default::default())
     }
@@ -925,7 +924,7 @@ impl Cheatcode for storeCall {
         let state = ccx.evm.state_mut();
         touch_account(state, target)?;
         warm_storage_slot(state, &target, slot.into())
-            .map_err(|e| fmt_err!("failed to store storage slot: {e}"))?
+            .map_err(|e| fmt_err!("failed to store storage slot: {e}").with_rpc_failure_of(&e))?
             .set(value.into());
         ccx.state.mark_arbitrary_storage_slot_explicit(target, slot.into());
         // A `fail()` fails the call where it is made, like an assertion.
@@ -1540,7 +1539,9 @@ impl Cheatcode for executeTransactionCall {
             Some(env),
         );
         ccx.state.tx_warm_addresses = previous;
-        let res = res.map_err(|e| fmt_err!("transaction execution failed: {e}"))?;
+        let res = res.map_err(|e| {
+            fmt_err!("transaction execution failed: {e}").with_rpc_failure_of(e.as_ref())
+        })?;
 
         // Return output bytes.
         if !res.status {
@@ -1984,7 +1985,9 @@ fn set_eip2935_blockhash(
     }
     state
         .storage_slot(&HISTORY_STORAGE_ADDRESS, history_storage_slot(block_number))
-        .map_err(|e| fmt_err!("failed to store EIP-2935 history slot: {e}"))?
+        .map_err(|e| {
+            fmt_err!("failed to store EIP-2935 history slot: {e}").with_rpc_failure_of(&e)
+        })?
         .set(history_storage_value(block_hash));
     Ok(())
 }
@@ -2014,7 +2017,9 @@ fn clear_eip2935_history_storage(state: &mut State<'_>, features: EvmFeatures) -
             Ok(mut slot) => slot.set(U256::ZERO),
             Err(e) => {
                 state.rollback(checkpoint, features);
-                return Err(fmt_err!("failed to clear EIP-2935 history slot: {e}"));
+                return Err(
+                    fmt_err!("failed to clear EIP-2935 history slot: {e}").with_rpc_failure_of(&e)
+                );
             }
         }
     }
@@ -2057,13 +2062,15 @@ fn store_solidity_string(
 
     if bytes.len() <= 31 {
         warm_storage_slot(state, &target, base_slot)
-            .map_err(|e| fmt_err!("failed to store TIP-20 logo URI: {e}"))?
+            .map_err(|e| fmt_err!("failed to store TIP-20 logo URI: {e}").with_rpc_failure_of(&e))?
             .set(encode_short_string(bytes));
         return Ok(Default::default());
     }
 
     warm_storage_slot(state, &target, base_slot)
-        .map_err(|e| fmt_err!("failed to store TIP-20 logo URI length: {e}"))?
+        .map_err(|e| {
+            fmt_err!("failed to store TIP-20 logo URI length: {e}").with_rpc_failure_of(&e)
+        })?
         .set(U256::from(bytes.len() * 2 + 1));
 
     let slot_start = solidity_dynamic_data_slot(base_slot);
@@ -2071,7 +2078,9 @@ fn store_solidity_string(
         let mut chunk_bytes = [0u8; 32];
         chunk_bytes[..chunk.len()].copy_from_slice(chunk);
         warm_storage_slot(state, &target, slot_start + U256::from(index))
-            .map_err(|e| fmt_err!("failed to store TIP-20 logo URI data: {e}"))?
+            .map_err(|e| {
+                fmt_err!("failed to store TIP-20 logo URI data: {e}").with_rpc_failure_of(&e)
+            })?
             .set(U256::from_be_bytes(chunk_bytes));
     }
 
@@ -2085,7 +2094,9 @@ fn cleanup_long_string_tail(
     new_len: usize,
 ) -> Result<()> {
     let previous = warm_storage_slot(state, &target, base_slot)
-        .map_err(|e| fmt_err!("failed to load previous TIP-20 logo URI: {e}"))?
+        .map_err(|e| {
+            fmt_err!("failed to load previous TIP-20 logo URI: {e}").with_rpc_failure_of(&e)
+        })?
         .current();
     if !is_long_string(previous) {
         return Ok(());
@@ -2103,7 +2114,10 @@ fn cleanup_long_string_tail(
     let slot_start = solidity_dynamic_data_slot(base_slot);
     for index in new_chunks..previous_chunks {
         warm_storage_slot(state, &target, slot_start + U256::from(index))
-            .map_err(|e| fmt_err!("failed to clear previous TIP-20 logo URI data: {e}"))?
+            .map_err(|e| {
+                fmt_err!("failed to clear previous TIP-20 logo URI data: {e}")
+                    .with_rpc_failure_of(&e)
+            })?
             .set(U256::ZERO);
     }
 

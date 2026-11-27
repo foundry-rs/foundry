@@ -5215,7 +5215,7 @@ contract FallbackTest {
         "pragma solidity 0.6.12; contract IndependentTest { function test_independent() public pure {} }",
     );
     cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
-Warning: dynamic test linking disabled for 2 files: error: unresolved symbol `now`
+Warning: dynamic test linking disabled for 2 files: error[7576]: unresolved symbol `now`
 
 "#]]);
 
@@ -5259,7 +5259,7 @@ Compiler run successful!
 ...
 "#]])
         .stderr_eq(str![[r#"
-Warning: dynamic test linking disabled for 1 files: error: unresolved symbol `now`
+Warning: dynamic test linking disabled for 1 files: error[7576]: unresolved symbol `now`
 
 "#]]);
 }
@@ -5304,8 +5304,8 @@ fn preprocess_analysis_fallback_warns_per_compiler_job(prj: _, cmd: _) {
         );
     }
     cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
-Warning: dynamic test linking disabled for 1 files: error: unresolved symbol `now`
-Warning: dynamic test linking disabled for 1 files: error: unresolved symbol `now`
+Warning: dynamic test linking disabled for 1 files: error[7576]: unresolved symbol `now`
+Warning: dynamic test linking disabled for 1 files: error[7576]: unresolved symbol `now`
 
 "#]]);
 }
