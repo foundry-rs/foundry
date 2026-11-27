@@ -4,16 +4,18 @@
 //! `cast wallet session --for` invocation and keeps those wrapper details out of the main script
 //! execution flow.
 
-use crate::ScriptArgs;
+use crate::{ScriptArgs, coded};
 use alloy_primitives::Address;
 use clap::Args;
 use eyre::{Result, WrapErr};
-use foundry_cli::{opts::TEMPO_SESSION_ID_ENV, utils::LoadConfig};
+use foundry_cli::{json::JsonEnvelope, opts::TEMPO_SESSION_ID_ENV, utils::LoadConfig};
+use foundry_common::shell;
 use foundry_config::Config;
 use std::{
     ffi::{OsStr, OsString},
+    io::{BufRead, BufReader},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
 };
 
 const SESSION_WRAPPER_ENV_REMOVE: &[&str] = &[
@@ -203,25 +205,44 @@ impl ScriptArgs {
             child.env_remove(key);
         }
 
-        let status = child.status().wrap_err_with(|| {
+        // With `--json`, the inner output passes through this process, which holds back the inner
+        // failure envelope until Cast exits so it stays the last stdout line after cleanup output,
+        // such as the session key revocation.
+        if shell::is_json() {
+            child.stdout(Stdio::piped());
+        }
+        let mut child = child.spawn().wrap_err_with(|| {
             format!(
                 "failed to run `{}` for forge script wallet session",
                 command.program.to_string_lossy()
             )
         })?;
-
-        if status.success() {
-            Ok(())
-        } else {
-            match status.code() {
-                Some(code) => {
-                    eyre::bail!("forge script wallet session exited with code {code}");
-                }
-                None => {
-                    eyre::bail!("forge script wallet session terminated by a signal");
+        let mut failure_envelope = None;
+        if let Some(stdout) = child.stdout.take() {
+            for line in BufReader::new(stdout).lines().map_while(std::io::Result::ok) {
+                if serde_json::from_str::<JsonEnvelope<serde_json::Value>>(&line)
+                    .is_ok_and(|envelope| !envelope.success)
+                {
+                    failure_envelope = Some(line);
+                } else {
+                    sh_println!("{line}")?;
                 }
             }
         }
+        let status = child.wait().wrap_err("failed to wait for forge script wallet session")?;
+        if let Some(envelope) = &failure_envelope {
+            sh_println!("{envelope}")?;
+        }
+
+        if status.success() {
+            return Ok(());
+        }
+        let failure = InnerScriptFailed(match status.code() {
+            Some(code) => format!("exited with code {code}"),
+            None => "terminated by a signal".into(),
+        });
+        // `cast` may fail before it runs the inner `forge script`, which then printed nothing.
+        if failure_envelope.is_some() { Err(failure.into()) } else { eyre::bail!("{failure}") }
     }
 
     fn wallet_session_command_from_env(&self) -> Result<WalletSessionCommand> {
@@ -255,7 +276,8 @@ impl ScriptArgs {
         *program = forge_program;
         let inner = quote_command(&inner)?;
 
-        let (config, evm_opts) = self.load_config_and_evm_opts()?;
+        let (config, evm_opts) =
+            self.load_config_and_evm_opts().map_err(|err| coded(err, "config.error"))?;
         let session = &self.wallet_session;
         let mut args = vec![OsString::from("wallet"), OsString::from("session")];
         push_arg(&mut args, "--profile", Config::selected_profile().to_string());
@@ -479,6 +501,11 @@ fn quote_arg(arg: &OsString) -> Result<String> {
     quoted.push('"');
     Ok(quoted)
 }
+
+/// The inner `forge script` of a wallet session failed, after reporting the failure itself.
+#[derive(Debug, thiserror::Error)]
+#[error("forge script wallet session {0}")]
+pub(super) struct InnerScriptFailed(String);
 
 #[cfg(test)]
 mod tests {

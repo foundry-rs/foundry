@@ -22,7 +22,7 @@ use evm2::{
     evm::precompile::PrecompileProvider, registry::TxRegistry,
 };
 use foundry_common::{FoundryReceiptResponse, FoundryTransactionBuilder, fmt::UIfmt};
-use foundry_evm_hardforks::ExecutionSpec;
+use foundry_evm_hardforks::{ExecutionSpec, FoundryHardfork};
 use foundry_evm_networks::NetworkConfigs;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
@@ -273,6 +273,31 @@ pub type TxResultFor<FEN> = TxResult<TypesFor<FEN>>;
 pub type FoundryEvmFor<'a, FEN> = Evm<'a, TypesFor<FEN>>;
 pub type InterpreterFor<'frame, 'host, FEN> =
     evm2::interpreter::Interpreter<'frame, 'host, TypesFor<FEN>>;
+
+/// Returns the most gas one transaction may use on a known chain at `timestamp`, as the chain's
+/// execution factory enforces it, or `None` for an unknown chain or one without such a cap.
+pub fn tx_gas_limit_cap(chain_id: u64, timestamp: u64) -> Option<u64> {
+    let hardfork = FoundryHardfork::from_chain_and_timestamp(chain_id, timestamp)?;
+    // Under EIP-8037 the cap only bounds regular gas, not the transaction's gas limit.
+    if evm2::SpecId::from(hardfork) >= evm2::SpecId::AMSTERDAM {
+        return None;
+    }
+    let version = match hardfork {
+        FoundryHardfork::Ethereum(_) => version_at::<EthEvmFactory>(hardfork, chain_id),
+        #[cfg(feature = "optimism")]
+        FoundryHardfork::Optimism(_) => version_at::<op_evm2::OpEvmFactory>(hardfork, chain_id),
+        #[cfg(feature = "base")]
+        FoundryHardfork::Base(_) => version_at::<base_evm2::BaseEvmFactory>(hardfork, chain_id),
+        FoundryHardfork::Tempo(_) => version_at::<tempo_evm::TempoEvmFactory>(hardfork, chain_id),
+        #[cfg(feature = "monad")]
+        FoundryHardfork::Monad(_) => version_at::<monad_evm2::MonadEvmFactory>(hardfork, chain_id),
+    }?;
+    (version.tx_gas_limit_cap != u64::MAX).then_some(version.tx_gas_limit_cap)
+}
+
+fn version_at<F: FoundryEvmFactory>(hardfork: FoundryHardfork, chain_id: u64) -> Option<Version> {
+    Some(F::default().version(SpecOf::<F>::from_foundry_hardfork(hardfork)?, chain_id))
+}
 pub type MessageFor<FEN> = evm2::interpreter::Message<TypesFor<FEN>>;
 pub type MessageResultFor<FEN> = evm2::interpreter::MessageResult<TypesFor<FEN>>;
 pub type NetworkFor<FEN> = <FEN as FoundryEvmNetwork>::Network;

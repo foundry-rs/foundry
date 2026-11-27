@@ -38,14 +38,21 @@ pub(crate) struct ExternalCompilation<'a> {
     complete_discovery: bool,
     active_units: BTreeMap<String, BTreeSet<String>>,
     pending_cache: Vec<PendingCache>,
+    no_compile: bool,
+    /// Inputs of units that `no_compile` left uncompiled because they are not cached.
+    pub(crate) stale: Vec<PathBuf>,
 }
 
 impl<'a> ExternalCompilation<'a> {
     /// Runs adapters, staging their output until the built-in compilation succeeds.
+    ///
+    /// With `no_compile`, records the inputs of a unit that is not cached in `stale` instead of
+    /// compiling it.
     pub(crate) fn compile(
         config: &'a Config,
         selected_paths: &[PathBuf],
         write_outputs: bool,
+        no_compile: bool,
     ) -> Result<Self> {
         let mut compilation = Self {
             config,
@@ -55,6 +62,8 @@ impl<'a> ExternalCompilation<'a> {
             complete_discovery: selected_paths.is_empty(),
             active_units: BTreeMap::new(),
             pending_cache: Vec::new(),
+            no_compile,
+            stale: Vec::new(),
         };
         let mut adapter_keys = BTreeSet::new();
         for adapter in &config.external_compilers {
@@ -247,6 +256,16 @@ impl<'a> AdapterClient<'a> {
             };
             let (result, fresh) = match result {
                 Some(result) => (result, false),
+                None if output.no_compile => {
+                    // A unit without inputs is reported by its ID.
+                    if unit.inputs.is_empty() {
+                        output.stale.push(unit.id.into());
+                    }
+                    for input in &unit.inputs {
+                        output.stale.push(self.config.root.join(input));
+                    }
+                    continue;
+                }
                 None => {
                     let result: CompileResult = process
                         .request("compile", json!({"unit": unit.id, "fingerprint": fingerprint}))?;

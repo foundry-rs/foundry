@@ -55,28 +55,15 @@ impl Printer {
     }
 
     pub fn last_token_is_neverbreak(&self) -> bool {
-        if let Some(token) = self.last_token() {
-            return token.is_neverbreak();
-        }
-
-        false
+        self.last_token().is_some_and(Token::is_neverbreak)
     }
 
     pub fn last_token_is_break(&self) -> bool {
-        if let Some(token) = self.last_token() {
-            return matches!(token, Token::Break(_));
-        }
-        false
+        self.last_token().is_some_and(|token| matches!(token, Token::Break(_)))
     }
 
     pub fn last_token_is_space(&self) -> bool {
-        if let Some(token) = self.last_token()
-            && token.is_space()
-        {
-            return true;
-        }
-
-        self.out.ends_with(' ')
+        self.last_token().is_some_and(Token::is_space) || self.out.ends_with(' ')
     }
 
     pub fn is_beginning_of_line(&self) -> bool {
