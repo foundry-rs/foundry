@@ -306,6 +306,14 @@ async fn age_rejects_timestamp_overflow(cmd: _) {
 }
 
 #[casttest]
+async fn finds_block_on_genesis_only_chain(cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test().with_genesis_timestamp(Some(100))).await;
+    cmd.args(["find-block", "150", "--rpc-url", &handle.http_endpoint()])
+        .assert_success()
+        .stdout_eq("0\n");
+}
+
+#[casttest]
 async fn base_fee(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test().with_base_fee(Some(123_456_789))).await;
     cmd.args(["base-fee", "0", "--rpc-url", &handle.http_endpoint()])
