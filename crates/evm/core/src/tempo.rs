@@ -50,7 +50,9 @@ const OUSD_CREATOR: Address = address!("0x22c01F26b74c808C89bbBaBDC31A4f03bDD4A0
 const OUSD_SALT: B256 = b256!("0xf33dc2a859c2e7b057c1b3c1d2c3dd002405b1afab213e14d51cf86bd941e73b");
 
 /// All well-known TIP20 fee token addresses on Tempo networks.
-pub const TEMPO_TIP20_TOKENS: &[Address] = &[PATH_USD_ADDRESS];
+///
+/// Not every genesis creates OUSD, so its address may have no code.
+pub const TEMPO_TIP20_TOKENS: &[Address] = &[PATH_USD_ADDRESS, OUSD_ADDRESS];
 
 /// Inner genesis initialization logic. Must be called within a [`StorageCtx`] scope
 /// (either via [`StorageCtx::enter`] or [`StorageCtx::enter_evm`]).
