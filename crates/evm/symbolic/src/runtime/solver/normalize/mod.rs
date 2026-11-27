@@ -599,6 +599,11 @@ pub(super) struct ConstraintContext {
     conflicting_exact_values: HashSet<SymExpr>,
     non_wrapping_products: HashSet<(SymExpr, SymExpr)>,
     /// The `(x, d)` pairs asserted to satisfy `x % d == 0` once `d` is nonzero.
+    ///
+    /// They decide comparisons rather than rewrite words. Words fold bottom-up, so rewriting the
+    /// rounded product to `x` or the remainder to zero would hide shapes from enclosing rules:
+    /// [`Self::quotient_of_rounded_product`], Solidity's checked-multiplication guard, and the
+    /// rebuild of `x - x % d` as `(x / d) * d`.
     exact_multiples: HashSet<(SymExpr, SymExpr)>,
     /// Conjuncts of the context, which decide `ite` conditions they assert or deny.
     facts: HashSet<SymBoolExpr>,
@@ -880,6 +885,21 @@ impl ConstraintContext {
                 // `always_true_word != 0 => true`.
                 SymBoolExpr::constant(cx, true)
             }
+            _ if expr
+                .zero_check_operand()
+                .is_some_and(|remainder| self.exact_multiple_remainder(remainder)) =>
+            {
+                // `x % d == 0 => true` for a recorded exact multiple `x` of a nonzero `d`.
+                SymBoolExpr::constant(cx, true)
+            }
+            SymBoolExprKind::Not(value)
+                if value
+                    .zero_check_operand()
+                    .is_some_and(|remainder| self.exact_multiple_remainder(remainder)) =>
+            {
+                // `x % d != 0 => false` for a recorded exact multiple `x` of a nonzero `d`.
+                SymBoolExpr::constant(cx, false)
+            }
             _ => expr,
         }
     }
@@ -909,7 +929,6 @@ impl ConstraintContext {
             || Self::mul_div_operands(expr).is_some()
             || Self::ceil_div_product(expr).is_some()
             || full_mul_div_operands(expr).is_some()
-            || self.exact_multiple_remainder(expr)
         {
             return true;
         }
@@ -955,9 +974,6 @@ impl ConstraintContext {
         }
         if let Some(quotient) = self.full_mul_div(cx, &expr) {
             return quotient;
-        }
-        if self.exact_multiple_remainder(&expr) {
-            return SymExpr::zero(cx);
         }
         if let SymExprKind::BinOp(SymBinOp::And, value, mask) = expr.kind()
             && let Some(bits) = mask.as_const().and_then(mask_low_bits)
@@ -2578,11 +2594,6 @@ impl ConstraintContext {
 
     /// Whether `value == product` holds because `product` is `(value / d) * d` for a recorded
     /// exact multiple `value` and a nonzero `d`.
-    ///
-    /// This is decided on the comparison rather than by rewriting the product, so rules that
-    /// match the rounded product inside an enclosing word, such as
-    /// [`Self::quotient_of_rounded_product`] and Solidity's checked-multiplication guard, still
-    /// see it.
     fn exact_multiple_identity(&self, value: &SymExpr, product: &SymExpr) -> bool {
         if self.exact_multiples.is_empty() {
             return false;

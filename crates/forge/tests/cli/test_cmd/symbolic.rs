@@ -7873,6 +7873,17 @@ contract RoundedProductTest {
         assert(rounded / rate == value);
     }
 
+    // Divisibility must not fold the remainder before `x - x % d` becomes `(x / d) * d`.
+    function checkExactRemainderSubtractionQuotient(uint256 x, uint8 d) external pure {
+        require(d != 0);
+        require(x >= 256);
+        require(x % d == 0);
+        unchecked {
+            uint256 rounded = x - x % d;
+            assert(rounded / (x / d) == d);
+        }
+    }
+
     function checkExactConverse(uint256 x, uint256 d) external pure {
         require(d != 0);
         require(x / d * d == x);
@@ -7947,7 +7958,7 @@ contract RoundedProductTest {
                 "--symbolic-timeout",
                 "30",
                 "--match-test",
-                "check(Exact(TickSpacing|Lot|ConstantLot|Granularity|EarlyReturn|Assembly|Downstream|Guard|CeilingRoundTrip|Converse)|FloorError|DividendRelation|WrappingDividendRelation|CeilingError|CeilingRoundTrip|SymbolicDivisorFacts|EuclideanIdentities|SymbolicEuclideanIdentity|NarrowFloorError|NestedConstantQuotient|ReversedNestedConstantQuotient|NestedFeeEuclideanIdentity|NestedFeeCeiling|BasisPointsFee|SlippageMinimum|TransferConservation)",
+                "check(Exact(TickSpacing|Lot|ConstantLot|Granularity|EarlyReturn|Assembly|Downstream|Guard|CeilingRoundTrip|RemainderSubtractionQuotient|Converse)|FloorError|DividendRelation|WrappingDividendRelation|CeilingError|CeilingRoundTrip|SymbolicDivisorFacts|EuclideanIdentities|SymbolicEuclideanIdentity|NarrowFloorError|NestedConstantQuotient|ReversedNestedConstantQuotient|NestedFeeEuclideanIdentity|NestedFeeCeiling|BasisPointsFee|SlippageMinimum|TransferConservation)",
             ])
             .assert_success()
             .get_output()
@@ -7967,6 +7978,7 @@ contract RoundedProductTest {
             "checkExactDownstream(uint256,uint256)",
             "checkExactGuard(uint256,uint256)",
             "checkExactCeilingRoundTrip(uint128,uint128)",
+            "checkExactRemainderSubtractionQuotient(uint256,uint8)",
             "checkExactConverse(uint256,uint256)",
         ] {
             let result = json_test_result(&output, signature);
