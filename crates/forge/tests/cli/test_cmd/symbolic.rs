@@ -9437,7 +9437,8 @@ contract SymbolicWeightedAverage {
 
 // OpenZeppelin's `VestingWallet` (MIT) vests `total * (t - start) / duration` once
 // `start <= t < start + duration`, so the elapsed time stays at most the duration. A stream with an
-// end time bounds `t - start` by `end - start` the same way.
+// end time bounds `t - start` by `end - start` the same way. Order guards chain, so
+// `start <= t1 <= t2` also orders `start` before `t2`.
 #[forgetest_init]
 fn symbolic_proves_vesting_schedule_bounded(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_vesting_schedule_bounded");
@@ -9560,6 +9561,96 @@ contract SymbolicVestingSchedule {
         }
         assert(streamed == deposit);
     }
+
+    // Only `start <= t1 <= t2` orders `start` before `t2`, which both `t2 - start` and the cap
+    // need.
+    function checkVestedAtTwoTimes(
+        uint128 total,
+        uint64 start,
+        uint64 duration,
+        uint64 t1,
+        uint64 t2
+    ) public pure {
+        if (duration == 0 || t1 > t2 || t1 < start || uint256(t2) > uint256(start) + duration) {
+            return;
+        }
+        uint256 v1 = uint256(total) * (t1 - start) / duration;
+        uint256 v2 = uint256(total) * (t2 - start) / duration;
+        assert(v1 <= v2 && v2 <= total);
+    }
+
+    function checkVestedAtTwoTimesBeforeStart(
+        uint128 total,
+        uint64 start,
+        uint64 duration,
+        uint64 t1,
+        uint64 t2
+    ) public pure {
+        if (duration == 0 || t1 > t2 || uint256(t2) > uint256(start) + duration) return;
+        unchecked {
+            uint256 v1 = uint256(total) * (uint256(t1) - start) / duration;
+            uint256 v2 = uint256(total) * (uint256(t2) - start) / duration;
+            assert(v1 <= v2 && v2 <= total);
+        }
+    }
+
+    // `start <= t1` and `t2 <= t1` do not order `start` before `t2`.
+    function checkVestedAtReversedTimes(
+        uint128 total,
+        uint64 start,
+        uint64 duration,
+        uint64 t1,
+        uint64 t2
+    ) public pure {
+        if (duration == 0 || t2 > t1 || t1 < start || uint256(t1) > uint256(start) + duration) {
+            return;
+        }
+        unchecked {
+            uint256 v2 = uint256(total) * (uint256(t2) - start) / duration;
+            assert(v2 <= total);
+        }
+    }
+
+    // One strict link makes a whole order chain strict, so the duration below is nonzero. A chain
+    // of only weak links allows an empty stream.
+    function checkStreamThroughStrictChain(
+        uint128 deposit,
+        uint40 start,
+        uint40 cliff,
+        uint40 t,
+        uint40 end
+    ) public pure {
+        if (cliff <= start || t < cliff || end < t) return;
+        uint256 duration = end - start;
+        uint256 streamed;
+        assembly {
+            streamed := div(mul(deposit, duration), duration)
+        }
+        assert(streamed == deposit);
+    }
+
+    function checkStreamThroughWeakChain(uint128 deposit, uint40 start, uint40 cliff, uint40 end)
+        public
+        pure
+    {
+        if (cliff < start || end < cliff) return;
+        uint256 duration = end - start;
+        uint256 streamed;
+        assembly {
+            streamed := div(mul(deposit, duration), duration)
+        }
+        assert(streamed == deposit);
+    }
+
+    // A derived `b <= a` must not let the subtraction rewrite drop the `d <= a` it came from.
+    function checkNestedElapsedGuards(uint256 a, uint256 b, uint256 c) public pure {
+        unchecked {
+            uint256 t = a - b;
+            uint256 d = t - c;
+            if (c > t || b > d || d > a) return;
+            assert(b <= a);
+        }
+    }
 }
 "#,
     );
@@ -9577,16 +9668,23 @@ contract SymbolicVestingSchedule {
             "checkVestedBelowAllocation(uint64,uint64,uint128,uint64)",
             "checkVestedBelowWideAllocation(uint64,uint64,uint256,uint64)",
             "checkStreamedBelowDeposit(uint128,uint40,uint40,uint40)",
+            "checkVestedAtTwoTimes(uint128,uint64,uint64,uint64,uint64)",
+            "checkStreamThroughStrictChain(uint128,uint40,uint40,uint40,uint40)",
+            "checkNestedElapsedGuards(uint256,uint256,uint256)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
         }
-        let result =
-            json_test_result(&output, "checkStreamedBelowDeposit(uint128,uint40,uint40,uint40)");
-        assert_eq!(
-            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
-            "optimized={optimized}: {result}"
-        );
+        for signature in [
+            "checkStreamedBelowDeposit(uint128,uint40,uint40,uint40)",
+            "checkVestedAtTwoTimes(uint128,uint64,uint64,uint64,uint64)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+                "optimized={optimized}: {result}"
+            );
+        }
 
         for signature in [
             "checkVestedPastLongerEnd(uint64,uint32,uint128,uint64)",
@@ -9596,6 +9694,9 @@ contract SymbolicVestingSchedule {
             "checkStreamedBeforeStart(uint128,uint40,uint40,uint40)",
             "checkStreamedOtherStart(uint128,uint40,uint40,uint40,uint40)",
             "checkEmptyStreamReleased(uint128,uint40,uint40)",
+            "checkVestedAtTwoTimesBeforeStart(uint128,uint64,uint64,uint64,uint64)",
+            "checkVestedAtReversedTimes(uint128,uint64,uint64,uint64,uint64)",
+            "checkStreamThroughWeakChain(uint128,uint40,uint40,uint40)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(
