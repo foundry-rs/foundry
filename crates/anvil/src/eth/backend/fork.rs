@@ -6,9 +6,10 @@ use crate::eth::{
         env::{BlobExcessGasAndPrice, SpecId},
     },
     error::BlockchainError,
+    tempo_simulate::TempoSimulateV1Response,
 };
 use alloy_chains::NamedChain;
-use alloy_consensus::{BlockHeader, TrieAccount};
+use alloy_consensus::{BlockHeader, TrieAccount, constants::EMPTY_ROOT_HASH};
 use alloy_eips::{eip2930::AccessListResult, eip7840::BlobParams};
 use alloy_network::{
     AnyNetwork, AnyRpcBlock, BlockResponse, Network, TransactionResponse,
@@ -836,6 +837,95 @@ impl<N: Network> ClientFork<N> {
 }
 
 impl ClientFork {
+    /// Returns canonical upstream block traces, bypassing caches keyed only by block number.
+    pub(crate) async fn trace_block_by_hash(
+        &self,
+        hash: B256,
+    ) -> Result<Vec<Trace>, BlockchainError> {
+        let (provider, fork_number, fork_hash) = {
+            let config = self.config.read();
+            (config.provider.clone(), config.block_number, config.block_hash)
+        };
+        let block =
+            provider.get_block_by_hash(hash).await?.ok_or(BlockchainError::BlockNotFound)?;
+        let number = block.header().number();
+        if number > fork_number || (number == fork_number && hash != fork_hash) {
+            return Err(BlockchainError::BlockNotFound);
+        }
+        // Like the local path, a pruned body is unavailable rather than an empty block.
+        if block.transactions().is_empty() && block.header().transactions_root() != EMPTY_ROOT_HASH
+        {
+            return Err(BlockchainError::DataUnavailable);
+        }
+        if number > self.canonical_fork_anchor(&provider, fork_number, fork_hash).await? {
+            return Err(BlockchainError::BlockNotFound);
+        }
+        let canonical = provider
+            .get_block_by_number(number.into())
+            .await?
+            .ok_or(BlockchainError::BlockNotFound)?;
+        if canonical.header().hash() != hash {
+            return Err(BlockchainError::BlockNotFound);
+        }
+        let traces = provider.trace_block(number.into()).await?;
+        // A reorg between resolution and tracing must never return a replacement block's traces.
+        if traces
+            .iter()
+            .any(|trace| trace.block_hash != Some(hash) || trace.block_number != Some(number))
+        {
+            return Err(BlockchainError::BlockNotFound);
+        }
+        // In particular, a replacement empty block must not look like an empty selected block.
+        let traced_transactions =
+            traces.iter().filter_map(|trace| trace.transaction_hash).collect::<HashSet<_>>();
+        if block.transactions().hashes().any(|tx| !traced_transactions.contains(&tx)) {
+            return Err(BlockchainError::DataUnavailable);
+        }
+        // Recheck both identities after tracing, without using cached headers.
+        if number > self.canonical_fork_anchor(&provider, fork_number, fork_hash).await? {
+            return Err(BlockchainError::BlockNotFound);
+        }
+        let canonical = provider
+            .get_block_by_number(number.into())
+            .await?
+            .ok_or(BlockchainError::BlockNotFound)?;
+        if canonical.header().hash() != hash {
+            return Err(BlockchainError::BlockNotFound);
+        }
+        Ok(traces)
+    }
+
+    /// Returns the newest block number at which the upstream chain still matches the fork's chain.
+    ///
+    /// A reorg that replaced only the fork root keeps its parent canonical, so the blocks below the
+    /// root stay available. A deeper reorg can't be checked without the root's ancestors, so it
+    /// fails. The root header is cached on first use, so a later reorg that drops it upstream can
+    /// still be checked.
+    async fn canonical_fork_anchor(
+        &self,
+        provider: &RetryProvider<AnyNetwork>,
+        fork_number: u64,
+        fork_hash: B256,
+    ) -> Result<u64, BlockchainError> {
+        let root = self.root_header().await?.ok_or(BlockchainError::BlockNotFound)?;
+        let tip = provider
+            .get_block_by_number(fork_number.into())
+            .await?
+            .ok_or(BlockchainError::BlockNotFound)?;
+        if tip.header().hash() == fork_hash {
+            return Ok(fork_number);
+        }
+        let parent_number = fork_number.checked_sub(1).ok_or(BlockchainError::BlockNotFound)?;
+        let parent = provider
+            .get_block_by_number(parent_number.into())
+            .await?
+            .ok_or(BlockchainError::BlockNotFound)?;
+        if parent.header().hash() != root.parent_hash() {
+            return Err(BlockchainError::BlockNotFound);
+        }
+        Ok(parent_number)
+    }
+
     pub async fn transaction_receipt(
         &self,
         hash: B256,
@@ -968,6 +1058,15 @@ impl ClientFork {
             self.cache_block(&block);
         }
         Ok(Some(header))
+    }
+
+    /// Sends `tempo_simulateV1`.
+    pub async fn tempo_simulate_v1(
+        &self,
+        request: &SimulatePayload<WithOtherFields<TransactionRequest>>,
+        block: BlockId,
+    ) -> Result<TempoSimulateV1Response, TransportError> {
+        self.provider().raw_request("tempo_simulateV1".into(), (request, block)).await
     }
 }
 

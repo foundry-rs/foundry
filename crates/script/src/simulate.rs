@@ -275,6 +275,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                     .with_execution_result(
                         &result,
                         self.args.gas_estimate_multiplier,
+                        self.execution_artifacts.rpc_data.chain_ids.get(&rpc).copied(),
                         &self.build_data,
                     )?
                     .build();

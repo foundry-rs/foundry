@@ -4,7 +4,9 @@ use crate::{
         BundledState, refused_after_revert, remaining_operation_indices,
         remaining_unsigned_transactions_for_recovery,
     },
+    coded,
     execute::LinkedState,
+    json_failure,
     multi_sequence::MultiChainSequence,
     progress::ScriptProgress,
     receipts::is_mined_receipt_for,
@@ -20,7 +22,7 @@ use alloy_signer::Signer;
 use eyre::{ContextCompat, OptionExt, Result};
 use forge_script_sequence::ScriptSequence;
 use foundry_cheatcodes::Wallets;
-use foundry_cli::opts::TempoOpts;
+use foundry_cli::{json::JsonMessage, opts::TempoOpts};
 use foundry_common::{
     ContractData, ContractsByArtifact, ContractsByArtifactBuilder,
     compile::ProjectCompiler,
@@ -46,7 +48,6 @@ use foundry_evm::{
 };
 use foundry_linking::Linker;
 use foundry_wallets::{MultiWalletOpts, wallet_browser::signer::BrowserSigner};
-use itertools::Itertools;
 use std::{
     path::{Path, PathBuf},
     str::FromStr,
@@ -231,7 +232,9 @@ impl<FEN: FoundryEvmNetwork> PreprocessedState<FEN> {
             !(args.no_compile && script_config.config.decode_external_storage),
             "`--no-compile` cannot be used with `decode_external_storage`"
         );
-        let mut project = script_config.config.project()?;
+        // Setting up the compiler, such as installing solc, fails here.
+        let mut project =
+            script_config.config.project().map_err(|err| coded(err.into(), "compiler.error"))?;
         eyre::ensure!(
             !args.no_compile || project.cached,
             "`--no-compile` needs the build cache, which `cache = false`, `--no-cache`, and \
@@ -272,12 +275,20 @@ impl<FEN: FoundryEvmNetwork> PreprocessedState<FEN> {
             compiler.target_files([target_path.clone()])
         };
         let output = compiler.compile(&project).map_err(|err| {
-            let Some(SolcError::StaleSources(files)) = err.downcast_ref() else { return err };
-            let files = files.iter().map(|file| file.strip_prefix(project.root()).unwrap_or(file));
-            eyre::eyre!(
+            let Some(SolcError::StaleSources(files)) = err.downcast_ref() else {
+                return coded(err, "compiler.error");
+            };
+            let files = files
+                .iter()
+                .map(|file| file.strip_prefix(project.root()).unwrap_or(file).display().to_string())
+                .collect::<Vec<_>>();
+            let message = format!(
                 "compilation disabled by --no-compile; sources need compiling:\n{}",
-                files.map(|file| file.display()).join("\n")
-            )
+                files.join("\n")
+            );
+            let error = JsonMessage::error("compiler.stale", message)
+                .with_details(serde_json::json!({ "files": files }));
+            json_failure(error).into()
         })?;
 
         let mut target_id: Option<ArtifactId> = None;
@@ -472,7 +483,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
             match errors.len() {
                 0 => {}
                 1 => return Err(errors.remove(0)),
-                _ => eyre::bail!("{}", errors.iter().format("\n")),
+                _ => return Err(crate::joined(errors)),
             }
         }
         // Resume refuses new operations after a recorded revert. Saved attempts after it are still

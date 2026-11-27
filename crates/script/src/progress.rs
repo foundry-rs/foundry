@@ -257,6 +257,9 @@ impl ScriptProgress {
         let mut polled = Vec::with_capacity(count);
 
         let mut errors: Vec<String> = vec![];
+        // Keeps the `--json` code of the first receipt failure.
+        let mut receipt_error = None;
+        let mut receipt_failures = 0;
         let mut discarded_transactions = false;
 
         loop {
@@ -300,6 +303,8 @@ impl ScriptProgress {
                         errors.push(format!(
                             "Failure on receiving a receipt for {tx_hash:?}:\n{err}"
                         ));
+                        receipt_error.get_or_insert(err);
+                        receipt_failures += 1;
                         seq_progress.inner.write().finish_tx_spinner(tx_hash);
                     }
                 }
@@ -369,7 +374,16 @@ impl ScriptProgress {
 Add `--resume` to your command to try and continue broadcasting the transactions. This will attempt to resend transactions that were discarded by the RPC."#;
             }
 
-            eyre::bail!(error_msg);
+            // A revert or a refused discard is not an RPC failure, so only code the failure as
+            // one when every error is a receipt failure.
+            let receipt_error = receipt_error.filter(|_| receipt_failures == errors.len());
+            return Err(match receipt_error {
+                Some(err) => {
+                    let err = err.wrap_err(error_msg);
+                    crate::flattened(err.to_string(), err.as_ref())
+                }
+                None => eyre::eyre!(error_msg),
+            });
         } else if discarded_transactions {
             // If we have discarded transactions but no errors, still inform the user
             sh_warn!(

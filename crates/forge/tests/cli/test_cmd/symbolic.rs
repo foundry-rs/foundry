@@ -7750,6 +7750,41 @@ contract RoundedProductTest {
         assert(rounded <= value);
     }
 
+    function checkNestedConstantQuotient(uint256 value) external pure {
+        assert(value / 1e9 / 1e9 == value / 1e18);
+    }
+
+    // Equality orders two quotients by a stable hash, which puts this nested side on the right.
+    function checkReversedNestedConstantQuotient(uint256 value) external pure {
+        assert(value / 21 == value / 3 / 7);
+    }
+
+    function checkNestedQuotientIsNotFiner(uint256 value) external pure {
+        assert(value / 1e9 / 1e9 == value / 1e17);
+    }
+
+    function checkNestedQuotientOfOtherValue(uint256 value, uint256 other) external pure {
+        assert(value / 1e9 / 1e9 == other / 1e18);
+    }
+
+    // The divisors' product wraps to `2**129 + 1`, which must not stand in for it.
+    function checkWrappedNestedDivisor(uint256 value) external pure {
+        assert(value / (2 ** 128 + 1) / (2 ** 128 + 1) == value / (2 ** 129 + 1));
+    }
+
+    // A fee that is itself a constant division keeps its Euclidean and ceiling relations.
+    function checkNestedFeeEuclideanIdentity(uint128 amount, uint16 bps) external pure {
+        require(bps <= 10000);
+        uint256 fee = uint256(amount) * bps / 10000;
+        assert(fee / 3 * 3 + fee % 3 == fee);
+    }
+
+    function checkNestedFeeCeiling(uint128 amount, uint16 bps) external pure {
+        require(bps <= 10000);
+        uint256 fee = uint256(amount) * bps / 10000;
+        assert((fee + 2) / 3 >= fee / 3);
+    }
+
     function checkBasisPointsFee(uint64 amount, uint16 bps) external pure {
         require(bps <= 10000);
         assert(uint256(amount) * bps / 10000 <= amount);
@@ -7777,15 +7812,6 @@ contract RoundedProductTest {
     );
     for optimized in [false, true] {
         prj.update_config(|config| config.optimizer = Some(optimized));
-        cmd.forge_fuse().args([
-            "test",
-            "--symbolic",
-            "--symbolic-timeout",
-            "30",
-            "--match-test",
-            "check(FloorError|DividendRelation|WrappingDividendRelation|CeilingError|CeilingRoundTrip|SymbolicDivisorFacts|EuclideanIdentities|SymbolicEuclideanIdentity|NarrowFloorError|BasisPointsFee|SlippageMinimum|TransferConservation)",
-        ])
-        .assert_success();
         let output = cmd
             .forge_fuse()
             .args([
@@ -7795,13 +7821,46 @@ contract RoundedProductTest {
                 "--symbolic-timeout",
                 "30",
                 "--match-test",
-                "check(CeilingIsNotExact|WrappingCeiling|ReversedFloorError|MixedEuclideanSum)",
+                "check(FloorError|DividendRelation|WrappingDividendRelation|CeilingError|CeilingRoundTrip|SymbolicDivisorFacts|EuclideanIdentities|SymbolicEuclideanIdentity|NarrowFloorError|NestedConstantQuotient|ReversedNestedConstantQuotient|NestedFeeEuclideanIdentity|NestedFeeCeiling|BasisPointsFee|SlippageMinimum|TransferConservation)",
+            ])
+            .assert_success()
+            .get_output()
+            .stdout
+            .clone();
+        for signature in [
+            "checkNestedConstantQuotient(uint256)",
+            "checkReversedNestedConstantQuotient(uint256)",
+            "checkNestedFeeEuclideanIdentity(uint128,uint16)",
+            "checkNestedFeeCeiling(uint128,uint16)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+                "{signature}, optimized={optimized}: {result}"
+            );
+        }
+        let output = cmd
+            .forge_fuse()
+            .args([
+                "test",
+                "--symbolic",
+                "--json",
+                "--symbolic-timeout",
+                "30",
+                "--match-test",
+                "check(CeilingIsNotExact|WrappingCeiling|ReversedFloorError|NestedQuotientIsNotFiner|NestedQuotientOfOtherValue|WrappedNestedDivisor|MixedEuclideanSum)",
             ])
             .assert_failure()
             .get_output()
             .stdout
             .clone();
-        for test in ["checkCeilingIsNotExact", "checkWrappingCeiling", "checkReversedFloorError"] {
+        for test in [
+            "checkCeilingIsNotExact",
+            "checkWrappingCeiling",
+            "checkReversedFloorError",
+            "checkNestedQuotientIsNotFiner",
+            "checkWrappedNestedDivisor",
+        ] {
             let signature = format!("{test}(uint256)");
             let result = json_test_result(&output, &signature);
             assert_eq!(
@@ -7809,9 +7868,20 @@ contract RoundedProductTest {
                 "{test}, optimized={optimized}"
             );
         }
-        let result = json_test_result(&output, "checkMixedEuclideanSum(uint256,uint256,uint256)");
-        assert_eq!(result["symbolic"]["status"], "fail_counterexample", "optimized={optimized}");
-        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "optimized={optimized}");
+        for signature in [
+            "checkMixedEuclideanSum(uint256,uint256,uint256)",
+            "checkNestedQuotientOfOtherValue(uint256,uint256)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "{signature}, optimized={optimized}"
+            );
+            assert_eq!(
+                result["symbolic"]["replay"]["status"], "confirmed",
+                "{signature}, optimized={optimized}"
+            );
+        }
     }
 }
 
@@ -8931,7 +9001,14 @@ contract SymbolicMinRatioNested {
 }
 
 // An EMA or weighted average `(p * u + q * v) / k` with `u + v <= k` stays at most a bound on
-// `p` and `q`.
+// `p` and `q`. A lerp or a two-step fee written as `a + (b - a) * t / k` stays at most `b` once
+// `a <= b` and `t <= k`, but not strictly, not at most `a`, not without either guard, and not
+// with another start or the reversed difference `a - b`. Likewise a Dutch auction price
+// `s - (s - e) * t / d` stays at least `e` once `e <= s` and `t <= d`, but not strictly, not at
+// least another floor, not without either guard, and not with a span from another start. A time
+// ramp `a + (b - a) * (t - t0) / (t1 - t0)` stays at most `b` once `t0 <= t <= t1`, as a falling
+// one stays at least its end, but not strictly, not past `t1` or another deadline, not before `t0`,
+// and not over a span from another start.
 #[forgetest_init]
 fn symbolic_proves_weighted_average_bound(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_weighted_average_bound");
@@ -9083,6 +9160,205 @@ contract SymbolicWeightedAverage {
         }
         assert(next <= cap);
     }
+
+    function checkLerpBelowEnd(uint128 a, uint128 b, uint64 t) public pure {
+        require(a <= b && t <= WAD);
+        assert(a + (uint256(b) - a) * t / WAD <= b);
+    }
+
+    // A fee taken on the amount's distance to a cap keeps the total within the cap.
+    function checkStepFeeBelowCap(uint128 amount, uint128 cap, uint16 bps) public pure {
+        require(amount <= cap && bps <= 10000);
+        uint256 total = amount + (uint256(cap) - amount) * bps / 10000;
+        assert(total <= cap);
+    }
+
+    // Unchecked, `b - a` wraps once `a > b`.
+    function checkLerpUnorderedEnds(uint128 a, uint128 b, uint64 t) public pure {
+        require(t <= WAD);
+        uint256 span;
+        unchecked {
+            span = uint256(b) - a;
+        }
+        assert(a + span * t / WAD <= b);
+    }
+
+    function checkLerpWeightAboveWad(uint128 a, uint128 b, uint64 t) public pure {
+        require(a <= b);
+        assert(a + (uint256(b) - a) * t / WAD <= b);
+    }
+
+    function checkLerpStrictlyBelowEnd(uint128 a, uint128 b, uint64 t) public pure {
+        require(a <= b && t <= WAD);
+        assert(a + (uint256(b) - a) * t / WAD < b);
+    }
+
+    function checkLerpBelowStart(uint128 a, uint128 b, uint64 t) public pure {
+        require(a <= b && t <= WAD);
+        assert(a + (uint256(b) - a) * t / WAD <= a);
+    }
+
+    function checkLerpOtherStart(uint128 a, uint128 b, uint128 e, uint64 t) public pure {
+        require(a <= b && e <= b && t <= WAD);
+        assert(a + (uint256(b) - e) * t / WAD <= b);
+    }
+
+    // Unchecked, `a - b` wraps once `a < b`.
+    function checkLerpSwappedSpan(uint128 a, uint128 b, uint64 t) public pure {
+        require(a <= b && t <= WAD);
+        uint256 span;
+        unchecked {
+            span = uint256(a) - b;
+        }
+        assert(a + span * t / WAD <= b);
+    }
+
+    function checkDutchPriceAboveEnd(uint128 start, uint128 end, uint64 elapsed, uint64 duration)
+        public
+        pure
+    {
+        require(end <= start && elapsed <= duration);
+        uint256 price = start - (uint256(start) - end) * elapsed / duration;
+        assert(price >= end);
+    }
+
+    function checkDutchPriceAfterDuration(
+        uint128 start,
+        uint128 end,
+        uint64 elapsed,
+        uint64 duration
+    ) public pure {
+        require(end <= start);
+        uint256 price = start - (uint256(start) - end) * elapsed / duration;
+        assert(price >= end);
+    }
+
+    // Unchecked, `start - end` wraps once `end > start`.
+    function checkDutchPriceUnorderedEnds(
+        uint128 start,
+        uint128 end,
+        uint64 elapsed,
+        uint64 duration
+    ) public pure {
+        require(elapsed <= duration);
+        uint256 span;
+        unchecked {
+            span = uint256(start) - end;
+        }
+        uint256 price = start - span * elapsed / duration;
+        assert(price >= end);
+    }
+
+    function checkDutchPriceStrictlyAboveEnd(
+        uint128 start,
+        uint128 end,
+        uint64 elapsed,
+        uint64 duration
+    ) public pure {
+        require(end <= start && elapsed <= duration);
+        uint256 price = start - (uint256(start) - end) * elapsed / duration;
+        assert(price > end);
+    }
+
+    function checkDutchPriceOtherFloor(
+        uint128 start,
+        uint128 end,
+        uint128 floor,
+        uint64 elapsed,
+        uint64 duration
+    ) public pure {
+        require(end <= start && floor <= start && elapsed <= duration);
+        uint256 price = start - (uint256(start) - end) * elapsed / duration;
+        assert(price >= floor);
+    }
+
+    function checkDutchPriceOtherStart(
+        uint128 start,
+        uint128 top,
+        uint128 end,
+        uint64 elapsed,
+        uint64 duration
+    ) public pure {
+        require(end <= start && end <= top && elapsed <= duration);
+        uint256 price = start - (uint256(top) - end) * elapsed / duration;
+        assert(price >= end);
+    }
+
+    function checkRampBelowEnd(uint128 a, uint128 b, uint64 t0, uint64 t1, uint64 t) public pure {
+        require(a <= b && t0 < t1 && t0 <= t && t <= t1);
+        uint256 v = a + (uint256(b) - a) * (uint256(t) - t0) / (uint256(t1) - t0);
+        assert(v <= b);
+    }
+
+    // Curve's `_A()` ramps either way, with checked `uint64` times.
+    function checkCurveRampWithinEnds(uint128 a0, uint128 a1, uint64 t0, uint64 t1, uint64 t)
+        public
+        pure
+    {
+        require(t0 < t1 && t0 <= t && t <= t1);
+        if (a1 > a0) {
+            assert(a0 + (uint256(a1) - a0) * (t - t0) / (t1 - t0) <= a1);
+        } else {
+            assert(a0 - (uint256(a0) - a1) * (t - t0) / (t1 - t0) >= a1);
+        }
+    }
+
+    function checkRampDownAboveEnd(uint128 a, uint128 b, uint64 t0, uint64 t1, uint64 t)
+        public
+        pure
+    {
+        require(b <= a && t0 < t1 && t0 <= t && t <= t1);
+        uint256 v = a - (uint256(a) - b) * (uint256(t) - t0) / (uint256(t1) - t0);
+        assert(v >= b);
+    }
+
+    function checkRampStrictlyBelowEnd(uint128 a, uint128 b, uint64 t0, uint64 t1, uint64 t)
+        public
+        pure
+    {
+        require(a <= b && t0 < t1 && t0 <= t && t <= t1);
+        uint256 v = a + (uint256(b) - a) * (uint256(t) - t0) / (uint256(t1) - t0);
+        assert(v < b);
+    }
+
+    function checkRampAfterEnd(uint128 a, uint128 b, uint64 t0, uint64 t1, uint64 t) public pure {
+        require(a <= b && t0 < t1 && t0 <= t);
+        uint256 v = a + (uint256(b) - a) * (uint256(t) - t0) / (uint256(t1) - t0);
+        assert(v <= b);
+    }
+
+    // Ramps to `WAD`, so that the counterexample has few enough inputs for the local search.
+    function checkRampOtherSpanStart(uint128 a, uint64 t0, uint64 t1, uint64 t2, uint64 t)
+        public
+        pure
+    {
+        require(a <= WAD && t2 < t1 && t0 <= t && t <= t1);
+        uint256 v = a + (WAD - a) * (uint256(t) - t0) / (uint256(t1) - t2);
+        assert(v <= WAD);
+    }
+
+    // Unchecked, `t - t0` wraps once `t < t0`.
+    function checkRampBeforeStart(uint128 a, uint64 t0, uint64 t1, uint64 t) public pure {
+        require(a <= WAD && t0 < t1 && t <= t1);
+        uint256 v;
+        unchecked {
+            v = a + (WAD - a) * (uint256(t) - t0) / (uint256(t1) - t0);
+        }
+        assert(v <= WAD);
+    }
+
+    function checkRampOtherDeadline(
+        uint128 a,
+        uint128 b,
+        uint64 t0,
+        uint64 t1,
+        uint64 t3,
+        uint64 t
+    ) public pure {
+        require(a <= b && t0 < t1 && t0 <= t && t <= t3);
+        uint256 v = a + (uint256(b) - a) * (uint256(t) - t0) / (uint256(t1) - t0);
+        assert(v <= b);
+    }
 }
 "#,
     );
@@ -9106,6 +9382,12 @@ contract SymbolicWeightedAverage {
             "checkEmaWideCap(uint256,uint256,uint64,uint256)",
             "checkWeightedScaled(uint128,uint128,uint64,uint128)",
             "checkMaskedComplement(uint128,uint128,uint256,uint256,uint128)",
+            "checkLerpBelowEnd(uint128,uint128,uint64)",
+            "checkStepFeeBelowCap(uint128,uint128,uint16)",
+            "checkDutchPriceAboveEnd(uint128,uint128,uint64,uint64)",
+            "checkRampBelowEnd(uint128,uint128,uint64,uint64,uint64)",
+            "checkCurveRampWithinEnds(uint128,uint128,uint64,uint64,uint64)",
+            "checkRampDownAboveEnd(uint128,uint128,uint64,uint64,uint64)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
@@ -9123,6 +9405,22 @@ contract SymbolicWeightedAverage {
             "checkWeightedZeroWhole(uint128,uint128,uint64,uint64,uint128)",
             "checkEmaOtherComplement(uint128,uint128,uint64,uint64,uint128)",
             "checkEmaWrappingComplement(uint128,uint128,uint64,uint128)",
+            "checkLerpUnorderedEnds(uint128,uint128,uint64)",
+            "checkLerpWeightAboveWad(uint128,uint128,uint64)",
+            "checkLerpStrictlyBelowEnd(uint128,uint128,uint64)",
+            "checkLerpBelowStart(uint128,uint128,uint64)",
+            "checkLerpOtherStart(uint128,uint128,uint128,uint64)",
+            "checkLerpSwappedSpan(uint128,uint128,uint64)",
+            "checkDutchPriceAfterDuration(uint128,uint128,uint64,uint64)",
+            "checkDutchPriceUnorderedEnds(uint128,uint128,uint64,uint64)",
+            "checkDutchPriceStrictlyAboveEnd(uint128,uint128,uint64,uint64)",
+            "checkDutchPriceOtherFloor(uint128,uint128,uint128,uint64,uint64)",
+            "checkDutchPriceOtherStart(uint128,uint128,uint128,uint64,uint64)",
+            "checkRampStrictlyBelowEnd(uint128,uint128,uint64,uint64,uint64)",
+            "checkRampAfterEnd(uint128,uint128,uint64,uint64,uint64)",
+            "checkRampOtherSpanStart(uint128,uint64,uint64,uint64,uint64)",
+            "checkRampBeforeStart(uint128,uint64,uint64,uint64)",
+            "checkRampOtherDeadline(uint128,uint128,uint64,uint64,uint64,uint64)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(
@@ -9138,14 +9436,19 @@ contract SymbolicWeightedAverage {
 }
 
 // OpenZeppelin's `VestingWallet` (MIT) vests `total * (t - start) / duration` once
-// `start <= t < start + duration`, so the elapsed time stays at most the duration.
+// `start <= t < start + duration`, so the elapsed time stays at most the duration. A stream with an
+// end time bounds `t - start` by `end - start` the same way. Order guards chain, so
+// `start <= t1 <= t2` also orders `start` before `t2`.
 #[forgetest_init]
 fn symbolic_proves_vesting_schedule_bounded(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_vesting_schedule_bounded");
     prj.add_test(
         "SymbolicVestingSchedule.t.sol",
         r#"
+import {Vm} from "forge-std/Vm.sol";
+
 contract SymbolicVestingSchedule {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
     uint64 private _start;
     uint64 private _duration;
 
@@ -9206,6 +9509,148 @@ contract SymbolicVestingSchedule {
             assert(uint256(t) - s <= type(uint64).max);
         }
     }
+
+    // A Sablier- or LlamaPay-style stream unlocks `deposit * (t - start) / (end - start)` by `end`.
+    function checkStreamedBelowDeposit(uint128 deposit, uint40 start, uint40 end, uint40 t)
+        public
+        pure
+    {
+        if (end <= start || t < start || t > end) return;
+        assert(uint256(deposit) * (t - start) / (end - start) <= deposit);
+    }
+
+    function checkStreamedPastEnd(uint128 deposit, uint40 start, uint40 end, uint40 t)
+        public
+        pure
+    {
+        if (end <= start || t < start) return;
+        assert(uint256(deposit) * (t - start) / (end - start) <= deposit);
+    }
+
+    function checkStreamedBeforeStart(uint128 deposit, uint40 start, uint40 end, uint40 t)
+        public
+        pure
+    {
+        if (end <= start || t > end) return;
+        unchecked {
+            assert(uint256(deposit) * (uint256(t) - start) / (end - start) <= deposit);
+        }
+    }
+
+    function checkStreamedOtherStart(
+        uint128 deposit,
+        uint40 start,
+        uint40 other,
+        uint40 end,
+        uint40 t
+    ) public pure {
+        if (end <= other || t < start || t > end) return;
+        assert(uint256(deposit) * (t - start) / (end - other) <= deposit);
+    }
+
+    // An empty stream, `start == end`, releases nothing, as EVM `div` by zero is zero. Solidity
+    // comparisons reach the solver as `<` or its negation; `vm.assertLe` adds a plain `<=`, which
+    // must not count as strict.
+    function checkEmptyStreamReleased(uint128 deposit, uint40 start, uint40 end) public pure {
+        if (end < start) return;
+        vm.assertLe(start, end);
+        uint256 duration = end - start;
+        uint256 streamed;
+        assembly {
+            streamed := div(mul(deposit, duration), duration)
+        }
+        assert(streamed == deposit);
+    }
+
+    // Only `start <= t1 <= t2` orders `start` before `t2`, which both `t2 - start` and the cap
+    // need.
+    function checkVestedAtTwoTimes(
+        uint128 total,
+        uint64 start,
+        uint64 duration,
+        uint64 t1,
+        uint64 t2
+    ) public pure {
+        if (duration == 0 || t1 > t2 || t1 < start || uint256(t2) > uint256(start) + duration) {
+            return;
+        }
+        uint256 v1 = uint256(total) * (t1 - start) / duration;
+        uint256 v2 = uint256(total) * (t2 - start) / duration;
+        assert(v1 <= v2 && v2 <= total);
+    }
+
+    function checkVestedAtTwoTimesBeforeStart(
+        uint128 total,
+        uint64 start,
+        uint64 duration,
+        uint64 t1,
+        uint64 t2
+    ) public pure {
+        if (duration == 0 || t1 > t2 || uint256(t2) > uint256(start) + duration) return;
+        unchecked {
+            uint256 v1 = uint256(total) * (uint256(t1) - start) / duration;
+            uint256 v2 = uint256(total) * (uint256(t2) - start) / duration;
+            assert(v1 <= v2 && v2 <= total);
+        }
+    }
+
+    // `start <= t1` and `t2 <= t1` do not order `start` before `t2`.
+    function checkVestedAtReversedTimes(
+        uint128 total,
+        uint64 start,
+        uint64 duration,
+        uint64 t1,
+        uint64 t2
+    ) public pure {
+        if (duration == 0 || t2 > t1 || t1 < start || uint256(t1) > uint256(start) + duration) {
+            return;
+        }
+        unchecked {
+            uint256 v2 = uint256(total) * (uint256(t2) - start) / duration;
+            assert(v2 <= total);
+        }
+    }
+
+    // One strict link makes a whole order chain strict, so the duration below is nonzero. A chain
+    // of only weak links allows an empty stream.
+    function checkStreamThroughStrictChain(
+        uint128 deposit,
+        uint40 start,
+        uint40 cliff,
+        uint40 t,
+        uint40 end
+    ) public pure {
+        if (cliff <= start || t < cliff || end < t) return;
+        uint256 duration = end - start;
+        uint256 streamed;
+        assembly {
+            streamed := div(mul(deposit, duration), duration)
+        }
+        assert(streamed == deposit);
+    }
+
+    function checkStreamThroughWeakChain(uint128 deposit, uint40 start, uint40 cliff, uint40 end)
+        public
+        pure
+    {
+        if (cliff < start || end < cliff) return;
+        uint256 duration = end - start;
+        uint256 streamed;
+        assembly {
+            streamed := div(mul(deposit, duration), duration)
+        }
+        assert(streamed == deposit);
+    }
+
+    // A derived `b <= a` must not let the subtraction rewrite drop the `d <= a` it came from.
+    function checkNestedElapsedGuards(uint256 a, uint256 b, uint256 c) public pure {
+        unchecked {
+            uint256 t = a - b;
+            uint256 d = t - c;
+            if (c > t || b > d || d > a) return;
+            assert(b <= a);
+        }
+    }
 }
 "#,
     );
@@ -9222,15 +9667,36 @@ contract SymbolicVestingSchedule {
         for signature in [
             "checkVestedBelowAllocation(uint64,uint64,uint128,uint64)",
             "checkVestedBelowWideAllocation(uint64,uint64,uint256,uint64)",
+            "checkStreamedBelowDeposit(uint128,uint40,uint40,uint40)",
+            "checkVestedAtTwoTimes(uint128,uint64,uint64,uint64,uint64)",
+            "checkStreamThroughStrictChain(uint128,uint40,uint40,uint40,uint40)",
+            "checkNestedElapsedGuards(uint256,uint256,uint256)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        }
+        for signature in [
+            "checkStreamedBelowDeposit(uint128,uint40,uint40,uint40)",
+            "checkVestedAtTwoTimes(uint128,uint64,uint64,uint64,uint64)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+                "optimized={optimized}: {result}"
+            );
         }
 
         for signature in [
             "checkVestedPastLongerEnd(uint64,uint32,uint128,uint64)",
             "checkElapsedBeforeStart(uint256,uint256,uint64,uint256)",
             "checkElapsedAgainstOrder(uint64,uint64)",
+            "checkStreamedPastEnd(uint128,uint40,uint40,uint40)",
+            "checkStreamedBeforeStart(uint128,uint40,uint40,uint40)",
+            "checkStreamedOtherStart(uint128,uint40,uint40,uint40,uint40)",
+            "checkEmptyStreamReleased(uint128,uint40,uint40)",
+            "checkVestedAtTwoTimesBeforeStart(uint128,uint64,uint64,uint64,uint64)",
+            "checkVestedAtReversedTimes(uint128,uint64,uint64,uint64,uint64)",
+            "checkStreamThroughWeakChain(uint128,uint40,uint40,uint40)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(
@@ -10011,14 +10477,27 @@ contract SymbolicPreviewMint {
 
 // Utilization and remaining-share ratios scale `(total - used) * WAD / total`, which stays at
 // most `WAD` once `used <= total`. A remainder of an unrelated amount, or one that wraps, is not
-// bounded by the total.
+// bounded by the total. Compound's utilization `borrows * WAD / (cash + borrows - reserves)` is at
+// most `WAD` once `reserves <= cash`, since the divisor is `borrows + (cash - reserves)`. Reserves
+// above the cash, or only below the borrows, shrink the divisor below the borrows, and the rate
+// reaches `WAD` exactly when the reserves equal the cash. Reserves below both amounts, or a borrow
+// floor equal to the reserve cap, still bound it. A wrapped `cash + borrows` is not bounded either.
+// An ERC4626 round trip through Solmate's `mulDivDown` passes its overflow guard on a quotient
+// whose product cannot overflow without querying SMT. A quotient by another divisor, a smaller
+// guard numerator, or a factor that may be zero can still fail the guard, and a non-strict
+// `MAX / y <= x` still holds at `x == MAX / y`.
 #[forgetest_init]
 fn symbolic_proves_remaining_ratio_bounded(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_remaining_ratio_bounded");
     prj.add_test(
         "SymbolicRemainingRatio.t.sol",
         r#"
+interface Vm {
+    function assertLe(uint256 left, uint256 right) external pure;
+}
+
 contract SymbolicRemainingRatio {
+    Vm internal constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
     uint256 internal constant WAD = 1e18;
 
     // Solmate's `FixedPointMathLib.mulDivDown` (MIT).
@@ -10046,6 +10525,114 @@ contract SymbolicRemainingRatio {
         }
         assert(mulDivDown(remaining, WAD, total) <= WAD);
     }
+
+    function checkUtilizationRate(uint256 cash, uint256 borrows, uint256 reserves) public pure {
+        require(borrows != 0 && reserves <= cash);
+        assert(borrows * WAD / (cash + borrows - reserves) <= WAD);
+    }
+
+    function checkNarrowUtilizationRate(uint128 cash, uint128 borrows, uint128 reserves)
+        public
+        pure
+    {
+        require(borrows != 0 && reserves <= cash);
+        assert(uint256(borrows) * WAD / (uint256(cash) + borrows - reserves) <= WAD);
+    }
+
+    function checkUtilizationReservesBelowBoth(uint256 borrows, uint256 cash, uint256 reserves)
+        public
+        pure
+    {
+        require(borrows != 0 && reserves <= cash && reserves <= borrows);
+        assert(borrows * WAD / (cash + borrows - reserves) <= WAD);
+    }
+
+    function checkNarrowUtilizationReservesAtBorrowFloor(
+        uint128 cash,
+        uint128 borrows,
+        uint128 reserves
+    ) public pure {
+        require(borrows >= 100 && reserves <= 100 && reserves <= cash);
+        assert(uint256(borrows) * WAD / (uint256(cash) + borrows - reserves) <= WAD);
+    }
+
+    function checkUtilizationReservesAboveCash(uint256 cash, uint256 borrows, uint256 reserves)
+        public
+        pure
+    {
+        require(borrows != 0);
+        assert(borrows * WAD / (cash + borrows - reserves) <= WAD);
+    }
+
+    function checkUtilizationReservesBelowBorrows(
+        uint256 cash,
+        uint256 borrows,
+        uint256 reserves
+    ) public pure {
+        require(borrows != 0 && reserves <= borrows);
+        assert(borrows * WAD / (cash + borrows - reserves) <= WAD);
+    }
+
+    function checkUtilizationStrictlyBelowWad(uint256 cash, uint256 borrows, uint256 reserves)
+        public
+        pure
+    {
+        require(borrows != 0 && reserves <= cash);
+        assert(borrows * WAD / (cash + borrows - reserves) < WAD);
+    }
+
+    function checkUtilizationWrappedSum(uint256 cash, uint256 borrows, uint256 reserves)
+        public
+        pure
+    {
+        require(borrows != 0 && reserves <= cash);
+        uint256 total;
+        unchecked {
+            total = cash + borrows - reserves;
+        }
+        assert(borrows * WAD / total <= WAD);
+    }
+
+    function checkSharesRoundTrip(uint128 assets, uint128 supply, uint128 total) public pure {
+        if (supply == 0 || total == 0) return;
+        assert(mulDivDown(mulDivDown(assets, supply, total), total, supply) <= assets);
+    }
+
+    function checkOtherDivisorGuard(uint128 assets, uint128 supply, uint128 other, uint128 total)
+        public
+        pure
+    {
+        if (supply == 0 || other == 0 || total == 0) return;
+        uint256 shares = mulDivDown(assets, supply, other);
+        assert(!(shares > type(uint256).max / total));
+    }
+
+    function checkSmallNumeratorGuard(uint128 assets, uint128 supply, uint128 total) public pure {
+        if (supply == 0 || total == 0) return;
+        uint256 shares = mulDivDown(assets, supply, total);
+        assert(!(shares > 1000 / total));
+    }
+
+    function checkZeroFactorGuard(uint128 assets, uint128 supply, uint128 total, uint256 y)
+        public
+        pure
+    {
+        if (supply == 0 || total == 0) return;
+        uint256 shares = mulDivDown(assets, supply, total);
+        uint256 overflows;
+        assembly {
+            overflows := gt(shares, div(not(0), y))
+        }
+        assert(overflows == 0);
+    }
+
+    function checkQuotientAtGuardLimit(uint256 n, uint256 y) public pure {
+        if (y == 0) return;
+        uint256 x = n / y;
+        if (x < type(uint256).max / y) return;
+        vm.assertLe(type(uint256).max / y, x);
+        assert(x != type(uint256).max / y);
+    }
 }
 "#,
     );
@@ -10060,9 +10647,35 @@ contract SymbolicRemainingRatio {
             .clone();
         let result = json_test_result(&output, "checkRemainingRatio(uint256,uint256)");
         assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        let result = json_test_result(&output, "checkSharesRoundTrip(uint128,uint128,uint128)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        assert_eq!(
+            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+            "optimized={optimized}: {result}"
+        );
+        for signature in [
+            "checkUtilizationRate(uint256,uint256,uint256)",
+            "checkNarrowUtilizationRate(uint128,uint128,uint128)",
+            "checkUtilizationReservesBelowBoth(uint256,uint256,uint256)",
+            "checkNarrowUtilizationReservesAtBorrowFloor(uint128,uint128,uint128)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "pass",
+                "optimized={optimized} {signature}: {result}"
+            );
+        }
         for signature in [
             "checkUnrelatedRemainder(uint256,uint256,uint256)",
             "checkWrappedRemainder(uint256,uint256)",
+            "checkOtherDivisorGuard(uint128,uint128,uint128,uint128)",
+            "checkSmallNumeratorGuard(uint128,uint128,uint128)",
+            "checkZeroFactorGuard(uint128,uint128,uint128,uint256)",
+            "checkQuotientAtGuardLimit(uint256,uint256)",
+            "checkUtilizationReservesAboveCash(uint256,uint256,uint256)",
+            "checkUtilizationReservesBelowBorrows(uint256,uint256,uint256)",
+            "checkUtilizationStrictlyBelowWad(uint256,uint256,uint256)",
+            "checkUtilizationWrappedSum(uint256,uint256,uint256)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(
@@ -10503,7 +11116,9 @@ contract SymbolicCollateralRatio {
 
 // Vaults round shares up as `(assets * supply + total - 1) / total` and down as
 // `assets * supply / total`. The ceiling is at least the floor and at most one above it once
-// the sum cannot wrap, from value ranges or a checked addition.
+// the sum cannot wrap, from value ranges or a checked addition. Aave's WadRayMath rounds half up
+// as `(a * b + WAD / 2) / WAD` and `(a * RAY + b / 2) / b`, which is also at most one above the
+// floor, as is any addend up to the divisor once `n / d + 1` cannot wrap.
 #[forgetest_init]
 fn symbolic_proves_additive_ceiling_bounds(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_additive_ceiling_bounds");
@@ -10570,6 +11185,79 @@ contract SymbolicCeilingBounds {
         require(d != 0 && e != 0);
         assert((uint256(n) + d - 1) / d <= uint256(n) / e + 1);
     }
+
+    function checkWadMulHalfUp(uint128 a, uint128 b) public pure {
+        assert((uint256(a) * b + 5e17) / 1e18 <= uint256(a) * b / 1e18 + 1);
+    }
+
+    function checkRayDivHalfUp(uint128 a, uint128 b) public pure {
+        require(b != 0);
+        assert((uint256(a) * 1e27 + b / 2) / b <= uint256(a) * 1e27 / b + 1);
+    }
+
+    // A zero `b` reverts in the checked division before the assertion.
+    function checkRayDivHalfUpUnguarded(uint128 a, uint128 b) public pure {
+        assert((uint256(a) * 1e27 + b / 2) / b <= uint256(a) * 1e27 / b + 1);
+    }
+
+    // A wrapped sum only shrinks the dividend, and `n / d + 1` cannot wrap once `d >= 2`.
+    function checkWrappedHalfUpWideDivisor(uint256 n, uint256 d) public pure {
+        require(d >= 2);
+        unchecked {
+            assert((n + d / 2) / d <= n / d + 1);
+        }
+    }
+
+    // A guarded offset up to the divisor, including the divisor itself, is decided from the guard.
+    function checkGuardedHalfUpOffset(uint256 n, uint256 e, uint256 d) public pure {
+        require(d >= 2 && e <= d);
+        unchecked {
+            assert((n + e) / d <= n / d + 1);
+        }
+    }
+
+    function checkDivisorOffset(uint256 n, uint256 d) public pure {
+        require(d >= 2);
+        unchecked {
+            assert((n + d) / d <= n / d + 1);
+        }
+    }
+
+    function checkWrappedHalfUpFloorPlusOne(uint256 n, uint256 d) public pure {
+        require(d != 0);
+        unchecked {
+            assert((n + d / 2) / d <= n / d + 1);
+        }
+    }
+
+    function checkCheckedHalfUpWrappedFloorPlusOne(uint256 n, uint256 d) public pure {
+        require(d != 0);
+        uint256 up = (n + d / 2) / d;
+        unchecked {
+            assert(up <= n / d + 1);
+        }
+    }
+
+    function checkAddendAboveDivisor(uint128 n, uint128 d) public pure {
+        require(d != 0);
+        uint256 e = uint256(d) + 1;
+        assert((uint256(n) + e) / d <= uint256(n) / d + 1);
+    }
+
+    function checkHalfUpOtherDivisor(uint128 a, uint128 b, uint128 c) public pure {
+        require(b != 0 && c != 0);
+        assert((uint256(a) * 1e27 + b / 2) / b <= uint256(a) * 1e27 / c + 1);
+    }
+
+    function checkHalfUpOtherNumerator(uint128 a, uint128 b, uint128 c) public pure {
+        require(b != 0);
+        assert((uint256(a) + b / 2) / b <= uint256(c) / b + 1);
+    }
+
+    function checkHalfOfOtherValue(uint128 n, uint128 c, uint128 d) public pure {
+        require(d != 0);
+        assert((uint256(n) + c / 2) / d <= uint256(n) / d + 1);
+    }
 }
 "#,
     );
@@ -10582,10 +11270,22 @@ contract SymbolicCeilingBounds {
             .get_output()
             .stdout
             .clone();
+        // Unoptimized, `rayDiv` still queries the solver for its overflow-checked product.
+        let ray_div =
+            ["checkRayDivHalfUp(uint128,uint128)", "checkRayDivHalfUpUnguarded(uint128,uint128)"];
+        let (without_queries, with_queries) =
+            if optimized { (&ray_div[..], &[][..]) } else { (&[][..], &ray_div[..]) };
         for signature in [
             "checkCeilingAboveFloor(uint128,uint128,uint128)",
             "checkCeilingAtMostFloorPlusOne(uint128,uint128,uint128)",
-        ] {
+            "checkWadMulHalfUp(uint128,uint128)",
+            "checkWrappedHalfUpWideDivisor(uint256,uint256)",
+            "checkGuardedHalfUpOffset(uint256,uint256,uint256)",
+            "checkDivisorOffset(uint256,uint256)",
+        ]
+        .into_iter()
+        .chain(without_queries.iter().copied())
+        {
             let result = json_test_result(&output, signature);
             assert_eq!(
                 result["symbolic"]["status"], "pass",
@@ -10597,12 +11297,16 @@ contract SymbolicCeilingBounds {
             );
         }
         // A checked `n + d` leaves its `d <= ~n` guard instead of a bounded range.
-        let signature = "checkCheckedCeilingAboveFloor(uint256,uint256)";
-        let result = json_test_result(&output, signature);
-        assert_eq!(
-            result["symbolic"]["status"], "pass",
-            "{signature}, optimized={optimized}: {result}"
-        );
+        for signature in ["checkCheckedCeilingAboveFloor(uint256,uint256)"]
+            .into_iter()
+            .chain(with_queries.iter().copied())
+        {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "pass",
+                "{signature}, optimized={optimized}: {result}"
+            );
+        }
         for signature in [
             "checkWrappedCeilingAboveFloor(uint256,uint256)",
             "checkWrappedCeilingAtMostFloorPlusOne(uint256,uint256)",
@@ -10610,6 +11314,12 @@ contract SymbolicCeilingBounds {
             "checkCeilingAtMostFloor(uint128,uint128)",
             "checkOtherDivisor(uint128,uint128,uint128)",
             "checkOtherDivisorPlusOne(uint128,uint128,uint128)",
+            "checkWrappedHalfUpFloorPlusOne(uint256,uint256)",
+            "checkCheckedHalfUpWrappedFloorPlusOne(uint256,uint256)",
+            "checkAddendAboveDivisor(uint128,uint128)",
+            "checkHalfUpOtherDivisor(uint128,uint128,uint128)",
+            "checkHalfUpOtherNumerator(uint128,uint128,uint128)",
+            "checkHalfOfOtherValue(uint128,uint128,uint128)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(
