@@ -62,6 +62,9 @@ pub trait FoundryTransactionBuilder<N: Network>: NetworkTransactionBuilder<N> {
     /// Reset gas limit
     fn reset_gas_limit(&mut self);
 
+    /// Removes the gas price and the EIP-1559 fees, leaving the request unpriced.
+    fn reset_gas_fees(&mut self);
+
     /// Get the max fee per blob gas for the transaction.
     fn max_fee_per_blob_gas(&self) -> Option<u128> {
         None
@@ -347,6 +350,12 @@ impl FoundryTransactionBuilder<Ethereum> for TransactionRequest {
         self.gas = None;
     }
 
+    fn reset_gas_fees(&mut self) {
+        self.gas_price = None;
+        self.max_fee_per_gas = None;
+        self.max_priority_fee_per_gas = None;
+    }
+
     fn max_fee_per_blob_gas(&self) -> Option<u128> {
         self.max_fee_per_blob_gas
     }
@@ -384,6 +393,12 @@ impl FoundryTransactionBuilder<Ethereum> for TransactionRequest {
 impl FoundryTransactionBuilder<AnyNetwork> for WithOtherFields<TransactionRequest> {
     fn reset_gas_limit(&mut self) {
         self.gas = None;
+    }
+
+    fn reset_gas_fees(&mut self) {
+        self.gas_price = None;
+        self.max_fee_per_gas = None;
+        self.max_priority_fee_per_gas = None;
     }
 
     fn max_fee_per_blob_gas(&self) -> Option<u128> {
@@ -426,6 +441,13 @@ impl FoundryTransactionBuilder<Base> for BaseTransactionRequest {
         self.as_mut().gas = None;
     }
 
+    fn reset_gas_fees(&mut self) {
+        let tx = self.as_mut();
+        tx.gas_price = None;
+        tx.max_fee_per_gas = None;
+        tx.max_priority_fee_per_gas = None;
+    }
+
     fn authorization_list(&self) -> Option<&Vec<SignedAuthorization>> {
         self.as_ref().authorization_list.as_ref()
     }
@@ -439,6 +461,13 @@ impl FoundryTransactionBuilder<Base> for BaseTransactionRequest {
 impl FoundryTransactionBuilder<Optimism> for OpTransactionRequest {
     fn reset_gas_limit(&mut self) {
         self.as_mut().gas = None;
+    }
+
+    fn reset_gas_fees(&mut self) {
+        let tx = self.as_mut();
+        tx.gas_price = None;
+        tx.max_fee_per_gas = None;
+        tx.max_priority_fee_per_gas = None;
     }
 
     fn authorization_list(&self) -> Option<&Vec<SignedAuthorization>> {
@@ -459,6 +488,12 @@ const TEMPO_BROWSER_WEBAUTHN_DATA_SIZE: u16 = 1_400;
 impl FoundryTransactionBuilder<TempoNetwork> for TempoTransactionRequest {
     fn reset_gas_limit(&mut self) {
         self.gas = None;
+    }
+
+    fn reset_gas_fees(&mut self) {
+        self.gas_price = None;
+        self.max_fee_per_gas = None;
+        self.max_priority_fee_per_gas = None;
     }
 
     fn authorization_list(&self) -> Option<&Vec<SignedAuthorization>> {

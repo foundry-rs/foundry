@@ -20,6 +20,7 @@ use foundry_common::{
     tempo::{
         configurable_account::{ConfigurableAccountSigner, simulation_spec},
         is_tempo_hardfork_active, maybe_print_fee_token, resolve_and_set_fee_token,
+        resolve_and_set_sponsor_fee_token,
     },
 };
 use foundry_config::{Chain, Config, Eip1559FeeEstimatePreset};
@@ -88,7 +89,6 @@ where
     P: Provider<N>,
 {
     if let Some(sponsor) = sponsor {
-        let provider = provider.map(|p| p as &dyn Provider<N>);
         sponsor.resolve_and_set_fee_token(provider, tx).await?;
         sponsor.attach_and_print::<N>(tx, payer).await?;
     }
@@ -124,9 +124,8 @@ where
     N::TransactionRequest: FoundryTransactionBuilder<N>,
     P: Provider<N>,
 {
-    if fee_payer.is_some() {
-        let provider = provider.map(|p| p as &dyn Provider<N>);
-        resolve_and_set_fee_token(provider, tx, fee_payer).await?;
+    if let Some(fee_payer) = fee_payer {
+        resolve_and_set_sponsor_fee_token(provider, tx, fee_payer).await?;
     }
     tx.compute_sponsor_hash(from)
         .ok_or_else(|| eyre::eyre!("This network does not support sponsored transactions"))

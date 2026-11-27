@@ -30,7 +30,7 @@ use foundry_common::{
     shell,
     tempo::{
         configurable_account::ConfigurableAccountSigner, mark_sponsored_gas_estimation,
-        maybe_print_fee_token, resolve_and_set_fee_token,
+        maybe_print_fee_token, resolve_and_set_fee_token, resolve_and_set_sponsor_fee_token,
     },
 };
 use foundry_compilers::{
@@ -619,6 +619,15 @@ impl CreateArgs {
                     "max priority fee per gas ({priority}) cannot exceed max fee per gas ({max_fee})"
                 );
             }
+        }
+
+        if let Some(sponsor) = self.tx.tempo.sponsor {
+            resolve_and_set_sponsor_fee_token(
+                resolve_unknown_fee_token_symbol.then_some(&provider),
+                &mut deployer.tx,
+                sponsor,
+            )
+            .await?;
         }
 
         // set access list if specified

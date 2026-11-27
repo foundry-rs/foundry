@@ -1083,6 +1083,51 @@ async fn send_with_sponsor_url_uses_anvil_builtin_fee_payer(cmd: _) {
     assert!(sponsor_after < sponsor_before, "sponsor must pay the transaction fee");
 }
 
+/// A T14 Tempo node, whose genesis stores a fee token for the first dev accounts: AlphaUSD for
+/// account 0, BetaUSD for 1, ThetaUSD for 2 and PathUSD for the others.
+fn tempo_t14() -> NodeConfig {
+    NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))
+}
+
+// The sponsor of a sender holding no fee token to spare pays in another token than the PathUSD
+// the sender moves. The estimate must be unpriced, or the node caps it by the sender's balance,
+// and must use the sponsor's fee token, or the transfer runs out of gas.
+#[casttest]
+async fn send_sponsored_for_sender_without_fee_token_balance(cmd: _) {
+    let (api, handle) = anvil::spawn(tempo_t14()).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let (funder, _) = dev_account(&handle, 0);
+    let (sponsor, sponsor_key) = dev_account(&handle, 1);
+    api.anvil_set_fee_token(sponsor, ALPHA_USD_ADDRESS).await.unwrap();
+    let sender = PrivateKeySigner::random();
+    let recipient = Address::repeat_byte(0x42).to_string();
+
+    let tip20 = ITIP20::new(PATH_USD_ADDRESS, &provider);
+    let fund = TransactionRequest::default()
+        .from(funder)
+        .to(PATH_USD_ADDRESS)
+        .with_input(tip20.transfer(sender.address(), U256::from(1000)).calldata().clone());
+    let funded =
+        provider.send_transaction(WithOtherFields::new(fund)).await.unwrap().get_receipt().await;
+    assert!(funded.unwrap().status());
+
+    let output = cmd
+        .cast_fuse()
+        .args(["send", &PATH_USD_ADDRESS.to_string(), "transfer(address,uint256)", &recipient])
+        .args(["1000", "--private-key", &hex::encode_prefixed(sender.to_bytes())])
+        .args(["--tempo.sponsor", &sponsor.to_string()])
+        .args(["--tempo.sponsor-signer", &format!("private-key://{sponsor_key}")])
+        .args(["--rpc-url", &rpc, "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let receipt: serde_json::Value = parse_json(output.trim()).unwrap();
+    assert_eq!(receipt["status"], "0x1", "{receipt}");
+    assert_eq!(receipt["feePayer"], serde_json::to_value(sponsor).unwrap(), "{receipt}");
+    assert_eq!(receipt["feeToken"], serde_json::to_value(ALPHA_USD_ADDRESS).unwrap(), "{receipt}");
+}
+
 #[casttest]
 fn tip20_logo_check_accepts_valid_values(cmd: _) {
     for uri in ["", "https://example.com/logo.png", "HTTP://example.com/logo.png", "ipfs://token"] {

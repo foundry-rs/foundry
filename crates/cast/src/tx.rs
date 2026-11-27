@@ -24,7 +24,7 @@ use foundry_common::{
     shell,
     tempo::{
         ensure_expiring_nonce_discriminator_active, is_tempo_hardfork_active,
-        mark_sponsored_gas_estimation,
+        mark_sponsored_gas_estimation, resolve_and_set_sponsor_fee_token,
     },
 };
 use foundry_config::{Chain, Config, Eip1559FeeEstimatePreset};
@@ -494,6 +494,9 @@ struct TxBuilderInner<N: Network, P> {
     gas_estimate_multiplier: Option<u64>,
     /// Whether a Tempo fee payer will sponsor the transaction.
     sponsored: bool,
+    /// The Tempo fee payer sponsoring the transaction, whose fee token is resolved before gas
+    /// estimation. `None` when it is not known, or the RPC must not be queried for it.
+    sponsor: Option<Address>,
     auth: Vec<CliAuthorizationList>,
     chain: Chain,
     etherscan_api_key: Option<String>,
@@ -589,6 +592,7 @@ where
                 eip1559_fee_estimate: config.eip1559_fee_estimate,
                 gas_estimate_multiplier: None,
                 sponsored: tx_opts.tempo.is_sponsored(),
+                sponsor: tx_opts.tempo.sponsor.filter(|_| !config.eth_rpc_curl),
                 chain,
                 etherscan_api_key,
                 etherscan_api_url,
@@ -738,6 +742,10 @@ where
         // identifies this as an AA batch transaction. The `calls` field determines the actual
         // targets. If `to` is set, `build_aa()` would add a spurious extra call.
         self.tx.clear_batch_to();
+
+        if fill && let Some(sponsor) = self.sponsor {
+            resolve_and_set_sponsor_fee_token(Some(&self.provider), &mut self.tx, sponsor).await?;
+        }
 
         // Read-only calls do not need a nonce unless it is required to sign an authorization.
         // Avoid an otherwise unused `eth_getTransactionCount` request for raw transactions.

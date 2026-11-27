@@ -95,20 +95,21 @@ impl TempoSponsor {
         self.sponsor
     }
 
-    /// Resolves the fee token paid by this sponsor and applies it to the transaction request.
+    /// Resolves the fee token paid by this sponsor and applies it to the transaction request, as
+    /// [`resolve_and_set_sponsor_fee_token`] does.
     ///
     /// This must happen before computing a sponsor digest, because Tempo sponsor signatures commit
     /// to the fee token.
     pub async fn resolve_and_set_fee_token<N>(
         &self,
-        provider: Option<&dyn Provider<N>>,
+        provider: Option<&impl Provider<N>>,
         tx: &mut N::TransactionRequest,
     ) -> Result<Option<Address>>
     where
         N: Network,
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
-        resolve_and_set_fee_token(provider, tx, Some(self.sponsor)).await
+        resolve_and_set_sponsor_fee_token(provider, tx, self.sponsor).await
     }
 
     pub async fn attach_and_print<N: Network>(
@@ -299,14 +300,7 @@ where
     let is_aa = tx.is_tempo_aa();
     let tx_from = tx.from();
 
-    // A resolved fee token would classify the request as Tempo AA. AA transactions require a
-    // non-empty call list, which a contract creation lacks, and carry authorizations in their own
-    // list, so an EIP-7702 request would silently lose its Ethereum authorization list. Leave both
-    // as Ethereum transactions; the protocol selects the same fee token for them when charging
-    // fees.
-    if (!has_call_list && calls.iter().any(|(to, _)| to.is_create()))
-        || (!is_aa && tx.authorization_list().is_some_and(|auths| !auths.is_empty()))
-    {
+    if keeps_fee_token_unset::<N>(tx) {
         return Ok(None);
     }
 
@@ -331,6 +325,83 @@ where
     let Some(fee_token) = fee_token else { return Ok(None) };
     tx.set_fee_token(fee_token);
     Ok(Some(fee_token))
+}
+
+/// Resolves and applies the fee token `sponsor` pays for the Tempo AA transaction `tx` with.
+///
+/// Resolves like [`resolve_and_set_fee_token`] for the sponsor. A sponsor without a stored
+/// preference pays with a fallback fee token of the active hardfork, so the first one it holds is
+/// set, or the first one when it holds none. The protocol charges the first whose balance covers
+/// the transaction's maximum fee; a balance too small for it is not told apart here, so such a
+/// sponsor is rejected when the transaction is submitted.
+///
+/// Gas estimation needs the token: a node estimates a sponsored request as if the sender paid,
+/// and the fee token that request resolves to warms storage the transaction may touch too, so a
+/// sponsor paying with another token can run out of gas. The fallback token is left unset when
+/// the hardfork cannot be determined.
+pub async fn resolve_and_set_sponsor_fee_token<N>(
+    provider: Option<&impl Provider<N>>,
+    tx: &mut N::TransactionRequest,
+    sponsor: Address,
+) -> Result<Option<Address>>
+where
+    N: Network,
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
+    let dyn_provider = provider.map(|p| p as &dyn Provider<N>);
+    if let Some(fee_token) = resolve_and_set_fee_token(dyn_provider, tx, Some(sponsor)).await? {
+        return Ok(Some(fee_token));
+    }
+    let Some(provider) = provider.filter(|_| tx.is_tempo_aa() && !keeps_fee_token_unset::<N>(tx))
+    else {
+        return Ok(None);
+    };
+    let Ok(hardfork) = active_tempo_hardfork(provider).await else { return Ok(None) };
+    let fallback_tokens = hardfork.fallback_fee_tokens();
+    let mut fee_token = fallback_tokens[0];
+    if fallback_tokens.len() > 1 {
+        for &token in fallback_tokens {
+            if !fee_token_balance(provider, token, sponsor).await?.is_zero() {
+                fee_token = token;
+                break;
+            }
+        }
+    }
+    tx.set_fee_token(fee_token);
+    Ok(Some(fee_token))
+}
+
+/// Whether no fee token is resolved for `tx`.
+///
+/// A resolved fee token would classify the request as Tempo AA. AA transactions require a
+/// non-empty call list, which a contract creation lacks, and carry authorizations in their own
+/// list, so an EIP-7702 request would silently lose its Ethereum authorization list. Both are left
+/// as Ethereum transactions; the protocol selects the same fee token for them when charging fees.
+fn keeps_fee_token_unset<N>(tx: &N::TransactionRequest) -> bool
+where
+    N: Network,
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
+    (!tx.has_tempo_call_list() && tx.tempo_calls().iter().any(|(to, _)| to.is_create()))
+        || (!tx.is_tempo_aa() && tx.authorization_list().is_some_and(|auths| !auths.is_empty()))
+}
+
+async fn fee_token_balance<N>(
+    provider: &impl Provider<N>,
+    fee_token: Address,
+    account: Address,
+) -> Result<U256>
+where
+    N: Network,
+{
+    let tx = N::TransactionRequest::default()
+        .with_to(fee_token)
+        .with_input(ITIP20::balanceOfCall { account }.abi_encode());
+    let output = provider
+        .call(tx)
+        .await
+        .wrap_err_with(|| format!("failed to read the {fee_token} balance of {account}"))?;
+    ITIP20::balanceOfCall::abi_decode_returns(&output).wrap_err("failed to decode TIP-20 balance")
 }
 
 async fn stored_user_fee_token<N>(
