@@ -5,7 +5,7 @@ pub mod configurable_account;
 
 use crate::FoundryTransactionBuilder;
 use alloy_network::{Network, TransactionBuilder};
-use alloy_primitives::{Address, B256, Signature, TxKind, U256, address, uint};
+use alloy_primitives::{Address, B256, Signature, TxKind, address};
 use alloy_provider::Provider;
 use alloy_signer::Signer;
 use alloy_sol_types::SolCall;
@@ -69,10 +69,6 @@ pub const ALPHA_USD_ADDRESS: Address = address!("0x20C00000000000000000000000000
 pub const BETA_USD_ADDRESS: Address = address!("0x20C0000000000000000000000000000000000002");
 pub const THETA_USD_ADDRESS: Address = address!("0x20C0000000000000000000000000000000000003");
 pub const OUSD_ADDRESS: Address = address!("0x20c0000000000000000000006a37DA5C996874BE");
-
-/// The balance a Tempo node answers `eth_getBalance` with, since Tempo has no native token.
-pub const NATIVE_BALANCE_PLACEHOLDER: U256 =
-    uint!(4242424242424242424242424242424242424242424242424242424242424242424242424242_U256);
 
 /// Gas sponsor configuration for Tempo fee-payer signatures.
 #[derive(Clone, Debug)]

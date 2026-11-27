@@ -8381,6 +8381,95 @@ contract TempoFixedGas is Script {
     assert_eq!(estimates.lock().unwrap().len(), 1);
 }
 
+// Simulated gas covers what a call spends before Tempo's uncapped storage credit refunds (TIP-1060)
+// are credited, such as clearing one slot and creating another.
+#[forgetest_init]
+async fn tempo_script_gas_covers_storage_credit_refunds(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "TempoRefund.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract Slots {
+    uint256 a = 1;
+    uint256 b;
+
+    function swap() external {
+        a = 0;
+        b = 1;
+    }
+}
+
+contract TempoRefund is Script {
+    function run() external {
+        vm.startBroadcast();
+        new Slots().swap();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    cmd.arg("script").arg(&script).args([
+        "--tc",
+        "TempoRefund",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--network",
+        "tempo",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+    ]);
+    cmd.assert_success();
+    let sequence: Value =
+        foundry_common::fs::read_json_file(&latest_broadcast_path(prj.root())).unwrap();
+    let receipts = sequence["receipts"].as_array().unwrap();
+    assert_eq!(receipts.len(), 2);
+    assert!(receipts.iter().all(|receipt| receipt["status"] == "0x1"), "{receipts:?}");
+}
+
+// Simulation at a pinned hardfork older than the chain's prices transactions below it, so Tempo
+// transactions are estimated over RPC instead.
+#[forgetest_init]
+async fn tempo_script_estimates_over_rpc_below_chain_hardfork(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.hardfork = Some("tempo:T0".parse::<foundry_config::FoundryHardfork>().unwrap());
+    });
+    let script = prj.add_script(
+        "TempoPinned.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract C {
+    uint256 x = 1;
+}
+
+contract TempoPinned is Script {
+    function run() external {
+        vm.startBroadcast();
+        new C();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let (rpc, estimates) =
+        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_estimateGas").await;
+    cmd.arg("script").arg(&script).args([
+        "--rpc-url",
+        &rpc,
+        "--network",
+        "tempo",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+    ]);
+    cmd.assert_success();
+    assert_eq!(estimates.lock().unwrap().len(), 1);
+}
+
 #[forgetest_init]
 async fn tempo_batch_broadcasts_deploy_code_via_create2(prj: _, cmd: _) {
     prj.add_source(
