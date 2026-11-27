@@ -258,7 +258,8 @@ pub struct RpcData {
     /// Chain IDs already fetched for each RPC URL.
     pub(crate) chain_ids: HashMap<String, u64>,
     /// Hardfork that each RPC URL's transactions were simulated under, for the specs that report
-    /// one. Caps gas estimate margins on chains whose hardfork schedule is unknown.
+    /// one: Tempo, Base, and Monad, but not Ethereum or Optimism. Caps gas estimate margins on
+    /// chains whose hardfork schedule is unknown.
     pub(crate) hardforks: HashMap<String, FoundryHardfork>,
 }
 

@@ -9233,7 +9233,9 @@ Warning: Simulated with Foundry's default sender, so addresses and nonces may no
 }
 
 // Tempo caps transactions at 30M gas. Foundry knows no hardfork schedule for a local Tempo chain,
-// so the cap that keeps the default 130% gas estimate margin sendable comes from the node.
+// so the cap that keeps the default 130% gas estimate margin sendable comes from the node. Anvil
+// lifts the cap by default, so the test checks the gas limits recorded and sent rather than a
+// rejection.
 #[forgetest_init]
 async fn tempo_script_caps_gas_margin_on_unscheduled_chain(prj: _, cmd: _) {
     const TEMPO_TX_GAS_LIMIT_CAP: u64 = 30_000_000;

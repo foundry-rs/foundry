@@ -1337,6 +1337,8 @@ impl<'a> IntoIterator for &'a Submodules {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_provider::ProviderBuilder;
+    use alloy_transport::mock::Asserter;
     use foundry_common::fs;
     use foundry_evm::hardforks::TempoHardfork;
     use std::{env, fs::File, io::Write};
@@ -1409,6 +1411,24 @@ mod tests {
         assert_eq!(apply(25_000_000, 31337, tempo(TempoHardfork::T1A)), 30_000_000);
         assert_eq!(apply(15_000_000, 31337, tempo(TempoHardfork::T1)), 1 << 24);
         assert_eq!(apply(15_000_000, 42431, tempo(TempoHardfork::T1)), 19_500_000);
+    }
+
+    #[tokio::test]
+    async fn gas_cap_hardfork_queries_only_unscheduled_chains_with_a_margin() {
+        let asserter = Asserter::new();
+        asserter.push_success(&serde_json::json!({ "active": "T1A", "schedule": [] }));
+        let provider =
+            ProviderBuilder::<_, _, AnyNetwork>::default().connect_mocked_client(asserter.clone());
+
+        // Neither a known schedule nor a missing margin consumes the queued response.
+        assert_eq!(gas_cap_hardfork(&provider, Some(4217), Some(130)).await, None);
+        assert_eq!(gas_cap_hardfork(&provider, Some(31337), None).await, None);
+        assert_eq!(gas_cap_hardfork(&provider, None, Some(130)).await, None);
+        assert_eq!(
+            gas_cap_hardfork(&provider, Some(31337), Some(130)).await,
+            Some(TempoHardfork::T1A.into())
+        );
+        assert!(asserter.read_q().is_empty());
     }
 
     #[test]

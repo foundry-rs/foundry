@@ -901,7 +901,8 @@ Warning: Solidity metadata contains absolute filesystem paths that may reveal in
 }
 
 // Foundry knows no hardfork schedule for a local Tempo chain, so the 30M transaction cap that keeps
-// a gas estimate margin sendable comes from the node.
+// a gas estimate margin sendable comes from the node. Anvil lifts the cap by default, so the test
+// checks the gas limit sent rather than a rejection.
 #[forgetest]
 async fn create_caps_gas_margin_on_unscheduled_tempo_chain(prj: _, cmd: _) {
     prj.add_source("LargeRuntime.sol", &generate_large_runtime_contract(24_000));

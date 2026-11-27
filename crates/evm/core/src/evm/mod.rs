@@ -278,14 +278,14 @@ pub type InterpreterFor<'frame, 'host, FEN> =
 /// execution factory enforces it.
 ///
 /// A chain whose hardfork schedule this build does not know, such as a local or development node,
-/// uses `reported`, the hardfork its node reports. Returns `None` when neither is known, or when
-/// the hardfork has no such cap.
+/// uses `fallback`, the hardfork its node reports or the transaction was simulated under. Returns
+/// `None` when neither is known, or when the hardfork has no such cap.
 pub fn tx_gas_limit_cap(
     chain_id: u64,
     timestamp: u64,
-    reported: Option<FoundryHardfork>,
+    fallback: Option<FoundryHardfork>,
 ) -> Option<u64> {
-    let hardfork = FoundryHardfork::from_chain_and_timestamp(chain_id, timestamp).or(reported)?;
+    let hardfork = FoundryHardfork::from_chain_and_timestamp(chain_id, timestamp).or(fallback)?;
     // Under EIP-8037 the cap only bounds regular gas, not the transaction's gas limit.
     if evm2::SpecId::from(hardfork) >= evm2::SpecId::AMSTERDAM {
         return None;
