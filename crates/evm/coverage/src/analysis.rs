@@ -993,6 +993,7 @@ impl SourceAnalysis {
     #[instrument(name = "SourceAnalysis::new", skip_all)]
     pub fn new(data: &SourceFiles, output: &ProjectCompileOutput) -> eyre::Result<Self> {
         let mut resolved_empty_special_functions = Vec::new();
+        let mut excluded_counts = Vec::new();
         let mut sourced_items = output.parser().solc().compiler().enter(|compiler| {
             let hir_source_ids = Arc::new(
                 data.sources
@@ -1005,6 +1006,23 @@ impl SourceAnalysis {
             );
             resolved_empty_special_functions =
                 resolve_empty_special_functions(compiler.gcx(), &hir_source_ids);
+            // Sources that the report leaves out, such as libraries and tests, still call the
+            // functions of the reported ones.
+            let excluded = compiler
+                .gcx()
+                .hir
+                .source_ids()
+                .filter(|id| !hir_source_ids.contains_key(id))
+                .collect::<Vec<_>>();
+            excluded_counts = excluded
+                .par_iter()
+                .map(|&hir_source_id| {
+                    let mut visitor =
+                        SourceVisitor::new(u32::MAX, compiler.gcx(), hir_source_ids.clone());
+                    visitor.resolve_function_calls(hir_source_id);
+                    (visitor.callee_calls, visitor.member_calls, visitor.value_refs)
+                })
+                .collect::<Vec<_>>();
             data.sources
                 .par_iter()
                 .map(|(&source_id, path)| {
@@ -1080,7 +1098,9 @@ impl SourceAnalysis {
         let mut callee_calls = HashMap::<_, (u32, Arc<str>)>::default();
         let mut member_calls = HashMap::<_, u32>::default();
         let mut value_refs = HashMap::<_, u32>::default();
-        for (idx, items, hints, branches, calls, members, refs) in sourced_items {
+        let mut merge_counts = |calls: HashMap<_, (u32, Arc<str>)>,
+                                members: HashMap<_, u32>,
+                                refs: HashMap<_, u32>| {
             for (function, count) in refs {
                 *value_refs.entry(function).or_default() += count;
             }
@@ -1090,6 +1110,12 @@ impl SourceAnalysis {
             for (name, count) in members {
                 *member_calls.entry(name).or_default() += count;
             }
+        };
+        for (calls, members, refs) in excluded_counts {
+            merge_counts(calls, members, refs);
+        }
+        for (idx, items, hints, branches, calls, members, refs) in sourced_items {
+            merge_counts(calls, members, refs);
             let base = all_items.len() as u32;
             anchor_hints.extend(hints.into_iter().map(|(id, hint)| (base + id as u32, hint)));
             branch_kinds.extend(branches.into_iter().map(|(branch, kind)| ((idx, branch), kind)));
