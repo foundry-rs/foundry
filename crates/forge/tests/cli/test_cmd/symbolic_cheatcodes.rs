@@ -3865,6 +3865,120 @@ Suite result: FAILED. 1 passed; 9 failed; 0 skipped; [ELAPSED]
 "#]]);
 }
 
+// A read of an account's empty code does not keep state written through a free address from
+// settling onto it, while a read of state that the written state would change still does.
+#[forgetest_init]
+fn symbolic_fixed_address_settles_after_code_read(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_fixed_address_settles_after_code_read");
+
+    prj.add_test(
+        "SymbolicSettleAfterRead.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicSettleAfterRead is Test {
+    // Fails for `who == 0xB0B`: the code read saw no code, which the balance does not change.
+    function checkCachedRead(address who) public {
+        address recipient = address(0xB0B);
+        vm.deal(who, 5);
+        require(recipient.code.length == 0);
+        if (who == recipient) assert(who.balance != 5);
+    }
+
+    // The balance read saw 0 where `who == 0xB0B` holds 5, so the call that settles `who`
+    // would hide the failure.
+    function checkBalanceRead(address who) public {
+        address recipient = address(0xB0B);
+        vm.deal(who, 5);
+        require(recipient.code.length == 0);
+        uint256 seen = recipient.balance;
+        if (who == recipient) {
+            address(4).staticcall("");
+            assert(seen != 5);
+        }
+    }
+
+    // A reverted read still saw 0 where `who == 0xB0B` holds 5.
+    function checkBalanceReadReverted(address who) public {
+        address recipient = address(0xB0B);
+        vm.deal(who, 5);
+        uint256 snapshot = vm.snapshotState();
+        uint256 seen = recipient.balance;
+        vm.revertToState(snapshot);
+        if (who == recipient) {
+            address(4).staticcall("");
+            assert(seen != 5);
+        }
+    }
+
+    function readBalanceThenFail() external view {
+        uint256 seen = address(0xB0B).balance;
+        assembly {
+            mstore(0, seen)
+            revert(0, 32)
+        }
+    }
+
+    // A read in a failed frame still saw 0 where `who == 0xB0B` holds 5.
+    function checkBalanceReadInFailedCall(address who) public {
+        vm.deal(who, 5);
+        uint256 seen;
+        try this.readBalanceThenFail() {}
+        catch (bytes memory err) {
+            seen = abi.decode(err, (uint256));
+        }
+        if (who == address(0xB0B)) {
+            address(4).staticcall("");
+            assert(seen != 5);
+        }
+    }
+
+    // The create saw no nonce where `who` names its address, which `vm.setNonce` gave a nonce,
+    // so the real create collides without running the reverting initcode and returns no data.
+    function checkNonceThenCreate(address who) public {
+        vm.setNonce(who, 5);
+        address predicted = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
+        uint256 returned;
+        assembly {
+            // Initcode `revert(0, 32)`.
+            mstore(0, shl(216, 0x60206000fd))
+            pop(create(0, 0, 5))
+            returned := returndatasize()
+        }
+        if (who == predicted) {
+            address(4).staticcall("");
+            assert(returned == 32);
+        }
+    }
+
+    // The code read saw no code where `who == 0xB0B` holds the etched code.
+    function checkCodeReadAfterEtch(address who) public {
+        vm.assume(uint160(who) > 0x200);
+        vm.etch(who, hex"00");
+        uint256 seen = address(0xB0B).code.length;
+        vm.assume(who == address(0xB0B));
+        assert(seen == who.code.length);
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicSettleAfterRead"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 6 tests for test/SymbolicSettleAfterRead.t.sol:SymbolicSettleAfterRead
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic address fixed to an account the run knew only after state was written through the address] checkBalanceRead(address) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic address fixed to an account the run knew only after state was written through the address] checkBalanceReadInFailedCall(address) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic address fixed to an account the run knew only after state was written through the address] checkBalanceReadReverted(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkCachedRead(address) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic address fixed to an account the run knew only after state was written through the address] checkCodeReadAfterEtch(address) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic address fixed to an account the run knew only after state was written through the address] checkNonceThenCreate(address) ([METRICS])
+Suite result: FAILED. 0 passed; 6 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
 #[forgetest_init]
 fn symbolic_cheatcode_state_survives_reverting_call(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_cheatcode_state_survives_reverting_call");
