@@ -13,13 +13,13 @@ use anvil::NodeConfig;
 use foundry_cli::utils::parse_json;
 use foundry_common::tempo::NATIVE_BALANCE_PLACEHOLDER;
 use foundry_evm::core::tempo::{ALPHA_USD_ADDRESS, PATH_USD_ADDRESS};
-use foundry_test_utils::util::OutputExt;
+use foundry_test_utils::{rpc::spawn_rpc_proxy_recording_method, util::OutputExt};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tempo_contracts::precompiles::{
     CONFIGURABLE_ACCOUNT_ADDRESS, CURRENT_COMMITTEE_ADDRESS, IConfigurableAccount,
     ICurrentCommittee, IReceivePolicyGuard, IRolesAuth, ITIP20, ITIP20Factory, ITIP403Registry,
-    NONCE_PRECOMPILE_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS,
-    TIP403_REGISTRY_ADDRESS,
+    NONCE_PRECOMPILE_ADDRESS, TIP_FEE_MANAGER_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS,
+    TIP20_FACTORY_ADDRESS, TIP403_REGISTRY_ADDRESS,
 };
 use tempo_hardfork::TempoHardfork;
 use tempo_primitives::{
@@ -2219,6 +2219,58 @@ async fn tempo_t0_expiring_nonce_key_uses_lane_nonce(cmd: _) {
 2
 
 "#]]);
+}
+
+/// `cast send` on a Tempo chain reads the chain ID once, to select the network, and the sender's
+/// fee token at most once, while filling the nonce and fees, whether or not the sender stored one.
+#[casttest]
+async fn tempo_send_reads_chain_id_and_fee_token_once(cmd: _) {
+    let (api, handle) = anvil::spawn(NodeConfig::test_tempo().with_chain_id(Some(4217u64))).await;
+    let node = handle.http_endpoint();
+    let (rpc, chain_ids) = spawn_rpc_proxy_recording_method(node.clone(), "eth_chainId").await;
+    let (rpc, calls) = spawn_rpc_proxy_recording_method(rpc, "eth_call").await;
+
+    // A new sender has not stored a fee token yet. Anvil caps its gas estimates by the native
+    // balance.
+    let (_, funder) = dev_account(&handle, 0);
+    let sender = PrivateKeySigner::from_bytes(&B256::repeat_byte(0x61)).unwrap();
+    api.anvil_set_balance(sender.address(), U256::from(10).pow(U256::from(18))).await.unwrap();
+    for token in [PATH_USD_ADDRESS, ALPHA_USD_ADDRESS] {
+        cmd.cast_fuse()
+            .args(["send", &token.to_string(), "transfer(address,uint256)"])
+            .args([&sender.address().to_string(), "1000000000", "--private-key", &funder])
+            .args(["--rpc-url", &node])
+            .assert_success();
+    }
+    let key = hex::encode_prefixed(sender.to_bytes());
+    let (target, fee_manager) = (Address::repeat_byte(0x73), TIP_FEE_MANAGER_ADDRESS);
+    let set_user_token = ["setUserToken(address)".to_string(), PATH_USD_ADDRESS.to_string()];
+
+    // Setting the fee token needs no lookup, since the call names it, and the last transaction
+    // pays with the stored fee token.
+    for (to, args, lookups) in
+        [(target, &[][..], 1), (fee_manager, &set_user_token[..], 0), (target, &[], 1)]
+    {
+        chain_ids.lock().unwrap().clear();
+        calls.lock().unwrap().clear();
+
+        cmd.cast_fuse()
+            .args(["send", &to.to_string()])
+            .args(args)
+            .args(["--private-key", &key, "--rpc-url", &rpc])
+            .assert_success();
+
+        assert_eq!(chain_ids.lock().unwrap().len(), 1, "{args:?}");
+        let fee_token_lookups = calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|params| {
+                serde_json::from_value::<Address>(params[0]["to"].clone()).ok() == Some(fee_manager)
+            })
+            .count();
+        assert_eq!(fee_token_lookups, lookups, "{args:?}");
+    }
 }
 
 // Tempo has no native token, so its nodes answer `eth_getBalance` with a placeholder.

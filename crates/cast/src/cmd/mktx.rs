@@ -133,7 +133,7 @@ impl MakeTxArgs {
             "--tempo.configurable-access-key cannot deploy: Tempo access keys cannot sign CREATE"
         );
 
-        let (network, signer, access_key) =
+        let (network, _, signer, access_key) =
             tempo::resolve_transaction_network_and_signer(&self.tx.tempo, &self.eth).await?;
         eyre::ensure!(
             !self.tempo_digest || network.is_tempo(),

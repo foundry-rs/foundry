@@ -25,7 +25,7 @@ use foundry_common::{
     provider::ProviderBuilder,
     tempo::{configurable_account::ConfigurableAccountSigner, maybe_print_fee_token},
 };
-use foundry_config::Config;
+use foundry_config::{Chain, Config};
 use foundry_wallets::{WalletSigner, wallet_browser::signer::BrowserSigner};
 use std::{path::PathBuf, str::FromStr};
 use tempo_alloy::{TempoNetwork, accounts::TempoAccountsWallet};
@@ -151,21 +151,23 @@ impl SendTxArgs {
             }
         }
 
-        let (network, signer, tempo_access_key) =
+        let (network, chain, signer, tempo_access_key) =
             tempo::resolve_transaction_network_and_signer(&self.tx.tempo, &self.send_tx.eth)
                 .await?;
 
         if network.is_tempo() {
-            return self.run_generic::<TempoNetwork>(signer, tempo_access_key).await;
+            return self
+                .run_generic_inner::<TempoNetwork>(signer, tempo_access_key, None, chain)
+                .await;
         }
 
         #[cfg(feature = "base")]
         if network.is_base() {
             super::validate_base_transaction_options(&self.tx)?;
-            return self.run_generic::<Base>(signer, None).await;
+            return self.run_generic_inner::<Base>(signer, None, None, chain).await;
         }
 
-        self.run_generic::<Ethereum>(signer, None).await
+        self.run_generic_inner::<Ethereum>(signer, None, None, chain).await
     }
 
     /// Runs a contract call with an already resolved browser signer.
@@ -179,7 +181,7 @@ impl SendTxArgs {
         N::TransactionRequest: FoundryTransactionBuilder<N>,
         N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
     {
-        self.run_generic_inner::<N>(None, None, Some(browser)).await
+        self.run_generic_inner::<N>(None, None, Some(browser), None).await
     }
 
     pub(crate) async fn run_generic<N: Network>(
@@ -193,14 +195,17 @@ impl SendTxArgs {
         N::TransactionRequest: FoundryTransactionBuilder<N>,
         N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
     {
-        self.run_generic_inner::<N>(pre_resolved_signer, access_key, None).await
+        self.run_generic_inner::<N>(pre_resolved_signer, access_key, None, None).await
     }
 
+    /// Sends the transaction. `chain` is the chain the caller already resolved, which is otherwise
+    /// read from the config or the RPC.
     async fn run_generic_inner<N: Network>(
         self,
         mut pre_resolved_signer: Option<WalletSigner>,
         mut access_key: Option<TempoAccountsWallet>,
         pre_resolved_browser: Option<BrowserSigner<N>>,
+        chain: Option<Chain>,
     ) -> Result<()>
     where
         N::TxEnvelope: From<Signed<N::UnsignedTx>>,
@@ -285,11 +290,20 @@ impl SendTxArgs {
         // The provider is not consulted for fee tokens in `--curl` mode.
         let fee_provider = (!config.eth_rpc_curl).then_some(&provider);
 
+        // An unsponsored sender's fee token is resolved while building the transaction, alongside
+        // its nonce and fees, unless the request is only rendered as `curl`. A browser wallet send
+        // attaches its fee payment after building, which leaves legacy requests without one.
+        let build_resolves_fee_token = !config.eth_rpc_curl
+            && !tx.tempo.is_sponsored()
+            && !send_tx.browser.browser
+            && pre_resolved_browser.is_none();
+
         let resolved_lane = resolve_lane(&mut tx.tempo, &config.root)?;
         let lane = resolved_lane.as_ref();
 
+        let mut chain = chain.or(config.chain);
         if has_session || access_key.is_some() {
-            let chain = get_chain(config.chain, &provider).await?;
+            let chain = *chain.insert(get_chain(chain, &provider).await?);
             access_key =
                 tempo::resolve_session_or_wallet_signer(&tx.tempo, &send_tx.eth.wallet, chain.id())
                     .await?
@@ -303,7 +317,7 @@ impl SendTxArgs {
 
         // A configurable account sender signs with its owners, which the RPC, a browser wallet or
         // an access key cannot do.
-        let configurable_account = if access_key.is_some()
+        let (configurable_account, chain) = if access_key.is_some()
             || unlocked
             || send_tx.browser.browser
             || pre_resolved_browser.is_some()
@@ -313,18 +327,22 @@ impl SendTxArgs {
                 "Tempo configurable accounts cannot be combined with --unlocked, --browser or an \
                  access key"
             );
-            None
+            (None, get_chain(chain, &provider).await?)
         } else {
-            tempo::resolve_configurable_account::<N>(
-                &tx.tempo,
-                &config,
-                &send_tx.eth.wallet,
-                &mut pre_resolved_signer,
-            )
-            .await?
+            // Detection does not depend on the chain, so a chain that is not known yet is
+            // requested at the same time.
+            tokio::try_join!(
+                tempo::resolve_configurable_account::<N>(
+                    &tx.tempo,
+                    &config,
+                    &send_tx.eth.wallet,
+                    &mut pre_resolved_signer,
+                ),
+                get_chain(chain, &provider),
+            )?
         };
 
-        let mut builder = CastTxBuilder::new(&provider, tx, &config)
+        let mut builder = CastTxBuilder::for_chain(&provider, tx, &config, chain)
             .await?
             .with_gas_estimate_multiplier(gas_estimate_multiplier)
             .with_to(to)
@@ -332,7 +350,9 @@ impl SendTxArgs {
             .with_code_sig_and_args(code, sig, args)
             .await?
             .with_blob_data(blob_data)?;
-        let chain = builder.chain();
+        if build_resolves_fee_token {
+            builder = builder.with_fee_token_resolution();
+        }
         apply_poll_interval(&provider, send_tx.poll_interval, chain.id());
         if let Some(account) = &configurable_account {
             account.prepare_request::<N>(builder.tx_mut());
@@ -371,9 +391,14 @@ impl SendTxArgs {
 
         tempo::print_expires(expires_at)?;
 
-        // Without a sponsor the fee token is resolved for the sender while sending.
+        // Without a sponsor the fee token is resolved for the sender while building, or else while
+        // sending.
         let send_opts = SendOptions::new(&send_tx, &config);
-        let fee_send_opts = send_opts.resolving_fee_token(tempo_sponsor.is_none(), &config);
+        let fee_send_opts = if build_resolves_fee_token {
+            send_opts.with_resolved_fee_token()
+        } else {
+            send_opts.resolving_fee_token(tempo_sponsor.is_none(), &config)
+        };
 
         // --sponsor-url is valid with local signers and Tempo access keys. Bail early rather than
         // silently ignoring it in signing paths that cannot produce a raw transaction locally.
@@ -583,12 +608,16 @@ enum FeeTokenMode {
     /// Resolve a missing fee token for the sender without querying the provider, e.g. when the
     /// request is only rendered as `curl`.
     ResolveOffline,
+    /// Leave the fee token that building resolved for the sender (see
+    /// [`CastTxBuilder::with_fee_token_resolution`]), and print it, querying the provider for its
+    /// symbol.
+    Resolved,
 }
 
 impl FeeTokenMode {
     /// Whether the provider may be queried for the stored fee token and its symbol.
     const fn queries_provider(self) -> bool {
-        matches!(self, Self::Resolve)
+        matches!(self, Self::Resolve | Self::Resolved)
     }
 }
 
@@ -615,6 +644,12 @@ impl SendOptions {
             FeeTokenMode::Resolve
         };
         Self { fee_token, ..self }
+    }
+
+    /// Keeps the fee token that building resolved for the sender, see
+    /// [`CastTxBuilder::with_fee_token_resolution`].
+    pub(crate) const fn with_resolved_fee_token(self) -> Self {
+        Self { fee_token: FeeTokenMode::Resolved, ..self }
     }
 
     /// Prints the hash of a submitted transaction, or its receipt unless `--async` was passed.
@@ -660,7 +695,9 @@ impl SendOptions {
     {
         let provider = self.fee_token.queries_provider().then_some(provider);
         match self.fee_token {
-            FeeTokenMode::AsBuilt => maybe_print_fee_token(provider, tx.fee_token()).await,
+            FeeTokenMode::AsBuilt | FeeTokenMode::Resolved => {
+                maybe_print_fee_token(provider, tx.fee_token()).await
+            }
             FeeTokenMode::Resolve | FeeTokenMode::ResolveOffline => {
                 tempo::resolve_and_print_fee_token(provider, tx, None).await
             }
