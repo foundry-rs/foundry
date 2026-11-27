@@ -235,3 +235,59 @@ struct NewPoint {
     let bindings = std::fs::read_to_string(prj.root().join("a/JsonBindings.sol")).unwrap();
     assert!(bindings.contains("schema_NewPoint"), "{bindings}");
 }
+
+// The placeholder must not change which compiler unpinned sources get: with the output path
+// sorting before `src/`, it used to take the newest compiler and pull `B.sol` away from `A.sol`.
+#[forgetest]
+fn test_bind_json_placeholder_does_not_steer_versions(prj: _, cmd: _) {
+    prj.add_raw_source(
+        "A",
+        r#"
+pragma solidity =0.8.26;
+
+struct APoint {
+    uint256 x;
+}
+"#,
+    );
+    prj.add_raw_source(
+        "B",
+        r#"
+struct BPoint {
+    uint256 y;
+}
+"#,
+    );
+    prj.add_raw_source(
+        "C",
+        r#"
+pragma solidity =0.8.20;
+
+struct CPoint {
+    uint256 z;
+}
+"#,
+    );
+
+    cmd.args(["bind-json", "a/JsonBindings.sol"]).assert_success();
+
+    let bindings = std::fs::read_to_string(prj.root().join("a/JsonBindings.sol")).unwrap();
+    assert!(bindings.contains("schema_APoint"), "{bindings}");
+    assert!(bindings.contains("schema_BPoint"), "{bindings}");
+}
+
+// A failed run must leave existing bindings as they were.
+#[forgetest]
+fn test_bind_json_failure_restores_bindings(prj: _, cmd: _) {
+    let existing = "// existing bindings\nlibrary JsonBindings {}\n";
+    std::fs::create_dir_all(prj.root().join("utils")).unwrap();
+    std::fs::write(prj.root().join("utils/JsonBindings.sol"), existing).unwrap();
+    prj.add_source("Broken", "pragma solidity =0.8.26;\n\nstruct Broken {\n");
+
+    cmd.arg("bind-json").assert_failure();
+
+    assert_eq!(
+        std::fs::read_to_string(prj.root().join("utils/JsonBindings.sol")).unwrap(),
+        existing
+    );
+}

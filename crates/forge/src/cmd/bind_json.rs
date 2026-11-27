@@ -53,9 +53,13 @@ impl BindJsonArgs {
 
         // Step 1: Read and preprocess sources
         let mut sources = project.paths.read_input_files()?;
-        // Replace any existing bindings file with the placeholder before resolving the graph, so
-        // the version pragma of stale bindings (such as `<0.9.0`) can't pin the solc version.
-        sources.insert(target_path.clone(), Source::new(JSON_BINDINGS_PLACEHOLDER));
+        // Keep the bindings file out of compiler version resolution. Existing bindings may carry a
+        // stale version pragma (such as `<0.9.0`), and as an input file the pragma-free
+        // placeholder would take the newest compiler and pull unpinned sources into its group.
+        // The placeholder is written to disk instead, so it only resolves the imports of the
+        // sources that use it. The original file is restored if bind-json fails.
+        sources.remove(&target_path);
+        let placeholder = PlaceholderFile::install(&target_path)?;
         let graph = Graph::<MultiCompilerParser>::resolve_sources(&project.paths, sources)?;
 
         // We only generate bindings for a single Solidity version to avoid conflicts.
@@ -69,9 +73,6 @@ impl BindJsonArgs {
             .ok_or_else(|| eyre::eyre!("no Solidity sources"))?
             .1
             .into_iter()
-            // The placeholder has no version pragma, so it can end up in a group of its own. Only
-            // groups with real sources may supply the structs.
-            .filter(|(_, sources, _)| sources.keys().any(|path| *path != target_path))
             // For now, we are always picking the latest version.
             .max_by(|(v1, _, _), (v2, _, _)| v1.cmp(v2))
             .ok_or_else(|| eyre::eyre!("no Solidity sources"))?;
@@ -93,6 +94,7 @@ impl BindJsonArgs {
 
         // Step 4: Write bindings
         self.write_bindings(&structs_to_write, &target_path, &version)?;
+        placeholder.keep();
 
         Ok(())
     }
@@ -406,6 +408,47 @@ library JsonBindings {
         sh_status!("Bindings written to {}", target_path.display())?;
 
         Ok(())
+    }
+}
+
+/// The bindings placeholder written to disk while bindings are generated.
+///
+/// Dropping it without [PlaceholderFile::keep] restores the file that was there before.
+struct PlaceholderFile {
+    path: PathBuf,
+    original: Option<String>,
+    keep: bool,
+}
+
+impl PlaceholderFile {
+    fn install(path: &Path) -> Result<Self> {
+        let original = path.is_file().then(|| fs::read_to_string(path)).transpose()?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, JSON_BINDINGS_PLACEHOLDER)?;
+        Ok(Self { path: path.to_path_buf(), original, keep: false })
+    }
+
+    /// Keeps what is now at the path: the generated bindings.
+    fn keep(mut self) {
+        self.keep = true;
+    }
+}
+
+impl Drop for PlaceholderFile {
+    fn drop(&mut self) {
+        if self.keep {
+            return;
+        }
+        match &self.original {
+            Some(original) => {
+                let _ = fs::write(&self.path, original);
+            }
+            None => {
+                let _ = std::fs::remove_file(&self.path);
+            }
+        }
     }
 }
 
