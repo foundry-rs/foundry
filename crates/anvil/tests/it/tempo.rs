@@ -9586,6 +9586,53 @@ async fn tempo_fork_schedule_matches_moderato_head() {
     }
 }
 
+// A fork of Moderato runs the hardfork Moderato schedules for each mined block, so its blocks cross
+// an activation as Moderato's do, unless the user pins the hardfork.
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_fork_crosses_moderato_hardfork_activation() {
+    let t14 = TempoHardfork::T14.moderato_activation_timestamp().unwrap();
+    let (source_api, source) = spawn(
+        NodeConfig::test_tempo()
+            .with_chain_id(Some(alloy_chains::NamedChain::TempoModerato as u64))
+            .with_genesis_timestamp(Some(t14 - 100))
+            .with_hardfork(Some(TempoHardfork::T13.into())),
+    )
+    .await;
+    source_api.mine_one().await.unwrap();
+    // Hide Anvil identity so the source is treated as a Moderato node.
+    let native =
+        spawn_rpc_proxy_rejecting_method_after(source.http_endpoint(), "anvil_nodeInfo", 0).await;
+
+    for (pinned, after) in
+        [(None, TempoHardfork::T14), (Some(TempoHardfork::T13), TempoHardfork::T13)]
+    {
+        let (api, handle) = spawn(
+            NodeConfig::test_tempo()
+                .with_eth_rpc_url(Some(native.clone()))
+                .with_hardfork(pinned.map(Into::into)),
+        )
+        .await;
+        let provider = handle.http_provider();
+        let active = async || {
+            provider
+                .raw_request::<_, tempo_alloy::rpc::ForkSchedule>("tempo_forkSchedule".into(), ())
+                .await
+                .unwrap()
+                .active
+        };
+        assert_eq!(api.backend.tempo_hardfork(), TempoHardfork::T13, "{pinned:?}");
+
+        api.evm_set_next_block_timestamp(t14 - 1).unwrap();
+        api.mine_one().await.unwrap();
+        assert_eq!(active().await, "T13", "{pinned:?}");
+
+        api.evm_set_next_block_timestamp(t14).unwrap();
+        api.mine_one().await.unwrap();
+        assert_eq!(active().await, after.to_string(), "{pinned:?}");
+        assert_eq!(api.anvil_node_info().await.unwrap().hard_fork, after.to_string());
+    }
+}
+
 // `tempo_fundAddress` mints each faucet token like Moderato's faucet, without a transaction.
 #[tokio::test(flavor = "multi_thread")]
 async fn tempo_fund_address_mints_faucet_tokens() {

@@ -2502,6 +2502,7 @@ latest block number: {latest_block}"
             override_chain_id,
             fork_chain_id: self.fork_chain_id.map(|chain_id| chain_id.to()),
             hardfork: Some(effective_hardfork),
+            follows_hardfork_schedule: self.hardfork.is_none() && endpoint_hardfork.is_none(),
             endpoint_identity: fork_identity,
             state_is_mutable,
             tempo_epoch_length,

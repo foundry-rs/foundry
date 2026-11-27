@@ -33,6 +33,7 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
+use tempo_hardfork::TempoHardfork;
 use tokio::time::{Instant, Interval};
 
 #[derive(Clone, Debug, Parser)]
@@ -984,6 +985,14 @@ fn parse_hardfork(hf: &str, networks: &NetworkConfigs) -> eyre::Result<FoundryHa
         networks.normalize_for_hardfork(hardfork).map_err(eyre::Report::msg)?;
         return Ok(hardfork);
     }
+    // A fork URL reveals its network only later, so without a selected network a name only
+    // Tempo uses selects Tempo, as `tempo:<name>` does.
+    if !networks.has_network_selection()
+        && let Ok(hardfork) = TempoHardfork::from_str(hf)
+        && hardfork != TempoHardfork::Genesis
+    {
+        return Ok(hardfork.into());
+    }
 
     networks.execution_network().parse_hardfork(hf).map_err(eyre::Report::msg)
 }
@@ -1124,6 +1133,21 @@ mod tests {
 
         assert!(config.networks.is_tempo());
         assert_eq!(config.hardfork, Some(TempoHardfork::T5.into()));
+    }
+
+    #[test]
+    fn can_parse_bare_tempo_hardfork_for_fork() {
+        let args = NodeArgs::parse_from([
+            "anvil",
+            "--fork-url",
+            "https://rpc.tempo.xyz",
+            "--hardfork",
+            "T14",
+        ]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.is_tempo());
+        assert_eq!(config.hardfork, Some(TempoHardfork::T14.into()));
     }
 
     #[test]

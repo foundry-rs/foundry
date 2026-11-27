@@ -1685,13 +1685,32 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns the active hardfork.
+    ///
+    /// A Tempo fork that follows its source chain's schedule runs the hardfork active at the head.
     pub fn hardfork(&self) -> FoundryHardfork {
         if let Some(hardfork) =
             self.fork.read().as_ref().and_then(|fork| fork.config.read().hardfork)
         {
-            return hardfork;
+            return self.scheduled_fork_hardfork(self.time.last_timestamp()).unwrap_or(hardfork);
         }
         *self.hardfork.read()
+    }
+
+    /// Returns the hardfork a Tempo fork runs at `timestamp` when it follows its source chain's
+    /// schedule, so that mined blocks cross scheduled activations like the source chain's nodes.
+    ///
+    /// Returns `None` when not forking Tempo, when the user or the endpoint pinned the hardfork, or
+    /// when the source chain has no known schedule.
+    fn scheduled_fork_hardfork(&self, timestamp: u64) -> Option<FoundryHardfork> {
+        if !self.is_tempo() {
+            return None;
+        }
+        let fork = self.fork.read();
+        let config = fork.as_ref()?.config.read();
+        if !config.follows_hardfork_schedule {
+            return None;
+        }
+        TempoHardfork::from_chain_and_timestamp(config.chain_id, timestamp).map(Into::into)
     }
 
     /// Returns canonical Ethereum transition configuration only for an Ethereum network.
@@ -2925,6 +2944,9 @@ impl<N: Network> Backend<N> {
     /// Returns the hardfork executing a block at `timestamp` when `hardfork` is configured.
     #[cfg_attr(not(feature = "base"), allow(unused_variables))]
     fn execution_hardfork_at(&self, hardfork: FoundryHardfork, timestamp: u64) -> FoundryHardfork {
+        if let Some(scheduled) = self.scheduled_fork_hardfork(timestamp) {
+            return scheduled;
+        }
         #[cfg(feature = "base")]
         if self.is_base() {
             let configured = match hardfork {
@@ -6863,6 +6885,7 @@ where
                 )?;
                 let block_timestamp = pending_timestamp.timestamp;
                 evm_env.block_env.timestamp = U256::from(block_timestamp);
+                let hardfork = self.scheduled_fork_hardfork(block_timestamp).unwrap_or(hardfork);
 
                 // Forced historical transactions bypass pool admission and are replayed while
                 // mining. Keep this exception local to the disposable mining environment.

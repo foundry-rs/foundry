@@ -129,6 +129,11 @@ impl TimeManager {
         self.state.read().offset
     }
 
+    /// Returns the timestamp of the latest block, or the time `evm_setTime` set since.
+    pub(crate) fn last_timestamp(&self) -> u64 {
+        self.state.read().last_timestamp
+    }
+
     pub(crate) fn snapshot(&self) -> TimeSnapshot {
         let state = self.state.read();
         TimeSnapshot {

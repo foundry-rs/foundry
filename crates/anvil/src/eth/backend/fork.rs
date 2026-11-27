@@ -1092,6 +1092,9 @@ pub struct ClientForkConfig<N: Network = AnyNetwork> {
     pub fork_chain_id: Option<u64>,
     /// The effective hardfork used to execute the forked block.
     pub hardfork: Option<FoundryHardfork>,
+    /// Whether the hardfork follows the source chain's schedule, as neither the user nor the
+    /// endpoint pinned it.
+    pub(crate) follows_hardfork_schedule: bool,
     /// Stable endpoint identity captured with the fork block.
     pub(crate) endpoint_identity: ForkEndpointIdentity,
     /// Discovery identified a local node or could not rule out mutable source state.

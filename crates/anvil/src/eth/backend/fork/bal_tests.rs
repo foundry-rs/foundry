@@ -51,6 +51,7 @@ fn fork_config(asserter: Asserter, block_hash: B256) -> ClientForkConfig {
         override_chain_id: None,
         fork_chain_id: None,
         hardfork: None,
+        follows_hardfork_schedule: false,
         endpoint_identity: ForkEndpointIdentity {
             execution_chain_id: 1,
             source_chain_id: 1,
