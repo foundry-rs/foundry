@@ -3210,6 +3210,60 @@ BRDA:13,0,0,-
     assert_lcov(cmd.forge_fuse().args(optimized).arg("--use").arg(&solar), expected);
 }
 
+// A function that a library calls runs from there, and the library is not in the report, so its
+// calls count against the functions of the reported sources too.
+#[forgetest]
+fn if_arm_does_not_take_calls_of_a_library_lcov(prj: _, cmd: _) {
+    prj.add_lib(
+        "Base.sol",
+        r#"
+abstract contract Base {
+    uint256 public total;
+    function hook() internal virtual;
+    function run() public { hook(); }
+}
+"#,
+    );
+    prj.add_source(
+        "C.sol",
+        r#"
+import "../lib/Base.sol";
+
+contract C is Base {
+    bool constant FLAG = false;
+    function hook() internal override { total |= 1; }
+    function f() public { if (FLAG) { hook(); } }
+}
+"#,
+    );
+    prj.add_test(
+        "C.t.sol",
+        r#"
+import "../src/C.sol";
+
+contract CTest {
+    function testRun() public {
+        C c = new C();
+        c.run();
+        c.run();
+        c.run();
+        c.f();
+    }
+}
+"#,
+    );
+
+    let optimized = ["coverage", "--no-isolate", "--keep-optimizer", "--optimize", "--via-ir"];
+    assert_lcov(
+        cmd.args(optimized),
+        str![[r#"
+...
+BRDA:9,0,0,-
+...
+"#]],
+    );
+}
+
 // An arm of an `if` with a proved condition has no jump, and it takes the hits of the function it
 // calls only when nothing else can run that function. Every `never` below is not compiled and its
 // function runs another way, so no arm may report hits, while the live control reports its own.
