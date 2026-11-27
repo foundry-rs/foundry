@@ -5224,6 +5224,31 @@ Suite result: ok. 0 passed; 0 failed; 1 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 1 skipped (1 total tests)
 
 "#]]);
+
+    // A skipped suite is not a failure, so fail-fast still runs the suite after it. With one
+    // thread the skipped suite runs first.
+    prj.add_test(
+        "Failing.t.sol",
+        r#"
+contract FailingAfterSkipTest {
+    function test_fails() public pure {
+        revert("real failure");
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse().args(["test", "--fail-fast", "-j1"]).assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/Counter.t.sol:SkipCounterSetup
+[SKIP: skipped: skip counter test] setUp() ([GAS])
+Suite result: ok. 0 passed; 0 failed; 1 skipped; [ELAPSED]
+
+Ran 1 test for test/Failing.t.sol:FailingAfterSkipTest
+[FAIL: real failure] test_fails() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest]
