@@ -829,7 +829,8 @@ pub struct Config {
     /// - `same-varname` (8760), `unnamed-return` (6321), `unreachable` (5740)
     /// - `pragma-solidity` (3420), `constructor-visibility` (2462), `transient-storage` (2394)
     /// - `too-many-warnings` (4591), `transfer-deprecated` (9207)
-    /// - `natspec-memory-safe-assembly-deprecated` (2424)
+    /// - `natspec-memory-safe-assembly-deprecated` (2424), `code-size-amsterdam` (5776)
+    /// - `init-code-size-amsterdam` (7868)
     ///
     /// ```toml
     /// [profile.default]
