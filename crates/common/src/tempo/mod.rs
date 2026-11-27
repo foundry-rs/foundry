@@ -5,7 +5,11 @@ pub mod configurable_account;
 
 use crate::FoundryTransactionBuilder;
 use alloy_network::{Network, TransactionBuilder};
-use alloy_primitives::{Address, B256, Signature, TxKind, U256, address, uint};
+use alloy_primitives::{
+    Address, B256, Signature, TxKind, U256, address,
+    map::{AddressHashMap, Entry},
+    uint,
+};
 use alloy_provider::Provider;
 use alloy_signer::Signer;
 use alloy_sol_types::SolCall;
@@ -287,6 +291,21 @@ where
     N: Network,
     N::TransactionRequest: FoundryTransactionBuilder<N>,
 {
+    resolve_and_set_fee_token_cached(provider, tx, fee_payer, None).await
+}
+
+/// Resolves and applies the Tempo fee token like [`resolve_and_set_fee_token`], taking the fee
+/// payer's stored fee token from `stored` once it was read from the chain.
+pub async fn resolve_and_set_fee_token_cached<N>(
+    provider: Option<&dyn Provider<N>>,
+    tx: &mut N::TransactionRequest,
+    fee_payer: Option<Address>,
+    stored: Option<&mut StoredFeeTokens>,
+) -> Result<Option<Address>>
+where
+    N: Network,
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
     if let Some(fee_token) = tx.fee_token() {
         return Ok(Some(fee_token));
     }
@@ -315,7 +334,10 @@ where
     let stored_fee_token = if immediate_user_token.is_none()
         && let (Some(provider), Some(fee_payer)) = (provider, fee_payer)
     {
-        stored_user_fee_token(provider, fee_payer).await?
+        match stored {
+            Some(stored) => stored.get(provider, fee_payer).await?,
+            None => stored_user_fee_token(provider, fee_payer).await?,
+        }
     } else {
         None
     };
@@ -331,6 +353,29 @@ where
     let Some(fee_token) = fee_token else { return Ok(None) };
     tx.set_fee_token(fee_token);
     Ok(Some(fee_token))
+}
+
+/// The fee tokens that Tempo fee payers stored in the FeeManager, each read from the chain once.
+///
+/// A fee payer's stored fee token changes when it calls `setUserToken`, so the cache must not be
+/// reused for transactions sent after one that does.
+#[derive(Debug, Default)]
+pub struct StoredFeeTokens(AddressHashMap<Option<Address>>);
+
+impl StoredFeeTokens {
+    /// Returns the fee token that `fee_payer` stored, reading it from the chain the first time.
+    async fn get<N: Network>(
+        &mut self,
+        provider: &dyn Provider<N>,
+        fee_payer: Address,
+    ) -> Result<Option<Address>> {
+        Ok(match self.0.entry(fee_payer) {
+            Entry::Occupied(entry) => *entry.get(),
+            Entry::Vacant(entry) => {
+                *entry.insert(stored_user_fee_token(provider, fee_payer).await?)
+            }
+        })
+    }
 }
 
 async fn stored_user_fee_token<N>(

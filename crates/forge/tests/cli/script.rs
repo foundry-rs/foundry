@@ -8318,6 +8318,98 @@ Deployed contracts (chain 31337):
     );
 }
 
+// A broadcast reads each sender's stored fee token once, unless one of its transactions sets it,
+// which later transactions must pay with.
+#[forgetest_init]
+async fn tempo_script_reads_stored_fee_token_once(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "TempoStoredFeeToken.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+interface IFeeManager {
+    function setUserToken(address token) external;
+}
+
+contract TempoFeeTokenTarget {
+    uint256 public value;
+
+    function set(uint256 newValue) external {
+        value = newValue;
+    }
+}
+
+contract TempoFeeTokenCalls is Script {
+    function run() external {
+        vm.startBroadcast();
+        TempoFeeTokenTarget target = new TempoFeeTokenTarget();
+        target.set(1);
+        target.set(2);
+        target.set(3);
+        vm.stopBroadcast();
+    }
+}
+
+contract TempoFeeTokenSwitch is Script {
+    function run() external {
+        vm.startBroadcast();
+        TempoFeeTokenTarget target = new TempoFeeTokenTarget();
+        target.set(1);
+        IFeeManager(0xfeEC000000000000000000000000000000000000).setUserToken(
+            0x20C0000000000000000000000000000000000000
+        );
+        target.set(2);
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let (rpc, calls) = spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_call").await;
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let alpha_usd = Value::from("0x20c0000000000000000000000000000000000001");
+    let path_usd = Value::from("0x20c0000000000000000000000000000000000000");
+    let broadcast = prj.root().join("broadcast");
+    let fee_tokens = || {
+        let run_latest = foundry_common::fs::json_files(&broadcast)
+            .find(|path| {
+                path.ends_with("run-latest.json") && !path.to_string_lossy().contains("dry-run")
+            })
+            .expect("no broadcast artifact found");
+        let json: Value = foundry_common::fs::read_json_file(&run_latest).unwrap();
+        json["receipts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|receipt| receipt["feeToken"].clone())
+            .collect::<Vec<_>>()
+    };
+    let fee_token_lookups = || {
+        let fee_manager = Value::from("0xfeec000000000000000000000000000000000000");
+        calls.lock().unwrap().drain(..).filter(|params| params[0]["to"] == fee_manager).count()
+    };
+
+    for (contract, lookups, expected) in [
+        ("TempoFeeTokenCalls", 1, vec![alpha_usd.clone(); 4]),
+        // The protocol charges the stored fee token for the CREATE, which stays an Ethereum
+        // transaction.
+        (
+            "TempoFeeTokenSwitch",
+            2,
+            vec![alpha_usd.clone(), alpha_usd.clone(), path_usd.clone(), path_usd.clone()],
+        ),
+    ] {
+        cmd.forge_fuse()
+            .arg("script")
+            .arg(&script)
+            .args(["--tc", contract, "--rpc-url", &rpc, "--private-key", private_key])
+            .arg("--broadcast")
+            .assert_success();
+        assert_eq!(fee_token_lookups(), lookups, "{contract}");
+        assert_eq!(fee_tokens(), expected, "{contract}");
+    }
+}
+
 // Tempo scripts keep script-specified gas and give ordinary transactions their simulated gas,
 // unless their intrinsic gas is not simulated, as for an expiring nonce.
 #[forgetest_init]

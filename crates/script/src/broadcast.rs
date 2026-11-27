@@ -51,12 +51,12 @@ use foundry_common::{
     },
     shell,
     tempo::{
-        TempoSponsor, active_tempo_hardfork,
+        StoredFeeTokens, TempoSponsor, active_tempo_hardfork,
         configurable_account::{
             ConfigurableAccountSigner, detect_configurable_account, reaches_threshold,
         },
         mark_sponsored_gas_estimation, maybe_print_fee_token, resolve_and_set_fee_token,
-        sets_user_fee_token,
+        resolve_and_set_fee_token_cached, sets_user_fee_token,
     },
 };
 use foundry_config::Config;
@@ -104,6 +104,8 @@ where
     /// 1. Nonce synchronization: Waits for the provider's nonce to catch up to the expected
     ///    transaction nonce when doing sequential broadcast
     /// 2. Gas estimation: Re-estimates gas right before broadcasting for chains that require it
+    ///
+    /// A Tempo fee payer's stored fee token is taken from `fee_tokens` once it was read.
     #[allow(clippy::too_many_arguments)]
     pub async fn prepare(
         &mut self,
@@ -113,6 +115,7 @@ where
         estimate_via_rpc: bool,
         estimate_multiplier: u64,
         tempo_sponsor: Option<&TempoSponsor>,
+        fee_tokens: Option<&mut StoredFeeTokens>,
     ) -> Result<()> {
         let browser = matches!(self, Self::Browser(..));
         let (tx, tempo_wallet) = match self {
@@ -167,10 +170,11 @@ where
         }
 
         let fee_token = if let Some(sponsor) = tempo_sponsor {
-            sponsor.resolve_and_set_fee_token(Some(provider), tx).await?;
+            let fee_payer = Some(sponsor.sponsor());
+            resolve_and_set_fee_token_cached(Some(provider), tx, fee_payer, fee_tokens).await?;
             None
         } else {
-            resolve_and_set_fee_token(Some(provider), tx, tx.from()).await?
+            resolve_and_set_fee_token_cached(Some(provider), tx, tx.from(), fee_tokens).await?
         };
 
         // A fee token, sponsor, validity window, or other Tempo field selects
@@ -204,6 +208,7 @@ where
         estimate_via_rpc: bool,
         estimate_multiplier: u64,
         tempo_sponsor: Option<&TempoSponsor>,
+        fee_tokens: Option<&mut StoredFeeTokens>,
     ) -> Result<PreparedTransaction<'a, N>> {
         self.prepare(
             provider,
@@ -212,6 +217,7 @@ where
             estimate_via_rpc,
             estimate_multiplier,
             tempo_sponsor,
+            fee_tokens,
         )
         .await?;
         if let Self::Unlocked(tx) = &mut self {
@@ -368,6 +374,19 @@ where
             SendTransactionKind::Signed(_) | SendTransactionKind::PreparedRaw(..) => false,
             _ => true,
         })
+}
+
+/// Returns whether `tx` sets its sender's fee token in the FeeManager.
+fn sets_sender_fee_token<N: Network>(tx: &TransactionMaybeSigned<N>) -> bool
+where
+    N::TransactionRequest: FoundryTransactionBuilder<N> + From<N::TxEnvelope>,
+{
+    match tx {
+        TransactionMaybeSigned::Unsigned(request) => sets_user_fee_token(&request.tempo_calls()),
+        TransactionMaybeSigned::Signed { tx, .. } => sets_user_fee_token(
+            &<N::TransactionRequest as From<N::TxEnvelope>>::from(tx.clone()).tempo_calls(),
+        ),
+    }
 }
 
 fn is_definite_browser_non_submission(error: &eyre::Report) -> bool {
@@ -1335,6 +1354,12 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     // networks cannot handle more than that.
                     let batch_size = if sequential_broadcast { 1 } else { 100 };
 
+                    // Each fee payer's stored fee token is read once, unless a transaction sets
+                    // its sender's fee token, which later transactions must then pay with.
+                    let mut fee_tokens =
+                        (!sequence.transactions.iter().any(|tx| sets_sender_fee_token(tx.tx())))
+                            .then(StoredFeeTokens::default);
+
                     for (batch_number, batch) in transactions.chunks(batch_size).enumerate() {
                         seq_progress.inner.write().set_status(&format!(
                             "Sending transactions [{} - {}]",
@@ -1363,6 +1388,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                     estimate_via_rpc,
                                     self.args.gas_estimate_multiplier,
                                     tempo_sponsor.as_deref(),
+                                    fee_tokens.as_mut(),
                                 )
                                 .await?;
                             if let PreparedTransaction::Raw(payload, hash) = &mut kind {
@@ -2787,7 +2813,7 @@ mod tests {
         let provider =
             RootProvider::<TempoNetwork>::new_http("http://localhost:8545".parse().unwrap());
 
-        sender.prepare(&provider, false, true, false, 100, None).await.unwrap();
+        sender.prepare(&provider, false, true, false, 100, None, None).await.unwrap();
 
         match sender {
             SendTransactionKind::AccessKey(tx, _) => {
@@ -3104,7 +3130,7 @@ mod tests {
             SendTransactionKind::PreparedRaw(Bytes::from_static(SIGNED_TX), hash),
         ] {
             let prepared = input
-                .prepare_for_durable_send(&provider, true, false, true, 130, None)
+                .prepare_for_durable_send(&provider, true, false, true, 130, None, None)
                 .await
                 .unwrap();
             let PreparedTransaction::Raw(payload, prepared_hash) = prepared else {
