@@ -1152,6 +1152,12 @@ ignore them in the `.gitignore` file."
         self.cmd().args(["rev-parse", "--absolute-git-dir"]).get_stdout_lossy().map(PathBuf::from)
     }
 
+    /// Returns the absolute path to a file or directory in Git's metadata.
+    pub fn git_path(self, path: &Path) -> Result<PathBuf> {
+        let git_path = self.cmd().args(["rev-parse", "--git-path"]).arg(path).get_stdout_lossy()?;
+        Ok(self.root.join(git_path))
+    }
+
     /// Returns the fetch URL of the given remote, or `None` if it doesn't exist.
     pub fn remote_url(self, name: &str) -> Option<String> {
         self.cmd().args(["remote", "get-url", name]).get_stdout_lossy().ok()
