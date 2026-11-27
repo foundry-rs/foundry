@@ -52,8 +52,15 @@ impl BindJsonArgs {
         let target_path = config.root.join(self.out.as_ref().unwrap_or(&config.bind_json.out));
 
         // Step 1: Read and preprocess sources
-        let sources = project.paths.read_input_files()?;
-        let graph = Graph::<MultiCompilerParser>::resolve_sources(&project.paths, sources)?;
+        let mut inputs = project.paths.read_input_files()?;
+        inputs.remove(&target_path);
+        // Resolve compiler versions without the bindings file. Existing bindings may carry a stale
+        // version pragma (such as `<0.9.0`), and a pragma-free placeholder would take the newest
+        // compiler and pull unpinned sources into its group, so imports of the bindings file are
+        // left out here. The file on disk stays untouched until the new bindings are written.
+        let mut resolve_sources = inputs.clone();
+        self.strip_bindings_imports(&project, &mut resolve_sources, &target_path);
+        let graph = Graph::<MultiCompilerParser>::resolve_sources(&project.paths, resolve_sources)?;
 
         // We only generate bindings for a single Solidity version to avoid conflicts.
         let (version, mut sources, _) = graph
@@ -68,7 +75,15 @@ impl BindJsonArgs {
             .into_iter()
             // For now, we are always picking the latest version.
             .max_by(|(v1, _, _), (v2, _, _)| v1.cmp(v2))
-            .unwrap();
+            .ok_or_else(|| eyre::eyre!("no Solidity sources"))?;
+
+        // Restore the imports of the bindings file in the selected input files. Each gets its own
+        // content, since preprocessing below edits it in place.
+        for (path, source) in &mut sources {
+            if let Some(original) = inputs.remove(path) {
+                *source = Source::new(original.content.as_str());
+            }
+        }
 
         // Step 2: Preprocess sources to handle potentially invalid bindings
         self.preprocess_sources(&mut sources)?;
@@ -77,11 +92,16 @@ impl BindJsonArgs {
         sources.insert(target_path.clone(), Source::new(JSON_BINDINGS_PLACEHOLDER));
 
         // Step 3: Find structs and generate bindings
-        let structs_to_write =
-            self.find_and_resolve_structs(&config, &project, version, sources, &target_path)?;
+        let structs_to_write = self.find_and_resolve_structs(
+            &config,
+            &project,
+            version.clone(),
+            sources,
+            &target_path,
+        )?;
 
         // Step 4: Write bindings
-        self.write_bindings(&structs_to_write, &target_path)?;
+        self.write_bindings(&structs_to_write, &target_path, &version)?;
 
         Ok(())
     }
@@ -128,6 +148,63 @@ impl BindJsonArgs {
         });
         eyre::ensure!(result.is_ok(), "failed parsing");
         Ok(())
+    }
+
+    /// Removes the imports of the bindings file at `target_path` from `sources`.
+    ///
+    /// Only Solidity files that mention the bindings file name are parsed. A file that fails to
+    /// parse is left as it is: the compiler reports its errors later, as it would without
+    /// bindings.
+    fn strip_bindings_imports(&self, project: &Project, sources: &mut Sources, target_path: &Path) {
+        // Imports can only resolve to the bindings file when it exists.
+        let Ok(target) = foundry_compilers::utils::canonicalize(target_path) else { return };
+        let Some(file_name) = target_path.file_name().and_then(|name| name.to_str()) else {
+            return;
+        };
+        let sess = Session::builder().with_silent_emitter(None).build();
+        sess.enter(|| {
+            sources
+                .0
+                .par_iter_mut()
+                .filter(|(path, source)| {
+                    path.extension().is_some_and(|ext| ext == "sol")
+                        && source.content.contains(file_name)
+                })
+                .for_each(|(path, source)| {
+                    let arena = Arena::new();
+                    let Ok(mut parser) = SolarParser::from_source_code(
+                        &sess,
+                        &arena,
+                        FileName::Real(path.clone()),
+                        source.content.to_string(),
+                    ) else {
+                        return;
+                    };
+                    let Ok(ast) = parser.parse_file().map_err(|e| e.cancel()) else { return };
+
+                    let cwd = path.parent().unwrap_or(path);
+                    let mut visitor = PreprocessorVisitor::new();
+                    for item in ast.items.iter() {
+                        let ast::ItemKind::Import(import) = &item.kind else { continue };
+                        let Ok(resolved) = project
+                            .paths
+                            .resolve_import(cwd, Path::new(import.path.value.as_str()))
+                        else {
+                            continue;
+                        };
+                        if foundry_compilers::utils::canonicalize(&resolved)
+                            .is_ok_and(|p| p == target)
+                        {
+                            visitor.updates.push((item.span, ""));
+                        }
+                    }
+                    if !visitor.updates.is_empty() {
+                        let mut content = source.content.to_string();
+                        visitor.update(&sess, &mut content);
+                        source.content = Arc::new(content);
+                    }
+                });
+        });
     }
 
     /// Find structs, resolve conflicts, and prepare them for writing
@@ -296,7 +373,8 @@ impl BindJsonArgs {
     fn write_bindings(
         &self,
         structs_to_write: &[StructToWrite],
-        target_path: &PathBuf,
+        target_path: &Path,
+        version: &Version,
     ) -> Result<()> {
         let mut result = String::new();
 
@@ -310,7 +388,9 @@ impl BindJsonArgs {
                 .insert(item);
         }
 
-        result.push_str("// Automatically generated by forge bind-json.\n\npragma solidity >=0.6.2 <0.9.0;\npragma experimental ABIEncoderV2;\n\n");
+        result.push_str("// Automatically generated by forge bind-json.\n\n");
+        result.push_str(bindings_pragma(version));
+        result.push('\n');
 
         for (path, names) in grouped_imports {
             writeln!(
@@ -384,14 +464,92 @@ library JsonBindings {
         result.push_str("}\n");
 
         // Write to file
-        if let Some(parent) = target_path.parent() {
+        let destination = bindings_destination(target_path)?;
+        if let Some(parent) = destination.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::write(target_path, &result)?;
+        publish_bindings(&destination, &result)?;
 
         sh_status!("Bindings written to {}", target_path.display())?;
 
         Ok(())
+    }
+}
+
+/// Returns the file the bindings are written to: `target_path`, or the file it links to, so a
+/// symlinked bindings file is updated through its link.
+fn bindings_destination(target_path: &Path) -> Result<PathBuf> {
+    let mut path = target_path.to_path_buf();
+    // Bounded like the OS does, so a symlink loop fails instead of hanging.
+    for _ in 0..40 {
+        let Ok(link) = std::fs::read_link(&path) else { return Ok(path) };
+        path = match path.parent() {
+            Some(parent) => parent.join(link),
+            None => link,
+        };
+    }
+    eyre::bail!("failed to write to {}: too many levels of symbolic links", target_path.display())
+}
+
+/// Writes `contents` to `destination` through a uniquely named temporary file beside it, so the
+/// old file is only replaced once the new one is complete and no other file is overwritten.
+fn publish_bindings(destination: &Path, contents: &str) -> Result<()> {
+    if destination.exists() {
+        // Fail like a plain write would for a file we may not write to, without changing it.
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(destination)
+            .map_err(|err| eyre::eyre!("failed to write to {}: {err}", destination.display()))?;
+        // A rename would detach a hard-linked file from its other links, so write those in place.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if std::fs::metadata(destination)?.nlink() > 1 {
+                fs::write(destination, contents)?;
+                return Ok(());
+            }
+        }
+    }
+
+    let dir =
+        destination.parent().filter(|dir| !dir.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let prefix = format!(
+        ".{}.",
+        destination.file_name().map(|name| name.to_string_lossy()).unwrap_or_default()
+    );
+    let mut tmp = match tempfile::Builder::new().prefix(&prefix).suffix(".tmp").tempfile_in(dir) {
+        Ok(tmp) => tmp,
+        // The directory may not allow new files while the bindings file itself is writable.
+        Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied && destination.exists() => {
+            fs::write(destination, contents)?;
+            return Ok(());
+        }
+        Err(err) => return Err(err.into()),
+    };
+    std::io::Write::write_all(&mut tmp, contents.as_bytes())?;
+    // Temporary files are private, so give the new file the old one's permissions.
+    if let Ok(metadata) = std::fs::metadata(destination) {
+        tmp.as_file().set_permissions(metadata.permissions())?;
+    } else {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            tmp.as_file().set_permissions(std::fs::Permissions::from_mode(0o644))?;
+        }
+    }
+    tmp.persist(destination).map_err(|err| err.error)?;
+    Ok(())
+}
+
+/// Returns the pragma lines of the generated bindings file for the given solc version.
+///
+/// Solidity 0.9 removed `pragma experimental ABIEncoderV2`, which solc before 0.8 needs to encode
+/// the structs, so solc 0.9 and later get a header without it.
+fn bindings_pragma(version: &Version) -> &'static str {
+    if (version.major, version.minor) >= (0, 9) {
+        "pragma solidity >=0.8.0 <0.10.0;\n"
+    } else {
+        "pragma solidity >=0.6.2 <0.9.0;\npragma experimental ABIEncoderV2;\n"
     }
 }
 
@@ -507,6 +665,26 @@ impl StructToWrite {
             format!("{} as {}", self.struct_or_contract_name(), alias)
         } else {
             self.struct_or_contract_name().to_string()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bindings_pragma_by_solc_version() {
+        let legacy = "pragma solidity >=0.6.2 <0.9.0;\npragma experimental ABIEncoderV2;\n";
+        let v0_9 = "pragma solidity >=0.8.0 <0.10.0;\n";
+        for (version, expected) in [
+            ("0.6.2", legacy),
+            ("0.8.35", legacy),
+            ("0.9.0-pre.1", v0_9),
+            ("0.9.0", v0_9),
+            ("0.9.3", v0_9),
+        ] {
+            assert_eq!(bindings_pragma(&Version::parse(version).unwrap()), expected, "{version}");
         }
     }
 }
