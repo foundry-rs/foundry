@@ -166,23 +166,32 @@ impl SenderKind<'_> {
     /// needs a signer. Otherwise returns the configured signer (or Tempo wallet account), falling
     /// back to the zero address.
     pub async fn from_wallet_opts(
-        mut opts: WalletOpts,
+        opts: WalletOpts,
         authorizations: &[CliAuthorizationList],
     ) -> Result<Self> {
+        Ok(Self::from_wallet_opts_with_access_key(opts, authorizations).await?.0)
+    }
+
+    /// [`Self::from_wallet_opts`], also returning the Tempo access key that signs for the sender
+    /// when the wallet options select one.
+    pub async fn from_wallet_opts_with_access_key(
+        mut opts: WalletOpts,
+        authorizations: &[CliAuthorizationList],
+    ) -> Result<(Self, Option<TempoAccountsWallet>)> {
         let from = opts.from.take();
         if let Some(from) = from
             && opts.tempo_access_key.is_none()
             && !authorizations.iter().any(|auth| matches!(auth, CliAuthorizationList::Address(_)))
         {
-            return Ok(from.into());
+            return Ok((from.into(), None));
         }
         let (signer, tempo_wallet) = foundry_common::tempo::maybe_signer(&opts, None).await?;
         Ok(if let Some(signer) = signer {
-            signer.into()
+            (signer.into(), None)
         } else if let Some(tempo_wallet) = tempo_wallet {
-            tempo_wallet.account().into()
+            (tempo_wallet.account().into(), Some(tempo_wallet))
         } else {
-            from.unwrap_or_default().into()
+            (from.unwrap_or_default().into(), None)
         })
     }
 
@@ -215,21 +224,26 @@ impl From<WalletSigner> for SenderKind<'_> {
 }
 
 /// Resolves the sender of a read-only request: the browser wallet address when `--browser` is
-/// set, otherwise the wallet options. Also returns whether the browser wallet was used.
+/// set, otherwise the wallet options. Also returns whether the browser wallet was used, and the
+/// Tempo access key of a session or the wallet options that signs for the sender.
 pub(crate) async fn read_only_sender<N: Network>(
     browser: &BrowserWalletOpts,
     wallet: WalletOpts,
     tx: &TransactionOpts,
     chain_id: u64,
-) -> Result<(SenderKind<'static>, bool)> {
+) -> Result<(SenderKind<'static>, bool, Option<TempoAccountsWallet>)> {
     crate::tempo::ensure_session_not_browser(&tx.tempo, browser.browser)?;
     if let Some(session) = tx.tempo.session_signer_for_wallet(&wallet, chain_id)? {
-        return Ok((session.access_key.account().into(), false));
+        return Ok((session.access_key.account().into(), false, Some(session.access_key)));
     }
 
     Ok(match browser.run::<N>().await? {
-        Some(browser) => (browser.address().into(), true),
-        None => (SenderKind::from_wallet_opts(wallet, &tx.auth).await?, false),
+        Some(browser) => (browser.address().into(), true, None),
+        None => {
+            let (sender, access_key) =
+                SenderKind::from_wallet_opts_with_access_key(wallet, &tx.auth).await?;
+            (sender, false, access_key.map(|access_key| access_key.with_chain_id(chain_id)))
+        }
     })
 }
 

@@ -1172,6 +1172,59 @@ async fn send_with_sponsor_url_estimates_for_relay_fee_token(cmd: _) {
     assert!((built_at + 300..=sent_at + 300).contains(&valid_before), "{tx}");
 }
 
+// `cast estimate` prepares the request as `cast send` does, so a transaction an access key signs
+// or a sponsor pays for succeeds with the gas limit it estimates. The sponsor pays in PathUSD for
+// a sender moving its own AlphaUSD.
+#[casttest]
+async fn estimate_covers_access_key_and_sponsored_sends(cmd: _) {
+    let (_, handle) = anvil::spawn(tempo_t14()).await;
+    let rpc = handle.http_endpoint();
+    let (_, sender_key) = dev_account(&handle, 0);
+    let (root, root_key) = dev_account(&handle, 1);
+    let (sponsor, sponsor_key) = dev_account(&handle, 3);
+    let access_key = PrivateKeySigner::random();
+    cmd.cast_fuse()
+        .args(["keychain", "authorize", &access_key.address().to_string()])
+        .args(["--private-key", &root_key, "--rpc-url", &rpc])
+        .assert_success();
+
+    let access_key = hex::encode_prefixed(access_key.to_bytes());
+    let (root, sponsor, sponsor_signer) =
+        (root.to_string(), sponsor.to_string(), format!("private-key://{sponsor_key}"));
+    let signers = [
+        vec!["--tempo.access-key", &access_key, "--tempo.root-account", &root],
+        vec!["--private-key", &sender_key, "--tempo.sponsor", &sponsor],
+    ];
+    let recipient = Address::repeat_byte(0x42).to_string();
+    let token = ALPHA_USD_ADDRESS.to_string();
+    let call = [token.as_str(), "transfer(address,uint256)", &recipient, "1000"];
+    for mut signer in signers {
+        if signer.contains(&"--tempo.sponsor") {
+            signer.extend(["--tempo.sponsor-signer", &sponsor_signer]);
+        }
+        let gas = cmd
+            .cast_fuse()
+            .arg("estimate")
+            .args(call)
+            .args(&signer)
+            .args(["--rpc-url", &rpc])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let output = cmd
+            .cast_fuse()
+            .arg("send")
+            .args(call)
+            .args(&signer)
+            .args(["--gas-limit", gas.trim(), "--timeout", "10", "--rpc-url", &rpc, "--json"])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let receipt: serde_json::Value = parse_json(output.trim()).unwrap();
+        assert_eq!(receipt["status"], "0x1", "{signer:?} ran out of its estimate {gas}: {receipt}");
+    }
+}
+
 #[casttest]
 fn tip20_logo_check_accepts_valid_values(cmd: _) {
     for uri in ["", "https://example.com/logo.png", "HTTP://example.com/logo.png", "ipfs://token"] {
