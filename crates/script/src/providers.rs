@@ -29,12 +29,14 @@ impl<N: Network> ProvidersManager<N> {
         chain: Option<u64>,
         is_legacy: bool,
         fee_estimate: Eip1559FeeEstimatePreset,
+        tempo: bool,
         config: &Config,
     ) -> Result<&ProviderInfo<N>> {
         Ok(match self.inner.entry(rpc.to_string()) {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => {
-                let info = ProviderInfo::new(rpc, chain, is_legacy, fee_estimate, config).await?;
+                let info =
+                    ProviderInfo::new(rpc, chain, is_legacy, fee_estimate, tempo, config).await?;
                 entry.insert(info)
             }
         })
@@ -70,6 +72,7 @@ impl<N: Network> ProviderInfo<N> {
         chain: Option<u64>,
         mut is_legacy: bool,
         fee_estimate: Eip1559FeeEstimatePreset,
+        tempo: bool,
         config: &Config,
     ) -> Result<Self> {
         let provider = Arc::new(ProviderBuilder::from_config_with_url(config, rpc)?.build()?);
@@ -90,6 +93,7 @@ impl<N: Network> ProviderInfo<N> {
             GasPrice::EIP1559(
                 estimate_eip1559_fees(&provider, fee_estimate)
                     .await
+                    .map(|fees| if tempo { fees.for_tempo(fee_estimate) } else { fees })
                     .wrap_err("Failed to get EIP-1559 fees"),
             )
         };

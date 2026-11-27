@@ -55,7 +55,8 @@ use foundry_common::{
         configurable_account::{
             ConfigurableAccountSigner, detect_configurable_account, reaches_threshold,
         },
-        mark_sponsored_gas_estimation, maybe_print_fee_token, resolve_and_set_fee_token,
+        explain_fee_allowance_error, mark_sponsored_gas_estimation, maybe_print_fee_token,
+        resolve_and_set_fee_token,
     },
 };
 use foundry_config::Config;
@@ -1173,12 +1174,13 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                             })
                         }
                         (false, false, _, _) => {
-                            let fees = estimate_eip1559_fees(
-                                &provider,
-                                self.script_config.config.eip1559_fee_estimate,
-                            )
+                            let fee_estimate = self.script_config.config.eip1559_fee_estimate;
+                            let mut fees = estimate_eip1559_fees(&provider, fee_estimate)
                             .await
                             .wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
+                            if self.script_config.evm_opts.networks.is_tempo() {
+                                fees = fees.for_tempo(fee_estimate);
+                            }
 
                             // Browser wallets may suggest their own tip; query it best-effort.
                             let browser_suggested_tip = if matches!(
@@ -1947,8 +1949,8 @@ impl BundledState<TempoEvmNetwork> {
         let nonce = provider.get_transaction_count(sender).await?;
 
         // Batch transactions are Tempo-only and always use EIP-1559 style fees.
-        let fees = estimate_eip1559_fees(&provider, self.script_config.config.eip1559_fee_estimate)
-            .await?;
+        let fee_estimate = self.script_config.config.eip1559_fee_estimate;
+        let fees = estimate_eip1559_fees(&provider, fee_estimate).await?.for_tempo(fee_estimate);
         let fees = resolve_broadcast_eip1559_fees(
             fees,
             self.args.with_gas_price.map(|p| p.to()),
@@ -2255,8 +2257,20 @@ where
     if sponsored {
         mark_sponsored_gas_estimation(provider, &mut request).await;
     }
-    let estimate =
-        provider.estimate_gas(request).await.wrap_err("Failed to estimate gas for tx")?;
+    let estimate = match provider.estimate_gas(request.clone()).await {
+        Ok(estimate) => estimate,
+        Err(err) => {
+            let explanation = if sponsored {
+                None
+            } else {
+                explain_fee_allowance_error(provider, &request, &err).await
+            };
+            return Err(eyre::Report::new(err).wrap_err(explanation.map_or_else(
+                || "Failed to estimate gas for tx".to_string(),
+                |explanation| format!("Failed to estimate gas for tx: {explanation}"),
+            )));
+        }
+    };
     tx.set_gas_limit(apply_gas_estimate_multiplier(
         estimate,
         Some(estimate_multiplier),

@@ -1,5 +1,6 @@
 //! CLI tests for shared Tempo transaction options.
 
+use alloy_consensus::Transaction;
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_network::{AnyNetwork, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, B256, U256, address, hex, keccak256};
@@ -11,17 +12,17 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
 use anvil::NodeConfig;
 use foundry_cli::utils::parse_json;
-use foundry_common::tempo::NATIVE_BALANCE_PLACEHOLDER;
+use foundry_common::tempo::{NATIVE_BALANCE_PLACEHOLDER, OUSD_ADDRESS};
 use foundry_evm::core::tempo::{ALPHA_USD_ADDRESS, PATH_USD_ADDRESS};
 use foundry_test_utils::util::OutputExt;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tempo_contracts::precompiles::{
     CONFIGURABLE_ACCOUNT_ADDRESS, CURRENT_COMMITTEE_ADDRESS, IConfigurableAccount,
     ICurrentCommittee, IReceivePolicyGuard, IRolesAuth, ITIP20, ITIP20Factory, ITIP403Registry,
-    NONCE_PRECOMPILE_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS,
-    TIP403_REGISTRY_ADDRESS,
+    NONCE_PRECOMPILE_ADDRESS, TIP_FEE_MANAGER_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS,
+    TIP20_FACTORY_ADDRESS, TIP403_REGISTRY_ADDRESS,
 };
-use tempo_hardfork::TempoHardfork;
+use tempo_hardfork::{TempoHardfork, constants::gas::TEMPO_T7_BASE_FEE_CAP};
 use tempo_primitives::{
     TempoSignature, TempoTransaction, TempoTxEnvelope,
     transaction::{
@@ -2236,6 +2237,181 @@ async fn balance_warns_about_tempo_placeholder(cmd: _) {
 "#]])
         .stderr_eq(str![[r#"
 Warning: Tempo has no native token, so this balance is a placeholder; use `cast erc20 balance <TOKEN> 0x4242424242424242424242424242424242424242` for a TIP-20 balance, such as PathUSD (0x20C0000000000000000000000000000000000000) or OUSD (0x20c0000000000000000000006a37DA5C996874BE)
+
+"#]]);
+}
+
+/// Creates an account that stores no fee token preference.
+///
+/// Anvil caps the gas estimate of a non-AA transaction by the sender's native balance, which a
+/// Tempo node does not, so the account gets the native balance a Tempo node reports.
+async fn fresh_tempo_account(provider: &impl Provider<AnyNetwork>) -> (Address, String) {
+    let account = PrivateKeySigner::random();
+    provider
+        .raw_request::<_, ()>(
+            "anvil_setBalance".into(),
+            (account.address(), NATIVE_BALANCE_PLACEHOLDER),
+        )
+        .await
+        .unwrap();
+    (account.address(), hex::encode_prefixed(account.credential().to_bytes()))
+}
+
+/// Returns the transaction and receipt of a `cast send --json` output.
+async fn sent_transaction(
+    provider: &impl Provider<AnyNetwork>,
+    receipt: &str,
+) -> (TempoTxEnvelope, serde_json::Value) {
+    let receipt: serde_json::Value = serde_json::from_str(receipt.trim()).unwrap();
+    let hash = receipt["transactionHash"].as_str().unwrap().parse::<B256>().unwrap();
+    let raw = provider.get_raw_transaction_by_hash(hash).await.unwrap().unwrap();
+    (TempoTxEnvelope::decode_2718_exact(&raw).unwrap(), receipt)
+}
+
+/// TIP-1067's base fee prices congestion, so a tip does not buy earlier inclusion: Tempo sends pay
+/// none unless asked to. `maxFeePerGas`, which Tempo reserves from the fee token up front, stops at
+/// the base-fee cap plus the tip that is sent.
+#[casttest]
+async fn tempo_send_pays_no_tip_by_default(cmd: _) {
+    let (api, handle) = anvil::spawn(NodeConfig::test_tempo().with_chain_id(Some(42431u64))).await;
+    let provider = handle.http_provider();
+    let rpc = handle.http_endpoint();
+    let (_, key) = dev_account(&handle, 0);
+    let cap = u128::from(TEMPO_T7_BASE_FEE_CAP);
+
+    // The genesis header carries the fixed T1 base fee; later blocks follow TIP-1067 and their
+    // base fees stay above half the cap for a few blocks, so the base-fee buffer is the cap.
+    api.evm_mine(None).await.unwrap();
+    for (args, tip) in [(&[][..], 0), (&["--priority-gas-price", "5"][..], 5)] {
+        let receipt = cmd
+            .cast_fuse()
+            .args(["send", "0x7373737373737373737373737373737373737373", "--json"])
+            .args(["--private-key", &key, "--rpc-url", &rpc])
+            .args(args)
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let (tx, _) = sent_transaction(&provider, &receipt).await;
+        assert_eq!((tx.max_fee_per_gas(), tx.max_priority_fee_per_gas()), (cap + tip, Some(tip)));
+    }
+}
+
+/// The protocol pays with a TIP-20 inferred from a transfer only when it is a USD token, and then
+/// even when its fee cannot be swapped to the validator's token or the transfer spends the balance
+/// the fee needs. Such a token is not pinned: a fallback fee token the sender holds pays instead.
+#[casttest]
+async fn tempo_send_pins_inferred_fee_token_only_when_it_can_pay(cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo().with_chain_id(Some(42431u64))).await;
+    let provider = handle.http_provider();
+    let rpc = handle.http_endpoint();
+    let (admin, admin_key) = dev_account(&handle, 0);
+    let (sender, key) = fresh_tempo_account(&provider).await;
+    let balance = U256::from(1_000_000_000u64);
+    let create_token = async |address: Address, currency: &str| {
+        let request = serde_json::json!({
+            "address": address,
+            "name": currency,
+            "symbol": currency,
+            "currency": currency,
+            "quoteToken": PATH_USD_ADDRESS,
+            "admin": admin,
+            "mint": [{ "to": sender, "amount": balance }],
+        });
+        provider
+            .raw_request::<_, Address>("anvil_tempoCreateToken".into(), [request])
+            .await
+            .unwrap();
+        address
+    };
+    let euro = create_token(address!("0x20C0000000000000000000000000000000000E70"), "EUR").await;
+    let unpooled =
+        create_token(address!("0x20C0000000000000000000000000000000000B0B"), "USD").await;
+    for token in [PATH_USD_ADDRESS, ALPHA_USD_ADDRESS] {
+        provider
+            .raw_request::<_, ()>("anvil_dealERC20".into(), (sender, token, balance))
+            .await
+            .unwrap();
+    }
+
+    let recipient = Address::random();
+    // Unlike the node, Anvil's gas estimate pays with the token the protocol infers, so it fails
+    // where that token cannot pay; those cases pin the gas limit.
+    let pinned_gas = &["--gas-limit", "1000000"][..];
+    for (token, amount, fee_token, args) in [
+        // Not a USD token, so the protocol would not pay with it either.
+        (euro, Some(1000), PATH_USD_ADDRESS, &[][..]),
+        // No FeeAMM pool swaps it to the validator's token.
+        (unpooled, Some(1000), PATH_USD_ADDRESS, pinned_gas),
+        // Enough is left for the fee.
+        (ALPHA_USD_ADDRESS, Some(1000), ALPHA_USD_ADDRESS, &[][..]),
+        // Sending the whole balance leaves nothing for the fee.
+        (ALPHA_USD_ADDRESS, None, PATH_USD_ADDRESS, pinned_gas),
+    ] {
+        let amount = match amount {
+            Some(amount) => U256::from(amount),
+            None => ITIP20::new(token, &provider).balanceOf(sender).call().await.unwrap(),
+        };
+        let receipt = cmd
+            .cast_fuse()
+            .args(["send", &token.to_string(), "transfer(address,uint256)"])
+            .args([&recipient.to_string(), &amount.to_string()])
+            .args(["--private-key", &key, "--json", "--timeout", "10", "--rpc-url", &rpc])
+            .args(args)
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let (tx, receipt) = sent_transaction(&provider, &receipt).await;
+        assert_eq!(receipt["status"], "0x1", "{token}: {receipt}");
+        assert_eq!(tx.fee_token(), Some(fee_token), "{token}: {receipt}");
+    }
+
+    // Without PathUSD, the next fallback token pays. OUSD is not in Anvil's genesis, so it is
+    // created and pooled here.
+    let (sender, key) = fresh_tempo_account(&provider).await;
+    create_token(OUSD_ADDRESS, "USD").await;
+    for token in [OUSD_ADDRESS, ALPHA_USD_ADDRESS] {
+        provider
+            .raw_request::<_, ()>("anvil_dealERC20".into(), (sender, token, balance))
+            .await
+            .unwrap();
+    }
+    cmd.cast_fuse()
+        .args(["send", &TIP_FEE_MANAGER_ADDRESS.to_string()])
+        .args(["mint(address,address,uint256,address)", &OUSD_ADDRESS.to_string()])
+        .args([&PATH_USD_ADDRESS.to_string(), "10000000000", &admin.to_string()])
+        .args(["--private-key", &admin_key, "--rpc-url", &rpc])
+        .assert_success();
+    let receipt = cmd
+        .cast_fuse()
+        .args(["send", &ALPHA_USD_ADDRESS.to_string(), "transfer(address,uint256)"])
+        .args([&recipient.to_string(), &balance.to_string()])
+        .args(["--private-key", &key, "--json", "--timeout", "10", "--rpc-url", &rpc])
+        .args(pinned_gas)
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let (tx, receipt) = sent_transaction(&provider, &receipt).await;
+    assert_eq!(receipt["status"], "0x1", "{receipt}");
+    assert_eq!(tx.fee_token(), Some(OUSD_ADDRESS), "{receipt}");
+}
+
+/// A Tempo node reports a fee payer without fee tokens as "gas required exceeds allowance (0)";
+/// the error names the tokens it could pay with and how to get one.
+#[casttest]
+async fn tempo_send_explains_missing_fee_token_balance(cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo().with_chain_id(Some(42431u64))).await;
+    let sender = PrivateKeySigner::random();
+    cmd.cast_fuse()
+        .args(["send", &PATH_USD_ADDRESS.to_string(), "transfer(address,uint256)"])
+        .args(["0x7373737373737373737373737373737373737373", "1"])
+        .args(["--private-key", &hex::encode_prefixed(sender.credential().to_bytes())])
+        .args(["--rpc-url", &handle.http_endpoint()])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: Failed to estimate gas: the Tempo fee payer [..] holds 0 PathUSD (0x20C0000000000000000000000000000000000000) and 0 OUSD (0x20c0000000000000000000006a37DA5C996874BE), not enough for the transaction fee. Fund it, or pass --tempo.fee-token with a USD TIP-20 it holds; on a testnet, `cast rpc tempo_fundAddress [..]` mints test fee tokens
+
+Context:
+- [..]gas required exceeds allowance[..]
 
 "#]]);
 }

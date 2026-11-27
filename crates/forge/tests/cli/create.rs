@@ -24,6 +24,7 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
     time::Duration,
 };
+use tempo_alloy::chainspec::constants::gas::TEMPO_T7_BASE_FEE_CAP;
 
 #[forgetest]
 fn create_rejects_unsupported_remote_sponsor(cmd: _) {
@@ -392,6 +393,37 @@ async fn create_resolves_tempo_expires_before_broadcast(prj: _, cmd: _) {
         "expected create to print resolved tempo expiry, got:\n{stderr}",
     );
     assert!(stdout.contains("Deployed to:"), "{stdout}");
+}
+
+// Tempo deployments pay no tip unless asked to, and `maxFeePerGas`, which Tempo reserves from the
+// fee token up front, stops at the base-fee cap plus the tip that is sent.
+#[forgetest_init]
+async fn create_pays_no_tempo_tip_by_default(prj: _, cmd: _) {
+    prj.initialize_default_contracts();
+
+    let (api, handle) = spawn(NodeConfig::test_tempo().with_chain_id(Some(42431u64))).await;
+    let provider = handle.http_provider();
+    let rpc = handle.http_endpoint();
+    let pk = hex::encode(handle.dev_wallets().next().unwrap().credential().to_bytes());
+    let cap = u128::from(TEMPO_T7_BASE_FEE_CAP);
+
+    // The genesis header carries the fixed T1 base fee; later blocks follow TIP-1067 and their
+    // base fees stay above half the cap for a few blocks, so the base-fee buffer is the cap.
+    api.evm_mine(None).await.unwrap();
+    for (args, tip) in [(&[][..], 0), (&["--priority-gas-price", "5"][..], 5)] {
+        let output = cmd
+            .forge_fuse()
+            .args(["create", &format!("./src/{TEMPLATE_CONTRACT}.sol:{TEMPLATE_CONTRACT}")])
+            .args(["--rpc-url", &rpc, "--private-key", &pk, "--broadcast", "--json"])
+            .args(args)
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let output: Value = serde_json::from_str(output.trim()).unwrap();
+        let hash = output["transactionHash"].as_str().unwrap().parse().unwrap();
+        let tx = provider.get_transaction_by_hash(hash).await.unwrap().unwrap();
+        assert_eq!((tx.max_fee_per_gas(), tx.max_priority_fee_per_gas()), (cap + tip, Some(tip)));
+    }
 }
 
 #[forgetest_init]

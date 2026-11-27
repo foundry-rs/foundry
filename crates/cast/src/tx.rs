@@ -23,8 +23,8 @@ use foundry_common::{
     provider::fee::{estimate_eip1559_fees, resolve_broadcast_eip1559_fees},
     shell,
     tempo::{
-        ensure_expiring_nonce_discriminator_active, is_tempo_hardfork_active,
-        mark_sponsored_gas_estimation,
+        ensure_expiring_nonce_discriminator_active, explain_fee_allowance_error,
+        is_tempo_hardfork_active, mark_sponsored_gas_estimation,
     },
 };
 use foundry_config::{Chain, Config, Eip1559FeeEstimatePreset};
@@ -944,10 +944,17 @@ where
             mark_sponsored_gas_estimation(provider, &mut request).await;
         }
         let chain_id = request.chain_id();
-        let err = match provider.estimate_gas(request).await {
+        let err = match provider.estimate_gas(request.clone()).await {
             Ok(estimated) => return apply_gas_estimate_multiplier(estimated, multiplier, chain_id),
             Err(err) => err,
         };
+        if !sponsored
+            && let Some(explanation) = explain_fee_allowance_error(provider, &request, &err).await
+        {
+            return Err(
+                eyre::Report::new(err).wrap_err(format!("Failed to estimate gas: {explanation}"))
+            );
+        }
         // If execution reverted with code 3 during provider gas estimation then try to decode
         // custom errors and append it to the error message.
         if let TransportError::ErrorResp(payload) = &err
@@ -981,7 +988,11 @@ where
     }
 
     if tx.max_fee_per_gas().is_none() || tx.max_priority_fee_per_gas().is_none() {
-        let estimate = estimate_eip1559_fees(provider, eip1559_fee_estimate).await?;
+        let mut estimate = estimate_eip1559_fees(provider, eip1559_fee_estimate).await?;
+        // Only a Tempo network's request type pays fees in a fee token.
+        if tx.supports_fee_token() {
+            estimate = estimate.for_tempo(eip1559_fee_estimate);
+        }
 
         // Only honor the browser-suggested tip when the user has not pinned a
         // priority fee; `resolve_broadcast_eip1559_fees` ignores a lower tip.
@@ -991,17 +1002,16 @@ where
             None
         };
 
-        // User `--gas-price`/`--priority-gas-price` overrides are already applied
-        // to `tx`; pass `None` so they are not double-applied here.
-        let estimate = resolve_broadcast_eip1559_fees(estimate, None, None, browser_suggested_tip)?;
-
-        if tx.max_fee_per_gas().is_none() {
-            tx.set_max_fee_per_gas(estimate.max_fee_per_gas);
-        }
-
-        if tx.max_priority_fee_per_gas().is_none() {
-            tx.set_max_priority_fee_per_gas(estimate.max_priority_fee_per_gas);
-        }
+        // The user's `--gas-price`/`--priority-gas-price` are already set on `tx`; passing them
+        // builds `maxFeePerGas` from the tip that is sent.
+        let estimate = resolve_broadcast_eip1559_fees(
+            estimate,
+            tx.max_fee_per_gas(),
+            tx.max_priority_fee_per_gas(),
+            browser_suggested_tip,
+        )?;
+        tx.set_max_fee_per_gas(estimate.max_fee_per_gas);
+        tx.set_max_priority_fee_per_gas(estimate.max_priority_fee_per_gas);
     }
 
     if let (Some(max_fee), Some(priority)) = (tx.max_fee_per_gas(), tx.max_priority_fee_per_gas()) {

@@ -4,8 +4,11 @@ pub mod auth;
 pub mod configurable_account;
 
 use crate::FoundryTransactionBuilder;
+use alloy_chains::NamedChain;
 use alloy_network::{Network, TransactionBuilder};
-use alloy_primitives::{Address, B256, Signature, TxKind, U256, address, uint};
+use alloy_primitives::{
+    Address, B256, Signature, TxKind, U256, address, uint, utils::format_units,
+};
 use alloy_provider::Provider;
 use alloy_signer::Signer;
 use alloy_sol_types::SolCall;
@@ -19,12 +22,13 @@ use tempo_alloy::{
     TempoNetwork,
     accounts::TempoAccountsWallet,
     contracts::precompiles::{
-        IFeeManager, IStablecoinDEX, ITIP20, STABLECOIN_DEX_ADDRESS, TIP_FEE_MANAGER_ADDRESS,
+        DEFAULT_FEE_TOKEN, IFeeManager, IStablecoinDEX, ITIP20, ITIPFeeAMM, STABLECOIN_DEX_ADDRESS,
+        TIP_FEE_MANAGER_ADDRESS,
     },
 };
 use tempo_primitives::{
     TempoAddressExt,
-    transaction::{KeyAuthorization, SignedKeyAuthorization},
+    transaction::{KeyAuthorization, SignedKeyAuthorization, calc_gas_balance_spending},
 };
 
 mod hardfork;
@@ -73,6 +77,10 @@ pub const OUSD_ADDRESS: Address = address!("0x20c0000000000000000000006a37DA5C99
 /// The balance a Tempo node answers `eth_getBalance` with, since Tempo has no native token.
 pub const NATIVE_BALANCE_PLACEHOLDER: U256 =
     uint!(4242424242424242424242424242424242424242424242424242424242424242424242424242_U256);
+
+/// Fee tokens the protocol falls back to from T13, in its order, when a transaction sets, stores
+/// and infers none.
+const FALLBACK_FEE_TOKENS: [Address; 2] = [PATH_USD_ADDRESS, OUSD_ADDRESS];
 
 /// Gas sponsor configuration for Tempo fee-payer signatures.
 #[derive(Clone, Debug)]
@@ -319,13 +327,28 @@ where
     } else {
         None
     };
-    let inferred_fee_token =
-        if immediate_user_token.is_none() && stored_fee_token.is_none() && !calls.is_empty() {
-            infer_fee_token_from_tip20_calls(&calls, tx_from, fee_payer)
-                .or_else(|| infer_fee_token_from_stablecoin_dex_calls(&calls, has_call_list))
-        } else {
-            None
-        };
+    let inferred_fee_token = if immediate_user_token.is_none()
+        && stored_fee_token.is_none()
+        && !calls.is_empty()
+    {
+        let inferred = infer_fee_token_from_tip20_calls(&calls, tx_from, fee_payer).or_else(|| {
+            infer_fee_token_from_stablecoin_dex_calls(&calls, has_call_list, tx_from, fee_payer)
+        });
+        match (inferred, provider, fee_payer) {
+            (Some((token, spent)), Some(provider), Some(fee_payer)) => {
+                let max_fee = match (tx.gas_limit(), tx.max_fee_per_gas()) {
+                    (Some(gas_limit), Some(max_fee_per_gas)) => {
+                        calc_gas_balance_spending(gas_limit, max_fee_per_gas)
+                    }
+                    _ => U256::ZERO,
+                };
+                payable_inferred_fee_token(provider, fee_payer, token, spent, max_fee).await
+            }
+            (inferred, ..) => inferred.map(|(token, _)| token),
+        }
+    } else {
+        None
+    };
     let fee_token = immediate_user_token.or(stored_fee_token).or(inferred_fee_token);
 
     let Some(fee_token) = fee_token else { return Ok(None) };
@@ -353,20 +376,87 @@ where
     Ok((!fee_token.is_zero()).then_some(fee_token))
 }
 
+/// Picks the fee token for a transaction from whose calls the protocol infers `inferred`, which
+/// the calls spend `spent` of.
+///
+/// The protocol pays with an inferred USD TIP-20 even when the fee cannot be swapped to the
+/// validator's token or the calls spend the balance the fee needs; the node then rejects the
+/// transaction or it reverts. Keeps `inferred` when `fee_payer` can pay `max_fee` with it after the
+/// calls, otherwise picks the first fallback token it can pay with. Returns `None`, leaving the
+/// choice to the protocol, when no candidate can pay.
+async fn payable_inferred_fee_token<N: Network>(
+    provider: &dyn Provider<N>,
+    fee_payer: Address,
+    inferred: Address,
+    spent: U256,
+    max_fee: U256,
+) -> Option<Address> {
+    if can_pay_fee(provider, fee_payer, inferred, spent.saturating_add(max_fee), max_fee).await {
+        return Some(inferred);
+    }
+    for token in FALLBACK_FEE_TOKENS {
+        if token != inferred && can_pay_fee(provider, fee_payer, token, max_fee, max_fee).await {
+            return Some(token);
+        }
+    }
+    None
+}
+
+/// Returns whether `fee_payer` holds a non-zero balance of at least `needed` in `token`, and the
+/// FeeAMM can swap `max_fee` of `token` to [`DEFAULT_FEE_TOKEN`].
+///
+/// Validators take PathUSD, the default validator token, or OUSD, which PathUSD pools to where
+/// validators take it. A token pooled only with OUSD does not count, because a network where every
+/// validator takes PathUSD rejects it. The FeeAMM only pools USD TIP-20s, so a pool also shows that
+/// `token` is a valid fee token, and a token that does not exist yet has none. A failed read counts
+/// as unable to pay.
+async fn can_pay_fee<N: Network>(
+    provider: &dyn Provider<N>,
+    fee_payer: Address,
+    token: Address,
+    needed: U256,
+    max_fee: U256,
+) -> bool {
+    let balance = async {
+        let call = ITIP20::balanceOfCall { account: fee_payer };
+        let tx = N::TransactionRequest::default().with_to(token).with_input(call.abi_encode());
+        let output = provider.call(tx).await.ok()?;
+        ITIP20::balanceOfCall::abi_decode_returns(&output).ok()
+    };
+    let swappable = async {
+        if token == DEFAULT_FEE_TOKEN {
+            return true;
+        }
+        let call = ITIPFeeAMM::getPoolCall { userToken: token, validatorToken: DEFAULT_FEE_TOKEN };
+        let tx = N::TransactionRequest::default()
+            .with_to(TIP_FEE_MANAGER_ADDRESS)
+            .with_input(call.abi_encode());
+        let Ok(output) = provider.call(tx).await else { return false };
+        ITIPFeeAMM::getPoolCall::abi_decode_returns(&output).is_ok_and(|pool| {
+            let reserve = U256::from(pool.reserveValidatorToken);
+            !reserve.is_zero() && reserve >= max_fee
+        })
+    };
+    let (balance, swappable) = tokio::join!(balance, swappable);
+    swappable && balance.is_some_and(|balance| !balance.is_zero() && balance >= needed)
+}
+
+/// Returns the TIP-20 the protocol infers as fee token from `calls` and the amount they transfer.
 fn infer_fee_token_from_tip20_calls(
     calls: &[(TxKind, &[u8])],
     tx_from: Option<Address>,
     fee_payer: Option<Address>,
-) -> Option<Address> {
-    if calls.is_empty() || !calls.iter().all(|(_, input)| is_tip20_fee_token_call(input)) {
-        return None;
+) -> Option<(Address, U256)> {
+    let mut spent = U256::ZERO;
+    for (_, input) in calls {
+        spent = spent.saturating_add(tip20_fee_token_call_amount(input)?);
     }
 
     let target = common_call_target(calls)?;
     if fee_payer != tx_from {
         return None;
     }
-    target.is_tip20().then_some(target)
+    target.is_tip20().then_some((target, spent))
 }
 
 fn infer_fee_token_from_set_user_token_call(
@@ -388,10 +478,14 @@ fn infer_fee_token_from_set_user_token_call(
     call.token.is_tip20().then_some(call.token)
 }
 
+/// Returns the swap input token the protocol infers as fee token from `calls` and the amount of it
+/// the fee payer spends on the swap.
 fn infer_fee_token_from_stablecoin_dex_calls(
     calls: &[(TxKind, &[u8])],
     has_call_list: bool,
-) -> Option<Address> {
+    tx_from: Option<Address>,
+    fee_payer: Option<Address>,
+) -> Option<(Address, U256)> {
     if has_call_list && calls.len() != 1 {
         return None;
     }
@@ -399,7 +493,8 @@ fn infer_fee_token_from_stablecoin_dex_calls(
     if *to != TxKind::Call(STABLECOIN_DEX_ADDRESS) {
         return None;
     }
-    decode_stablecoin_dex_fee_token(input)
+    let (token, amount_in) = decode_stablecoin_dex_fee_token(input)?;
+    Some((token, if fee_payer == tx_from { U256::from(amount_in) } else { U256::ZERO }))
 }
 
 fn common_call_target(calls: &[(TxKind, &[u8])]) -> Option<Address> {
@@ -411,23 +506,36 @@ fn common_call_target(calls: &[(TxKind, &[u8])]) -> Option<Address> {
     targets.all(|next| next == Some(target)).then_some(target)
 }
 
-fn is_tip20_fee_token_call(input: &[u8]) -> bool {
-    input.get(..4).is_some_and(|selector| {
-        selector == ITIP20::transferCall::SELECTOR
-            || selector == ITIP20::transferWithMemoCall::SELECTOR
-    })
+/// Returns the amount a TIP-20 call that triggers fee token inference transfers, `None` for any
+/// other call.
+///
+/// The protocol infers from the selector alone; calldata that does not decode cannot execute.
+fn tip20_fee_token_call_amount(input: &[u8]) -> Option<U256> {
+    let selector = input.get(..4)?;
+    if selector == ITIP20::transferCall::SELECTOR {
+        Some(ITIP20::transferCall::abi_decode(input).map_or(U256::ZERO, |call| call.amount))
+    } else if selector == ITIP20::transferWithMemoCall::SELECTOR {
+        Some(ITIP20::transferWithMemoCall::abi_decode(input).map_or(U256::ZERO, |call| call.amount))
+    } else {
+        None
+    }
 }
 
-fn decode_stablecoin_dex_fee_token(input: &[u8]) -> Option<Address> {
+/// Returns the input token of a Stablecoin DEX swap and the most it spends of it.
+fn decode_stablecoin_dex_fee_token(input: &[u8]) -> Option<(Address, u128)> {
     let selector = input.get(..4)?;
-    let token = if selector == IStablecoinDEX::swapExactAmountInCall::SELECTOR {
-        IStablecoinDEX::swapExactAmountInCall::abi_decode(input).ok().map(|call| call.tokenIn)
+    let (token, amount_in) = if selector == IStablecoinDEX::swapExactAmountInCall::SELECTOR {
+        IStablecoinDEX::swapExactAmountInCall::abi_decode(input)
+            .ok()
+            .map(|call| (call.tokenIn, call.amountIn))
     } else if selector == IStablecoinDEX::swapExactAmountOutCall::SELECTOR {
-        IStablecoinDEX::swapExactAmountOutCall::abi_decode(input).ok().map(|call| call.tokenIn)
+        IStablecoinDEX::swapExactAmountOutCall::abi_decode(input)
+            .ok()
+            .map(|call| (call.tokenIn, call.maxAmountIn))
     } else {
         None
     }?;
-    token.is_tip20().then_some(token)
+    token.is_tip20().then_some((token, amount_in))
 }
 
 /// Returns the known symbol for a Tempo fee token without making an RPC call.
@@ -485,6 +593,65 @@ where
         }
     }
     Ok(())
+}
+
+/// Explains a node's "gas required exceeds allowance" gas estimation error for a Tempo request.
+///
+/// A Tempo node caps gas by the fee payer's fee-token balance, so the error does not say which
+/// token is missing. Returns the fee tokens the payer could pay with, their balances and how to
+/// choose or fund one, or `None` when `error` is another error or `request` does not pay fees in a
+/// fee token. The payer is `request`'s sender, so callers skip sponsored requests.
+pub async fn explain_fee_allowance_error<N, P>(
+    provider: &P,
+    request: &N::TransactionRequest,
+    error: &impl std::fmt::Display,
+) -> Option<String>
+where
+    N: Network,
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+    P: Provider<N>,
+{
+    if !request.supports_fee_token()
+        || !error.to_string().contains("gas required exceeds allowance")
+    {
+        return None;
+    }
+    let payer = request.from()?;
+    let tokens = match request.fee_token() {
+        Some(token) => vec![token],
+        None => match stored_user_fee_token(provider, payer).await.ok().flatten() {
+            Some(token) => vec![token],
+            None => FALLBACK_FEE_TOKENS.to_vec(),
+        },
+    };
+    let mut balances = Vec::with_capacity(tokens.len());
+    for token in tokens {
+        let call = ITIP20::balanceOfCall { account: payer };
+        let tx = N::TransactionRequest::default().with_to(token).with_input(call.abi_encode());
+        let balance = provider
+            .call(tx)
+            .await
+            .ok()
+            .and_then(|output| ITIP20::balanceOfCall::abi_decode_returns(&output).ok())
+            .unwrap_or_default();
+        let balance = format_units(balance, 6).unwrap_or_else(|_| balance.to_string());
+        let balance = balance.trim_end_matches('0').trim_end_matches('.');
+        balances.push(match resolve_fee_token_symbol(provider, token).await {
+            Some(symbol) => format!("{balance} {symbol} ({token})"),
+            None => format!("{balance} of {token}"),
+        });
+    }
+    let mut message = format!(
+        "the Tempo fee payer {payer} holds {}, not enough for the transaction fee. Fund it, or \
+         pass --tempo.fee-token with a USD TIP-20 it holds",
+        balances.join(" and ")
+    );
+    if request.chain_id() != Some(NamedChain::Tempo as u64) {
+        message.push_str(&format!(
+            "; on a testnet, `cast rpc tempo_fundAddress {payer}` mints test fee tokens"
+        ));
+    }
+    Some(message)
 }
 
 /// Resolves the signer and Tempo Accounts wallet selected by `wallet`, pinning the Tempo wallet

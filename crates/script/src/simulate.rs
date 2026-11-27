@@ -717,6 +717,7 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
                     self.execution_artifacts.rpc_data.chain_ids.get(&tx.rpc).copied(),
                     self.args.legacy,
                     self.script_config.config.eip1559_fee_estimate,
+                    self.script_config.evm_opts.networks.is_tempo(),
                     &self.script_config.config,
                 )
                 .await?;

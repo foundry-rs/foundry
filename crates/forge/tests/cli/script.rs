@@ -4,7 +4,7 @@ use crate::{
     constants::TEMPLATE_CONTRACT,
     utils::{KillOnDrop, assert_debug_dump_identifies_contract, generate_large_runtime_contract},
 };
-use alloy_consensus::{SignableTransaction, TxEip1559, TxEip7702, TxEnvelope};
+use alloy_consensus::{SignableTransaction, Transaction as _, TxEip1559, TxEip7702, TxEnvelope};
 use alloy_dyn_abi::DynSolValue;
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::{
@@ -45,8 +45,6 @@ use std::{
 };
 use tempo_alloy::{TempoNetwork, primitives::TempoTxEnvelope};
 
-#[cfg(feature = "monad")]
-use alloy_consensus::Transaction as _;
 #[cfg(feature = "monad")]
 use alloy_network::TransactionResponse as _;
 
@@ -8316,6 +8314,93 @@ Deployed contracts (chain 31337):
         receipts(),
         [("0x76".to_owned(), Value::from(alpha_usd)), ("0x76".to_owned(), Value::from(alpha_usd))]
     );
+}
+
+// Tempo broadcasts pay no tip unless asked to, and `maxFeePerGas`, which Tempo reserves from the
+// fee token up front, stops at the base-fee cap plus the tip that is sent, both per transaction
+// and with `--batch`.
+#[forgetest_init]
+async fn tempo_script_pays_no_tip_by_default(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "TempoTip.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract TempoTipTarget {
+    uint256 public value;
+
+    function set(uint256 newValue) external {
+        value = newValue;
+    }
+}
+
+contract TempoTip is Script {
+    function run() external {
+        vm.startBroadcast();
+        TempoTipTarget target = new TempoTipTarget();
+        target.set(7);
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let rpc = handle.http_endpoint();
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let broadcast = prj.root().join("broadcast");
+    // The artifact records the planned transactions; fees are set when they are sent.
+    let fees = async || {
+        let run_latest = foundry_common::fs::json_files(&broadcast)
+            .find(|path| {
+                path.ends_with("run-latest.json") && !path.to_string_lossy().contains("dry-run")
+            })
+            .expect("no broadcast artifact found");
+        let json: Value = foundry_common::fs::read_json_file(&run_latest).unwrap();
+        let mut fees = Vec::new();
+        for receipt in json["receipts"].as_array().unwrap() {
+            let hash = receipt["transactionHash"].as_str().unwrap().parse().unwrap();
+            let raw = provider.get_raw_transaction_by_hash(hash).await.unwrap().unwrap();
+            let tx = TempoTxEnvelope::decode_2718_exact(&raw).unwrap();
+            fees.push((tx.max_fee_per_gas(), tx.max_priority_fee_per_gas()));
+        }
+        fees
+    };
+    let cap = u128::from(tempo_alloy::chainspec::constants::gas::TEMPO_T7_BASE_FEE_CAP);
+
+    // The genesis header carries the fixed T1 base fee; later blocks follow TIP-1067 and their
+    // base fees stay above half the cap for a few blocks, so the base-fee buffer is the cap.
+    api.evm_mine(None).await.unwrap();
+    cmd.arg("script").arg(&script).args([
+        "--tc",
+        "TempoTip",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--broadcast",
+    ]);
+    // Snapshots redact the estimate, so its tip line is compared directly.
+    let stdout = cmd.assert_success().get_output().stdout_lossy();
+    let estimated_tip =
+        stdout.lines().find(|line| line.starts_with("Estimated max priority fee per gas"));
+    assert_eq!(estimated_tip, Some("Estimated max priority fee per gas: 0 gwei"));
+    assert_eq!(fees().await, [(cap, Some(0)), (cap, Some(0))]);
+
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--tc",
+        "TempoTip",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--broadcast",
+        "--batch",
+        "--priority-gas-price",
+        "5",
+    ]);
+    cmd.assert_success();
+    assert_eq!(fees().await, [(cap + 5, Some(5)), (cap + 5, Some(5))]);
 }
 
 // Bundle estimation must preserve script-specified gas and still estimate ordinary transactions.
