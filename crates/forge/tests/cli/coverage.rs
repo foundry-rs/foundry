@@ -2661,10 +2661,862 @@ BRDA:18,4,0,16
     let optimized = ["coverage", "--no-isolate", "--keep-optimizer", "--optimize"];
     assert_lcov(cmd.arg("coverage").arg("--no-isolate"), expected.clone());
     assert_lcov(cmd.forge_fuse().args(optimized), expected.clone());
-    // Optimized Solar elides the final enum comparison and its source mapping, which Solar
-    // treats as best-effort: https://github.com/paradigmxyz/solar/issues/2758
     let solar = prj.ensure_foundry_bin("solar");
-    assert_lcov(cmd.forge_fuse().args(["coverage", "--no-isolate", "--use"]).arg(&solar), expected);
+    assert_lcov(cmd.forge_fuse().args(optimized).arg("--use").arg(&solar), expected);
+}
+
+// With via-IR and the optimizer, solc drops the jump of a condition it proves, so the arm that
+// remains runs whenever the `if` does and its path must count the `if`'s entries. The other
+// counts of the report are not asserted: via-IR source maps do not anchor them exactly.
+#[forgetest]
+fn if_arm_with_proved_condition_lcov(prj: _, cmd: _) {
+    prj.update_config(|config| config.via_ir = true);
+    prj.add_source(
+        "Gate.sol",
+        r#"
+contract Gate {
+    bool constant OPEN = true;
+
+    uint256 public total;
+
+    function check(uint256 kind) external {
+        if (kind == 0) {
+            addOne();
+        } else if (OPEN) {
+            addTwo();
+        }
+    }
+
+    function addOne() internal {
+        total += 1;
+    }
+
+    function addTwo() internal {
+        total += 2;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Gate.t.sol",
+        r#"
+import "../src/Gate.sol";
+
+contract GateTest {
+    function testGate() public {
+        Gate gate = new Gate();
+        gate.check(0);
+        for (uint256 i = 0; i < 2; i++) gate.check(1);
+    }
+}
+"#,
+    );
+
+    assert_lcov(
+        cmd.args(["coverage", "--no-isolate", "--keep-optimizer", "--optimize"]),
+        str![[r#"
+...
+BRDA:12,1,0,2
+...
+LH:5
+...
+"#]],
+    );
+}
+
+// An `if` in an internal function that nothing calls is not in the bytecode and has no jump, but
+// the function it calls runs from elsewhere. That run is not the arm's, so the arm stays unhit.
+#[forgetest]
+fn if_arm_in_uncalled_function_does_not_take_another_call_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Unused.sol",
+        r#"
+contract Unused {
+    bool constant OPEN = true;
+
+    uint256 public total;
+
+    function run() external {
+        bump();
+    }
+
+    function never() internal {
+        if (OPEN) {
+            bump();
+        }
+    }
+
+    function bump() internal {
+        total += 1;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Unused.t.sol",
+        r#"
+import "../src/Unused.sol";
+
+contract UnusedTest {
+    function testRun() public {
+        Unused unused = new Unused();
+        for (uint256 i = 0; i < 3; i++) unused.run();
+    }
+}
+"#,
+    );
+
+    assert_lcov(
+        cmd.arg("coverage").arg("--no-isolate"),
+        str![[r#"
+...
+BRDA:14,0,0,-
+...
+"#]],
+    );
+}
+
+// A public function also runs from outside, so the only internal call to it does not own its hits.
+#[forgetest]
+fn if_arm_calling_public_function_does_not_take_external_calls_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Public.sol",
+        r#"
+contract Public {
+    bool constant OPEN = true;
+
+    uint256 public total;
+
+    function never() internal {
+        if (OPEN) {
+            bump();
+        }
+    }
+
+    function bump() public {
+        total += 1;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Public.t.sol",
+        r#"
+import "../src/Public.sol";
+
+contract PublicTest {
+    function testBump() public {
+        Public target = new Public();
+        for (uint256 i = 0; i < 3; i++) target.bump();
+    }
+}
+"#,
+    );
+
+    assert_lcov(
+        cmd.arg("coverage").arg("--no-isolate"),
+        str![[r#"
+...
+BRDA:10,0,0,-
+...
+"#]],
+    );
+}
+
+// A test that inherits the source and calls the arm's function directly is not in the report, but
+// its calls still count: in its bytecode the `if` is not compiled, so the arm has no jump and must
+// not take the function's hits.
+#[forgetest]
+fn if_arm_does_not_take_calls_of_an_inheriting_test_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "M.sol",
+        r#"
+abstract contract M {
+    uint256 public total;
+
+    function a(bool b) internal {
+        if (b) {
+            _b(7);
+        }
+    }
+
+    function _b(uint256 x) internal {
+        total |= x;
+    }
+}
+
+contract C is M {
+    function go(bool b) external {
+        a(b);
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "M.t.sol",
+        r#"
+import "../src/M.sol";
+
+contract MTest is M {
+    function testGo() public {
+        new C().go(true);
+        new C().go(false);
+        _b(1);
+        _b(2);
+    }
+}
+"#,
+    );
+
+    assert_lcov(
+        cmd.arg("coverage").arg("--no-isolate"),
+        str![[r#"
+...
+BRDA:8,0,0,1
+...
+"#]],
+    );
+}
+
+// A call through a member access, such as `super.bump()`, is resolved statically and still runs the
+// function that the arm names, so the arm is not its only call.
+#[forgetest]
+fn if_arm_does_not_take_super_calls_lcov(prj: _, cmd: _) {
+    prj.update_config(|config| config.via_ir = true);
+    prj.add_source(
+        "Super.sol",
+        r#"
+contract Base {
+    uint256 public total;
+
+    function bump() internal {
+        total += 1;
+    }
+}
+
+contract Derived is Base {
+    function never() internal {
+        if (true) {
+            bump();
+        }
+    }
+
+    function run() external {
+        super.bump();
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Super.t.sol",
+        r#"
+import "../src/Super.sol";
+
+contract SuperTest {
+    function testRun() public {
+        Derived derived = new Derived();
+        derived.run();
+    }
+}
+"#,
+    );
+
+    assert_lcov(
+        cmd.args(["coverage", "--no-isolate", "--keep-optimizer", "--optimize"]),
+        str![[r#"
+...
+BRDA:14,0,0,-
+...
+"#]],
+    );
+}
+
+// A function pointer can run the function that an arm names from elsewhere, so a reference to the
+// function other than a call also keeps the arm from owning its hits.
+#[forgetest]
+fn if_arm_does_not_take_function_pointer_calls_lcov(prj: _, cmd: _) {
+    prj.update_config(|config| config.via_ir = true);
+    prj.add_source(
+        "Pointer.sol",
+        r#"
+contract Base {
+    uint256 public total;
+
+    function bump() internal {
+        total |= 7;
+    }
+}
+
+contract Derived is Base {
+    function never() internal {
+        if (true) {
+            bump();
+        }
+    }
+
+    function run() external {
+        function() internal f = bump;
+        f();
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Pointer.t.sol",
+        r#"
+import "../src/Pointer.sol";
+
+contract PointerTest {
+    function testRun() public {
+        Derived derived = new Derived();
+        derived.run();
+    }
+}
+"#,
+    );
+
+    assert_lcov(
+        cmd.args(["coverage", "--no-isolate", "--keep-optimizer", "--optimize"]),
+        str![[r#"
+...
+BRDA:14,0,0,-
+...
+"#]],
+    );
+}
+
+// The function pointer's value can be returned from a source without any call, which is walked
+// all the same.
+#[forgetest]
+fn if_arm_does_not_take_function_pointer_from_another_file_lcov(prj: _, cmd: _) {
+    prj.update_config(|config| config.via_ir = true);
+    prj.add_source(
+        "Base.sol",
+        r#"
+abstract contract Base {
+    uint256 public total;
+
+    function bump() internal {
+        total |= 7;
+    }
+
+    function never() internal {
+        if (true) {
+            bump();
+        }
+    }
+
+    function pointer() internal virtual returns (function() internal);
+
+    function run() external {
+        pointer()();
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "Derived.sol",
+        r#"
+import "./Base.sol";
+
+contract Derived is Base {
+    function pointer() internal pure override returns (function() internal) {
+        return bump;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Pointer.t.sol",
+        r#"
+import "../src/Derived.sol";
+
+contract PointerTest {
+    function testRun() public {
+        Derived derived = new Derived();
+        derived.run();
+    }
+}
+"#,
+    );
+
+    assert_lcov(
+        cmd.args(["coverage", "--no-isolate", "--keep-optimizer", "--optimize"]),
+        str![[r#"
+...
+BRDA:12,0,0,-
+...
+"#]],
+    );
+}
+
+// A call of an abstract function runs its override, so a dead arm that calls the override must not
+// take the hits of the override that `run` dispatches to.
+#[forgetest]
+fn if_arm_calling_override_of_abstract_function_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Abstract.sol",
+        r#"
+abstract contract Base {
+    uint256 public total;
+    function run() external { _hook(); }
+    function _hook() internal virtual;
+}
+contract V is Base {
+    function never(bool b) internal { if (b) { _hook(); } }
+    function _hook() internal override { total = total | 1; }
+}
+"#,
+    );
+    prj.add_test(
+        "Abstract.t.sol",
+        r#"
+import "../src/Abstract.sol";
+
+contract AbstractTest {
+    function testRun() public {
+        V v = new V();
+        for (uint256 i = 0; i < 3; i++) v.run();
+    }
+}
+"#,
+    );
+
+    let optimized = ["coverage", "--no-isolate", "--keep-optimizer", "--optimize"];
+    let expected = str![[r#"
+...
+BRDA:10,0,0,-
+...
+"#]];
+    assert_lcov(cmd.args(optimized), expected.clone());
+    prj.update_config(|config| config.via_ir = true);
+    assert_lcov(cmd.forge_fuse().args(optimized), expected.clone());
+    prj.update_config(|config| config.via_ir = false);
+    let solar = prj.ensure_foundry_bin("solar");
+    assert_lcov(cmd.forge_fuse().args(optimized).arg("--use").arg(&solar), expected);
+}
+
+// The run of an inlined function is entered once per call only when the function always runs its
+// body. A modifier that runs `_` only sometimes makes the body run less often than the arm.
+#[forgetest]
+fn if_arm_calling_function_with_conditional_modifier_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Gate.sol",
+        r#"
+contract Gate {
+    uint256 public total;
+    modifier gate(bool allowed) { while (allowed) { _; break; } }
+    function bump(bool allowed) internal gate(allowed) { total += 1; }
+    function run(bool allowed) external {
+        if (true) { bump(allowed); }
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Gate.t.sol",
+        r#"
+import "../src/Gate.sol";
+
+contract GateTest {
+    function testRun() public {
+        Gate gate = new Gate();
+        gate.run(false);
+        gate.run(true);
+        gate.run(false);
+    }
+}
+"#,
+    );
+
+    let optimized = ["coverage", "--no-isolate", "--keep-optimizer", "--optimize"];
+    // The arm is entered three times. Solc legacy counts them from its jump. Where the arm has no
+    // jump, the body runs once for the three calls, so the arm is left without hits.
+    assert_lcov(
+        cmd.args(optimized),
+        str![[r#"
+...
+BRDA:9,0,0,3
+...
+"#]],
+    );
+    prj.update_config(|config| config.via_ir = true);
+    assert_lcov(
+        cmd.forge_fuse().args(optimized),
+        str![[r#"
+...
+BRDA:9,0,0,-
+...
+"#]],
+    );
+    prj.update_config(|config| config.via_ir = false);
+    let solar = prj.ensure_foundry_bin("solar");
+    assert_lcov(
+        cmd.forge_fuse().args(optimized).arg("--use").arg(&solar),
+        str![[r#"
+...
+BRDA:9,0,0,-
+...
+"#]],
+    );
+}
+
+// An operator that a `using` directive binds to a function runs it from every use of the operator,
+// so a dead arm that calls the function by name must not take the hits of those uses.
+#[forgetest]
+fn if_arm_calling_operator_function_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Operator.sol",
+        r#"
+type Value is uint256;
+using {combine as +} for Value global;
+
+function combine(Value a, Value b) pure returns (Value) {
+    return Value.wrap(Value.unwrap(a) + Value.unwrap(b));
+}
+
+contract Operator {
+    Value public total;
+    function never(Value a, Value b) internal { if (true) { combine(a, b); } }
+    function run(Value a, Value b) external { total = a + b; }
+}
+"#,
+    );
+    prj.add_test(
+        "Operator.t.sol",
+        r#"
+import "../src/Operator.sol";
+
+contract OperatorTest {
+    function testRun() public {
+        Operator op = new Operator();
+        for (uint256 i = 0; i < 3; i++) op.run(Value.wrap(1), Value.wrap(2));
+    }
+}
+"#,
+    );
+
+    let optimized = ["coverage", "--no-isolate", "--keep-optimizer", "--optimize"];
+    let expected = str![[r#"
+...
+BRDA:13,0,0,-
+...
+"#]];
+    assert_lcov(cmd.args(optimized), expected.clone());
+    prj.update_config(|config| config.via_ir = true);
+    assert_lcov(cmd.forge_fuse().args(optimized), expected.clone());
+    prj.update_config(|config| config.via_ir = false);
+    let solar = prj.ensure_foundry_bin("solar");
+    assert_lcov(cmd.forge_fuse().args(optimized).arg("--use").arg(&solar), expected);
+}
+
+// A function that a library calls runs from there, and the library is not in the report, so its
+// calls count against the functions of the reported sources too.
+#[forgetest]
+fn if_arm_does_not_take_calls_of_a_library_lcov(prj: _, cmd: _) {
+    prj.add_lib(
+        "Base.sol",
+        r#"
+abstract contract Base {
+    uint256 public total;
+    function hook() internal virtual;
+    function run() public { hook(); }
+}
+"#,
+    );
+    prj.add_source(
+        "C.sol",
+        r#"
+import "../lib/Base.sol";
+
+contract C is Base {
+    bool constant FLAG = false;
+    function hook() internal override { total |= 1; }
+    function f() public { if (FLAG) { hook(); } }
+}
+"#,
+    );
+    prj.add_test(
+        "C.t.sol",
+        r#"
+import "../src/C.sol";
+
+contract CTest {
+    function testRun() public {
+        C c = new C();
+        c.run();
+        c.run();
+        c.run();
+        c.f();
+    }
+}
+"#,
+    );
+
+    let optimized = ["coverage", "--no-isolate", "--keep-optimizer", "--optimize", "--via-ir"];
+    assert_lcov(
+        cmd.args(optimized),
+        str![[r#"
+...
+BRDA:9,0,0,-
+...
+"#]],
+    );
+}
+
+// An arm of an `if` with a proved condition has no jump, and it takes the hits of the function it
+// calls only when nothing else can run that function. Every `never` below is not compiled and its
+// function runs another way, so no arm may report hits, while the live control reports its own.
+// Solc legacy with the optimizer is the mode where a wrong attribution shows as hits.
+#[forgetest]
+fn if_arms_do_not_take_other_ways_to_run_a_function_lcov(prj: _, cmd: _) {
+    prj.add_source(
+        "Matrix.sol",
+        r#"
+// C0: control, the only call of `T` is the arm of a live function.
+contract C0 {
+    uint256 public t;
+    function T() internal { t += 1; }
+    function live() external { if (true) { T(); } }
+}
+
+// C1: local function pointer.
+contract C1 {
+    uint256 public t;
+    function T() internal { t += 1; }
+    function never() internal { if (true) { T(); } }
+    function run() external { function() internal f = T; f(); }
+}
+
+// C2: state variable pointer.
+contract C2 {
+    uint256 public t;
+    function() internal p;
+    function T() internal { t += 1; }
+    function never() internal { if (true) { T(); } }
+    function run() external { p = T; p(); }
+}
+
+// C3: pointer passed as an argument.
+contract C3 {
+    uint256 public t;
+    function T() internal { t += 1; }
+    function never() internal { if (true) { T(); } }
+    function runit(function() internal f) internal { f(); }
+    function run() external { runit(T); }
+}
+
+// C4: pointer returned.
+contract C4 {
+    uint256 public t;
+    function T() internal { t += 1; }
+    function never() internal { if (true) { T(); } }
+    function get() internal pure returns (function() internal f) { f = T; }
+    function run() external { get()(); }
+}
+
+// C5: `super` and a virtual override.
+contract B5 {
+    uint256 public t;
+    function T() internal virtual { t += 1; }
+    function never() internal { if (true) { T(); } }
+}
+contract C5 is B5 {
+    function T() internal override { t += 2; super.T(); }
+    function run() external { T(); }
+}
+
+// C6: library `using for`.
+library L6 {
+    function T(uint256[] storage a) internal { a.push(1); }
+    function never(uint256[] storage a) internal { if (true) { T(a); } }
+}
+contract C6 {
+    using L6 for uint256[];
+    uint256[] a;
+    function run() external { a.T(); }
+}
+
+// C7: modifier.
+contract C7 {
+    uint256 public t;
+    modifier m() { T(); _; }
+    function T() internal { t += 1; }
+    function never() internal { if (true) { T(); } }
+    function run() external m {}
+}
+
+// C8: constructor of a derived contract.
+contract B8 {
+    uint256 public t;
+    function T() internal { t += 1; }
+    function never() internal { if (true) { T(); } }
+}
+contract C8 is B8 {
+    constructor() { T(); }
+}
+
+// C9: public function reached externally and internally.
+contract C9 {
+    uint256 public t;
+    function T() public { t += 1; }
+    function never() internal { if (true) { T(); } }
+}
+
+// C10: try/catch arm.
+contract C10 {
+    uint256 public t;
+    function T() internal { t += 1; }
+    function never() internal { if (true) { T(); } }
+    function bad() external pure { revert(); }
+    function run() external { try this.bad() {} catch { T(); } }
+}
+
+// C11: inheriting test.
+contract B11 {
+    uint256 public t;
+    function T() internal { t += 1; }
+    function never() internal { if (true) { T(); } }
+}
+
+// C12: the same function name in two contracts.
+contract A12 {
+    uint256 public t;
+    function T() internal { t += 1; }
+    function never() internal { if (true) { T(); } }
+}
+contract B12 {
+    uint256 public t;
+    function T() internal { t += 1; }
+    function run() external { T(); }
+}
+
+// C14: by-name call from a derived contract.
+contract B14 {
+    uint256 public t;
+    function T() internal { t += 1; }
+    function never() internal { if (true) { T(); } }
+}
+contract C14 is B14 {
+    function run() external { T(); }
+}
+
+// C15: free function used by two contracts.
+function F15(uint256[] storage a) {
+    a.push(1);
+}
+contract A15 {
+    uint256[] a;
+    function never() internal { if (true) { F15(a); } }
+}
+contract B15 {
+    uint256[] a;
+    function run() external { F15(a); }
+}
+
+// C16: by-name call from a contract in another file.
+contract B16 {
+    uint256 public t;
+    function T() internal { t += 1; }
+    function never() internal { if (true) { T(); } }
+}
+
+// C17: overloads.
+contract C17 {
+    uint256 public t;
+    function T() internal { t += 1; }
+    function T(uint256 x) internal { t += x; }
+    function never() internal { if (true) { T(); } }
+    function run() external { T(5); }
+}
+"#,
+    );
+    prj.add_source(
+        "Other.sol",
+        r#"
+import "./Matrix.sol";
+
+contract C16 is B16 {
+    function run() external { T(); }
+}
+"#,
+    );
+    prj.add_test(
+        "Matrix.t.sol",
+        r#"
+import "../src/Matrix.sol";
+import "../src/Other.sol";
+
+contract MatrixTest is B11 {
+    function testAll() public {
+        for (uint256 i = 0; i < 3; i++) {
+            new C0().live();
+            new C1().run();
+            new C2().run();
+            new C3().run();
+            new C4().run();
+            new C5().run();
+            new C6().run();
+            new C7().run();
+            new C8();
+            new C9().T();
+            new C10().run();
+            T();
+            new A12();
+            new B12().run();
+            new C14().run();
+            new A15();
+            new B15().run();
+            new C16().run();
+            new C17().run();
+        }
+    }
+}
+"#,
+    );
+
+    assert_lcov(
+        cmd.args(["coverage", "--no-isolate", "--keep-optimizer", "--optimize"]),
+        str![[r#"
+...
+SF:src/Matrix.sol
+...
+BRDA:8,0,0,3
+...
+BRDA:15,1,0,-
+...
+BRDA:24,2,0,-
+...
+BRDA:32,3,0,-
+...
+BRDA:41,4,0,-
+...
+BRDA:50,5,0,-
+...
+BRDA:60,6,0,-
+...
+BRDA:73,7,0,-
+...
+BRDA:81,8,0,-
+...
+BRDA:91,9,0,-
+...
+BRDA:98,10,0,-
+...
+BRDA:107,12,0,-
+...
+BRDA:114,13,0,-
+...
+BRDA:126,14,0,-
+...
+BRDA:138,15,0,-
+...
+BRDA:149,16,0,-
+...
+BRDA:157,17,0,-
+...
+"#]],
+    );
 }
 
 #[forgetest]

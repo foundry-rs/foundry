@@ -5,7 +5,10 @@ use foundry_compilers::ProjectCompileOutput;
 use rayon::prelude::*;
 use solar::{
     ast::{self, ExprKind, ItemKind, StmtKind, yul},
-    data_structures::{Never, map::FxHashMap},
+    data_structures::{
+        Never,
+        map::{FxHashMap, FxHashSet},
+    },
     interface::{RelativeBytePos, Span, sym},
     sema::{Gcx, hir},
 };
@@ -48,6 +51,18 @@ struct SourceVisitor<'gcx> {
     /// The byte range of every call by name and the functions it can call, as `(range,
     /// callees)`.
     callees: Vec<(Range<u32>, Vec<SourceLocation>)>,
+    /// How many calls by name resolve to each function, as `(source ID, start, end)` of the
+    /// function, with the function's name. A function that outside callers can reach counts twice
+    /// per call, so it never counts as called once.
+    callee_calls: HashMap<(usize, u32, u32), (u32, Arc<str>)>,
+    /// How many member accesses, such as `super.f` in a call, name each function. They resolve
+    /// statically, so they count against every function with that name.
+    member_calls: HashMap<Arc<str>, u32>,
+    /// How many references to each function are not the callee of a call, such as a function
+    /// pointer's value, by [`callee_key`]. The pointer can run the function from elsewhere.
+    value_refs: HashMap<(usize, u32, u32), u32>,
+    /// The spans of the callees that are bare names of calls, which `callee_calls` counts.
+    callee_idents: FxHashSet<Span>,
     /// Direct revert guards, resolved against HIR after collecting their source items.
     revert_guards: Vec<PendingRevertGuard>,
     current_function: Option<SourceLocation>,
@@ -174,6 +189,10 @@ fn resolve_empty_special_functions(
     resolved
 }
 
+const fn callee_key(loc: &SourceLocation) -> (usize, u32, u32) {
+    (loc.source_id, loc.bytes.start, loc.bytes.end)
+}
+
 impl<'gcx> SourceVisitor<'gcx> {
     fn new(
         source_id: u32,
@@ -192,6 +211,10 @@ impl<'gcx> SourceVisitor<'gcx> {
             stmts_after_if: Default::default(),
             hir_source_ids,
             callees: Default::default(),
+            callee_calls: Default::default(),
+            member_calls: Default::default(),
+            value_refs: Default::default(),
+            callee_idents: Default::default(),
             revert_guards: Default::default(),
             current_function: None,
             items: Default::default(),
@@ -266,6 +289,31 @@ impl<'gcx> SourceVisitor<'gcx> {
     fn resolve_function_calls(&mut self, hir_source_id: hir::SourceId) {
         self.function_call_scopes = self.function_calls.iter().cloned().collect();
         let _ = hir::Visit::visit_nested_source(self, hir_source_id);
+        // A function that a `using` directive binds to an operator runs from every use of the
+        // operator, which is not a call that the walk sees.
+        let hir = &self.gcx.hir;
+        let operator_functions = hir
+            .source(hir_source_id)
+            .usings
+            .iter()
+            .chain(
+                hir.contract_ids()
+                    .map(|id| hir.contract(id))
+                    .filter(|contract| contract.source == hir_source_id)
+                    .flat_map(|contract| contract.usings),
+            )
+            .flat_map(|using| using.entries)
+            .filter(|entry| entry.operator.is_some())
+            .filter_map(|entry| match entry.kind {
+                hir::UsingEntryKind::Functions(ids) => Some(ids),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|&id| self.function_key(hir.function(id)))
+            .collect::<Vec<_>>();
+        for key in operator_functions {
+            *self.value_refs.entry(key).or_default() += 1;
+        }
         self.callees.sort_unstable_by_key(|(range, _)| range.start);
         let callees = std::mem::take(&mut self.callees);
         let callees_in = |arm: &SourceLocation| {
@@ -396,24 +444,63 @@ impl<'gcx> SourceVisitor<'gcx> {
         }
     }
 
+    /// Returns the [`callee_key`] of a function with a body.
+    fn function_key(&self, function: &hir::Function<'_>) -> Option<(usize, u32, u32)> {
+        function.body?;
+        let &source_id = self.hir_source_ids.get(&function.source)?;
+        let contract = function.contract.map(|id| self.gcx.hir.contract(id).name.as_str());
+        let location = self.location(function.span, source_id, contract.unwrap_or_default().into());
+        Some(callee_key(&location))
+    }
+
     /// Records the functions that a call by name can run, from the functions its callee names
-    /// resolve to. An overloaded name resolves to every overload.
-    fn push_callees(&mut self, call: &hir::Expr<'_>, callee: &hir::Expr<'_>) {
+    /// resolve to. An overloaded name resolves to every overload. A call of a contract that is
+    /// dropped from the report, as a test's, only counts as a call to those functions.
+    fn push_callees(&mut self, call: &hir::Expr<'_>, callee: &hir::Expr<'_>, record: bool) {
         let hir::ExprKind::Ident(res) = &callee.peel_parens().kind else { return };
-        let callees = res
+        let functions = res
             .iter()
             .filter_map(|res| match res {
                 hir::Res::Item(hir::ItemId::Function(id)) => Some(self.gcx.hir.function(*id)),
                 _ => None,
             })
+            .collect::<Vec<_>>();
+        // A call that only names a function without a body runs an override of it, which the
+        // call counts for by name.
+        if let Some(function) = functions.first()
+            && functions.iter().all(|function| function.body.is_none())
+            && let Some(name) = &function.name
+        {
+            *self.member_calls.entry(Arc::from(name.as_str())).or_default() += 1;
+        }
+        let callees = functions
+            .into_iter()
             .filter(|function| function.body.is_some())
             .filter_map(|function| {
                 let &source_id = self.hir_source_ids.get(&function.source)?;
                 let contract = function.contract.map(|id| self.gcx.hir.contract(id).name.as_str());
-                Some(self.location(function.span, source_id, contract.unwrap_or_default().into()))
+                // A function that can be called from outside also runs from there, and one with
+                // modifiers runs its body less often than it is called.
+                let calls = if matches!(
+                    function.visibility,
+                    ast::Visibility::Internal | ast::Visibility::Private
+                ) && function.modifiers.is_empty()
+                {
+                    1
+                } else {
+                    2
+                };
+                let location =
+                    self.location(function.span, source_id, contract.unwrap_or_default().into());
+                let name = function.name.as_ref().map_or("", |name| name.as_str());
+                Some((location, calls, name))
             })
             .collect::<Vec<_>>();
-        if !callees.is_empty() {
+        for (callee, calls, name) in &callees {
+            self.callee_calls.entry(callee_key(callee)).or_insert((0, Arc::from(*name))).0 += calls;
+        }
+        let callees = callees.into_iter().map(|(callee, ..)| callee).collect::<Vec<_>>();
+        if record && !callees.is_empty() {
             let bytes = self.gcx.sess.source_map().span_to_source(call.span).unwrap().data;
             self.callees.push((bytes.start as u32..bytes.end as u32, callees));
         }
@@ -740,6 +827,21 @@ impl<'gcx> hir::Visit<'gcx> for SourceVisitor<'gcx> {
     }
 
     fn visit_expr(&mut self, expr: &'gcx hir::Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
+        match &expr.kind {
+            hir::ExprKind::Member(_, member) => {
+                *self.member_calls.entry(Arc::from(member.as_str())).or_default() += 1;
+            }
+            hir::ExprKind::Ident(res) if !self.callee_idents.contains(&expr.span) => {
+                for res in *res {
+                    if let hir::Res::Item(hir::ItemId::Function(id)) = res
+                        && let Some(key) = self.function_key(self.gcx.hir.function(*id))
+                    {
+                        *self.value_refs.entry(key).or_default() += 1;
+                    }
+                }
+            }
+            _ => {}
+        }
         if let Some((callee, args, _)) = expr.as_call()
             && args.is_empty()
             && let Some(hir::Res::Item(hir::ItemId::Error(error))) = self.gcx.resolved_expr(callee)
@@ -770,14 +872,19 @@ impl<'gcx> hir::Visit<'gcx> for SourceVisitor<'gcx> {
         }
         if let hir::ExprKind::Call(lhs, ..) = &expr.kind
             && is_regular_call(lhs)
-            && let Some(scope) = self.function_call_scopes.get(&expr.span).cloned()
         {
-            // Attribute the call with the scope captured where it was collected, not the
-            // visitor's final scope (which leaks across free functions and contracts).
-            let prev = std::mem::replace(&mut self.contract_name, scope);
-            self.push_stmt(expr.span);
-            self.contract_name = prev;
-            self.push_callees(expr, lhs);
+            let scope = self.function_call_scopes.get(&expr.span).cloned();
+            if let Some(scope) = scope.clone() {
+                // Attribute the call with the scope captured where it was collected, not the
+                // visitor's final scope (which leaks across free functions and contracts).
+                let prev = std::mem::replace(&mut self.contract_name, scope);
+                self.push_stmt(expr.span);
+                self.contract_name = prev;
+            }
+            if matches!(lhs.peel_parens().kind, hir::ExprKind::Ident(_)) {
+                self.callee_idents.insert(lhs.peel_parens().span);
+            }
+            self.push_callees(expr, lhs, scope.is_some());
         }
         self.walk_expr(expr)
     }
@@ -855,6 +962,12 @@ pub struct SourceAnalysis {
     anchor_hints: HashMap<u32, AnchorHints>,
     /// Kinds of the branches that need special anchoring, by source and branch ID.
     branch_kinds: HashMap<(u32, u32), BranchKind>,
+    /// How many calls by name resolve to each function, by [`callee_key`], with its name.
+    callee_calls: HashMap<(usize, u32, u32), (u32, Arc<str>)>,
+    /// How many member accesses name each function.
+    member_calls: HashMap<Arc<str>, u32>,
+    /// How many references to each function are not the callee of a call, by [`callee_key`].
+    value_refs: HashMap<(usize, u32, u32), u32>,
     /// Source ID to `(offset, len)` into `all_items`.
     map: Vec<(u32, u32)>,
     /// Empty receive and fallback items keyed by coverage item ID.
@@ -880,6 +993,7 @@ impl SourceAnalysis {
     #[instrument(name = "SourceAnalysis::new", skip_all)]
     pub fn new(data: &SourceFiles, output: &ProjectCompileOutput) -> eyre::Result<Self> {
         let mut resolved_empty_special_functions = Vec::new();
+        let mut excluded_counts = Vec::new();
         let mut sourced_items = output.parser().solc().compiler().enter(|compiler| {
             let hir_source_ids = Arc::new(
                 data.sources
@@ -892,6 +1006,23 @@ impl SourceAnalysis {
             );
             resolved_empty_special_functions =
                 resolve_empty_special_functions(compiler.gcx(), &hir_source_ids);
+            // Sources that the report leaves out, such as libraries and tests, still call the
+            // functions of the reported ones.
+            let excluded = compiler
+                .gcx()
+                .hir
+                .source_ids()
+                .filter(|id| !hir_source_ids.contains_key(id))
+                .collect::<Vec<_>>();
+            excluded_counts = excluded
+                .par_iter()
+                .map(|&hir_source_id| {
+                    let mut visitor =
+                        SourceVisitor::new(u32::MAX, compiler.gcx(), hir_source_ids.clone());
+                    visitor.resolve_function_calls(hir_source_id);
+                    (visitor.callee_calls, visitor.member_calls, visitor.value_refs)
+                })
+                .collect::<Vec<_>>();
             data.sources
                 .par_iter()
                 .map(|(&source_id, path)| {
@@ -932,9 +1063,9 @@ impl SourceAnalysis {
                         }
                     }
 
-                    if !visitor.function_calls.is_empty() || !visitor.revert_guards.is_empty() {
-                        visitor.resolve_function_calls(hir_source_id);
-                    }
+                    // Every source is walked, also one without calls: a reference to a function
+                    // that is not a call, as a function pointer's value, runs the function too.
+                    visitor.resolve_function_calls(hir_source_id);
 
                     if !visitor.items.is_empty() {
                         visitor.disambiguate_functions();
@@ -942,21 +1073,49 @@ impl SourceAnalysis {
                         visitor.push_lines();
                         visitor.sort();
                     }
-                    (source_id, visitor.items, visitor.anchor_hints, visitor.branch_kinds)
+                    (
+                        source_id,
+                        visitor.items,
+                        visitor.anchor_hints,
+                        visitor.branch_kinds,
+                        visitor.callee_calls,
+                        visitor.member_calls,
+                        visitor.value_refs,
+                    )
                 })
                 .collect::<Vec<_>>()
         });
 
         // Create mapping and merge items.
         sourced_items
-            .sort_by_key(|(id, items, _, _)| (*id, items.first().map(|i| i.loc.bytes.start)));
-        let Some(&(max_idx, _, _, _)) = sourced_items.last() else { return Ok(Self::default()) };
+            .sort_by_key(|(id, items, ..)| (*id, items.first().map(|i| i.loc.bytes.start)));
+        let Some(&(max_idx, ..)) = sourced_items.last() else { return Ok(Self::default()) };
         let len = max_idx + 1;
         let mut all_items = Vec::new();
         let mut anchor_hints = HashMap::default();
         let mut map = vec![(u32::MAX, 0); len as usize];
         let mut branch_kinds = HashMap::default();
-        for (idx, items, hints, branches) in sourced_items {
+        let mut callee_calls = HashMap::<_, (u32, Arc<str>)>::default();
+        let mut member_calls = HashMap::<_, u32>::default();
+        let mut value_refs = HashMap::<_, u32>::default();
+        let mut merge_counts = |calls: HashMap<_, (u32, Arc<str>)>,
+                                members: HashMap<_, u32>,
+                                refs: HashMap<_, u32>| {
+            for (function, count) in refs {
+                *value_refs.entry(function).or_default() += count;
+            }
+            for (callee, (count, name)) in calls {
+                callee_calls.entry(callee).or_insert((0, name)).0 += count;
+            }
+            for (name, count) in members {
+                *member_calls.entry(name).or_default() += count;
+            }
+        };
+        for (calls, members, refs) in excluded_counts {
+            merge_counts(calls, members, refs);
+        }
+        for (idx, items, hints, branches, calls, members, refs) in sourced_items {
+            merge_counts(calls, members, refs);
             let base = all_items.len() as u32;
             anchor_hints.extend(hints.into_iter().map(|(id, hint)| (base + id as u32, hint)));
             branch_kinds.extend(branches.into_iter().map(|(branch, kind)| ((idx, branch), kind)));
@@ -998,6 +1157,9 @@ impl SourceAnalysis {
             anchor_hints,
             map,
             branch_kinds,
+            callee_calls,
+            member_calls,
+            value_refs,
             empty_special_functions,
             contract_empty_special_functions,
         })
@@ -1005,6 +1167,16 @@ impl SourceAnalysis {
 
     pub(crate) fn anchor_hints(&self, item_id: u32) -> Option<&AnchorHints> {
         self.anchor_hints.get(&item_id)
+    }
+
+    /// Returns how many calls by name in the analyzed sources resolve to the function at `loc`.
+    pub(crate) fn callee_calls(&self, loc: &SourceLocation) -> u32 {
+        let key = callee_key(loc);
+        self.callee_calls.get(&key).map_or(0, |(count, name)| {
+            count
+                + self.member_calls.get(name).copied().unwrap_or_default()
+                + self.value_refs.get(&key).copied().unwrap_or_default()
+        })
     }
 
     pub(crate) fn branch_kind(&self, source_id: u32, branch_id: u32) -> Option<&BranchKind> {
