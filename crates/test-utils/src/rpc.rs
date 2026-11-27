@@ -446,6 +446,26 @@ pub async fn spawn_rpc_proxy_method_error(
     .await
 }
 
+/// Spawns an RPC proxy that answers only the request to `method` numbered `rejected_call`, counting
+/// from zero, with the JSON-RPC error `code` and `message`, and forwards all other requests.
+pub async fn spawn_rpc_proxy_method_error_once(
+    endpoint: String,
+    method: &'static str,
+    rejected_call: usize,
+    code: i64,
+    message: &'static str,
+) -> String {
+    spawn_rpc_proxy_rejecting_method(
+        endpoint,
+        method,
+        RpcMethodRejection::Only(rejected_call),
+        StatusCode::OK,
+        code,
+        message,
+    )
+    .await
+}
+
 /// Spawns an RPC proxy that answers `method` with `result` instead of forwarding it upstream.
 ///
 /// All other methods are forwarded. The returned counter tracks how many `method` calls reached the
@@ -867,6 +887,7 @@ enum RpcMethodRejection {
     After(usize),
     Enabled(Arc<AtomicBool>),
     AfterWhenEnabled(usize, Arc<AtomicBool>),
+    Only(usize),
 }
 
 impl RpcMethodRejection {
@@ -878,6 +899,7 @@ impl RpcMethodRejection {
             Self::AfterWhenEnabled(successful_calls, enabled) => {
                 call >= *successful_calls && enabled.load(Ordering::SeqCst)
             }
+            Self::Only(rejected_call) => call == *rejected_call,
         }
     }
 }

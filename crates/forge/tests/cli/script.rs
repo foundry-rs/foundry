@@ -12505,3 +12505,25 @@ async fn script_retries_rejection_behind_pending_transaction_fork(prj: _, cmd: _
     assert_eq!(api.transaction_count(sender, None).await.unwrap(), U256::from(2));
     assert!(rejections.load(Ordering::Relaxed) > 0);
 }
+
+// Each transaction sent with `--slow` is the first of its batch. A rejection after an earlier one
+// was mined may still depend on it, such as from a pool or backend that has not dropped it yet, so
+// it is retried.
+#[forgetest]
+async fn script_retries_rejection_after_mined_transaction_fork(prj: _, cmd: _) {
+    prj.add_script("Failures.s.sol", JSON_FAILURE_SCRIPT);
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let proxy = rpc::spawn_rpc_proxy_method_error_once(
+        handle.http_endpoint(),
+        "eth_sendRawTransaction",
+        1,
+        -32000,
+        "in-flight transaction limit reached for delegated accounts",
+    )
+    .await;
+
+    cmd.args(["script", "BroadcastsTwice", "--fork-url", &proxy, "--broadcast", "--slow"])
+        .assert_success();
+    let sender = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+    assert_eq!(api.transaction_count(sender, None).await.unwrap(), U256::from(2));
+}

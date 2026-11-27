@@ -1346,7 +1346,14 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                             prepared.push((kind, *index));
                         }
 
-                        let first_index = prepared.first().map(|(_, index)| *index);
+                        // The sequence's first transaction, while nothing of it reached the node.
+                        let submitted = &self.sequence.sequences()[i];
+                        let fail_fast_index = prepared
+                            .first()
+                            .filter(|_| {
+                                submitted.pending.is_empty() && submitted.receipts.is_empty()
+                            })
+                            .map(|(_, index)| *index);
                         let mut buffer = FuturesUnordered::new();
                         for (kind, index) in prepared {
                             if let Some(request) = kind.delegated_request() {
@@ -1402,16 +1409,19 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                     "submission outcome for delegated operation {index} is unknown; refusing to risk a duplicate transaction"
                                 );
                             }
-                            // A JSON-RPC error response means the node validated the payload and
-                            // rejected it, so the same payload fails again, for example with a gas
-                            // limit above the chain's cap. While earlier transactions of the batch
-                            // are unconfirmed, the rejection may depend on them, such as a pool's
-                            // in-flight limit for an EIP-7702 delegated sender, so it is retried.
+                            // A JSON-RPC error response to the first send of a sequence's first
+                            // transaction, before anything of it reached the node, means the node
+                            // rejected the payload itself, for example for a gas limit above the
+                            // chain's cap, so resending it fails again. Any other rejection may
+                            // depend on an earlier transaction the node has not caught up with,
+                            // such as a pool's in-flight limit for an EIP-7702 delegated sender,
+                            // or on an earlier attempt of this one that landed, so it is retried.
                             // The transport retries rate limits itself and reports exhausted
                             // retries as transport errors.
                             if attempt <= 3
                                 && let Err(error) = &res
-                                && (Some(index) != first_index
+                                && (attempt > 0
+                                    || Some(index) != fail_fast_index
                                     || !matches!(
                                         error.downcast_ref::<TransportError>(),
                                         Some(RpcError::ErrorResp(_))
