@@ -5788,6 +5788,142 @@ contract CounterTest {
     );
 }
 
+// Contracts that share a name get one bytecode listing each, under their source path.
+#[forgetest]
+fn coverage_bytecode_report_same_name(prj: _, cmd: _) {
+    prj.add_source(
+        "A.sol",
+        "contract Helper { function get() public pure returns (uint256) { return 1; } }",
+    );
+    prj.add_source(
+        "B.sol",
+        "contract Helper { function get() public pure returns (uint256) { return 2; } }",
+    );
+    prj.add_test(
+        "Helper.t.sol",
+        r#"
+import {Helper as A} from "src/A.sol";
+import {Helper as B} from "src/B.sol";
+
+contract HelperTest {
+    function testGet() public {
+        require(new A().get() == 1);
+        require(new B().get() == 2);
+    }
+}
+"#,
+    );
+    cmd.args(["coverage", "--report=bytecode"]).assert_success();
+    assert!(!prj.root().join("bytecode-coverage/Helper.asm").exists());
+    let a = fs::read_to_string(prj.root().join("bytecode-coverage/src/A.sol/Helper.asm")).unwrap();
+    assert_data_eq!(
+        a,
+        str![[r#"
+[002] 00000000: PUSH1 0x80                     // src/A.sol: 3:1-3:79 (71-149)
+[002] 00000002: PUSH1 0x40                     // src/A.sol: 3:1-3:79 (71-149)
+[002] 00000004: MSTORE                         // src/A.sol: 3:1-3:79 (71-149)
+[002] 00000005: CALLVALUE                      // src/A.sol: 3:1-3:79 (71-149)
+[002] 00000006: DUP1                           // src/A.sol: 3:1-3:79 (71-149)
+[002] 00000007: ISZERO                         // src/A.sol: 3:1-3:79 (71-149)
+[002] 00000008: PUSH1 0x0e                     // src/A.sol: 3:1-3:79 (71-149)
+[002] 0000000a: JUMPI                          // src/A.sol: 3:1-3:79 (71-149)
+      0000000b: PUSH0                          // src/A.sol: 3:1-3:79 (71-149)
+...
+"#]]
+    );
+    let b = fs::read_to_string(prj.root().join("bytecode-coverage/src/B.sol/Helper.asm")).unwrap();
+    assert_data_eq!(
+        b,
+        str![[r#"
+[002] 00000000: PUSH1 0x80                     // src/B.sol: 3:1-3:79 (71-149)
+[002] 00000002: PUSH1 0x40                     // src/B.sol: 3:1-3:79 (71-149)
+[002] 00000004: MSTORE                         // src/B.sol: 3:1-3:79 (71-149)
+[002] 00000005: CALLVALUE                      // src/B.sol: 3:1-3:79 (71-149)
+[002] 00000006: DUP1                           // src/B.sol: 3:1-3:79 (71-149)
+[002] 00000007: ISZERO                         // src/B.sol: 3:1-3:79 (71-149)
+[002] 00000008: PUSH1 0x0e                     // src/B.sol: 3:1-3:79 (71-149)
+[002] 0000000a: JUMPI                          // src/B.sol: 3:1-3:79 (71-149)
+      0000000b: PUSH0                          // src/B.sol: 3:1-3:79 (71-149)
+...
+"#]]
+    );
+}
+
+// A source compiled by two profiles gets one bytecode listing per artifact: the artifact name's
+// profile suffix is kept, not taken for the file's extension.
+#[forgetest]
+fn coverage_bytecode_report_profiles(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.additional_compiler_profiles = vec![SettingsOverrides {
+            name: "via-ir".to_owned(),
+            via_ir: Some(true),
+            evm_version: None,
+            optimizer: None,
+            optimizer_runs: None,
+            bytecode_hash: None,
+        }];
+        config.compilation_restrictions = vec![CompilationRestrictions {
+            paths: "src/ViaIr.sol".parse().unwrap(),
+            version: None,
+            via_ir: Some(true),
+            bytecode_hash: None,
+            min_optimizer_runs: None,
+            optimizer_runs: None,
+            max_optimizer_runs: None,
+            min_evm_version: None,
+            evm_version: None,
+            max_evm_version: None,
+        }];
+    });
+    prj.add_source(
+        "Shared.sol",
+        "contract Shared { function get() public pure returns (uint256) { return 7; } }",
+    );
+    prj.add_source(
+        "ViaIr.sol",
+        r#"
+import {Shared} from "./Shared.sol";
+
+contract ViaIr {
+    function make() external returns (uint256) {
+        return new Shared().get();
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Shared.t.sol",
+        r#"
+import {Shared} from "src/Shared.sol";
+
+interface Vm {
+    function deployCode(string calldata) external returns (address);
+}
+
+interface IViaIr {
+    function make() external returns (uint256);
+}
+
+contract SharedTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testGet() public {
+        require(new Shared().get() == 7);
+        require(IViaIr(vm.deployCode("src/ViaIr.sol:ViaIr")).make() == 7);
+    }
+}
+"#,
+    );
+    cmd.args(["coverage", "--report=bytecode"]).assert_success();
+    let mut listings = std::fs::read_dir(prj.root().join("bytecode-coverage"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .filter(|name| name.starts_with("Shared."))
+        .collect::<Vec<_>>();
+    listings.sort();
+    assert_eq!(listings, ["Shared.asm", "Shared.via-ir.asm"]);
+}
+
 // Gaps report offsets and snippets do not depend on CRLF line endings or multibyte text.
 #[forgetest]
 fn coverage_gaps_report(prj: _, cmd: _) {

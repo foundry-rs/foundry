@@ -14,7 +14,7 @@ use serde::{Serialize, ser::SerializeSeq};
 use std::{
     collections::{BTreeMap, hash_map},
     io::Write,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 pub use foundry_evm::coverage::*;
@@ -526,6 +526,7 @@ impl CoverageReporter for BytecodeReporter {
 
         let no_source_elements = Vec::new();
         let mut line_number_cache = LineNumberCache::new(self.root.clone());
+        let listing_paths = listing_paths(report, &self.root);
 
         for (contract_id, hits) in &report.bytecode_hits {
             let mut formatted = String::new();
@@ -567,14 +568,52 @@ impl CoverageReporter for BytecodeReporter {
                     writeln!(formatted, "{hits} {code:40}")?;
                 }
             }
-            fs::write(
-                self.destdir.join(&*contract_id.contract_name).with_extension("asm"),
-                formatted,
-            )?;
+            let mut listing = self.destdir.join(&listing_paths[contract_id]).into_os_string();
+            listing.push(".asm");
+            let listing = PathBuf::from(listing);
+            if let Some(parent) = listing.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(listing, formatted)?;
         }
 
         Ok(())
     }
+}
+
+/// Returns each contract's bytecode listing path relative to the report directory, without the
+/// extension.
+///
+/// A contract is listed under its name. Contracts that share a name are listed under their source
+/// path instead (`<source path>/<name>`, as in the artifacts directory). The name is the artifact
+/// name, which already carries a version or profile suffix when one source is compiled several
+/// times, so the extension is appended rather than set.
+fn listing_paths<'a>(report: &'a CoverageReport, root: &Path) -> HashMap<&'a ContractId, PathBuf> {
+    let mut by_name = HashMap::<_, Vec<_>>::default();
+    for contract_id in report.bytecode_hits.keys() {
+        by_name.entry(&contract_id.contract_name).or_default().push(contract_id);
+    }
+
+    let mut paths = HashMap::default();
+    for (name, contract_ids) in by_name {
+        if let [contract_id] = contract_ids[..] {
+            paths.insert(contract_id, PathBuf::from(&**name));
+            continue;
+        }
+
+        for contract_id in contract_ids {
+            let source = report
+                .get_source_path(&contract_id.build_id, contract_id.source_id)
+                .map(|path| path.strip_prefix(root).unwrap_or(path))
+                .unwrap_or_else(|| Path::new("unknown"));
+            let source = source
+                .components()
+                .filter(|component| matches!(component, Component::Normal(_)))
+                .collect::<PathBuf>();
+            paths.insert(contract_id, source.join(&**name));
+        }
+    }
+    paths
 }
 
 /// Cache line number offsets for source files
