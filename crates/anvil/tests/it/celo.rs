@@ -69,6 +69,19 @@ async fn cip64_fill_raw_send_and_native_fees() {
     let receipt =
         PendingTransactionBuilder::new(provider.root().clone(), hash).get_receipt().await.unwrap();
     assert_eq!(serde_json::to_value(receipt).unwrap()["type"], "0x7b");
+
+    // Simulated CIP-64 transactions default to the node's chain id.
+    let call = json!({"from":sender,"to":recipient,"feeCurrency":currency});
+    let response: serde_json::Value = provider
+        .raw_request(
+            "eth_simulateV1".into(),
+            (json!({"blockStateCalls":[{"calls":[call]}],"returnFullTransactions":true}),),
+        )
+        .await
+        .unwrap();
+    let tx = &response[0]["transactions"][0];
+    assert_eq!(tx["type"], "0x7b");
+    assert_eq!(tx["chainId"], json!(format!("{:#x}", api.chain_id())));
 }
 
 #[tokio::test(flavor = "multi_thread")]
