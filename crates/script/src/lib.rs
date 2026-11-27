@@ -490,7 +490,8 @@ impl ScriptArgs {
         if shell::is_json() {
             config.live_logs = false;
         }
-        if config.tracing.decode_internal && !args.debug {
+        // A cached run keeps the build it has: new outputs would make its sources stale.
+        if config.tracing.decode_internal && !args.debug && !args.no_compile {
             config.enable_internal_call_artifacts();
         }
         if args.debug {
