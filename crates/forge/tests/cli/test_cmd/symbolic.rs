@@ -9005,7 +9005,10 @@ contract SymbolicMinRatioNested {
 // `a <= b` and `t <= k`, but not strictly, not at most `a`, not without either guard, and not
 // with another start or the reversed difference `a - b`. Likewise a Dutch auction price
 // `s - (s - e) * t / d` stays at least `e` once `e <= s` and `t <= d`, but not strictly, not at
-// least another floor, not without either guard, and not with a span from another start.
+// least another floor, not without either guard, and not with a span from another start. A time
+// ramp `a + (b - a) * (t - t0) / (t1 - t0)` stays at most `b` once `t0 <= t <= t1`, as a falling
+// one stays at least its end, but not strictly, not past `t1` or another deadline, not before `t0`,
+// and not over a span from another start.
 #[forgetest_init]
 fn symbolic_proves_weighted_average_bound(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_weighted_average_bound");
@@ -9280,6 +9283,82 @@ contract SymbolicWeightedAverage {
         uint256 price = start - (uint256(top) - end) * elapsed / duration;
         assert(price >= end);
     }
+
+    function checkRampBelowEnd(uint128 a, uint128 b, uint64 t0, uint64 t1, uint64 t) public pure {
+        require(a <= b && t0 < t1 && t0 <= t && t <= t1);
+        uint256 v = a + (uint256(b) - a) * (uint256(t) - t0) / (uint256(t1) - t0);
+        assert(v <= b);
+    }
+
+    // Curve's `_A()` ramps either way, with checked `uint64` times.
+    function checkCurveRampWithinEnds(uint128 a0, uint128 a1, uint64 t0, uint64 t1, uint64 t)
+        public
+        pure
+    {
+        require(t0 < t1 && t0 <= t && t <= t1);
+        if (a1 > a0) {
+            assert(a0 + (uint256(a1) - a0) * (t - t0) / (t1 - t0) <= a1);
+        } else {
+            assert(a0 - (uint256(a0) - a1) * (t - t0) / (t1 - t0) >= a1);
+        }
+    }
+
+    function checkRampDownAboveEnd(uint128 a, uint128 b, uint64 t0, uint64 t1, uint64 t)
+        public
+        pure
+    {
+        require(b <= a && t0 < t1 && t0 <= t && t <= t1);
+        uint256 v = a - (uint256(a) - b) * (uint256(t) - t0) / (uint256(t1) - t0);
+        assert(v >= b);
+    }
+
+    function checkRampStrictlyBelowEnd(uint128 a, uint128 b, uint64 t0, uint64 t1, uint64 t)
+        public
+        pure
+    {
+        require(a <= b && t0 < t1 && t0 <= t && t <= t1);
+        uint256 v = a + (uint256(b) - a) * (uint256(t) - t0) / (uint256(t1) - t0);
+        assert(v < b);
+    }
+
+    function checkRampAfterEnd(uint128 a, uint128 b, uint64 t0, uint64 t1, uint64 t) public pure {
+        require(a <= b && t0 < t1 && t0 <= t);
+        uint256 v = a + (uint256(b) - a) * (uint256(t) - t0) / (uint256(t1) - t0);
+        assert(v <= b);
+    }
+
+    // Ramps to `WAD`, so that the counterexample has few enough inputs for the local search.
+    function checkRampOtherSpanStart(uint128 a, uint64 t0, uint64 t1, uint64 t2, uint64 t)
+        public
+        pure
+    {
+        require(a <= WAD && t2 < t1 && t0 <= t && t <= t1);
+        uint256 v = a + (WAD - a) * (uint256(t) - t0) / (uint256(t1) - t2);
+        assert(v <= WAD);
+    }
+
+    // Unchecked, `t - t0` wraps once `t < t0`.
+    function checkRampBeforeStart(uint128 a, uint64 t0, uint64 t1, uint64 t) public pure {
+        require(a <= WAD && t0 < t1 && t <= t1);
+        uint256 v;
+        unchecked {
+            v = a + (WAD - a) * (uint256(t) - t0) / (uint256(t1) - t0);
+        }
+        assert(v <= WAD);
+    }
+
+    function checkRampOtherDeadline(
+        uint128 a,
+        uint128 b,
+        uint64 t0,
+        uint64 t1,
+        uint64 t3,
+        uint64 t
+    ) public pure {
+        require(a <= b && t0 < t1 && t0 <= t && t <= t3);
+        uint256 v = a + (uint256(b) - a) * (uint256(t) - t0) / (uint256(t1) - t0);
+        assert(v <= b);
+    }
 }
 "#,
     );
@@ -9306,6 +9385,9 @@ contract SymbolicWeightedAverage {
             "checkLerpBelowEnd(uint128,uint128,uint64)",
             "checkStepFeeBelowCap(uint128,uint128,uint16)",
             "checkDutchPriceAboveEnd(uint128,uint128,uint64,uint64)",
+            "checkRampBelowEnd(uint128,uint128,uint64,uint64,uint64)",
+            "checkCurveRampWithinEnds(uint128,uint128,uint64,uint64,uint64)",
+            "checkRampDownAboveEnd(uint128,uint128,uint64,uint64,uint64)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
@@ -9334,6 +9416,11 @@ contract SymbolicWeightedAverage {
             "checkDutchPriceStrictlyAboveEnd(uint128,uint128,uint64,uint64)",
             "checkDutchPriceOtherFloor(uint128,uint128,uint128,uint64,uint64)",
             "checkDutchPriceOtherStart(uint128,uint128,uint128,uint64,uint64)",
+            "checkRampStrictlyBelowEnd(uint128,uint128,uint64,uint64,uint64)",
+            "checkRampAfterEnd(uint128,uint128,uint64,uint64,uint64)",
+            "checkRampOtherSpanStart(uint128,uint64,uint64,uint64,uint64)",
+            "checkRampBeforeStart(uint128,uint64,uint64,uint64)",
+            "checkRampOtherDeadline(uint128,uint128,uint64,uint64,uint64,uint64)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(
@@ -10294,13 +10381,22 @@ contract SymbolicPreviewMint {
 // above the cash, or only below the borrows, shrink the divisor below the borrows, and the rate
 // reaches `WAD` exactly when the reserves equal the cash. Reserves below both amounts, or a borrow
 // floor equal to the reserve cap, still bound it. A wrapped `cash + borrows` is not bounded either.
+// An ERC4626 round trip through Solmate's `mulDivDown` passes its overflow guard on a quotient
+// whose product cannot overflow without querying SMT. A quotient by another divisor, a smaller
+// guard numerator, or a factor that may be zero can still fail the guard, and a non-strict
+// `MAX / y <= x` still holds at `x == MAX / y`.
 #[forgetest_init]
 fn symbolic_proves_remaining_ratio_bounded(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_remaining_ratio_bounded");
     prj.add_test(
         "SymbolicRemainingRatio.t.sol",
         r#"
+interface Vm {
+    function assertLe(uint256 left, uint256 right) external pure;
+}
+
 contract SymbolicRemainingRatio {
+    Vm internal constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
     uint256 internal constant WAD = 1e18;
 
     // Solmate's `FixedPointMathLib.mulDivDown` (MIT).
@@ -10395,6 +10491,47 @@ contract SymbolicRemainingRatio {
         }
         assert(borrows * WAD / total <= WAD);
     }
+
+    function checkSharesRoundTrip(uint128 assets, uint128 supply, uint128 total) public pure {
+        if (supply == 0 || total == 0) return;
+        assert(mulDivDown(mulDivDown(assets, supply, total), total, supply) <= assets);
+    }
+
+    function checkOtherDivisorGuard(uint128 assets, uint128 supply, uint128 other, uint128 total)
+        public
+        pure
+    {
+        if (supply == 0 || other == 0 || total == 0) return;
+        uint256 shares = mulDivDown(assets, supply, other);
+        assert(!(shares > type(uint256).max / total));
+    }
+
+    function checkSmallNumeratorGuard(uint128 assets, uint128 supply, uint128 total) public pure {
+        if (supply == 0 || total == 0) return;
+        uint256 shares = mulDivDown(assets, supply, total);
+        assert(!(shares > 1000 / total));
+    }
+
+    function checkZeroFactorGuard(uint128 assets, uint128 supply, uint128 total, uint256 y)
+        public
+        pure
+    {
+        if (supply == 0 || total == 0) return;
+        uint256 shares = mulDivDown(assets, supply, total);
+        uint256 overflows;
+        assembly {
+            overflows := gt(shares, div(not(0), y))
+        }
+        assert(overflows == 0);
+    }
+
+    function checkQuotientAtGuardLimit(uint256 n, uint256 y) public pure {
+        if (y == 0) return;
+        uint256 x = n / y;
+        if (x < type(uint256).max / y) return;
+        vm.assertLe(type(uint256).max / y, x);
+        assert(x != type(uint256).max / y);
+    }
 }
 "#,
     );
@@ -10407,8 +10544,15 @@ contract SymbolicRemainingRatio {
             .get_output()
             .stdout
             .clone();
+        let result = json_test_result(&output, "checkRemainingRatio(uint256,uint256)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        let result = json_test_result(&output, "checkSharesRoundTrip(uint128,uint128,uint128)");
+        assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+        assert_eq!(
+            result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+            "optimized={optimized}: {result}"
+        );
         for signature in [
-            "checkRemainingRatio(uint256,uint256)",
             "checkUtilizationRate(uint256,uint256,uint256)",
             "checkNarrowUtilizationRate(uint128,uint128,uint128)",
             "checkUtilizationReservesBelowBoth(uint256,uint256,uint256)",
@@ -10423,6 +10567,10 @@ contract SymbolicRemainingRatio {
         for signature in [
             "checkUnrelatedRemainder(uint256,uint256,uint256)",
             "checkWrappedRemainder(uint256,uint256)",
+            "checkOtherDivisorGuard(uint128,uint128,uint128,uint128)",
+            "checkSmallNumeratorGuard(uint128,uint128,uint128)",
+            "checkZeroFactorGuard(uint128,uint128,uint128,uint256)",
+            "checkQuotientAtGuardLimit(uint256,uint256)",
             "checkUtilizationReservesAboveCash(uint256,uint256,uint256)",
             "checkUtilizationReservesBelowBorrows(uint256,uint256,uint256)",
             "checkUtilizationStrictlyBelowWad(uint256,uint256,uint256)",

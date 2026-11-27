@@ -693,6 +693,7 @@ impl ConstraintContext {
     /// Returns whether other conjuncts assert `small <= large`, including strict `<`. Once
     /// `s <= t`, a difference `t - s` cannot wrap, so it is at most `t`, and at most `d` once
     /// `t <= d + s`. A wrapped `d + s` would be below `s <= t`, so the two facts cannot both hold.
+    /// It is also at most `u - s` once `t <= u`, as `u - s` cannot wrap either.
     pub(super) fn asserts_less_or_equal(&self, small: &SymExpr, large: &SymExpr) -> bool {
         if self.asserted_upper_bounds(small).contains(large) {
             return true;
@@ -703,7 +704,9 @@ impl ConstraintContext {
                 || self.asserted_upper_bounds(end).iter().any(|sum| {
                     matches!(sum.kind(), SymExprKind::BinOp(SymBinOp::Add, a, b)
                         if (a == large && b == start) || (a == start && b == large))
-                }))
+                })
+                || matches!(large.kind(), SymExprKind::BinOp(SymBinOp::Sub, end2, start2)
+                    if start2 == start && self.asserted_upper_bounds(end).contains(end2)))
     }
 
     /// Returns whether `factor <= divisor`, by equality, another conjunct, a divisor that is a sum
