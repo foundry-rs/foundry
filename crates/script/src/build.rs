@@ -29,7 +29,7 @@ use foundry_common::{
     external_compiler::is_builtin_compiler_source,
     fs::canonicalize_path,
     namespaced_storage,
-    provider::ProviderBuilder,
+    provider::{ProviderBuilder, set_chain_poll_interval},
     tempo::configurable_account::{
         detect_configurable_account, parse_config, reaches_threshold, stored_owner_keys,
     },
@@ -433,6 +433,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                         sequence.rpc_url(index),
                     )?
                     .build()?;
+                    set_chain_poll_interval(&provider, sequence.sequences()[index].chain);
                     // A saved signed attempt whose response was lost before its hash was recorded
                     // is reconciled before requesting signers when its receipt shows it was mined.
                     for operation in 0..sequence.sequences()[index].transactions.len() {
