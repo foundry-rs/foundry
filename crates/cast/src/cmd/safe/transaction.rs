@@ -53,7 +53,7 @@ impl SafeSendOpts {
         let Self { rpc, wallet, tx } = self;
         let config = rpc.load_config()?;
         let eth = EthereumOpts { rpc: rpc.rpc, wallet: *wallet, ..Default::default() };
-        let (network, signer, access_key) =
+        let (network, _, signer, access_key) =
             tempo::resolve_transaction_network_and_signer_with_config(&tx.tempo, &eth, &config)
                 .await?;
         ensure!(

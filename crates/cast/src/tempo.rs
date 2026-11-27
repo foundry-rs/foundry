@@ -256,10 +256,13 @@ pub(crate) fn sponsor_relay_connector<N: Network>(
 /// Explicit signer options are resolved with `from` cleared so the store fallback is not consulted.
 /// The fallback is only enabled after selecting Tempo from transaction options, configuration,
 /// or the RPC chain.
+///
+/// Also returns the chain when it is configured or was read from the RPC, so that callers do not
+/// request it again.
 pub(crate) async fn resolve_transaction_network_and_signer(
     tempo: &TempoOpts,
     eth: &EthereumOpts,
-) -> Result<(NetworkVariant, Option<WalletSigner>, Option<TempoAccountsWallet>)> {
+) -> Result<(NetworkVariant, Option<Chain>, Option<WalletSigner>, Option<TempoAccountsWallet>)> {
     let config = eth.load_config()?;
     resolve_transaction_network_and_signer_with_config(tempo, eth, &config).await
 }
@@ -269,20 +272,22 @@ pub(crate) async fn resolve_transaction_network_and_signer_with_config(
     tempo: &TempoOpts,
     eth: &EthereumOpts,
     config: &Config,
-) -> Result<(NetworkVariant, Option<WalletSigner>, Option<TempoAccountsWallet>)> {
+) -> Result<(NetworkVariant, Option<Chain>, Option<WalletSigner>, Option<TempoAccountsWallet>)> {
     let has_session = tempo.session_id()?.is_some();
     let requires_tempo = tempo.is_tempo() || has_session;
     crate::cmd::validate_tempo_network(config, requires_tempo)?;
     if has_session {
-        return Ok((NetworkVariant::Tempo, None, None));
+        return Ok((NetworkVariant::Tempo, config.chain, None, None));
     }
 
     let mut explicit_wallet = eth.wallet.clone();
     explicit_wallet.from = None;
     let (signer, access_key) = foundry_common::tempo::maybe_signer(&explicit_wallet, None).await?;
-    let network =
-        crate::cmd::resolve_transaction_network(config, requires_tempo || access_key.is_some())
-            .await?;
+    let (network, chain) = crate::cmd::resolve_transaction_network_and_chain(
+        config,
+        requires_tempo || access_key.is_some(),
+    )
+    .await?;
     if let (Some(from), Some(access_key)) = (eth.wallet.from, &access_key) {
         eyre::ensure!(
             access_key.account() == from,
@@ -297,12 +302,12 @@ pub(crate) async fn resolve_transaction_network_and_signer_with_config(
         || eth.wallet.from.is_none()
         || tempo.configurable_access_key.is_some()
     {
-        return Ok((network, signer, access_key));
+        return Ok((network, chain, signer, access_key));
     }
 
     // Only consult the Accounts store after selecting Tempo.
     let provider = ProviderBuilder::<Ethereum>::from_config(config)?.build()?;
-    let chain = get_chain(config.chain, &provider).await?;
+    let chain = get_chain(chain, &provider).await?;
     let (signer, access_key) =
         foundry_common::tempo::maybe_signer(&eth.wallet, Some(chain.id())).await?;
     if let Some(access_key) = &access_key {
@@ -313,7 +318,7 @@ pub(crate) async fn resolve_transaction_network_and_signer_with_config(
             access_key.account()
         );
     }
-    Ok((network, signer, access_key))
+    Ok((network, Some(chain), signer, access_key))
 }
 
 /// How a Cast command tells the owners of a configurable account that are not local how to sign.
