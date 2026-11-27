@@ -354,26 +354,45 @@ where
 /// Returns whether Tempo `transactions` need `eth_estimateGas` right before each is sent, which
 /// also sends them one at a time.
 ///
-/// Simulation runs Tempo's gas schedule, so its gas matches the chain for a transaction its sender
-/// signs with a secp256k1 key. It cannot see the intrinsic gas of other signers, such as access
-/// keys, configurable account owners, browser wallets and sponsors, nor of 2D nonce keys, which
-/// are only set when broadcasting. A transaction that sets its sender's fee token must also land
-/// before the fee tokens of later transactions are resolved.
+/// Simulation runs Tempo's gas schedule at its own hardfork, which a pinned `hardfork` can set
+/// below the chain's, so its gas matches the chain only when `simulated_hardfork` is the chain's
+/// active one and the sender signs with a secp256k1 key. It cannot see the intrinsic gas of other
+/// signers, such as access keys, configurable account owners, browser wallets and sponsors, nor of
+/// 2D nonce keys, which are only set when broadcasting. A transaction that sets its sender's fee
+/// token must also land before the fee tokens of later transactions are resolved.
 fn tempo_needs_rpc_estimate<N: Network>(
     transactions: &[(SendTransactionKind<'_, N>, bool, usize)],
     sponsored: bool,
+    simulated_hardfork: Option<FoundryHardfork>,
+    chain_hardfork: Option<TempoHardfork>,
 ) -> bool
 where
-    N::TransactionRequest: FoundryTransactionBuilder<N>,
+    N::TransactionRequest: FoundryTransactionBuilder<N> + From<N::TxEnvelope>,
 {
-    sponsored
+    !matches!(
+        simulated_hardfork,
+        Some(FoundryHardfork::Tempo(fork)) if Some(fork) == chain_hardfork
+    ) || sponsored
         || transactions.iter().any(|(kind, ..)| match kind {
             SendTransactionKind::Raw(tx, _) => {
                 tx.nonce_key().is_some_and(|key| !key.is_zero())
                     || sets_user_fee_token(&tx.tempo_calls())
             }
-            SendTransactionKind::Signed(_) | SendTransactionKind::PreparedRaw(..) => false,
-            _ => true,
+            SendTransactionKind::Signed(tx) => sets_user_fee_token(
+                &<N::TransactionRequest as From<N::TxEnvelope>>::from(tx.clone()).tempo_calls(),
+            ),
+            SendTransactionKind::PreparedRaw(payload, _) => {
+                N::TxEnvelope::decode_2718_exact(payload).is_ok_and(|tx| {
+                    sets_user_fee_token(
+                        &<N::TransactionRequest as From<N::TxEnvelope>>::from(tx).tempo_calls(),
+                    )
+                })
+            }
+            SendTransactionKind::Unlocked(_)
+            | SendTransactionKind::Browser(..)
+            | SendTransactionKind::AccessKey(..)
+            | SendTransactionKind::ConfigurableAccount(..)
+            | SendTransactionKind::OfflineOwners(..) => true,
         })
 }
 
@@ -1328,12 +1347,12 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
 
                     let estimate_via_rpc = self.args.skip_simulation
                         || if self.script_config.evm_opts.networks.is_tempo() {
-                            // Simulation prices transactions at its own hardfork, which a pinned
-                            // `hardfork` can set below the chain's.
-                            !matches!(
+                            tempo_needs_rpc_estimate(
+                                transactions,
+                                tempo_sponsor.is_some(),
                                 self.script_config.hardfork,
-                                Some(FoundryHardfork::Tempo(fork)) if Some(fork) == tempo_hardfork
-                            ) || tempo_needs_rpc_estimate(transactions, tempo_sponsor.is_some())
+                                tempo_hardfork,
+                            )
                         } else {
                             has_different_gas_calc(sequence.chain)
                         };

@@ -8318,6 +8318,137 @@ Deployed contracts (chain 31337):
     );
 }
 
+// A transaction that changes the sender's stored fee token lands before the fee tokens of later
+// transactions are resolved.
+#[forgetest_init]
+async fn tempo_script_resolves_fee_token_after_set_user_token(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "TempoSetUserToken.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+interface IFeeManager {
+    function setUserToken(address token) external;
+}
+
+contract TempoSetUserTokenTarget {
+    uint256 public value;
+
+    function set(uint256 newValue) external {
+        value = newValue;
+    }
+}
+
+contract TempoSetUserToken is Script {
+    function run() external {
+        vm.startBroadcast();
+        TempoSetUserTokenTarget target = new TempoSetUserTokenTarget();
+        IFeeManager(0xfeEC000000000000000000000000000000000000).setUserToken(
+            0x20C0000000000000000000000000000000000000
+        );
+        target.set(7);
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    cmd.arg("script").arg(&script).args([
+        "--tc",
+        "TempoSetUserToken",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+    ]);
+    cmd.assert_success();
+    let sequence: Value =
+        foundry_common::fs::read_json_file(&latest_broadcast_path(prj.root())).unwrap();
+    let fee_tokens = sequence["receipts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|receipt| receipt["feeToken"].as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        fee_tokens,
+        [
+            "0x20c0000000000000000000000000000000000001",
+            "0x20c0000000000000000000000000000000000000",
+            "0x20c0000000000000000000000000000000000000",
+        ]
+    );
+}
+
+// The same holds for a presigned Tempo AA transaction that sets the fee token in a later call.
+#[forgetest_init]
+async fn tempo_script_resolves_fee_token_after_presigned_set_user_token(prj: _, cmd: _) {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    let path_usd = address!("0x20c0000000000000000000000000000000000000");
+    let mut set_user_token = keccak256("setUserToken(address)")[..4].to_vec();
+    set_user_token.extend(DynSolValue::Address(path_usd).abi_encode());
+    let payload = provider
+        .raw_request::<_, Bytes>(
+            "eth_signTransaction".into(),
+            (serde_json::json!({
+                "from": sender,
+                "type": "0x76",
+                "nonce": "0x0",
+                "gas": "0x1e8480",
+                "maxFeePerGas": "0x6fc23ac00",
+                "maxPriorityFeePerGas": "0x3b9aca00",
+                "calls": [
+                    {"to": "0x000000000000000000000000000000000000beef", "value": "0x0", "input": "0x"},
+                    {
+                        "to": "0xfeEC000000000000000000000000000000000000",
+                        "value": "0x0",
+                        "input": Bytes::from(set_user_token),
+                    },
+                ],
+            }),),
+        )
+        .await
+        .unwrap();
+    let script = prj.add_script(
+        "TempoPresignedSetUserToken.s.sol",
+        &format!(
+            r#"
+import "forge-std/Script.sol";
+
+contract TempoPresignedSetUserToken is Script {{
+    function run() external {{
+        vm.startBroadcast();
+        vm.broadcastRawTransaction(hex"{}");
+        (bool success,) = address(0xbeef).call("");
+        require(success);
+        vm.stopBroadcast();
+    }}
+}}
+"#,
+            hex::encode(payload),
+        ),
+    );
+    cmd.arg("script").arg(script).args([
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--network",
+        "tempo",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+        "--non-interactive",
+    ]);
+    cmd.assert_success();
+    let sequence: Value =
+        foundry_common::fs::read_json_file(&latest_broadcast_path(prj.root())).unwrap();
+    let receipts = sequence["receipts"].as_array().unwrap();
+    assert_eq!(receipts.len(), 2);
+    assert_eq!(receipts[1]["feeToken"], "0x20c0000000000000000000000000000000000000");
+}
+
 // A broadcast reads each sender's stored fee token once, unless one of its transactions sets it,
 // which later transactions must pay with.
 #[forgetest_init]
@@ -8498,11 +8629,13 @@ contract TempoRefund is Script {
 "#,
     );
     let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let (rpc, estimates) =
+        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_estimateGas").await;
     cmd.arg("script").arg(&script).args([
         "--tc",
         "TempoRefund",
         "--rpc-url",
-        &handle.http_endpoint(),
+        &rpc,
         "--network",
         "tempo",
         "--private-key",
@@ -8515,6 +8648,7 @@ contract TempoRefund is Script {
     let receipts = sequence["receipts"].as_array().unwrap();
     assert_eq!(receipts.len(), 2);
     assert!(receipts.iter().all(|receipt| receipt["status"] == "0x1"), "{receipts:?}");
+    assert!(estimates.lock().unwrap().is_empty());
 }
 
 // Simulation at a pinned hardfork older than the chain's prices transactions below it, so Tempo
@@ -8706,6 +8840,8 @@ contract TempoResume is Script {
         "tempo",
         "--tempo.fee-token",
         fee_token,
+        // Wait for the first receipt before the second transaction is rejected.
+        "--slow",
     ]);
     let stderr = String::from_utf8_lossy(&cmd.assert_failure().get_output().stderr).into_owned();
     assert!(stderr.contains("method is not allowed"), "{stderr}");
@@ -8714,9 +8850,8 @@ contract TempoResume is Script {
     let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
     let transactions = sequence["transactions"].as_array().unwrap();
     assert_eq!(transactions.len(), 2);
-    // Both transactions are sent in one batch, so the first one is still pending.
-    assert!(sequence["receipts"].as_array().unwrap().is_empty());
-    assert_eq!(sequence["pending"].as_array().unwrap(), &[transactions[0]["hash"].clone()]);
+    assert_eq!(sequence["receipts"].as_array().unwrap().len(), 1);
+    assert!(sequence["pending"].as_array().unwrap().is_empty());
     assert_eq!(submissions.lock().unwrap().len(), 1);
     let first_hash = transactions[0]["hash"].as_str().unwrap().to_owned();
     let remaining_payload = transactions[1]["transaction"].clone();
