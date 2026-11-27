@@ -59,6 +59,7 @@ use foundry_common::{
             ConfigurableAccountSigner, detect_configurable_account, reaches_threshold,
         },
         mark_sponsored_gas_estimation, maybe_print_fee_token, resolve_and_set_fee_token,
+        sets_user_fee_token,
     },
 };
 use foundry_config::Config;
@@ -355,6 +356,51 @@ where
             }
         }
     }
+}
+
+/// Returns whether Tempo `transactions` need `eth_estimateGas` right before each is sent, which
+/// also sends them one at a time.
+///
+/// Simulation runs Tempo's gas schedule at its own hardfork, which a pinned `hardfork` can set
+/// below the chain's, so its gas matches the chain only when `simulated_hardfork` is the chain's
+/// active one and the sender signs with a secp256k1 key. It cannot see the intrinsic gas of other
+/// signers, such as access keys, configurable account owners, browser wallets and sponsors, nor of
+/// 2D nonce keys, which are only set when broadcasting. A transaction that sets its sender's fee
+/// token must also land before the fee tokens of later transactions are resolved.
+fn tempo_needs_rpc_estimate<N: Network>(
+    transactions: &[(SendTransactionKind<'_, N>, bool, usize)],
+    sponsored: bool,
+    simulated_hardfork: Option<FoundryHardfork>,
+    chain_hardfork: Option<TempoHardfork>,
+) -> bool
+where
+    N::TransactionRequest: FoundryTransactionBuilder<N> + From<N::TxEnvelope>,
+{
+    !matches!(
+        simulated_hardfork,
+        Some(FoundryHardfork::Tempo(fork)) if Some(fork) == chain_hardfork
+    ) || sponsored
+        || transactions.iter().any(|(kind, ..)| match kind {
+            SendTransactionKind::Raw(tx, _) => {
+                tx.nonce_key().is_some_and(|key| !key.is_zero())
+                    || sets_user_fee_token(&tx.tempo_calls())
+            }
+            SendTransactionKind::Signed(tx) => sets_user_fee_token(
+                &<N::TransactionRequest as From<N::TxEnvelope>>::from(tx.clone()).tempo_calls(),
+            ),
+            SendTransactionKind::PreparedRaw(payload, _) => {
+                N::TxEnvelope::decode_2718_exact(payload).is_ok_and(|tx| {
+                    sets_user_fee_token(
+                        &<N::TransactionRequest as From<N::TxEnvelope>>::from(tx).tempo_calls(),
+                    )
+                })
+            }
+            SendTransactionKind::Unlocked(_)
+            | SendTransactionKind::Browser(..)
+            | SendTransactionKind::AccessKey(..)
+            | SendTransactionKind::ConfigurableAccount(..)
+            | SendTransactionKind::OfflineOwners(..) => true,
+        })
 }
 
 fn is_definite_browser_non_submission(error: &eyre::Report) -> bool {
@@ -1317,9 +1363,17 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                         .unwrap_or(transactions.len());
                     let transactions = &transactions[..offline];
 
-                    let estimate_via_rpc = has_different_gas_calc(sequence.chain)
-                        || self.script_config.evm_opts.networks.is_tempo()
-                        || self.args.skip_simulation;
+                    let estimate_via_rpc = self.args.skip_simulation
+                        || if self.script_config.evm_opts.networks.is_tempo() {
+                            tempo_needs_rpc_estimate(
+                                transactions,
+                                tempo_sponsor.is_some(),
+                                self.script_config.hardfork,
+                                tempo_hardfork,
+                            )
+                        } else {
+                            has_different_gas_calc(sequence.chain)
+                        };
 
                     // We only wait for a transaction receipt before sending the next transaction,
                     // if there is more than one signer. There would be no way of assuring their
@@ -1342,6 +1396,12 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     // We send transactions and wait for receipts in batches of 100, since some
                     // networks cannot handle more than that.
                     let batch_size = if sequential_broadcast { 1 } else { 100 };
+                    // A Tempo transaction is signed and sent only once the node accepted the
+                    // previous one, so a rejection leaves none of the sender's later nonces in a
+                    // pool behind the gap, where they would run once it is filled, and leaves
+                    // them unsigned for `--resume`. Other batches are signed before any of them
+                    // is sent, and sent all at once.
+                    let ordered = self.script_config.evm_opts.networks.is_tempo();
 
                     for (batch_number, batch) in transactions.chunks(batch_size).enumerate() {
                         seq_progress.inner.write().set_status(&format!(
@@ -1350,75 +1410,82 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                             batch_number * batch_size + std::cmp::min(batch_size, batch.len()) - 1
                         ));
 
-                        let mut prepared = Vec::with_capacity(batch.len());
-                        for (kind, is_fixed_gas_limit, index) in batch {
-                            // A pending operation can be confirmed while waiting on an earlier
-                            // batch.
-                            if is_operation_completed(&self.sequence, i, *index) {
-                                continue;
-                            }
-                            kind.validate_expiring_create_nonce(
-                                &provider,
-                                &self.sequence.sequences()[i].transactions[*index],
-                            )
-                            .await?;
-                            let mut kind = kind
-                                .clone()
-                                .prepare_for_durable_send(
+                        let mut unsent = batch.iter();
+                        let mut buffer = FuturesUnordered::new();
+                        let mut fail_fast_index = None;
+                        'send: loop {
+                            let mut prepared = Vec::new();
+                            while (!ordered || buffer.is_empty() && prepared.is_empty())
+                                && let Some((kind, is_fixed_gas_limit, index)) = unsent.next()
+                            {
+                                // A pending operation can be confirmed while waiting on an earlier
+                                // batch.
+                                if is_operation_completed(&self.sequence, i, *index) {
+                                    continue;
+                                }
+                                kind.validate_expiring_create_nonce(
                                     &provider,
-                                    sequential_broadcast,
-                                    *is_fixed_gas_limit,
-                                    estimate_via_rpc,
-                                    self.args.gas_estimate_multiplier,
-                                    reported_hardfork,
-                                    tempo_sponsor.as_deref(),
+                                    &self.sequence.sequences()[i].transactions[*index],
                                 )
                                 .await?;
-                            if let PreparedTransaction::Raw(payload, hash) = &mut kind {
-                                *hash = self.sequence.persist_signed_payload(
-                                    i,
-                                    *index,
-                                    payload.clone(),
-                                    tempo_hardfork.is_none_or(|fork| fork >= TempoHardfork::T1B),
-                                )?;
+                                let mut kind = kind
+                                    .clone()
+                                    .prepare_for_durable_send(
+                                        &provider,
+                                        sequential_broadcast,
+                                        *is_fixed_gas_limit,
+                                        estimate_via_rpc,
+                                        self.args.gas_estimate_multiplier,
+                                        reported_hardfork,
+                                        tempo_sponsor.as_deref(),
+                                    )
+                                    .await?;
+                                if let PreparedTransaction::Raw(payload, hash) = &mut kind {
+                                    *hash = self.sequence.persist_signed_payload(
+                                        i,
+                                        *index,
+                                        payload.clone(),
+                                        tempo_hardfork
+                                            .is_none_or(|fork| fork >= TempoHardfork::T1B),
+                                    )?;
+                                }
+                                prepared.push((kind, *index));
                             }
-                            prepared.push((kind, *index));
-                        }
 
-                        let fail_fast_index = prepared
-                            .first()
-                            .filter(|_| batch_number == 0 && first_on_chain)
-                            .map(|(_, index)| *index);
-                        let mut buffer = FuturesUnordered::new();
-                        for (kind, index) in prepared {
-                            if let Some(request) = kind.delegated_request() {
-                                kind.validate_delegated_submission()?;
-                                self.sequence.persist_delegated_request(
-                                    i,
-                                    index,
-                                    request.clone(),
-                                )?;
+                            if batch_number == 0 && first_on_chain && fail_fast_index.is_none() {
+                                fail_fast_index = prepared.first().map(|(_, index)| *index);
                             }
-                            let provider = if matches!(kind, PreparedTransaction::Unlocked(_)) {
-                                unlocked_submission_provider.clone()
-                            } else {
-                                provider.clone()
+                            for (kind, index) in prepared {
+                                if let Some(request) = kind.delegated_request() {
+                                    kind.validate_delegated_submission()?;
+                                    self.sequence.persist_delegated_request(
+                                        i,
+                                        index,
+                                        request.clone(),
+                                    )?;
+                                }
+                                let provider = if matches!(kind, PreparedTransaction::Unlocked(_)) {
+                                    unlocked_submission_provider.clone()
+                                } else {
+                                    provider.clone()
+                                };
+                                let mut pending = async move {
+                                    let res = kind.clone().send(provider).await;
+                                    (res, kind, 0, None, index)
+                                }
+                                .boxed();
+                                if let Some(result) = pending.as_mut().now_or_never() {
+                                    buffer.push(futures::future::ready(result).boxed());
+                                } else {
+                                    buffer.push(pending);
+                                }
+                            }
+
+                            let Some((mut res, kind, attempt, original_res, index)) =
+                                buffer.next().await
+                            else {
+                                break;
                             };
-                            let mut pending = async move {
-                                let res = kind.clone().send(provider).await;
-                                (res, kind, 0, None, index)
-                            }
-                            .boxed();
-                            if let Some(result) = pending.as_mut().now_or_never() {
-                                buffer.push(futures::future::ready(result).boxed());
-                            } else {
-                                buffer.push(pending);
-                            }
-                        }
-
-                        'send: while let Some((mut res, kind, attempt, original_res, index)) =
-                            buffer.next().await
-                        {
                             if res.is_err()
                                 && let PreparedTransaction::Raw(_, hash) = kind
                                 && provider
@@ -1477,6 +1544,20 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                 }));
 
                                 continue 'send;
+                            }
+
+                            if ordered && res.is_err() {
+                                let not_sent = transactions
+                                    .iter()
+                                    .map(|(_, _, other)| *other)
+                                    .filter(|&other| other > index)
+                                    .collect::<Vec<_>>();
+                                if !not_sent.is_empty() {
+                                    sh_warn!(
+                                        "Transactions {} on chain {sequence_chain} were not sent after transaction {index} failed. Add `--resume` to your command to retry transaction {index} and send them.",
+                                        not_sent.iter().format(", ")
+                                    )?;
+                                }
                             }
 
                             // Preserve the original error if any

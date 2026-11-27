@@ -369,6 +369,15 @@ fn infer_fee_token_from_tip20_calls(
     target.is_tip20().then_some(target)
 }
 
+/// Returns whether `calls` set their sender's fee token preference in the FeeManager, which the
+/// fee token of the sender's later transactions is resolved from.
+pub fn sets_user_fee_token(calls: &[(TxKind, &[u8])]) -> bool {
+    calls.iter().any(|(to, input)| {
+        *to == TxKind::Call(TIP_FEE_MANAGER_ADDRESS)
+            && input.starts_with(&IFeeManager::setUserTokenCall::SELECTOR)
+    })
+}
+
 fn infer_fee_token_from_set_user_token_call(
     calls: &[(TxKind, &[u8])],
     is_aa: bool,
