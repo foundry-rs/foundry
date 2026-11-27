@@ -14,7 +14,7 @@ use alloy_consensus::{
 };
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_genesis::{Genesis, GenesisAccount};
-use alloy_network::{ReceiptResponse, TransactionBuilder, TransactionResponse};
+use alloy_network::{Network, ReceiptResponse, TransactionBuilder, TransactionResponse};
 use alloy_primitives::{
     Address, B256, Bytes, Signature, TxKind, U256, address, aliases::U96, b256, bytes, hex,
     keccak256,
@@ -27,6 +27,7 @@ use alloy_rlp::Decodable;
 use alloy_rpc_types::{
     Authorization, BlockId, BlockNumberOrTag, EIP1186AccountProofResponse, TransactionRequest,
     anvil::Forking,
+    simulate::SimulatedBlock,
     trace::{
         geth::{CallConfig, GethDebugTracingOptions, GethTrace, TraceResult},
         parity::Action,
@@ -3778,6 +3779,25 @@ async fn test_tempo_simulate_v1_reports_token_metadata() {
         .await
         .unwrap();
 
+    // Tempo clients decode the blocks with Tempo's header.
+    let blocks = serde_json::from_value::<
+        Vec<SimulatedBlock<<TempoNetwork as Network>::BlockResponse>>,
+    >(response["blocks"].clone())
+    .unwrap();
+    let parent = provider
+        .raw_request::<_, <TempoNetwork as Network>::BlockResponse>(
+            "eth_getBlockByNumber".into(),
+            ("latest", false),
+        )
+        .await
+        .unwrap()
+        .header;
+    let header = &blocks[0].inner.header;
+    assert_eq!(header.parent_hash(), parent.hash);
+    assert_eq!(header.hash, header.inner.inner.hash_slow());
+    assert_eq!(header.inner.general_gas_limit, parent.inner.general_gas_limit);
+    assert_eq!(header.inner.shared_gas_limit, parent.inner.shared_gas_limit);
+    assert_eq!(header.timestamp_millis, header.inner.timestamp_millis());
     let calls = response["blocks"][0]["calls"].as_array().unwrap();
     assert!(calls[..4].iter().all(|call| call["status"] == "0x1"), "{calls:#?}");
     assert_eq!(calls[3]["logs"][0]["address"], serde_json::json!(PATH_USD));
@@ -3795,6 +3815,93 @@ async fn test_tempo_simulate_v1_reports_token_metadata() {
             (OUSD_ADDRESS, usd("Open USD", "OUSD")),
         ])
     );
+}
+
+/// `tempo_simulateV1` reads token metadata at the simulation's base block, so a token created
+/// after that block or only by a state override has none, like on a Tempo node.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_simulate_v1_reads_metadata_at_base_block() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let from = handle.dev_accounts().next().unwrap();
+    api.mine_one().await.unwrap();
+    create_ousd(&api, from).await;
+    // Code deployed by an override does not count: metadata comes from the base state.
+    let payload = serde_json::json!({
+        "blockStateCalls": [{
+            "stateOverrides": { (OUSD_ADDRESS.to_string()): { "code": "0x00" } },
+            "calls": [{ "from": from, "to": OUSD_ADDRESS }],
+        }],
+    });
+
+    let metadata = |block: BlockId| {
+        let provider = handle.http_provider();
+        let payload = payload.clone();
+        async move {
+            provider
+                .raw_request::<_, serde_json::Value>("tempo_simulateV1".into(), (payload, block))
+                .await
+                .unwrap()["tokenMetadata"]
+                .clone()
+        }
+    };
+
+    assert_eq!(metadata(BlockId::number(0)).await, serde_json::json!({}));
+    assert_eq!(metadata(BlockId::latest()).await, ousd_metadata());
+}
+
+/// A fork simulating a block that predates it forwards `tempo_simulateV1`, so the upstream
+/// resolves metadata at that block.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_simulate_v1_fork_forwards_pre_fork_blocks() {
+    let (source_api, source_handle) = spawn(NodeConfig::test_tempo()).await;
+    let from = source_handle.dev_accounts().next().unwrap();
+    source_api.mine_one().await.unwrap();
+    create_ousd(&source_api, from).await;
+    source_api.mine_one().await.unwrap();
+    let (_api, handle) =
+        spawn(NodeConfig::test_tempo().with_eth_rpc_url(Some(source_handle.http_endpoint()))).await;
+    let payload = serde_json::json!({ "blockStateCalls": [{ "calls": [{ "from": from, "to": OUSD_ADDRESS }] }] });
+
+    let simulate = |block: BlockId| {
+        let provider = handle.http_provider();
+        let payload = payload.clone();
+        async move {
+            provider
+                .raw_request::<_, serde_json::Value>("tempo_simulateV1".into(), (payload, block))
+                .await
+                .unwrap()
+        }
+    };
+
+    let before_token = simulate(BlockId::number(0)).await;
+    assert_eq!(before_token["tokenMetadata"], serde_json::json!({}));
+    assert_eq!(before_token["blocks"][0]["number"], "0x1");
+    serde_json::from_value::<Vec<SimulatedBlock<<TempoNetwork as Network>::BlockResponse>>>(
+        before_token["blocks"].clone(),
+    )
+    .unwrap();
+    assert_eq!(simulate(BlockId::number(1)).await["tokenMetadata"], ousd_metadata());
+    assert_eq!(simulate(BlockId::latest()).await["tokenMetadata"], ousd_metadata());
+}
+
+async fn create_ousd(api: &EthApi<FoundryNetwork>, admin: Address) {
+    api.anvil_tempo_create_token(TempoCreateTokenRequest {
+        address: OUSD_ADDRESS,
+        name: "Open USD".into(),
+        symbol: "OUSD".into(),
+        currency: "USD".into(),
+        quote_token: PATH_USD,
+        admin,
+        mint: vec![],
+    })
+    .await
+    .unwrap();
+}
+
+fn ousd_metadata() -> serde_json::Value {
+    serde_json::json!({
+        (format!("{OUSD_ADDRESS:#x}")): { "name": "Open USD", "symbol": "OUSD", "currency": "USD" },
+    })
 }
 
 /// `tempo_simulateV1` is unavailable outside Tempo mode.
