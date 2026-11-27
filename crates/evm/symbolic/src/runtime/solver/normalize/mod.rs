@@ -598,6 +598,8 @@ pub(super) struct ConstraintContext {
     exact_values: HashMap<SymExpr, U256>,
     conflicting_exact_values: HashSet<SymExpr>,
     non_wrapping_products: HashSet<(SymExpr, SymExpr)>,
+    /// The `(x, d)` pairs asserted to satisfy `x % d == 0` once `d` is nonzero.
+    exact_multiples: HashSet<(SymExpr, SymExpr)>,
     /// Conjuncts of the context, which decide `ite` conditions they assert or deny.
     facts: HashSet<SymBoolExpr>,
     /// The words each word is asserted to be at most, by a `<=` or `<` conjunct.
@@ -689,6 +691,9 @@ impl ConstraintContext {
             context.record_zero_mul_high(constraint);
         }
         for fact in &context.facts {
+            if let Some((value, divisor)) = Self::exact_multiple_fact(fact) {
+                context.exact_multiples.insert((value.clone(), divisor.clone()));
+            }
             let (small, large) = match fact.kind() {
                 SymBoolExprKind::Cmp(SymCmpOp::Ult, left, right) => {
                     context.strict_order_facts.insert((left.clone(), right.clone()));
@@ -896,9 +901,10 @@ impl ConstraintContext {
 
     fn may_normalize_word(&self, expr: &SymExpr) -> bool {
         if self.exact_values.contains_key(expr)
-            || Self::mul_div_operands(expr).is_some()
+            || self.guard_mul_div_operands(expr).is_some()
             || Self::ceil_div_product(expr).is_some()
             || full_mul_div_operands(expr).is_some()
+            || self.exact_multiple_operands(expr).is_some()
         {
             return true;
         }
@@ -945,6 +951,16 @@ impl ConstraintContext {
         if let Some(quotient) = self.full_mul_div(cx, &expr) {
             return quotient;
         }
+        if let Some((value, divisor)) = self.exact_multiple_operands(&expr)
+            && self.interval(divisor).is_some_and(|range| !range.min.is_zero())
+        {
+            // With `d != 0`, `(x / d) * d == x - x % d`, so `x % d == 0` makes it `x`.
+            return if matches!(expr.kind(), SymExprKind::BinOp(SymBinOp::URem, _, _)) {
+                SymExpr::zero(cx)
+            } else {
+                value.clone()
+            };
+        }
         if let SymExprKind::BinOp(SymBinOp::And, value, mask) = expr.kind()
             && let Some(bits) = mask.as_const().and_then(mask_low_bits)
             && (self.unsigned_bits(value) <= bits
@@ -981,7 +997,7 @@ impl ConstraintContext {
             let factor = SymExpr::constant(cx, factor);
             return SymExpr::binop(cx, SymBinOp::Mul, value.clone(), factor);
         }
-        if let Some((denominator, other)) = Self::mul_div_operands(&expr)
+        if let Some((denominator, other)) = self.guard_mul_div_operands(&expr)
             && self.interval(denominator).is_some_and(|interval| !interval.min.is_zero())
         {
             let other = match other {
@@ -1455,7 +1471,8 @@ impl ConstraintContext {
     }
 
     fn mul_div_identity(&self, quotient: &SymExpr, expected: &SymExpr) -> bool {
-        let Some((denominator, other)) = Self::mul_div_identity_operands(quotient, expected) else {
+        let Some((denominator, other)) = self.guard_mul_div_identity_operands(quotient, expected)
+        else {
             return false;
         };
 
@@ -1469,6 +1486,38 @@ impl ConstraintContext {
     ) -> Option<(&'a SymExpr, &'a SymExpr)> {
         let (denominator, other) = Self::mul_div_operands(quotient)?;
         other.matches(expected).then_some((denominator, expected))
+    }
+
+    /// Like [`Self::mul_div_identity_operands`], also matching a quotient whose product an exact
+    /// multiple rewrote.
+    fn guard_mul_div_identity_operands<'a>(
+        &self,
+        quotient: &'a SymExpr,
+        expected: &'a SymExpr,
+    ) -> Option<(&'a SymExpr, &'a SymExpr)> {
+        let (denominator, other) = self.guard_mul_div_operands(quotient)?;
+        other.matches(expected).then_some((denominator, expected))
+    }
+
+    /// Like [`Self::mul_div_operands`], also matching `x / (x / d)`, the quotient
+    /// `((x / d) * d) / (x / d)` after an exact multiple `x` rewrote its product. With `d != 0`
+    /// and `x % d == 0`, `(x / d) * d == x`.
+    fn guard_mul_div_operands<'a>(
+        &self,
+        quotient: &'a SymExpr,
+    ) -> Option<(&'a SymExpr, MulDivFactor<'a>)> {
+        if let Some(operands) = Self::mul_div_operands(quotient) {
+            return Some(operands);
+        }
+        if self.exact_multiples.is_empty() {
+            return None;
+        }
+        let (value, divisor) = quotient.udiv_operands()?;
+        let (dividend, factor) = divisor.udiv_operands()?;
+        (dividend == value
+            && self.exact_multiples.contains(&(value.clone(), factor.clone()))
+            && self.interval(factor).is_some_and(|range| !range.min.is_zero()))
+        .then_some((divisor, MulDivFactor::Expr(factor)))
     }
 
     /// Returns the denominator `x` and the other factor of `(x * f) / x`.
@@ -2423,7 +2472,7 @@ impl ConstraintContext {
             } else {
                 (quotient, None)
             };
-        let (divisor, other) = Self::mul_div_identity_operands(quotient, expected)?;
+        let (divisor, other) = self.guard_mul_div_identity_operands(quotient, expected)?;
         (zero_condition.is_none_or(|condition| self.zero_check_for_operand(condition, divisor))
             && branch_condition
                 .is_none_or(|condition| self.zero_check_for_operand(condition, divisor)))
@@ -2509,6 +2558,65 @@ impl ConstraintContext {
     fn has_non_wrapping_product(&self, left: &SymExpr, right: &SymExpr) -> bool {
         self.non_wrapping_products.contains(&(left.clone(), right.clone()))
             || self.non_wrapping_products.contains(&(right.clone(), left.clone()))
+    }
+
+    /// Returns `(x, d)` for a fact stating `x % d == 0`: `x % d == 0` itself, the exact two-way
+    /// disjunction `d == 0 || x % d == 0`, or `x == (x / d) * d`. Each implies `x % d == 0`
+    /// once `d` is nonzero, which every rewrite using the pair must still prove.
+    fn exact_multiple_fact<'a>(fact: &'a SymBoolExpr) -> Option<(&'a SymExpr, &'a SymExpr)> {
+        let remainder_operands = |operand: &'a SymExpr| match operand.kind() {
+            SymExprKind::BinOp(SymBinOp::URem, value, divisor) => Some((value, divisor)),
+            _ => None,
+        };
+        match fact.kind() {
+            SymBoolExprKind::Not(inner)
+                if let SymBoolExprKind::And(terms) = inner.kind()
+                    && let [first, second] = &terms[..] =>
+            {
+                // An additional alternative would let the disjunction hold without divisibility.
+                let denied_zero_check = |term: &'a SymBoolExpr| match term.kind() {
+                    SymBoolExprKind::Not(check) => check.zero_check_operand(),
+                    _ => None,
+                };
+                [(first, second), (second, first)].into_iter().find_map(|(nonzero, remainder)| {
+                    let divisor = denied_zero_check(nonzero)?;
+                    let (value, remainder_divisor) =
+                        remainder_operands(denied_zero_check(remainder)?)?;
+                    (remainder_divisor == divisor).then_some((value, divisor))
+                })
+            }
+            SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => {
+                if let Some(operand) = fact.zero_check_operand()
+                    && let Some(operands) = remainder_operands(operand)
+                {
+                    return Some(operands);
+                }
+                [(left, right), (right, left)].into_iter().find_map(|(value, product)| {
+                    let SymExprKind::BinOp(SymBinOp::Mul, a, b) = product.kind() else {
+                        return None;
+                    };
+                    let (dividend, divisor) = rounded_product_operands(a, b)?;
+                    (dividend == value).then_some((dividend, divisor))
+                })
+            }
+            _ => None,
+        }
+    }
+
+    /// Returns `(x, d)` for the rounded product `(x / d) * d` or the remainder `x % d` of a
+    /// recorded exact multiple.
+    fn exact_multiple_operands<'a>(&self, expr: &'a SymExpr) -> Option<(&'a SymExpr, &'a SymExpr)> {
+        if self.exact_multiples.is_empty() {
+            return None;
+        }
+        let (value, divisor) = match expr.kind() {
+            SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
+                rounded_product_operands(left, right)?
+            }
+            SymExprKind::BinOp(SymBinOp::URem, value, divisor) => (value, divisor),
+            _ => return None,
+        };
+        self.exact_multiples.contains(&(value.clone(), divisor.clone())).then_some((value, divisor))
     }
 
     pub(super) fn mul_cannot_overflow_256(&self, left: &SymExpr, right: &SymExpr) -> bool {
