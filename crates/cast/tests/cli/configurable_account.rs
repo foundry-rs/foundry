@@ -598,7 +598,7 @@ Error: [..] is already a configurable account
 /// A 2-of-3 configurable account over the keys `0x61..61`, `0x62..62` and `0x63..63`, the
 /// account it derives, its configuration as `--tempo.config` takes it, and the keys sorted by
 /// address.
-fn two_of_three() -> (Address, String, [PrivateKeySigner; 3]) {
+pub(super) fn two_of_three() -> (Address, String, [PrivateKeySigner; 3]) {
     let mut keys = [0x61, 0x62, 0x63]
         .map(|byte| PrivateKeySigner::from_bytes(&B256::repeat_byte(byte)).unwrap());
     keys.sort_by_key(|key| key.address());

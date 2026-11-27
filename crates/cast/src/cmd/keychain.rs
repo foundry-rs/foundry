@@ -432,7 +432,7 @@ pub enum KeyAuthorizationSubcommand {
     ///
     /// With `--tempo.configurable-account`, the configurable account's owners sign the
     /// authorization (T14, TIP-1111) and it is bound to the account. Its configuration is read
-    /// from the RPC.
+    /// from the RPC or supplied with `--tempo.config` for a fresh multisig.
     Sign {
         #[command(flatten)]
         authorization: KeyAuthorizationArgs,
@@ -934,7 +934,7 @@ impl KeyAuthorizationSubcommand {
                     );
                     return sign_configurable_key_authorization(
                         authorization,
-                        &configurable,
+                        configurable,
                         configurable_account,
                         account,
                         &wallet,
@@ -2774,7 +2774,7 @@ async fn run_key_auth_sign(
 /// The wallet signer, when given, approves as one owner.
 async fn sign_configurable_key_authorization(
     args: KeyAuthorizationArgs,
-    configurable: &ConfigurableAccountArgs,
+    configurable: ConfigurableAccountArgs,
     account: Address,
     bind_account: Option<Address>,
     wallet: &WalletOpts,
