@@ -299,14 +299,7 @@ where
     let is_aa = tx.is_tempo_aa();
     let tx_from = tx.from();
 
-    // A resolved fee token would classify the request as Tempo AA. AA transactions require a
-    // non-empty call list, which a contract creation lacks, and carry authorizations in their own
-    // list, so an EIP-7702 request would silently lose its Ethereum authorization list. Leave both
-    // as Ethereum transactions; the protocol selects the same fee token for them when charging
-    // fees.
-    if (!has_call_list && calls.iter().any(|(to, _)| to.is_create()))
-        || (!is_aa && tx.authorization_list().is_some_and(|auths| !auths.is_empty()))
-    {
+    if keeps_fee_token_unset::<N>(tx) {
         return Ok(None);
     }
 
@@ -331,6 +324,21 @@ where
     let Some(fee_token) = fee_token else { return Ok(None) };
     tx.set_fee_token(fee_token);
     Ok(Some(fee_token))
+}
+
+/// Whether no fee token is resolved for `tx`.
+///
+/// A resolved fee token would classify the request as Tempo AA. AA transactions require a
+/// non-empty call list, which a contract creation lacks, and carry authorizations in their own
+/// list, so an EIP-7702 request would silently lose its Ethereum authorization list. Both are left
+/// as Ethereum transactions; the protocol selects the same fee token for them when charging fees.
+fn keeps_fee_token_unset<N>(tx: &N::TransactionRequest) -> bool
+where
+    N: Network,
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
+    (!tx.has_tempo_call_list() && tx.tempo_calls().iter().any(|(to, _)| to.is_create()))
+        || (!tx.is_tempo_aa() && tx.authorization_list().is_some_and(|auths| !auths.is_empty()))
 }
 
 async fn stored_user_fee_token<N>(

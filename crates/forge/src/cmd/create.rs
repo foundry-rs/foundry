@@ -637,7 +637,8 @@ impl CreateArgs {
                 deployer.tx.clone()
             };
             if self.tx.tempo.is_sponsored() {
-                mark_sponsored_gas_estimation(&provider, &mut request).await;
+                let sponsor = self.tx.tempo.sponsor.filter(|_| resolve_unknown_fee_token_symbol);
+                mark_sponsored_gas_estimation(&provider, &mut request, sponsor).await;
             }
             let estimated = provider.estimate_gas(request).await?;
             deployer.tx.set_gas_limit(apply_gas_estimate_multiplier(

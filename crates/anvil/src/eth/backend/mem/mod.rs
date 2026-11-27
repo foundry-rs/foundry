@@ -137,7 +137,10 @@ use evm2::{
     ethereum::{
         access_list_counts, intrinsic_and_floor_gas, validate_floor_gas, validate_intrinsic_gas,
     },
-    evm::{BalContext, BlockAccessIndex, BlockStateAccumulator, PendingState, StateChangeSource},
+    evm::{
+        BalContext, BlockAccessIndex, BlockStateAccumulator, DynDatabase, PendingState,
+        StateChangeSource,
+    },
     interpreter::InstrStop,
     registry::HandlerError,
 };
@@ -178,15 +181,18 @@ use std::{
 use storage::{Blockchain, DEFAULT_HISTORY_LIMIT, MinedTransaction};
 use tempo_alloy::rpc::{ConfigurableAccountSimulationSpec, PrimitiveSignatureType};
 use tempo_contracts::precompiles::IConfigurableAccount;
-use tempo_evm::{FeePaymentError, TempoInvalidTransaction};
+use tempo_evm::{
+    FeePaymentError, FeeTokenResolver, TempoFeeManager, TempoInvalidTransaction, TempoStateAccess,
+};
 use tempo_hardfork::TempoHardfork;
 use tempo_precompiles::{
     CONFIGURABLE_ACCOUNT_ADDRESS, NONCE_PRECOMPILE_ADDRESS, TIP_FEE_MANAGER_ADDRESS,
     configurable_account,
+    error::TempoPrecompileError,
     nonce::NonceManager,
-    storage::{Handler, account_config_commitment},
+    storage::{Handler, StorageActions, account_config_commitment},
     tip_fee_manager::{IFeeManager, TipFeeManager},
-    tip20::{ITIP20, TIP20Token},
+    tip20::{ITIP20, TIP20Error, TIP20Token},
     tip20_factory::TIP20Factory,
 };
 use tempo_primitives::{
@@ -194,7 +200,7 @@ use tempo_primitives::{
     transaction::{
         ConfigurableAccountConfig, ConfigurableAccountQuorumError, ConfigurableAccountSignature,
         ConfigurableAccountWeightAccumulator, KeychainSignature, MAX_WEBAUTHN_SIGNATURE_LENGTH,
-        PrimitiveSignature,
+        PrimitiveSignature, TEMPO_GAS_PRICE_SCALING_FACTOR,
         tt_signature::{P256SignatureWithPreHash, WebAuthnSignature},
     },
 };
@@ -3869,6 +3875,61 @@ impl<N: Network> Backend<N> {
             },
             monad_context,
         )
+    }
+
+    /// Returns the gas the fee payer of the Tempo AA `request` pays for at its max fee per gas
+    /// with its balance of the fee token the protocol charges, or `None` when it is unpriced.
+    ///
+    /// A Tempo node caps a gas estimate by this allowance, since estimates charge no fee.
+    pub(crate) fn tempo_fee_payer_gas_allowance(
+        &self,
+        state: &dyn DatabaseRef,
+        request: FoundryTransactionRequest,
+        fee_details: FeeDetails,
+        block_env: BlockEnv,
+    ) -> Result<Option<u64>, BlockchainError>
+    where
+        N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
+    {
+        let PreparedCall { tx, .. } =
+            self.prepare_typed_call_env(state, request, fee_details, block_env)?;
+        let tx = TempoEvmNetwork::prepared_evm_tx(&tx, None)?;
+        let max_fee_per_gas = tx.max_fee_per_gas();
+        if max_fee_per_gas == 0 {
+            return Ok(None);
+        }
+        let fee_payer = tx.fee_payer().map_err(|_| {
+            BlockchainError::Message(format!(
+                "tempo transaction error: {}",
+                TempoInvalidTransaction::InvalidFeePayerSignature
+            ))
+        })?;
+        let hardfork = self.tempo_hardfork();
+        let mut db = EvmDb::for_storage(state);
+        let mut db: &mut dyn DynDatabase = &mut db;
+        let actions = StorageActions::disabled();
+        let balance = match TempoFeeManager::new().resolve_fee_token(
+            &mut db,
+            &tx,
+            fee_payer,
+            hardfork,
+            actions.clone(),
+        ) {
+            Ok(fee_token) => db.get_token_balance(fee_token, fee_payer, hardfork, actions),
+            // No fallback token covers the fee at the request's gas limit; cap by the largest.
+            Err(TempoPrecompileError::TIP20(TIP20Error::InsufficientBalance(error))) => {
+                Ok(error.available)
+            }
+            Err(error) => Err(error),
+        }
+        .map_err(|error| BlockchainError::Message(error.to_string()))?;
+        Ok(Some(
+            balance
+                .saturating_mul(TEMPO_GAS_PRICE_SCALING_FACTOR)
+                .checked_div(U256::from(max_fee_per_gas))
+                .unwrap_or_default()
+                .saturating_to(),
+        ))
     }
 
     pub(crate) fn call_with_state_typed_access_list(

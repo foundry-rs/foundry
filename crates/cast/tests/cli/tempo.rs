@@ -1083,6 +1083,203 @@ async fn send_with_sponsor_url_uses_anvil_builtin_fee_payer(cmd: _) {
     assert!(sponsor_after < sponsor_before, "sponsor must pay the transaction fee");
 }
 
+/// A T14 Tempo node, whose genesis stores a fee token for the first dev accounts: AlphaUSD for
+/// account 0, BetaUSD for 1, ThetaUSD for 2 and PathUSD for the others.
+fn tempo_t14() -> NodeConfig {
+    NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))
+}
+
+// The sponsor of a sender holding no fee token to spare pays in another token than the PathUSD
+// the sender moves. The estimate must be unpriced, or the node caps it by the sender's balance,
+// and must use the sponsor's fee token, or the transfer runs out of gas.
+#[casttest]
+async fn send_sponsored_for_sender_without_fee_token_balance(cmd: _) {
+    let (api, handle) = anvil::spawn(tempo_t14()).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let (funder, _) = dev_account(&handle, 0);
+    let (sponsor, sponsor_key) = dev_account(&handle, 1);
+    api.anvil_set_fee_token(sponsor, ALPHA_USD_ADDRESS).await.unwrap();
+    let sender = PrivateKeySigner::random();
+    let recipient = Address::repeat_byte(0x42).to_string();
+
+    let tip20 = ITIP20::new(PATH_USD_ADDRESS, &provider);
+    let fund = TransactionRequest::default()
+        .from(funder)
+        .to(PATH_USD_ADDRESS)
+        .with_input(tip20.transfer(sender.address(), U256::from(1000)).calldata().clone());
+    let funded =
+        provider.send_transaction(WithOtherFields::new(fund)).await.unwrap().get_receipt().await;
+    assert!(funded.unwrap().status());
+
+    let output = cmd
+        .cast_fuse()
+        .args(["send", &PATH_USD_ADDRESS.to_string(), "transfer(address,uint256)", &recipient])
+        .args(["1000", "--private-key", &hex::encode_prefixed(sender.to_bytes())])
+        .args(["--tempo.sponsor", &sponsor.to_string()])
+        .args(["--tempo.sponsor-signer", &format!("private-key://{sponsor_key}")])
+        .args(["--rpc-url", &rpc, "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let receipt: serde_json::Value = parse_json(output.trim()).unwrap();
+    assert_eq!(receipt["status"], "0x1", "{receipt}");
+    assert_eq!(receipt["feePayer"], serde_json::to_value(sponsor).unwrap(), "{receipt}");
+    assert_eq!(receipt["feeToken"], serde_json::to_value(ALPHA_USD_ADDRESS).unwrap(), "{receipt}");
+}
+
+// A sponsor relay pays with the fee token it chooses, here PathUSD, while the sender's estimate
+// used its own AlphaUSD, which it transfers. The transaction is estimated again for PathUSD before
+// it is broadcast, or it runs out of gas. Relays only sign transactions that expire within an
+// hour, so it expires five minutes after it is built.
+#[casttest]
+async fn send_with_sponsor_url_estimates_for_relay_fee_token(cmd: _) {
+    let (_, handle) = anvil::spawn(tempo_t14()).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let (_, sender_key) = dev_account(&handle, 0);
+    let sponsor = handle.dev_accounts().last().unwrap();
+    let recipient = Address::repeat_byte(0x42).to_string();
+
+    let built_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let output = cmd
+        .cast_fuse()
+        .args(["send", &ALPHA_USD_ADDRESS.to_string(), "transfer(address,uint256)", &recipient])
+        .args(["1000", "--private-key", &sender_key, "--rpc-url", &rpc, "--sponsor-url", &rpc])
+        .arg("--json")
+        .assert_success();
+    let output = output.get_output();
+    let sent_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let receipt: serde_json::Value = parse_json(output.stdout_lossy().trim()).unwrap();
+    assert_eq!(receipt["status"], "0x1", "{receipt}");
+    assert_eq!(receipt["feePayer"], serde_json::to_value(sponsor).unwrap(), "{receipt}");
+    assert_eq!(receipt["feeToken"], serde_json::to_value(PATH_USD_ADDRESS).unwrap(), "{receipt}");
+    let stderr = output.stderr_lossy();
+    assert!(stderr.contains("The sponsor relay pays with fee token"), "{stderr}");
+
+    let tx = provider
+        .raw_request::<_, serde_json::Value>(
+            "eth_getTransactionByHash".into(),
+            (receipt["transactionHash"].clone(),),
+        )
+        .await
+        .unwrap();
+    let valid_before = u64::from_str_radix(
+        tx["validBefore"].as_str().expect("validBefore").trim_start_matches("0x"),
+        16,
+    )
+    .unwrap();
+    assert!((built_at + 300..=sent_at + 300).contains(&valid_before), "{tx}");
+}
+
+// `cast estimate` prepares the request as `cast send` does, so a transaction an access key signs
+// or a sponsor pays for succeeds with the gas limit it estimates. The sponsor pays in PathUSD for
+// a sender moving its own AlphaUSD.
+#[casttest]
+async fn estimate_covers_access_key_and_sponsored_sends(cmd: _) {
+    let (_, handle) = anvil::spawn(tempo_t14()).await;
+    let rpc = handle.http_endpoint();
+    let (_, sender_key) = dev_account(&handle, 0);
+    let (root, root_key) = dev_account(&handle, 1);
+    let (sponsor, sponsor_key) = dev_account(&handle, 3);
+    let access_key = PrivateKeySigner::random();
+    cmd.cast_fuse()
+        .args(["keychain", "authorize", &access_key.address().to_string()])
+        .args(["--private-key", &root_key, "--rpc-url", &rpc])
+        .assert_success();
+
+    let access_key = hex::encode_prefixed(access_key.to_bytes());
+    let (root, sponsor, sponsor_signer) =
+        (root.to_string(), sponsor.to_string(), format!("private-key://{sponsor_key}"));
+    let signers = [
+        vec!["--tempo.access-key", &access_key, "--tempo.root-account", &root],
+        vec!["--private-key", &sender_key, "--tempo.sponsor", &sponsor],
+    ];
+    let recipient = Address::repeat_byte(0x42).to_string();
+    let token = ALPHA_USD_ADDRESS.to_string();
+    let call = [token.as_str(), "transfer(address,uint256)", &recipient, "1000"];
+    for mut signer in signers {
+        if signer.contains(&"--tempo.sponsor") {
+            signer.extend(["--tempo.sponsor-signer", &sponsor_signer]);
+        }
+        let gas = cmd
+            .cast_fuse()
+            .arg("estimate")
+            .args(call)
+            .args(&signer)
+            .args(["--rpc-url", &rpc])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let output = cmd
+            .cast_fuse()
+            .arg("send")
+            .args(call)
+            .args(&signer)
+            .args(["--gas-limit", gas.trim(), "--timeout", "10", "--rpc-url", &rpc, "--json"])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let receipt: serde_json::Value = parse_json(output.trim()).unwrap();
+        assert_eq!(receipt["status"], "0x1", "{signer:?} ran out of its estimate {gas}: {receipt}");
+    }
+}
+
+// A sponsor signs the digest of a transaction that names no fee token when it is printed without
+// the sponsor. Sending it with the sponsor named must keep that digest, also for a sponsor without
+// a stored preference, which the protocol charges a fallback fee token.
+#[casttest]
+async fn send_with_sponsor_signature_over_digest_printed_without_sponsor(cmd: _) {
+    let (_, handle) = anvil::spawn(tempo_t14()).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let (sender, sender_key) = dev_account(&handle, 0);
+    let sponsor = PrivateKeySigner::random();
+    let tip20 = ITIP20::new(PATH_USD_ADDRESS, &provider);
+    let fund = TransactionRequest::default().from(sender).to(PATH_USD_ADDRESS).with_input(
+        tip20.transfer(sponsor.address(), U256::from(1_000_000_000)).calldata().clone(),
+    );
+    let funded =
+        provider.send_transaction(WithOtherFields::new(fund)).await.unwrap().get_receipt().await;
+    assert!(funded.unwrap().status());
+
+    let (token, recipient) = (PATH_USD_ADDRESS.to_string(), Address::repeat_byte(0x42).to_string());
+    let nonce = provider.get_transaction_count(sender).await.unwrap().to_string();
+    let tx = [&token, "transfer(address,uint256)", &recipient, "1", "--private-key", &sender_key];
+    let pinned = ["--nonce", &nonce, "--gas-limit", "1000000", "--gas-price", "40gwei"];
+    let hash = cmd
+        .cast_fuse()
+        .arg("mktx")
+        .args(tx)
+        .args(pinned)
+        .args(["--priority-gas-price", "1gwei", "--rpc-url", &rpc, "--tempo.print-sponsor-hash"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let sponsor_key = hex::encode_prefixed(sponsor.to_bytes());
+    let sig = cmd
+        .cast_fuse()
+        .args(["wallet", "sign", "--private-key", &sponsor_key, "--no-hash", hash.trim()])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let output = cmd
+        .cast_fuse()
+        .arg("send")
+        .args(tx)
+        .args(pinned)
+        .args(["--priority-gas-price", "1gwei", "--rpc-url", &rpc, "--json"])
+        .args(["--tempo.sponsor", &sponsor.address().to_string()])
+        .args(["--tempo.sponsor-signature", sig.trim()])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let receipt: serde_json::Value = parse_json(output.trim()).unwrap();
+    assert_eq!(receipt["status"], "0x1", "{receipt}");
+    assert_eq!(receipt["feePayer"], serde_json::to_value(sponsor.address()).unwrap(), "{receipt}");
+}
+
 #[casttest]
 fn tip20_logo_check_accepts_valid_values(cmd: _) {
     for uri in ["", "https://example.com/logo.png", "HTTP://example.com/logo.png", "ipfs://token"] {

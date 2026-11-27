@@ -121,6 +121,11 @@ pub struct TempoOpts {
     /// the fully-sponsored transaction, which is then submitted via the regular RPC.
     /// No local sponsor key is required.
     ///
+    /// The service picks the fee token it pays with. When that is not the token the gas was
+    /// estimated for, the transaction is estimated for the service's token and signed again.
+    /// Sponsor services only sign transactions that expire within an hour, so without
+    /// `--tempo.valid-before` or `--tempo.expires` the transaction is valid for five minutes.
+    ///
     /// This option is supported by `cast send` and `cast erc20`. Forge commands currently support
     /// local sponsorship through `--tempo.sponsor` and `--tempo.sponsor-signer` instead.
     ///
@@ -164,17 +169,17 @@ pub struct TempoOpts {
     #[arg(long = "tempo.expiring-nonce", requires = "valid_before", conflicts_with = "expires")]
     pub expiring_nonce: bool,
 
-    /// Upper bound timestamp for Tempo expiring nonce transactions.
+    /// Upper bound timestamp for Tempo transactions.
     ///
-    /// The transaction is only valid before this unix timestamp.
-    /// Requires `--tempo.expiring-nonce`.
+    /// The transaction is only valid before this unix timestamp. Required by
+    /// `--tempo.expiring-nonce`, where it must fall within the expiry window of the active
+    /// hardfork. Defaults to five minutes from now with `--sponsor-url`.
     #[arg(long = "tempo.valid-before", conflicts_with = "expires")]
     pub valid_before: Option<u64>,
 
-    /// Lower bound timestamp for Tempo expiring nonce transactions.
+    /// Lower bound timestamp for Tempo transactions.
     ///
     /// The transaction is only valid after this unix timestamp.
-    /// Requires `--tempo.expiring-nonce`.
     #[arg(long = "tempo.valid-after")]
     pub valid_after: Option<u64>,
 
@@ -267,6 +272,18 @@ impl TempoOpts {
         self.expiring_nonce = true;
         self.valid_before = Some(ts);
         self.expires = None;
+        Some(ts)
+    }
+
+    /// Defaults `valid_before` to five minutes from now for a `--sponsor-url` transaction without
+    /// an expiry, since sponsor services only sign transactions that expire within an hour.
+    /// Returns the timestamp it set.
+    pub fn default_sponsor_url_valid_before(&mut self) -> Option<u64> {
+        if self.sponsor_url.is_none() || self.valid_before.is_some() || self.expires.is_some() {
+            return None;
+        }
+        let ts = now().as_secs() + SPONSOR_URL_VALIDITY_SECS;
+        self.valid_before = Some(ts);
         Some(ts)
     }
 
@@ -372,6 +389,9 @@ impl TempoOpts {
 fn parse_signature(s: &str) -> Result<Signature, String> {
     Signature::from_str(s).map_err(|e| format!("invalid signature: {e}"))
 }
+
+/// How long a `--sponsor-url` transaction without an expiry stays valid.
+const SPONSOR_URL_VALIDITY_SECS: u64 = 5 * 60;
 
 /// Largest TIP-1009 validity window accepted by any hardfork. The window was 30 seconds before
 /// T11; the node enforces the limit of its active hardfork.

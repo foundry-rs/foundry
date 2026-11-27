@@ -1,12 +1,17 @@
 //! Tempo hardfork activation queries.
 
+use super::{keeps_fee_token_unset, resolve_and_set_fee_token};
 use crate::{FoundryTransactionBuilder, provider::is_rpc_method_not_found};
 use alloy_network::{Network, TransactionBuilder};
+use alloy_primitives::{Address, U256};
 use alloy_provider::Provider;
+use alloy_sol_types::SolCall;
 use alloy_transport::{TransportError, TransportErrorKind};
 use eyre::Result;
 use serde::Deserialize;
-use tempo_alloy::{chainspec::hardfork::TempoHardfork, rpc::ForkSchedule};
+use tempo_alloy::{
+    chainspec::hardfork::TempoHardfork, contracts::precompiles::ITIP20, rpc::ForkSchedule,
+};
 use tempo_primitives::transaction::{FEE_PAYER_SIGNATURE_MARKER, TEMPO_EXPIRING_NONCE_KEY};
 
 #[derive(Debug, Deserialize)]
@@ -68,22 +73,70 @@ where
 /// Marks `request`, the gas estimation request of a transaction a fee payer will sponsor, as
 /// sponsored.
 ///
+/// The request is unpriced: a node caps a priced estimate by the gas the sender's fee token
+/// balance pays for, and a sponsored sender need not hold any.
+///
+/// A node estimates the request as if the sender paid, and the fee token it resolves for that
+/// warms storage the transaction may touch too, so a request naming no fee token is given the one
+/// `sponsor`, when known, pays with: its stored preference, or else the first fallback fee token
+/// of the active hardfork it holds, or the first one when it holds none. The protocol charges the
+/// first whose balance covers the fee. Only the estimate names the fallback token, so the sponsor
+/// digest of the transaction does not depend on balances.
+///
 /// From T14 a fee payer signature costs one cold account access: the fee payer's account is read
 /// to check that its root key is not retired. The sponsor signs after estimation, because its
 /// signature commits to the gas limit, so the request carries [`FEE_PAYER_SIGNATURE_MARKER`] in its
 /// place, for which a Tempo node adds that access to the estimate. Before T14 nodes do not handle
-/// the marker, so the request is left unchanged there and when the hardfork is unknown.
+/// the marker, so it is not set there and when the hardfork is unknown.
 pub async fn mark_sponsored_gas_estimation<N: Network, P: Provider<N>>(
     provider: &P,
     request: &mut N::TransactionRequest,
+    sponsor: Option<Address>,
 ) where
     N::TransactionRequest: FoundryTransactionBuilder<N>,
 {
-    if request.fee_payer_signature().is_none()
-        && matches!(is_tempo_hardfork_active(provider, TempoHardfork::T14).await, Ok(true))
+    request.reset_gas_fees();
+    let sponsor_without_token = match sponsor {
+        Some(sponsor) => {
+            let resolved = resolve_and_set_fee_token(Some(provider), request, Some(sponsor)).await;
+            matches!(resolved, Ok(None)).then_some(sponsor)
+        }
+        None => None,
+    };
+    let Ok(hardfork) = active_tempo_hardfork(provider).await else { return };
+    if let Some(sponsor) = sponsor_without_token
+        && request.is_tempo_aa()
+        && !keeps_fee_token_unset::<N>(request)
     {
+        request.set_fee_token(held_fallback_fee_token(provider, hardfork, sponsor).await);
+    }
+    if request.fee_payer_signature().is_none() && hardfork >= TempoHardfork::T14 {
         request.set_fee_payer_signature(FEE_PAYER_SIGNATURE_MARKER);
     }
+}
+
+/// Returns the first fallback fee token of `hardfork` that `account` holds, or the first one when
+/// it holds none or a balance cannot be read.
+async fn held_fallback_fee_token<N: Network, P: Provider<N>>(
+    provider: &P,
+    hardfork: TempoHardfork,
+    account: Address,
+) -> Address {
+    let fallback_tokens = hardfork.fallback_fee_tokens();
+    if fallback_tokens.len() > 1 {
+        for &token in fallback_tokens {
+            let request = N::TransactionRequest::default()
+                .with_to(token)
+                .with_input(ITIP20::balanceOfCall { account }.abi_encode());
+            if let Ok(output) = provider.call(request).await
+                && let Ok(balance) = ITIP20::balanceOfCall::abi_decode_returns(&output)
+                && balance > U256::ZERO
+            {
+                return token;
+            }
+        }
+    }
+    fallback_tokens[0]
 }
 
 async fn fork_schedule_hardfork<N: Network, P: Provider<N>>(
@@ -111,7 +164,6 @@ fn hardfork_from_anvil_node_info(info: &AnvilNodeInfo) -> Option<TempoHardfork> 
 mod tests {
     use super::*;
     use alloy_json_rpc::ErrorPayload;
-    use alloy_primitives::U256;
     use alloy_provider::{ProviderBuilder, mock::Asserter};
     use tempo_alloy::{TempoNetwork, rpc::TempoTransactionRequest};
 
