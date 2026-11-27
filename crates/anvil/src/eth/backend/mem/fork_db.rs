@@ -253,6 +253,7 @@ impl<N: Network> Db for ForkedDatabase<N> {
             monad_block_replay_profiles: Default::default(),
             historical_states,
             fork_replayed_blocks: Default::default(),
+            hardfork: None,
         }))
     }
 

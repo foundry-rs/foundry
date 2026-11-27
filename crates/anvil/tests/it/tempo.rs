@@ -3631,25 +3631,32 @@ async fn test_tempo_trace_call_many_distinguishes_expiring_nonce_transactions() 
     }
 }
 
+// Like a Tempo node, a 0x76 call creates through a call with a null `to`, not a top-level `data`.
 #[tokio::test(flavor = "multi_thread")]
-async fn test_tempo_call_supports_top_level_create() {
+async fn test_tempo_call_creates_through_calls() {
     let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
     let provider = handle.http_provider();
     let from = handle.dev_accounts().next().unwrap();
+    let call = |request| provider.raw_request::<_, Bytes>("eth_call".into(), (request,));
 
-    let output = provider
-        .raw_request::<_, Bytes>(
-            "eth_call".into(),
-            (serde_json::json!({
-                "from": from,
-                "type": "0x76",
-                "gas": "0xf4240",
-                "data": "0x602a5f526001601ff3",
-            }),),
-        )
-        .await
-        .unwrap();
+    let err = call(serde_json::json!({
+        "from": from,
+        "type": "0x76",
+        "gas": "0xf4240",
+        "data": "0x602a5f526001601ff3",
+    }))
+    .await
+    .unwrap_err();
+    assert_eq!(err.as_error_resp().unwrap().code, -32602);
 
+    let output = call(serde_json::json!({
+        "from": from,
+        "type": "0x76",
+        "gas": "0xf4240",
+        "calls": [{ "to": null, "value": "0x0", "input": "0x602a5f526001601ff3" }],
+    }))
+    .await
+    .unwrap();
     assert_eq!(output, Bytes::from_static(&[0x2a]));
 }
 
@@ -9838,6 +9845,107 @@ async fn test_tempo_estimate_gas_bounded_by_fee_token_balance() {
              exceeds allowance: {allowance}"
         )
     );
+}
+
+// Like a Tempo node, a 0x76 request needs `calls` or `to`: a create is a call with a null `to`.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_request_without_calls_or_to_is_rejected() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+
+    let err = provider
+        .raw_request::<_, U256>(
+            "eth_estimateGas".into(),
+            (serde_json::json!({
+                "from": sender,
+                "type": "0x76",
+                "feeToken": PATH_USD,
+                "input": COUNTER_INIT_CODE,
+            }),),
+        )
+        .await
+        .unwrap_err();
+    let err = err.as_error_resp().unwrap();
+    assert_eq!(err.code, -32602);
+    assert_eq!(
+        err.message,
+        "Invalid transaction request: Missing 'calls' or 'to' field for Tempo transaction."
+    );
+
+    provider
+        .raw_request::<_, U256>(
+            "eth_estimateGas".into(),
+            (serde_json::json!({
+                "from": sender,
+                "type": "0x76",
+                "feeToken": PATH_USD,
+                "calls": [{ "to": null, "value": "0x0", "input": COUNTER_INIT_CODE }],
+            }),),
+        )
+        .await
+        .unwrap();
+}
+
+// Like a Tempo node, the pool rejects a transaction whose fee token has no FeeAMM liquidity into
+// the validator token, instead of keeping it pending and blocking the sender's next nonce.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_pool_rejects_fee_token_without_liquidity() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    let token = address!("20c000000000000000000000000000000000fee1");
+    api.anvil_tempo_create_token(anvil_core::types::TempoCreateTokenRequest {
+        address: token,
+        name: "No Liquidity".into(),
+        symbol: "NLQ".into(),
+        currency: "USD".into(),
+        quote_token: PATH_USD,
+        admin: sender,
+        mint: vec![anvil_core::types::TempoTokenMint {
+            to: sender,
+            amount: U256::from(1_000_000_000u64),
+        }],
+    })
+    .await
+    .unwrap();
+
+    let err = provider
+        .raw_request::<_, B256>(
+            "eth_sendTransaction".into(),
+            (serde_json::json!({
+                "from": sender,
+                "type": "0x76",
+                "feeToken": token,
+                "gas": "0x927c0",
+                "calls": [{ "to": Address::repeat_byte(0x42), "value": "0x0", "input": "0x" }],
+            }),),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("insufficient liquidity in FeeAMM pool"), "{err}");
+    assert_eq!(api.txpool_status().await.unwrap().pending, 0);
+}
+
+// A state dump records its hardfork, so loading it without one restores the network and hardfork
+// it was produced under.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_state_dump_restores_network_and_hardfork() {
+    let (source, _source_handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    source.mine_one().await.unwrap();
+    let state = source.serialized_state(false).await.unwrap();
+    assert_eq!(state.hardfork, Some(TempoHardfork::T14.into()));
+
+    for config in [NodeConfig::test(), NodeConfig::test_tempo()] {
+        let (api, handle) = spawn(config.with_init_state(Some(state.clone()))).await;
+        assert!(api.backend.is_tempo());
+        assert_eq!(api.backend.tempo_hardfork(), TempoHardfork::T14);
+        let sender = handle.dev_accounts().next().unwrap();
+        let path_usd = tempo_precompiles::tip20::ITIP20::new(PATH_USD, handle.http_provider());
+        assert!(!path_usd.balanceOf(sender).call().await.unwrap().is_zero());
+    }
 }
 
 // A fork serves the schedule before it mines a block, as forge reads it to pick the hardfork.

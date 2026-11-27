@@ -1759,6 +1759,33 @@ impl NodeConfig {
         })
     }
 
+    /// Restores the hardfork, and with it the network, that the state to load was produced under,
+    /// unless the hardfork is set explicitly or a fork decides it. Warns when the node runs
+    /// another hardfork.
+    pub(crate) fn restore_init_state_hardfork(&mut self) {
+        let Some(dumped) = self.init_state.as_ref().and_then(|state| state.hardfork) else {
+            return;
+        };
+        if !self.fork_urls.is_empty() {
+            return;
+        }
+        if self.hardfork.is_none()
+            && let Ok(networks) = self.networks.normalize_for_hardfork(dumped)
+        {
+            self.networks = networks;
+            self.hardfork = Some(dumped);
+            return;
+        }
+        let configured = self.get_hardfork();
+        if configured != dumped && !self.silent {
+            let _ = foundry_common::sh_warn!(
+                "the loaded state was produced under hardfork {}, but this node runs {}",
+                String::from(dumped),
+                String::from(configured)
+            );
+        }
+    }
+
     /// Warns when `fork_headers` will not be sent to `url` because it is not a trusted fork URL.
     pub(crate) fn warn_if_fork_headers_withheld(&self, url: &str) {
         if !self.silent && !self.fork_headers.is_empty() && !self.is_trusted_fork_url(url) {

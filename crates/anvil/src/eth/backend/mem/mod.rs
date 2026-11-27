@@ -3669,12 +3669,6 @@ impl<N: Network> Backend<N> {
         request.inner.max_priority_fee_per_gas = Some(fees.max_priority_fee_per_gas);
         request.inner.access_list = Some(request.inner.access_list.clone().unwrap_or_default());
         request.inner.gas_price = None;
-        let input = request.inner.input.clone().into_input().unwrap_or_default();
-        if request.calls.is_empty() && request.inner.to.is_none() && !input.is_empty() {
-            // Alloy represents an omitted top-level `to` as `None`; preserve Ethereum CREATE
-            // semantics by materializing it as the Tempo call.
-            request.inner.to = Some(TxKind::Create);
-        }
 
         let mut signature = simulated_configurable_account_signature(&mut request)?;
         // An impersonated configurable account is simulated with the placeholder quorum it sends
@@ -9161,6 +9155,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         };
         let mut state = state;
         state.fork_replayed_blocks = self.fork_replayed_blocks.lock().clone();
+        state.hardfork = Some(self.hardfork());
         Ok(state)
     }
 
@@ -10753,9 +10748,9 @@ where
         let opts = self.evm_options(&evm_env);
         self.with_database_at(None, move |state, _| {
             let mut evm = build_evm::<TempoEvmNetwork>(&*state, &evm_env, &opts)?;
-            // Pool admission does not require the lower validity bound or fee AMM liquidity.
+            // Pool admission does not require the lower validity bound. Like a Tempo node, it does
+            // require fee AMM liquidity for the fee token.
             evm.ext_mut().skip_valid_after_check = true;
-            evm.ext_mut().skip_liquidity_check = true;
             let evm_tx = TempoEvmNetwork::prepared_evm_tx(&tx, opts.cheats.as_ref())?;
             TempoEvmNetwork::set_tx_context(&mut evm, &evm_tx, &TxContext::default());
             let Err(err) = evm.transact(&evm_tx) else { return Ok(()) };
@@ -10772,12 +10767,11 @@ where
                 .into());
             }
             match err.into() {
-                // The pool queues transactions ahead of their nonce lane, and fee AMM liquidity
-                // is only required at inclusion; evm2 has no validation-only entry point.
+                // The pool queues transactions ahead of their nonce lane; evm2 has no
+                // validation-only entry point.
                 BlockchainError::InvalidTransaction(InvalidTransactionError::NonceTooHigh) => {
                     Ok(())
                 }
-                err if err.to_string().contains("InsufficientLiquidity") => Ok(()),
                 err => Err(err),
             }
         })
