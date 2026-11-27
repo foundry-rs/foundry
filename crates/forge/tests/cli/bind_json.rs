@@ -276,18 +276,19 @@ struct CPoint {
     assert!(bindings.contains("schema_BPoint"), "{bindings}");
 }
 
-// A failed run must leave existing bindings as they were.
+// bind-json must not touch existing bindings before the new ones are generated: a failed or
+// interrupted run leaves them as they were.
 #[forgetest]
-fn test_bind_json_failure_restores_bindings(prj: _, cmd: _) {
+fn test_bind_json_failure_keeps_bindings(prj: _, cmd: _) {
     let existing = "// existing bindings\nlibrary JsonBindings {}\n";
-    std::fs::create_dir_all(prj.root().join("utils")).unwrap();
-    std::fs::write(prj.root().join("utils/JsonBindings.sol"), existing).unwrap();
+    let bindings_path = prj.root().join("utils/JsonBindings.sol");
+    std::fs::create_dir_all(bindings_path.parent().unwrap()).unwrap();
+    std::fs::write(&bindings_path, existing).unwrap();
+    let modified = std::fs::metadata(&bindings_path).unwrap().modified().unwrap();
     prj.add_source("Broken", "pragma solidity =0.8.26;\n\nstruct Broken {\n");
 
     cmd.arg("bind-json").assert_failure();
 
-    assert_eq!(
-        std::fs::read_to_string(prj.root().join("utils/JsonBindings.sol")).unwrap(),
-        existing
-    );
+    assert_eq!(std::fs::read_to_string(&bindings_path).unwrap(), existing);
+    assert_eq!(std::fs::metadata(&bindings_path).unwrap().modified().unwrap(), modified);
 }

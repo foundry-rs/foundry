@@ -52,15 +52,15 @@ impl BindJsonArgs {
         let target_path = config.root.join(self.out.as_ref().unwrap_or(&config.bind_json.out));
 
         // Step 1: Read and preprocess sources
-        let mut sources = project.paths.read_input_files()?;
-        // Keep the bindings file out of compiler version resolution. Existing bindings may carry a
-        // stale version pragma (such as `<0.9.0`), and as an input file the pragma-free
-        // placeholder would take the newest compiler and pull unpinned sources into its group.
-        // The placeholder is written to disk instead, so it only resolves the imports of the
-        // sources that use it. The original file is restored if bind-json fails.
-        sources.remove(&target_path);
-        let placeholder = PlaceholderFile::install(&target_path)?;
-        let graph = Graph::<MultiCompilerParser>::resolve_sources(&project.paths, sources)?;
+        let mut inputs = project.paths.read_input_files()?;
+        inputs.remove(&target_path);
+        // Resolve compiler versions without the bindings file. Existing bindings may carry a stale
+        // version pragma (such as `<0.9.0`), and a pragma-free placeholder would take the newest
+        // compiler and pull unpinned sources into its group, so imports of the bindings file are
+        // left out here. The file on disk stays untouched until the new bindings are written.
+        let mut resolve_sources = inputs.clone();
+        self.strip_bindings_imports(&project, &mut resolve_sources, &target_path)?;
+        let graph = Graph::<MultiCompilerParser>::resolve_sources(&project.paths, resolve_sources)?;
 
         // We only generate bindings for a single Solidity version to avoid conflicts.
         let (version, mut sources, _) = graph
@@ -76,6 +76,14 @@ impl BindJsonArgs {
             // For now, we are always picking the latest version.
             .max_by(|(v1, _, _), (v2, _, _)| v1.cmp(v2))
             .ok_or_else(|| eyre::eyre!("no Solidity sources"))?;
+
+        // Restore the imports of the bindings file in the selected input files. Each gets its own
+        // content, since preprocessing below edits it in place.
+        for (path, source) in &mut sources {
+            if let Some(original) = inputs.remove(path) {
+                *source = Source::new(original.content.as_str());
+            }
+        }
 
         // Step 2: Preprocess sources to handle potentially invalid bindings
         self.preprocess_sources(&mut sources)?;
@@ -94,7 +102,6 @@ impl BindJsonArgs {
 
         // Step 4: Write bindings
         self.write_bindings(&structs_to_write, &target_path, &version)?;
-        placeholder.keep();
 
         Ok(())
     }
@@ -136,6 +143,55 @@ impl BindJsonArgs {
                 visitor.update(&sess, &mut content);
 
                 source.content = Arc::new(content);
+                Ok(())
+            })
+        });
+        eyre::ensure!(result.is_ok(), "failed parsing");
+        Ok(())
+    }
+
+    /// Removes the imports of the bindings file at `target_path` from `sources`.
+    fn strip_bindings_imports(
+        &self,
+        project: &Project,
+        sources: &mut Sources,
+        target_path: &Path,
+    ) -> Result<()> {
+        // Imports can only resolve to the bindings file when it exists.
+        let Ok(target) = foundry_compilers::utils::canonicalize(target_path) else { return Ok(()) };
+        let sess = Session::builder().with_stderr_emitter().build();
+        let result = sess.enter(|| -> solar::interface::Result<()> {
+            sources.0.par_iter_mut().try_for_each(|(path, source)| {
+                let arena = Arena::new();
+                let ast = {
+                    let mut parser = SolarParser::from_source_code(
+                        &sess,
+                        &arena,
+                        FileName::Real(path.clone()),
+                        source.content.to_string(),
+                    )?;
+                    parser.parse_file().map_err(|e| e.emit())?
+                };
+
+                let cwd = path.parent().unwrap_or(path);
+                let mut visitor = PreprocessorVisitor::new();
+                for item in ast.items.iter() {
+                    let ast::ItemKind::Import(import) = &item.kind else { continue };
+                    let Ok(resolved) =
+                        project.paths.resolve_import(cwd, Path::new(import.path.value.as_str()))
+                    else {
+                        continue;
+                    };
+                    if foundry_compilers::utils::canonicalize(&resolved).is_ok_and(|p| p == target)
+                    {
+                        visitor.updates.push((item.span, ""));
+                    }
+                }
+                if !visitor.updates.is_empty() {
+                    let mut content = source.content.to_string();
+                    visitor.update(&sess, &mut content);
+                    source.content = Arc::new(content);
+                }
                 Ok(())
             })
         });
@@ -403,52 +459,15 @@ library JsonBindings {
         if let Some(parent) = target_path.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::write(target_path, &result)?;
+        // Write next to the target and rename, so the old bindings are only replaced once the new
+        // ones are complete.
+        let tmp_path = target_path.with_extension("sol.tmp");
+        fs::write(&tmp_path, &result)?;
+        std::fs::rename(&tmp_path, target_path)?;
 
         sh_status!("Bindings written to {}", target_path.display())?;
 
         Ok(())
-    }
-}
-
-/// The bindings placeholder written to disk while bindings are generated.
-///
-/// Dropping it without [PlaceholderFile::keep] restores the file that was there before.
-struct PlaceholderFile {
-    path: PathBuf,
-    original: Option<String>,
-    keep: bool,
-}
-
-impl PlaceholderFile {
-    fn install(path: &Path) -> Result<Self> {
-        let original = path.is_file().then(|| fs::read_to_string(path)).transpose()?;
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::write(path, JSON_BINDINGS_PLACEHOLDER)?;
-        Ok(Self { path: path.to_path_buf(), original, keep: false })
-    }
-
-    /// Keeps what is now at the path: the generated bindings.
-    fn keep(mut self) {
-        self.keep = true;
-    }
-}
-
-impl Drop for PlaceholderFile {
-    fn drop(&mut self) {
-        if self.keep {
-            return;
-        }
-        match &self.original {
-            Some(original) => {
-                let _ = fs::write(&self.path, original);
-            }
-            None => {
-                let _ = std::fs::remove_file(&self.path);
-            }
-        }
     }
 }
 
