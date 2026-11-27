@@ -1570,6 +1570,52 @@ fn test_json_trace_depth_removes_nested_nodes(prj: _, cmd: _) {
 }
 
 #[forgetest]
+fn json_output_suppresses_successful_traces(prj: _, cmd: _) {
+    prj.add_test(
+        "Mixed.t.sol",
+        r#"
+contract MixedTest {
+    function test_Pass() public pure {}
+
+    function test_Reverts() public pure {
+        require(false, "boom");
+    }
+}
+"#,
+    );
+    let traces = |results: &serde_json::Value, test: &str| {
+        results["test/Mixed.t.sol:MixedTest"]["test_results"][test]["traces"]
+            .as_array()
+            .unwrap()
+            .len()
+    };
+
+    // Without `-s`, passing tests keep their traces.
+    let output = cmd.args(["test", "-vvv", "--json"]).assert_failure().get_output().stdout.clone();
+    let results: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_ne!(traces(&results, "test_Pass()"), 0);
+
+    // With `-s`, only failing tests keep their traces.
+    let output = cmd
+        .forge_fuse()
+        .args(["test", "-vvv", "--json", "-s"])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let results: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(traces(&results, "test_Pass()"), 0);
+    assert_ne!(traces(&results, "test_Reverts()"), 0);
+
+    let json_path = prj.root().join("results.json");
+    cmd.forge_fuse().args(["test", "-vvv", "-s", "--json-file"]).arg(&json_path).assert_failure();
+    let results: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&json_path).unwrap()).unwrap();
+    assert_eq!(traces(&results, "test_Pass()"), 0);
+    assert_ne!(traces(&results, "test_Reverts()"), 0);
+}
+
+#[forgetest]
 fn can_run_test_with_json_output_non_verbose(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.insert_console();

@@ -2136,7 +2136,12 @@ impl TestArgs {
                 if let Some(path) = &self.json_file {
                     let mut results =
                         outcome.json_file_results.take().unwrap_or_else(|| outcome.results.clone());
-                    prepare_results_for_json(&mut results, verbosity, json_trace_depth);
+                    prepare_results_for_json(
+                        &mut results,
+                        verbosity,
+                        json_trace_depth,
+                        self.suppress_successful_traces,
+                    );
                     fs::write_json_file(path, &results)?;
                 }
 
@@ -2597,7 +2602,13 @@ impl TestArgs {
         if serialize_json || self.junit {
             let mut results = runner.test_collect(filter)?;
             if serialize_json {
-                prepare_results_for_json(&mut results, verbosity, tracing.trace_depth);
+                prepare_results_for_json(
+                    &mut results,
+                    verbosity,
+                    tracing.trace_depth,
+                    // The debugger reads traces from these results.
+                    self.suppress_successful_traces && !self.debug,
+                );
             }
             self.emit_symbolic_regressions(&config, &runner.known_contracts, &mut results)?;
             let rendered = if serialize_json {
@@ -3089,9 +3100,13 @@ fn prepare_results_for_json(
     results: &mut BTreeMap<String, SuiteResult>,
     verbosity: u8,
     trace_depth: Option<usize>,
+    suppress_successful_traces: bool,
 ) {
     let decoder = CallTraceDecoder::new();
     for test_result in results.values_mut().flat_map(|suite| suite.test_results.values_mut()) {
+        if suppress_successful_traces && !test_result.status.is_failure() {
+            test_result.traces = Vec::new();
+        }
         if verbosity >= 2 {
             test_result.decoded_logs = decode_console_logs(&test_result.logs);
         } else {
