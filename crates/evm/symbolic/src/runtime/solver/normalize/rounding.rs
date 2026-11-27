@@ -161,7 +161,8 @@ impl ConstraintContext {
     /// `a + (c - a) * t / d` is at most `c`, and a decay `c - (c - a) * t / d` is at least `a`,
     /// once `a <= c` and the quotient is at most `c - a`.
     /// A weighted average `(p * u + q * v) / k` with `u + v <= k` is at most a bound on `p` and
-    /// `q`.
+    /// `q`. A remainder `x % (s + 1)` is at most `s`, so `a + x % (c - a + 1)` is at most `c` once
+    /// `a <= c`.
     pub(super) fn division_comparison_value(&self, expr: &SymBoolExpr) -> Option<bool> {
         if let SymBoolExprKind::Not(inner) = expr.kind() {
             return self.division_comparison_value(inner).map(|value| !value);
@@ -327,7 +328,14 @@ impl ConstraintContext {
                 if dividend == large {
                     return Some(false);
                 }
-                (divisor == large && nonzero(interval(divisor))).then_some(true)
+                if divisor == large && nonzero(interval(divisor)) {
+                    return Some(true);
+                }
+                // `x % (s + 1) <= s`, as when a value is bounded into a range. A wrapped `s + 1`
+                // needs `s == MAX`, which bounds every word.
+                matches!(divisor.kind(), SymExprKind::BinOp(SymBinOp::Add, span, one)
+                    if span == large && one.as_const() == Some(U256::ONE))
+                .then_some(false)
             }
             SymExprKind::BinOp(SymBinOp::UDiv, dividend, divisor) => {
                 if dividend == large {
@@ -760,7 +768,8 @@ impl ConstraintContext {
         None
     }
 
-    /// Returns whether a quotient `q` of `(c - a) * t / d` fits in the span from `a` to `c`, so
+    /// Returns whether a quotient `q` of `(c - a) * t / d`, or a remainder `q` of
+    /// `x % (c - a + 1)`, fits in the span from `a` to `c`, so
     /// `a + q <= c` and `a <= c - q`: once `a <= c`, `c - a` cannot wrap, and once `q <= c - a`,
     /// neither can `a + q` nor `c - q`. The order prover decides `q <= c - a`, including whether a
     /// wrapped product still keeps the quotient below the span. Each recursion is charged to the
@@ -773,14 +782,27 @@ impl ConstraintContext {
         intervals: &mut HashMap<SymExpr, Option<WordInterval>>,
         remaining: &mut usize,
     ) -> bool {
-        let Some((product, _)) = quotient.udiv_operands() else { return false };
-        let SymExprKind::BinOp(SymBinOp::Mul, left, right) = product.kind() else { return false };
-        let Some(span) = [left, right].into_iter().find(|factor| {
+        let is_span = |factor: &&SymExpr| {
             matches!(factor.kind(), SymExprKind::BinOp(SymBinOp::Sub, end, start)
                 if end == c && start == a)
-        }) else {
-            return false;
         };
+        let span = match quotient.kind() {
+            SymExprKind::BinOp(SymBinOp::URem, _, divisor) => match divisor.kind() {
+                SymExprKind::BinOp(SymBinOp::Add, span, one)
+                    if one.as_const() == Some(U256::ONE) =>
+                {
+                    Some(span).filter(is_span)
+                }
+                _ => None,
+            },
+            _ => quotient.udiv_operands().and_then(|(product, _)| match product.kind() {
+                SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
+                    [left, right].into_iter().find(is_span)
+                }
+                _ => None,
+            }),
+        };
+        let Some(span) = span else { return false };
         let mut order = |small, large| {
             let Some(rest) = remaining.checked_sub(1) else { return false };
             *remaining = rest;

@@ -9163,7 +9163,9 @@ contract SymbolicMinRatioNested {
 // least another floor, not without either guard, and not with a span from another start. A time
 // ramp `a + (b - a) * (t - t0) / (t1 - t0)` stays at most `b` once `t0 <= t <= t1`, as a falling
 // one stays at least its end, but not strictly, not past `t1` or another deadline, not before `t0`,
-// and not over a span from another start.
+// and not over a span from another start. A remainder `x % (s + 1)` stays at most `s`, but not
+// strictly, so a value folded into a range, `a + x % (b - a + 1)`, stays at most `b` once `a <= b`,
+// but not strictly, not without the guard, and not modulo a wider span.
 #[forgetest_init]
 fn symbolic_proves_weighted_average_bound(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_weighted_average_bound");
@@ -9514,6 +9516,39 @@ contract SymbolicWeightedAverage {
         uint256 v = a + (uint256(b) - a) * (uint256(t) - t0) / (uint256(t1) - t0);
         assert(v <= b);
     }
+
+    function checkBoundIntoRange(uint256 x, uint128 lo, uint128 hi) public pure {
+        require(lo <= hi);
+        assert(uint256(lo) + x % (uint256(hi) - lo + 1) <= hi);
+    }
+
+    function checkRemainderWithinSpan(uint256 x, uint128 s) public pure {
+        assert(x % (uint256(s) + 1) <= s);
+    }
+
+    function checkRemainderBelowSpan(uint256 x, uint128 s) public pure {
+        assert(x % (uint256(s) + 1) < s);
+    }
+
+    function checkBoundStrictlyBelowEnd(uint256 x, uint128 lo, uint128 hi) public pure {
+        require(lo <= hi);
+        assert(uint256(lo) + x % (uint256(hi) - lo + 1) < hi);
+    }
+
+    // Unchecked, `hi - lo + 1` wraps once `lo > hi`: a zero modulus at `lo == hi + 1` reverts, but
+    // at `lo == hi + 2` it is `MAX`, and `x == 0` leaves `lo`.
+    function checkBoundIntoUnorderedRange(uint256 x, uint128 lo, uint128 hi) public pure {
+        uint256 r;
+        unchecked {
+            r = uint256(lo) + x % (uint256(hi) - lo + 1);
+        }
+        assert(r <= hi);
+    }
+
+    function checkBoundIntoWiderRange(uint256 x, uint128 lo, uint128 hi) public pure {
+        require(lo <= hi);
+        assert(uint256(lo) + x % (uint256(hi) - lo + 2) <= hi);
+    }
 }
 "#,
     );
@@ -9543,6 +9578,8 @@ contract SymbolicWeightedAverage {
             "checkRampBelowEnd(uint128,uint128,uint64,uint64,uint64)",
             "checkCurveRampWithinEnds(uint128,uint128,uint64,uint64,uint64)",
             "checkRampDownAboveEnd(uint128,uint128,uint64,uint64,uint64)",
+            "checkBoundIntoRange(uint256,uint128,uint128)",
+            "checkRemainderWithinSpan(uint256,uint128)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
@@ -9576,6 +9613,10 @@ contract SymbolicWeightedAverage {
             "checkRampOtherSpanStart(uint128,uint64,uint64,uint64,uint64)",
             "checkRampBeforeStart(uint128,uint64,uint64,uint64)",
             "checkRampOtherDeadline(uint128,uint128,uint64,uint64,uint64,uint64)",
+            "checkRemainderBelowSpan(uint256,uint128)",
+            "checkBoundStrictlyBelowEnd(uint256,uint128,uint128)",
+            "checkBoundIntoUnorderedRange(uint256,uint128,uint128)",
+            "checkBoundIntoWiderRange(uint256,uint128,uint128)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(
