@@ -1664,8 +1664,21 @@ impl ConstraintContext {
                         Some(left.max.saturating_sub(right.min)),
                     );
                 }
-                let left = left?;
-                let right = right?;
+                // `(c + y) - r = y + (c - r)` lies between `y` and `c + y` once `r <= c` and
+                // `c + y` cannot wrap.
+                // When both addends qualify, the larger minimum bounds the difference.
+                let addend_min = self
+                    .addends_within_difference(minuend, subtrahend, intervals, remaining)
+                    .into_iter()
+                    .flatten()
+                    .map(|addend| {
+                        self.interval_cached(addend, intervals, remaining)
+                            .map_or(U256::ZERO, |addend| addend.min)
+                    })
+                    .max();
+                let Some((left, right)) = left.zip(right) else {
+                    return WordInterval::new(addend_min?, left.map_or(U256::MAX, |left| left.max));
+                };
                 if left.max < right.min {
                     // Every subtraction wraps exactly once, so the unsigned image is contiguous.
                     return Some(WordInterval {
@@ -1673,20 +1686,20 @@ impl ConstraintContext {
                         max: left.max.wrapping_sub(right.min),
                     });
                 }
-                if left.min < right.max {
+                let interval = if left.min < right.max {
                     // An asserted `subtrahend <= minuend` rules out wrapping, and a strict
                     // `subtrahend < minuend` also rules out a zero difference.
-                    if !self.asserted_upper_bounds(subtrahend).contains(minuend) {
+                    let ordered = self.asserted_upper_bounds(subtrahend).contains(minuend);
+                    if !ordered && addend_min.is_none() {
                         return None;
                     }
-                    let strict =
-                        self.strict_order_facts.contains(&(subtrahend.clone(), minuend.clone()));
-                    return WordInterval::new(U256::from(strict), left.max - right.min);
-                }
-                Some(WordInterval {
-                    min: left.min.checked_sub(right.max)?,
-                    max: left.max.checked_sub(right.min)?,
-                })
+                    let strict = ordered
+                        && self.strict_order_facts.contains(&(subtrahend.clone(), minuend.clone()));
+                    WordInterval::new(U256::from(strict), left.max - right.min)?
+                } else {
+                    WordInterval { min: left.min - right.max, max: left.max - right.min }
+                };
+                interval.with_bounds(addend_min, None)
             }
             SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
                 // `(n / t) * t <= n`, and the product is zero when `t == 0`.

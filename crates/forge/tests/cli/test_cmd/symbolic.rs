@@ -10376,10 +10376,15 @@ contract SymbolicPreviewMint {
 
 // Utilization and remaining-share ratios scale `(total - used) * WAD / total`, which stays at
 // most `WAD` once `used <= total`. A remainder of an unrelated amount, or one that wraps, is not
-// bounded by the total. An ERC4626 round trip through Solmate's `mulDivDown` passes its overflow
-// guard on a quotient whose product cannot overflow without querying SMT. A quotient by another
-// divisor, a smaller guard numerator, or a factor that may be zero can still fail the guard, and a
-// non-strict `MAX / y <= x` still holds at `x == MAX / y`.
+// bounded by the total. Compound's utilization `borrows * WAD / (cash + borrows - reserves)` is at
+// most `WAD` once `reserves <= cash`, since the divisor is `borrows + (cash - reserves)`. Reserves
+// above the cash, or only below the borrows, shrink the divisor below the borrows, and the rate
+// reaches `WAD` exactly when the reserves equal the cash. Reserves below both amounts, or a borrow
+// floor equal to the reserve cap, still bound it. A wrapped `cash + borrows` is not bounded either.
+// An ERC4626 round trip through Solmate's `mulDivDown` passes its overflow guard on a quotient
+// whose product cannot overflow without querying SMT. A quotient by another divisor, a smaller
+// guard numerator, or a factor that may be zero can still fail the guard, and a non-strict
+// `MAX / y <= x` still holds at `x == MAX / y`.
 #[forgetest_init]
 fn symbolic_proves_remaining_ratio_bounded(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_remaining_ratio_bounded");
@@ -10418,6 +10423,73 @@ contract SymbolicRemainingRatio {
             remaining = total - used;
         }
         assert(mulDivDown(remaining, WAD, total) <= WAD);
+    }
+
+    function checkUtilizationRate(uint256 cash, uint256 borrows, uint256 reserves) public pure {
+        require(borrows != 0 && reserves <= cash);
+        assert(borrows * WAD / (cash + borrows - reserves) <= WAD);
+    }
+
+    function checkNarrowUtilizationRate(uint128 cash, uint128 borrows, uint128 reserves)
+        public
+        pure
+    {
+        require(borrows != 0 && reserves <= cash);
+        assert(uint256(borrows) * WAD / (uint256(cash) + borrows - reserves) <= WAD);
+    }
+
+    function checkUtilizationReservesBelowBoth(uint256 borrows, uint256 cash, uint256 reserves)
+        public
+        pure
+    {
+        require(borrows != 0 && reserves <= cash && reserves <= borrows);
+        assert(borrows * WAD / (cash + borrows - reserves) <= WAD);
+    }
+
+    function checkNarrowUtilizationReservesAtBorrowFloor(
+        uint128 cash,
+        uint128 borrows,
+        uint128 reserves
+    ) public pure {
+        require(borrows >= 100 && reserves <= 100 && reserves <= cash);
+        assert(uint256(borrows) * WAD / (uint256(cash) + borrows - reserves) <= WAD);
+    }
+
+    function checkUtilizationReservesAboveCash(uint256 cash, uint256 borrows, uint256 reserves)
+        public
+        pure
+    {
+        require(borrows != 0);
+        assert(borrows * WAD / (cash + borrows - reserves) <= WAD);
+    }
+
+    function checkUtilizationReservesBelowBorrows(
+        uint256 cash,
+        uint256 borrows,
+        uint256 reserves
+    ) public pure {
+        require(borrows != 0 && reserves <= borrows);
+        assert(borrows * WAD / (cash + borrows - reserves) <= WAD);
+    }
+
+    function checkUtilizationStrictlyBelowWad(uint256 cash, uint256 borrows, uint256 reserves)
+        public
+        pure
+    {
+        require(borrows != 0 && reserves <= cash);
+        assert(borrows * WAD / (cash + borrows - reserves) < WAD);
+    }
+
+    function checkUtilizationWrappedSum(uint256 cash, uint256 borrows, uint256 reserves)
+        public
+        pure
+    {
+        require(borrows != 0 && reserves <= cash);
+        uint256 total;
+        unchecked {
+            total = cash + borrows - reserves;
+        }
+        assert(borrows * WAD / total <= WAD);
     }
 
     function checkSharesRoundTrip(uint128 assets, uint128 supply, uint128 total) public pure {
@@ -10481,12 +10553,28 @@ contract SymbolicRemainingRatio {
             "optimized={optimized}: {result}"
         );
         for signature in [
+            "checkUtilizationRate(uint256,uint256,uint256)",
+            "checkNarrowUtilizationRate(uint128,uint128,uint128)",
+            "checkUtilizationReservesBelowBoth(uint256,uint256,uint256)",
+            "checkNarrowUtilizationReservesAtBorrowFloor(uint128,uint128,uint128)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "pass",
+                "optimized={optimized} {signature}: {result}"
+            );
+        }
+        for signature in [
             "checkUnrelatedRemainder(uint256,uint256,uint256)",
             "checkWrappedRemainder(uint256,uint256)",
             "checkOtherDivisorGuard(uint128,uint128,uint128,uint128)",
             "checkSmallNumeratorGuard(uint128,uint128,uint128)",
             "checkZeroFactorGuard(uint128,uint128,uint128,uint256)",
             "checkQuotientAtGuardLimit(uint256,uint256)",
+            "checkUtilizationReservesAboveCash(uint256,uint256,uint256)",
+            "checkUtilizationReservesBelowBorrows(uint256,uint256,uint256)",
+            "checkUtilizationStrictlyBelowWad(uint256,uint256,uint256)",
+            "checkUtilizationWrappedSum(uint256,uint256,uint256)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(
