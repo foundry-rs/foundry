@@ -52,7 +52,10 @@ impl BindJsonArgs {
         let target_path = config.root.join(self.out.as_ref().unwrap_or(&config.bind_json.out));
 
         // Step 1: Read and preprocess sources
-        let sources = project.paths.read_input_files()?;
+        let mut sources = project.paths.read_input_files()?;
+        // Replace any existing bindings file with the placeholder before resolving the graph, so
+        // the version pragma of stale bindings (such as `<0.9.0`) can't pin the solc version.
+        sources.insert(target_path.clone(), Source::new(JSON_BINDINGS_PLACEHOLDER));
         let graph = Graph::<MultiCompilerParser>::resolve_sources(&project.paths, sources)?;
 
         // We only generate bindings for a single Solidity version to avoid conflicts.
