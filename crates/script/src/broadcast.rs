@@ -1134,6 +1134,15 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
             let broadcast_sequence = async {
                 let sequence_offset = operation_ordinal(self.sequence.sequences(), i, 0);
                 let remaining_indices = remaining_operation_indices(&self.sequence, i);
+                // Whether nothing was submitted on this chain before, in this run or an earlier
+                // one, so that a rejection of the first send cannot depend on an earlier
+                // transaction or an earlier attempt of it.
+                let chain = self.sequence.sequences()[i].chain;
+                let first_on_chain =
+                    (0..=i).filter(|&s| self.sequence.sequences()[s].chain == chain).all(|s| {
+                        (0..self.sequence.sequences()[s].transactions.len())
+                            .all(|index| !is_operation_submitted(&self.sequence, s, index))
+                    });
                 // A transaction signed with its owners' approvals is recorded as a submission
                 // attempt only when it is sent, in order.
                 let signed_payloads = (0..self.sequence.sequences()[i].transactions.len())
@@ -1376,6 +1385,10 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                             prepared.push((kind, *index));
                         }
 
+                        let fail_fast_index = prepared
+                            .first()
+                            .filter(|_| batch_number == 0 && first_on_chain)
+                            .map(|(_, index)| *index);
                         let mut buffer = FuturesUnordered::new();
                         for (kind, index) in prepared {
                             if let Some(request) = kind.delegated_request() {
@@ -1431,7 +1444,24 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                     "submission outcome for delegated operation {index} is unknown; refusing to risk a duplicate transaction"
                                 );
                             }
-                            if res.is_err() && attempt <= 3 {
+                            // A JSON-RPC error response to the first send of the first transaction
+                            // on a chain means the node rejected the payload itself, for example
+                            // for a gas limit above the chain's cap, so resending it fails again.
+                            // Any other rejection may depend on an earlier transaction the node
+                            // has not caught up with, such as a pool's in-flight limit for an
+                            // EIP-7702 delegated sender, or on an earlier attempt of this one that
+                            // landed, so it is retried. The transport retries errors it classifies
+                            // as transient itself and reports exhausted retries as transport
+                            // errors.
+                            if attempt <= 3
+                                && let Err(error) = &res
+                                && (attempt > 0
+                                    || Some(index) != fail_fast_index
+                                    || !matches!(
+                                        error.downcast_ref::<TransportError>(),
+                                        Some(RpcError::ErrorResp(_))
+                                    ))
+                            {
                                 // Try to resubmit the transaction
                                 let provider = provider.clone();
                                 let progress = seq_progress.inner.clone();

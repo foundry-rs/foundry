@@ -11972,6 +11972,7 @@ interface Vm {
     function getRawBlockHeader(uint256 blockNumber) external view returns (bytes memory);
     function rpc(string calldata method, string calldata params) external returns (bytes memory);
     function startBroadcast(uint256 privateKey) external;
+    function stopBroadcast() external;
     function transact(bytes32 txHash) external;
 }
 
@@ -12065,6 +12066,18 @@ contract BroadcastsTwice is Base {
     function run() external {
         vm.startBroadcast(0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80);
         payable(address(0xdead)).transfer(1);
+        payable(address(0xbeef)).transfer(1);
+    }
+}
+
+contract BroadcastsThroughTwoUrls is Base {
+    function run() external {
+        vm.createSelectFork(vm.envString("FIRST_URL"));
+        vm.startBroadcast(0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80);
+        payable(address(0xdead)).transfer(1);
+        vm.stopBroadcast();
+        vm.createSelectFork(vm.envString("SECOND_URL"));
+        vm.startBroadcast(0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d);
         payable(address(0xbeef)).transfer(1);
     }
 }
@@ -12277,7 +12290,7 @@ async fn script_json_rpc_failure_codes_fork(prj: _, cmd: _) {
 {"success":true,"...":"{...}"}
 {"chain":31337,"...":"{...}"}
 {"status":"success","transactions":"[..]/broadcast/Failures.s.sol/31337/run-latest.json","sensitive":"[..]/cache/Failures.s.sol/31337/run-latest.json"}
-{"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"rpc.error","message":"Failed to send transaction after 4 attempts Err(server returned an error response: error code -32000: rejected)","details":{"code":-32000}}],"warnings":[]}
+{"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"rpc.error","message":"Failed to send transaction; server returned an error response: error code -32000: rejected","details":{"code":-32000}}],"warnings":[]}
 
 "#]]
         .is_jsonlines(),
@@ -12592,4 +12605,65 @@ Script ran successfully.
 [GAS]
 
 "#]]);
+}
+
+// A pool may reject a transaction until an earlier one of the same batch is mined, such as reth's
+// in-flight limit for an EIP-7702 delegated sender, so such a rejection is retried.
+#[forgetest]
+async fn script_retries_rejection_behind_pending_transaction_fork(prj: _, cmd: _) {
+    prj.add_script("Failures.s.sol", JSON_FAILURE_SCRIPT);
+    let (api, handle) =
+        spawn(NodeConfig::test().with_blocktime(Some(Duration::from_secs(1)))).await;
+    let (proxy, rejections) =
+        rpc::spawn_rpc_proxy_one_pooled_transaction(handle.http_endpoint()).await;
+
+    cmd.args(["script", "BroadcastsTwice", "--fork-url", &proxy, "--broadcast"]).assert_success();
+    let sender = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+    assert_eq!(api.transaction_count(sender, None).await.unwrap(), U256::from(2));
+    assert!(rejections.load(Ordering::Relaxed) > 0);
+}
+
+// Each transaction sent with `--slow` is the first of its batch. A rejection after an earlier one
+// was mined may still depend on it, such as from a pool or backend that has not dropped it yet, so
+// it is retried.
+#[forgetest]
+async fn script_retries_rejection_after_mined_transaction_fork(prj: _, cmd: _) {
+    prj.add_script("Failures.s.sol", JSON_FAILURE_SCRIPT);
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let proxy = rpc::spawn_rpc_proxy_method_error_once(
+        handle.http_endpoint(),
+        "eth_sendRawTransaction",
+        1,
+        -32000,
+        "in-flight transaction limit reached for delegated accounts",
+    )
+    .await;
+
+    cmd.args(["script", "BroadcastsTwice", "--fork-url", &proxy, "--broadcast", "--slow"])
+        .assert_success();
+    let sender = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+    assert_eq!(api.transaction_count(sender, None).await.unwrap(), U256::from(2));
+}
+
+// A script that broadcasts through two endpoints of one chain sends a sequence per endpoint. The
+// second sequence's first transaction is sent after the first sequence's, so its rejection is
+// retried.
+#[forgetest]
+async fn script_retries_rejection_in_later_sequence_on_chain_fork(prj: _, cmd: _) {
+    prj.add_script("Failures.s.sol", JSON_FAILURE_SCRIPT);
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let second = rpc::spawn_rpc_proxy_method_error_once(
+        handle.http_endpoint(),
+        "eth_sendRawTransaction",
+        0,
+        -32000,
+        "in-flight transaction limit reached for delegated accounts",
+    )
+    .await;
+
+    cmd.env("FIRST_URL", handle.http_endpoint());
+    cmd.env("SECOND_URL", &second);
+    cmd.args(["script", "BroadcastsThroughTwoUrls", "--broadcast"]).assert_success();
+    let sender = address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8");
+    assert_eq!(api.transaction_count(sender, None).await.unwrap(), U256::from(1));
 }
