@@ -22,6 +22,7 @@ use evm2::evm::{
 };
 use foundry_common::errors::FsPathError;
 use foundry_evm_core::evm::{FoundryDatabase, existing_account};
+use foundry_evm_hardforks::FoundryHardfork;
 use foundry_primitives::{FoundryHeader, FoundryReceiptEnvelope, FoundryTxEnvelope};
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
@@ -1344,6 +1345,11 @@ pub struct SerializableState {
     /// Local gas limits that transaction-hash fork replays executed with, by replayed block hash.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub fork_replayed_blocks: BTreeMap<B256, u64>,
+    /// The hardfork the state was produced under. Its namespace names the network.
+    ///
+    /// Note: This is an Option for backwards compatibility.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hardfork: Option<FoundryHardfork>,
 }
 
 impl SerializableState {

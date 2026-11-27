@@ -73,7 +73,7 @@ use serde::Deserialize;
 use std::{
     num::NonZeroU64,
     sync::{Arc, atomic::Ordering},
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tempo_alloy::{TempoNetwork, primitives::TempoTxEnvelope, rpc::TempoHeaderResponse};
 use tempo_contracts::{
@@ -205,7 +205,7 @@ fn assert_tempo_header_fields(header: &TempoHeaderResponse) {
     // From T1, Tempo's general lane is fixed below the block gas limit.
     assert_eq!(inner.general_gas_limit, 30_000_000);
     assert_eq!(inner.shared_gas_limit, 0);
-    assert_eq!(inner.timestamp_millis_part, 0);
+    assert!(inner.timestamp_millis_part < 1000);
 }
 
 #[cfg(feature = "cli")]
@@ -2402,8 +2402,8 @@ async fn test_tempo_pool_requires_max_fee_rounded_up_in_fee_token() {
         format!("insufficient fee token balance: have {}, need {required}", required - U256::ONE)
     );
 
-    // Only pool admission names the fee token balance; calls, estimates and simulations report
-    // the shortfall as missing funds.
+    // Only pool admission names the fee token balance; calls and simulations report the shortfall
+    // as missing funds. An estimate searches below the affordable gas instead, like a Tempo node.
     let mut request = WithOtherFields::new(
         TransactionRequest::default()
             .with_from(sender)
@@ -2413,14 +2413,11 @@ async fn test_tempo_pool_requires_max_fee_rounded_up_in_fee_token() {
             .with_max_priority_fee_per_gas(gas_price / 10),
     );
     request.other.insert("feeToken".into(), serde_json::to_value(PATH_USD).unwrap());
-    for err in [
-        provider.call(request.clone()).await.unwrap_err(),
-        provider.estimate_gas(request.clone()).await.unwrap_err(),
-    ] {
-        let err = err.as_error_resp().unwrap();
-        assert_eq!(err.code, -32003);
-        assert_eq!(err.message, "Insufficient funds for gas * price + value");
-    }
+    let err = provider.call(request.clone()).await.unwrap_err();
+    let err = err.as_error_resp().unwrap();
+    assert_eq!(err.code, -32003);
+    assert_eq!(err.message, "Insufficient funds for gas * price + value");
+    assert!(provider.estimate_gas(request.clone()).await.unwrap() < gas_limit);
     let err = provider
         .raw_request::<_, serde_json::Value>(
             "eth_simulateV1".into(),
@@ -3634,25 +3631,32 @@ async fn test_tempo_trace_call_many_distinguishes_expiring_nonce_transactions() 
     }
 }
 
+// Like a Tempo node, a 0x76 call creates through a call with a null `to`, not a top-level `data`.
 #[tokio::test(flavor = "multi_thread")]
-async fn test_tempo_call_supports_top_level_create() {
+async fn test_tempo_call_creates_through_calls() {
     let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
     let provider = handle.http_provider();
     let from = handle.dev_accounts().next().unwrap();
+    let call = |request| provider.raw_request::<_, Bytes>("eth_call".into(), (request,));
 
-    let output = provider
-        .raw_request::<_, Bytes>(
-            "eth_call".into(),
-            (serde_json::json!({
-                "from": from,
-                "type": "0x76",
-                "gas": "0xf4240",
-                "data": "0x602a5f526001601ff3",
-            }),),
-        )
-        .await
-        .unwrap();
+    let err = call(serde_json::json!({
+        "from": from,
+        "type": "0x76",
+        "gas": "0xf4240",
+        "data": "0x602a5f526001601ff3",
+    }))
+    .await
+    .unwrap_err();
+    assert_eq!(err.as_error_resp().unwrap().code, -32602);
 
+    let output = call(serde_json::json!({
+        "from": from,
+        "type": "0x76",
+        "gas": "0xf4240",
+        "calls": [{ "to": null, "value": "0x0", "input": "0x602a5f526001601ff3" }],
+    }))
+    .await
+    .unwrap();
     assert_eq!(output, Bytes::from_static(&[0x2a]));
 }
 
@@ -6030,6 +6034,101 @@ async fn test_block_timestamps_are_monotonic() {
         "Block timestamps must be strictly increasing: {timestamp2} should be > {timestamp1}",
     );
     assert_eq!(timestamp2, future_timestamp, "Block timestamp should match the set value");
+}
+
+// ============================================================================
+// Block & Chain: Millisecond Block Clock
+// ============================================================================
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_blocks_share_a_second_on_the_wall_clock() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let header = async |number: u64| -> TempoHeader {
+        let header: TempoHeaderResponse = provider
+            .client()
+            .request("eth_getHeaderByNumber", (format!("0x{number:x}"),))
+            .await
+            .unwrap();
+        header.as_ref().clone()
+    };
+
+    for _ in 0..10 {
+        api.mine_one().await.unwrap();
+    }
+    let now_millis = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+
+    let mut parent = header(0).await;
+    let mut shared_second = false;
+    for number in 1..=10 {
+        let header = header(number).await;
+        assert!(header.timestamp_millis() > parent.timestamp_millis(), "block {number}");
+        shared_second |= header.inner.timestamp == parent.inner.timestamp;
+        parent = header;
+    }
+    // A burst of blocks moves chain time at most a millisecond per block past the wall clock.
+    let ahead = parent.timestamp_millis().saturating_sub(now_millis);
+    assert!(ahead <= 10, "chain time is {ahead}ms ahead of the wall clock");
+    assert!(shared_second);
+
+    // Explicit time controls still move the clock by whole seconds.
+    api.evm_increase_time(U256::from(100)).await.unwrap();
+    api.mine_one().await.unwrap();
+    let increased = header(11).await;
+    assert!(increased.timestamp_millis() >= parent.timestamp_millis() + 100_000);
+
+    api.evm_set_next_block_timestamp(increased.inner.timestamp).unwrap();
+    api.mine_one().await.unwrap();
+    let repeated = header(12).await;
+    assert_eq!(repeated.inner.timestamp, increased.inner.timestamp);
+    assert!(repeated.timestamp_millis() > increased.timestamp_millis());
+}
+
+// ============================================================================
+// Block & Chain: General Gas Lane
+// ============================================================================
+
+// Like Tempo's payload builder, a block keeps non-payment transactions within the 30M general gas
+// lane and defers the rest, while payments use the remaining block gas.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_general_gas_lane_defers_non_payment_transactions() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let accounts = handle.dev_accounts().collect::<Vec<_>>();
+    // Stores to a new slot in an endless loop, so it uses its whole gas limit.
+    let endless = Address::repeat_byte(0x51);
+    api.anvil_set_code(endless, bytes!("60005b600101808055600256")).await.unwrap();
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let general = |from| {
+        WithOtherFields::new(
+            TransactionRequest::default().from(from).to(endless).gas_limit(20_000_000),
+        )
+    };
+    let first = *provider.send_transaction(general(accounts[0])).await.unwrap().tx_hash();
+    let deferred = *provider.send_transaction(general(accounts[1])).await.unwrap().tx_hash();
+    let transfer = tempo_precompiles::tip20::ITIP20::transferCall {
+        to: Address::repeat_byte(0x42),
+        amount: U256::from(1),
+    };
+    let payment = WithOtherFields::new(
+        TransactionRequest::default()
+            .from(accounts[2])
+            .to(PATH_USD)
+            .input(transfer.abi_encode().into())
+            .gas_limit(1_000_000),
+    );
+    let payment = *provider.send_transaction(payment).await.unwrap().tx_hash();
+
+    let block_hashes = async |number: u64| {
+        let block = provider.get_block(number.into()).await.unwrap().unwrap();
+        block.transactions.hashes().collect::<Vec<_>>()
+    };
+    api.mine_one().await.unwrap();
+    assert_eq!(block_hashes(1).await, [first, payment]);
+
+    api.mine_one().await.unwrap();
+    assert_eq!(block_hashes(2).await, [deferred]);
 }
 
 // ============================================================================
@@ -9541,6 +9640,53 @@ async fn tempo_fork_schedule_matches_moderato_head() {
     }
 }
 
+// A fork of Moderato runs the hardfork Moderato schedules for each mined block, so its blocks cross
+// an activation as Moderato's do, unless the user pins the hardfork.
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_fork_crosses_moderato_hardfork_activation() {
+    let t14 = TempoHardfork::T14.moderato_activation_timestamp().unwrap();
+    let (source_api, source) = spawn(
+        NodeConfig::test_tempo()
+            .with_chain_id(Some(alloy_chains::NamedChain::TempoModerato as u64))
+            .with_genesis_timestamp(Some(t14 - 100))
+            .with_hardfork(Some(TempoHardfork::T13.into())),
+    )
+    .await;
+    source_api.mine_one().await.unwrap();
+    // Hide Anvil identity so the source is treated as a Moderato node.
+    let native =
+        spawn_rpc_proxy_rejecting_method_after(source.http_endpoint(), "anvil_nodeInfo", 0).await;
+
+    for (pinned, after) in
+        [(None, TempoHardfork::T14), (Some(TempoHardfork::T13), TempoHardfork::T13)]
+    {
+        let (api, handle) = spawn(
+            NodeConfig::test_tempo()
+                .with_eth_rpc_url(Some(native.clone()))
+                .with_hardfork(pinned.map(Into::into)),
+        )
+        .await;
+        let provider = handle.http_provider();
+        let active = async || {
+            provider
+                .raw_request::<_, tempo_alloy::rpc::ForkSchedule>("tempo_forkSchedule".into(), ())
+                .await
+                .unwrap()
+                .active
+        };
+        assert_eq!(api.backend.tempo_hardfork(), TempoHardfork::T13, "{pinned:?}");
+
+        api.evm_set_next_block_timestamp(t14 - 1).unwrap();
+        api.mine_one().await.unwrap();
+        assert_eq!(active().await, "T13", "{pinned:?}");
+
+        api.evm_set_next_block_timestamp(t14).unwrap();
+        api.mine_one().await.unwrap();
+        assert_eq!(active().await, after.to_string(), "{pinned:?}");
+        assert_eq!(api.anvil_node_info().await.unwrap().hard_fork, after.to_string());
+    }
+}
+
 // `tempo_fundAddress` mints each faucet token like Moderato's faucet, without a transaction.
 #[tokio::test(flavor = "multi_thread")]
 async fn tempo_fund_address_mints_faucet_tokens() {
@@ -9654,6 +9800,152 @@ async fn test_tempo_gas_bounds_stay_within_tx_cap() {
     let receipt = provider.send_transaction(reverting_call).await.unwrap().get_receipt().await;
     let receipt = receipt.unwrap();
     assert!(!receipt.status());
+}
+
+// Like a Tempo node, a priced estimate of any transaction type is bounded by the fee payer's
+// fee-token balance, not its native balance, which Tempo accounts do not have.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_estimate_gas_bounded_by_fee_token_balance() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let sender = Address::repeat_byte(0xfb);
+    provider.raw_request::<_, Vec<B256>>("tempo_fundAddress".into(), (sender,)).await.unwrap();
+    assert!(provider.get_balance(sender).await.unwrap().is_zero());
+
+    let max_fee_per_gas = provider.get_gas_price().await.unwrap() * 2;
+    let request = WithOtherFields::new(
+        TransactionRequest::default()
+            .with_from(sender)
+            .with_to(PATH_USD)
+            .with_input(
+                tempo_precompiles::tip20::ITIP20::transferCall {
+                    to: Address::repeat_byte(0x42),
+                    amount: U256::from(1),
+                }
+                .abi_encode(),
+            )
+            .with_max_fee_per_gas(max_fee_per_gas)
+            .with_max_priority_fee_per_gas(0),
+    );
+    let gas = provider.estimate_gas(request.clone()).await.unwrap();
+
+    // With fee tokens for half the needed gas, the fee token balance is the bound.
+    let affordable = gas / 2;
+    let balance = calc_gas_balance_spending(affordable, max_fee_per_gas);
+    for token in [PATH_USD, ALPHA_USD, BETA_USD, THETA_USD, OUSD_ADDRESS] {
+        api.anvil_deal_tip20(sender, token, U256::ZERO).await.unwrap();
+    }
+    api.anvil_deal_tip20(sender, PATH_USD, balance).await.unwrap();
+    let err = provider.estimate_gas(request).await.unwrap_err();
+    let allowance = balance * TEMPO_GAS_PRICE_SCALING_FACTOR / U256::from(max_fee_per_gas);
+    assert_eq!(
+        err.to_string(),
+        format!(
+            "server returned an error response: error code -32003: Out of gas: gas required \
+             exceeds allowance: {allowance}"
+        )
+    );
+}
+
+// Like a Tempo node, a 0x76 request needs `calls` or `to`: a create is a call with a null `to`.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_request_without_calls_or_to_is_rejected() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+
+    let err = provider
+        .raw_request::<_, U256>(
+            "eth_estimateGas".into(),
+            (serde_json::json!({
+                "from": sender,
+                "type": "0x76",
+                "feeToken": PATH_USD,
+                "input": COUNTER_INIT_CODE,
+            }),),
+        )
+        .await
+        .unwrap_err();
+    let err = err.as_error_resp().unwrap();
+    assert_eq!(err.code, -32602);
+    assert_eq!(
+        err.message,
+        "Invalid transaction request: Missing 'calls' or 'to' field for Tempo transaction."
+    );
+
+    provider
+        .raw_request::<_, U256>(
+            "eth_estimateGas".into(),
+            (serde_json::json!({
+                "from": sender,
+                "type": "0x76",
+                "feeToken": PATH_USD,
+                "calls": [{ "to": null, "value": "0x0", "input": COUNTER_INIT_CODE }],
+            }),),
+        )
+        .await
+        .unwrap();
+}
+
+// Like a Tempo node, the pool rejects a transaction whose fee token has no FeeAMM liquidity into
+// the validator token, instead of keeping it pending and blocking the sender's next nonce.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_pool_rejects_fee_token_without_liquidity() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    let token = address!("20c000000000000000000000000000000000fee1");
+    api.anvil_tempo_create_token(anvil_core::types::TempoCreateTokenRequest {
+        address: token,
+        name: "No Liquidity".into(),
+        symbol: "NLQ".into(),
+        currency: "USD".into(),
+        quote_token: PATH_USD,
+        admin: sender,
+        mint: vec![anvil_core::types::TempoTokenMint {
+            to: sender,
+            amount: U256::from(1_000_000_000u64),
+        }],
+    })
+    .await
+    .unwrap();
+
+    let err = provider
+        .raw_request::<_, B256>(
+            "eth_sendTransaction".into(),
+            (serde_json::json!({
+                "from": sender,
+                "type": "0x76",
+                "feeToken": token,
+                "gas": "0x927c0",
+                "calls": [{ "to": Address::repeat_byte(0x42), "value": "0x0", "input": "0x" }],
+            }),),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("insufficient liquidity in FeeAMM pool"), "{err}");
+    assert_eq!(api.txpool_status().await.unwrap().pending, 0);
+}
+
+// A state dump records its hardfork, so loading it without one restores the network and hardfork
+// it was produced under.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_state_dump_restores_network_and_hardfork() {
+    let (source, _source_handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    source.mine_one().await.unwrap();
+    let state = source.serialized_state(false).await.unwrap();
+    assert_eq!(state.hardfork, Some(TempoHardfork::T14.into()));
+
+    for config in [NodeConfig::test(), NodeConfig::test_tempo()] {
+        let (api, handle) = spawn(config.with_init_state(Some(state.clone()))).await;
+        assert!(api.backend.is_tempo());
+        assert_eq!(api.backend.tempo_hardfork(), TempoHardfork::T14);
+        let sender = handle.dev_accounts().next().unwrap();
+        let path_usd = tempo_precompiles::tip20::ITIP20::new(PATH_USD, handle.http_provider());
+        assert!(!path_usd.balanceOf(sender).call().await.unwrap().is_zero());
+    }
 }
 
 // A fork serves the schedule before it mines a block, as forge reads it to pick the hardfork.

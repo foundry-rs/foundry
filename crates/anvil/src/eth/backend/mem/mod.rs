@@ -27,7 +27,8 @@ use crate::{
             },
             executor::{
                 AnvilBlockExecutor, BlockExecutionKind, BlockExecutionResult,
-                EthereumBlockTransitions, ExecutedPoolTransactions, PoolTxGasConfig, build_receipt,
+                EthereumBlockTransitions, ExecutedPoolTransactions, PoolTxGasConfig,
+                TempoGeneralLane, build_receipt,
             },
             fork::{ClientFork, ForkEndpointIdentity},
             genesis::GenesisConfig,
@@ -135,7 +136,10 @@ use evm2::{
     ethereum::{
         access_list_counts, intrinsic_and_floor_gas, validate_floor_gas, validate_intrinsic_gas,
     },
-    evm::{BalContext, BlockAccessIndex, BlockStateAccumulator, PendingState, StateChangeSource},
+    evm::{
+        BalContext, BlockAccessIndex, BlockStateAccumulator, DynDatabase, PendingState,
+        StateChangeSource,
+    },
     interpreter::InstrStop,
     registry::HandlerError,
 };
@@ -176,19 +180,22 @@ use std::{
 use storage::{Blockchain, DEFAULT_HISTORY_LIMIT, MinedTransaction};
 use tempo_alloy::rpc::{ConfigurableAccountSimulationSpec, PrimitiveSignatureType};
 use tempo_contracts::precompiles::IConfigurableAccount;
-use tempo_evm::{FeePaymentError, TempoInvalidTransaction};
+use tempo_evm::{
+    FeePaymentError, FeeTokenResolver, TempoFeeManager, TempoInvalidTransaction, TempoStateAccess,
+};
 use tempo_hardfork::TempoHardfork;
 use tempo_precompiles::{
     CONFIGURABLE_ACCOUNT_ADDRESS, NONCE_PRECOMPILE_ADDRESS, TIP_FEE_MANAGER_ADDRESS,
     configurable_account,
+    error::TempoPrecompileError,
     nonce::NonceManager,
-    storage::{Handler, account_config_commitment},
+    storage::{Handler, StorageActions, account_config_commitment},
     tip_fee_manager::{IFeeManager, TipFeeManager},
-    tip20::{ITIP20, TIP20Token},
+    tip20::{ITIP20, TIP20Error, TIP20Token},
     tip20_factory::TIP20Factory,
 };
 use tempo_primitives::{
-    AASigned, SignatureType, TEMPO_TX_TYPE_ID, TempoSignature,
+    AASigned, SignatureType, TEMPO_GAS_PRICE_SCALING_FACTOR, TEMPO_TX_TYPE_ID, TempoSignature,
     transaction::{
         ConfigurableAccountConfig, ConfigurableAccountQuorumError, ConfigurableAccountSignature,
         ConfigurableAccountWeightAccumulator, KeychainSignature, MAX_WEBAUTHN_SIGNATURE_LENGTH,
@@ -1679,13 +1686,32 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns the active hardfork.
+    ///
+    /// A Tempo fork that follows its source chain's schedule runs the hardfork active at the head.
     pub fn hardfork(&self) -> FoundryHardfork {
         if let Some(hardfork) =
             self.fork.read().as_ref().and_then(|fork| fork.config.read().hardfork)
         {
-            return hardfork;
+            return self.scheduled_fork_hardfork(self.time.last_timestamp()).unwrap_or(hardfork);
         }
         *self.hardfork.read()
+    }
+
+    /// Returns the hardfork a Tempo fork runs at `timestamp` when it follows its source chain's
+    /// schedule, so that mined blocks cross scheduled activations like the source chain's nodes.
+    ///
+    /// Returns `None` when not forking Tempo, when the user or the endpoint pinned the hardfork, or
+    /// when the source chain has no known schedule.
+    fn scheduled_fork_hardfork(&self, timestamp: u64) -> Option<FoundryHardfork> {
+        if !self.is_tempo() {
+            return None;
+        }
+        let fork = self.fork.read();
+        let config = fork.as_ref()?.config.read();
+        if !config.follows_hardfork_schedule {
+            return None;
+        }
+        TempoHardfork::from_chain_and_timestamp(config.chain_id, timestamp).map(Into::into)
     }
 
     /// Returns canonical Ethereum transition configuration only for an Ethereum network.
@@ -1780,8 +1806,26 @@ impl<N: Network> Backend<N> {
         if self.is_base() && self.base_upgrade() >= BaseUpgrade::Denim {
             return base::prepare_block_timestamp(db, &self.time, parent_timestamp);
         }
+        if self.is_tempo() {
+            return Ok(self
+                .time
+                .prepare_next_timestamp_millis(pin_timestamp, self.tempo_head_timestamp_millis()));
+        }
         let _ = (db, parent_timestamp);
         Ok(self.time.prepare_next_timestamp(pin_timestamp))
+    }
+
+    /// Returns the millisecond timestamp of the Tempo head, which may be the fork root.
+    fn tempo_head_timestamp_millis(&self) -> Option<u64> {
+        let best_hash = {
+            let storage = self.blockchain.storage.read();
+            if let Some(block) = storage.blocks.get(&storage.best_hash) {
+                return block.header.as_tempo().map(|header| header.timestamp_millis());
+            }
+            storage.best_hash
+        };
+        let fork = self.get_fork().filter(|fork| fork.block_hash() == best_hash)?;
+        fork.cached_root_header()?.as_tempo().map(|header| header.timestamp_millis())
     }
 
     /// Builds the required deposits from the same parent state used to prepare the clock.
@@ -2057,7 +2101,19 @@ impl<N: Network> Backend<N> {
             enforced_tx_gas_limit_cap: self.enforced_tx_gas_limit_cap(evm_env),
             max_blob_gas_per_block: blob_params.max_blob_gas_per_block(),
             is_cancun,
+            tempo_general_lane: self.is_tempo().then(|| self.tempo_general_lane(evm_env)),
         }
+    }
+
+    /// Returns the general gas lane of the Tempo block executed in `evm_env`.
+    fn tempo_general_lane(&self, evm_env: &EvmEnv) -> TempoGeneralLane {
+        let hardfork =
+            TempoHardfork::from(self.execution_hardfork_at(
+                self.hardfork(),
+                evm_env.block_env.timestamp.saturating_to(),
+            ));
+        let (gas_limit, _) = tempo_lane_gas_limits(hardfork, evm_env.block_env.gas_limit);
+        TempoGeneralLane { gas_limit, hardfork }
     }
 
     /// Returns the cap enforced on a transaction's gas limit, such as EIP-7825's or Tempo's, or
@@ -2901,6 +2957,9 @@ impl<N: Network> Backend<N> {
     /// Returns the hardfork executing a block at `timestamp` when `hardfork` is configured.
     #[cfg_attr(not(feature = "base"), allow(unused_variables))]
     fn execution_hardfork_at(&self, hardfork: FoundryHardfork, timestamp: u64) -> FoundryHardfork {
+        if let Some(scheduled) = self.scheduled_fork_hardfork(timestamp) {
+            return scheduled;
+        }
         #[cfg(feature = "base")]
         if self.is_base() {
             let configured = match hardfork {
@@ -3610,12 +3669,6 @@ impl<N: Network> Backend<N> {
         request.inner.max_priority_fee_per_gas = Some(fees.max_priority_fee_per_gas);
         request.inner.access_list = Some(request.inner.access_list.clone().unwrap_or_default());
         request.inner.gas_price = None;
-        let input = request.inner.input.clone().into_input().unwrap_or_default();
-        if request.calls.is_empty() && request.inner.to.is_none() && !input.is_empty() {
-            // Alloy represents an omitted top-level `to` as `None`; preserve Ethereum CREATE
-            // semantics by materializing it as the Tempo call.
-            request.inner.to = Some(TxKind::Create);
-        }
 
         let mut signature = simulated_configurable_account_signature(&mut request)?;
         // An impersonated configurable account is simulated with the placeholder quorum it sends
@@ -3911,6 +3964,55 @@ impl<N: Network> Backend<N> {
             },
             monad_context,
         )
+    }
+
+    /// Returns the gas the fee payer of `request` can afford with `gas_price`, like a Tempo
+    /// node's `caller_gas_allowance`: every transaction type pays with its resolved fee token.
+    ///
+    /// `gas_limit` is the search bound the fee token is resolved with. When no fallback token
+    /// covers it, the largest fallback balance bounds the gas instead.
+    pub(crate) fn tempo_caller_gas_allowance(
+        &self,
+        state: &dyn DatabaseRef,
+        request: FoundryTransactionRequest,
+        fee_details: FeeDetails,
+        block_env: BlockEnv,
+        gas_limit: u64,
+        gas_price: u128,
+    ) -> Result<u64, BlockchainError>
+    where
+        N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
+    {
+        let PreparedCall { evm_env, mut tx, .. } =
+            self.prepare_typed_call_env(state, request, fee_details, block_env)?;
+        tx.tx = with_gas_limit(tx.tx, gas_limit);
+        let opts = self.evm_options(&evm_env);
+        let tx = TempoEvmNetwork::prepared_evm_tx(&tx, opts.cheats.as_ref())?;
+        let fee_payer =
+            tx.fee_payer().map_err(|error| BlockchainError::Message(error.to_string()))?;
+        let spec = self.tempo_hardfork();
+        let mut db = EvmDb::for_storage(state);
+        let mut db: &mut dyn DynDatabase = &mut db;
+        let balance = match TempoFeeManager::new().resolve_fee_token(
+            &mut db,
+            &tx,
+            fee_payer,
+            spec,
+            StorageActions::disabled(),
+        ) {
+            Ok(token) => db
+                .get_token_balance(token, fee_payer, spec, StorageActions::disabled())
+                .map_err(tempo_db_err)?,
+            Err(TempoPrecompileError::TIP20(TIP20Error::InsufficientBalance(error))) => {
+                error.available
+            }
+            Err(error) => return Err(tempo_db_err(error).into()),
+        };
+        Ok(balance
+            .saturating_mul(TEMPO_GAS_PRICE_SCALING_FACTOR)
+            .checked_div(U256::from(gas_price))
+            .unwrap_or_default()
+            .saturating_to())
     }
 
     pub(crate) fn call_with_state_typed_access_list(
@@ -6790,6 +6892,7 @@ where
                 )?;
                 let block_timestamp = pending_timestamp.timestamp;
                 evm_env.block_env.timestamp = U256::from(block_timestamp);
+                let hardfork = self.scheduled_fork_hardfork(block_timestamp).unwrap_or(hardfork);
 
                 // Forced historical transactions bypass pool admission and are replayed while
                 // mining. Keep this exception local to the disposable mining environment.
@@ -6874,6 +6977,7 @@ where
                 );
 
                 if let FoundryHeader::Tempo(header) = &mut block_info.block.header {
+                    header.timestamp_millis_part = pending_timestamp.millis_part;
                     let storage = self.blockchain.storage.read();
                     let tempo = storage.tempo.as_ref().expect("Tempo chain is initialized");
                     tempo.prepare(header, TempoHardfork::from(hardfork))?;
@@ -9051,6 +9155,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         };
         let mut state = state;
         state.fork_replayed_blocks = self.fork_replayed_blocks.lock().clone();
+        state.hardfork = Some(self.hardfork());
         Ok(state)
     }
 
@@ -10643,9 +10748,9 @@ where
         let opts = self.evm_options(&evm_env);
         self.with_database_at(None, move |state, _| {
             let mut evm = build_evm::<TempoEvmNetwork>(&*state, &evm_env, &opts)?;
-            // Pool admission does not require the lower validity bound or fee AMM liquidity.
+            // Pool admission does not require the lower validity bound. Like a Tempo node, it does
+            // require fee AMM liquidity for the fee token.
             evm.ext_mut().skip_valid_after_check = true;
-            evm.ext_mut().skip_liquidity_check = true;
             let evm_tx = TempoEvmNetwork::prepared_evm_tx(&tx, opts.cheats.as_ref())?;
             TempoEvmNetwork::set_tx_context(&mut evm, &evm_tx, &TxContext::default());
             let Err(err) = evm.transact(&evm_tx) else { return Ok(()) };
@@ -10662,12 +10767,11 @@ where
                 .into());
             }
             match err.into() {
-                // The pool queues transactions ahead of their nonce lane, and fee AMM liquidity
-                // is only required at inclusion; evm2 has no validation-only entry point.
+                // The pool queues transactions ahead of their nonce lane; evm2 has no
+                // validation-only entry point.
                 BlockchainError::InvalidTransaction(InvalidTransactionError::NonceTooHigh) => {
                     Ok(())
                 }
-                err if err.to_string().contains("InsufficientLiquidity") => Ok(()),
                 err => Err(err),
             }
         })

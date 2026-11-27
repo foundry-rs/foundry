@@ -2144,7 +2144,20 @@ impl EthApi<FoundryNetwork> {
         // request has a non-zero gas price. Only enforce this for explicit senders: calls without
         // `from` historically estimate against the default caller and must not be capped by the
         // zero address balance.
-        if !is_tempo_aa_tx && let Some(from) = inner.from {
+        if self.backend.is_tempo() {
+            // Every Tempo transaction type pays with a fee token, never the native balance.
+            if inner.from.is_some() && gas_price > 0 {
+                let allowance = self.backend.tempo_caller_gas_allowance(
+                    state,
+                    request.clone(),
+                    fees.clone(),
+                    block_env.clone(),
+                    highest_gas_limit as u64,
+                    gas_price,
+                )?;
+                highest_gas_limit = highest_gas_limit.min(allowance.into());
+            }
+        } else if let Some(from) = inner.from {
             let mut available_funds = self.backend.get_balance_with_state(state, from)?;
             if let Some(value) = inner.value {
                 if value > available_funds {
