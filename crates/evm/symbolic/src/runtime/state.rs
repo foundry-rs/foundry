@@ -1051,7 +1051,7 @@ impl PathState {
             {
                 // The guarded writes, which set balances and storage, reached the account.
                 None
-            } else if self.world.knows_account(executor, account)
+            } else if self.world.knows_account(executor, account, representative)
                 || self.persistent_accounts.contains(&account)
             {
                 return Err(SymbolicError::Unsupported(
@@ -2332,6 +2332,10 @@ pub(crate) struct SymbolicWorldState {
     /// Accounts whose code was written during the run; `code_cache` also holds backend reads.
     written_code: HashSet<Address>,
     nonces: HashMap<Address, u64>,
+    /// Accounts whose balance, nonce, or storage the run read, or whose existence an
+    /// `EXTCODEHASH` read showed, all of which state written later through an alias of the
+    /// account would change.
+    state_reads: HashSet<Address>,
     existing_accounts: HashSet<Address>,
     destroyed_accounts: HashSet<Address>,
     pending_selfdestructs: HashSet<Address>,
@@ -2422,6 +2426,7 @@ impl SymbolicWorld {
         key: SymExpr,
         concrete_key: Option<U256>,
     ) -> Result<SymExpr, SymbolicError> {
+        self.record_state_read(address);
         let base = self.storage_base(cx, executor, address, &key, concrete_key)?;
         let read_key = concrete_key.map(|key| SymExpr::constant(cx, key)).unwrap_or(key);
         Ok(StorageWrite::select_from(cx, &self.storage, address, read_key, base))
@@ -2735,6 +2740,20 @@ impl SymbolicWorld {
             || self.arbitrary_storage_accounts.contains_key(&representative)
     }
 
+    fn record_state_read(&mut self, address: Address) {
+        if !self.state_reads.contains(&address) {
+            Arc::make_mut(&mut self.state).state_reads.insert(address);
+        }
+    }
+
+    /// Records a read of the account `address_expr` resolves to, if any.
+    fn record_address_read(&mut self, cx: &mut SymCx, address_expr: &SymExpr) {
+        let address_expr = address_expr.clone().address_operand(cx);
+        if let Some(address) = self.resolve_address(&address_expr) {
+            self.record_state_read(address);
+        }
+    }
+
     pub(crate) fn has_written_code(&self, address: Address) -> bool {
         self.written_code.contains(&address)
     }
@@ -2763,10 +2782,26 @@ impl SymbolicWorld {
             .is_some_and(|guarded| guarded.get(&address) == Some(&true))
     }
 
-    /// Returns whether the run knows `address` or wrote state to it.
-    pub(crate) fn knows_account(&self, executor: &ExecutorView<'_>, address: Address) -> bool {
-        self.representative_holds_state(address)
-            || self.concrete_alias_candidates(executor).contains(&address)
+    /// Returns whether the run knows `address`, wrote state to it, or read state of it that the
+    /// state written on `representative` would change. A backend read that found no code there
+    /// only saw its code, so it conflicts only with code written on `representative`.
+    pub(crate) fn knows_account(
+        &self,
+        executor: &ExecutorView<'_>,
+        address: Address,
+        representative: Address,
+    ) -> bool {
+        if self.representative_holds_state(address) || self.state_reads.contains(&address) {
+            return true;
+        }
+        if self.code_cache.get(&address).is_some_and(|code| code.is_empty())
+            && !self.existing_accounts.contains(&address)
+            && !executor.account_addresses.contains(&address)
+            && address != CHEATCODE_ADDRESS
+        {
+            return self.written_code.contains(&representative);
+        }
+        self.concrete_alias_candidates(executor).contains(&address)
     }
 
     /// Ends the alias of the word `expr`, which the path fixed to an account: the state written
@@ -3164,6 +3199,7 @@ impl SymbolicWorld {
         executor: &ExecutorView<'_>,
         address_expr: SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
+        self.record_address_read(cx, &address_expr);
         self.select_symbolic_account(
             cx,
             executor,
@@ -3234,6 +3270,7 @@ impl SymbolicWorld {
         executor: &ExecutorView<'_>,
         address_expr: SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
+        self.record_address_read(cx, &address_expr);
         self.select_symbolic_account(
             cx,
             executor,
@@ -3399,6 +3436,7 @@ impl SymbolicWorld {
             return Ok(hash);
         }
         // EIP-161: without code or a nonce, the account exists only while it has a balance.
+        self.record_state_read(address);
         let balance = self.balance_word_for_address(cx, executor, address)?;
         let empty = SymBoolExpr::eq_word_const(cx, &balance, U256::ZERO);
         let zero = SymExpr::zero(cx);

@@ -208,7 +208,7 @@ impl SymbolicExecutor {
                 self.execute_sequence_call_next(&input.executor, &mut side_a, completed_paths)?
             {
                 let end_a = self.equivalence_end(&outcome_a);
-                let mut state_a = outcome_a.state;
+                let state_a = outcome_a.state;
 
                 // B starts from the same pre-state, constrained to A's path, and its fresh
                 // symbols come after A's.
@@ -225,6 +225,15 @@ impl SymbolicExecutor {
                     self.check_timeout()?;
                     let end_b = self.equivalence_end(&outcome_b);
                     let mut state_b = outcome_b.state;
+                    // A side settles the caller alias only once it reaches a CALL-family opcode
+                    // after fixing the caller, so both settle here under B's constraints, which
+                    // extend A's, to compare the same accounts.
+                    state_b.settle_fixed_addresses(&mut self.cx, &input.executor)?;
+                    let mut state_a = state_a.clone();
+                    let constraints_a =
+                        std::mem::replace(&mut state_a.constraints, state_b.constraints.clone());
+                    state_a.settle_fixed_addresses(&mut self.cx, &input.executor)?;
+                    state_a.constraints = constraints_a;
                     let mismatch = self.equivalence_mismatch(
                         &input.executor,
                         &mut state_a,

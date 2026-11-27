@@ -317,6 +317,64 @@ contract KeepAll {
     assert!(out.contains("Not equivalent"), "{out}");
 }
 
+// Fixing the caller and then reaching a CALL-family opcode on one side only must not make the
+// two sides compare different caller accounts.
+#[forgetest]
+fn equivalence_fixed_caller_with_call_on_one_side(prj: _, cmd: _) {
+    skip_unless_z3!("equivalence_fixed_caller_with_call_on_one_side");
+    prj.add_source(
+        "Gated.sol",
+        r#"
+contract GatedCall {
+    function f() external {
+        require(msg.sender == address(0xB0B));
+        assembly {
+            pop(staticcall(gas(), 0x4, 0, 0, 0, 0))
+            sstore(0, caller())
+        }
+    }
+}
+
+contract Gated {
+    function f() external {
+        require(msg.sender == address(0xB0B));
+        assembly {
+            sstore(0, 0xB0B)
+        }
+    }
+}
+
+contract GatedOther {
+    function f() external {
+        require(msg.sender == address(0xB0B));
+        assembly {
+            sstore(0, 0xB0C)
+        }
+    }
+}
+"#,
+    );
+    let gated_call = deployed_bytecode(&mut cmd, "GatedCall");
+    let gated = deployed_bytecode(&mut cmd, "Gated");
+    let gated_other = deployed_bytecode(&mut cmd, "GatedOther");
+
+    let out = cmd
+        .forge_fuse()
+        .args(["equivalence", "--code-a", &gated_call, "--code-b", &gated, "--sig", "f()"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(out.contains("Equivalent: no explored input distinguishes"), "{out}");
+
+    let out = cmd
+        .forge_fuse()
+        .args(["equivalence", "--code-a", &gated_call, "--code-b", &gated_other, "--sig", "f()"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(out.contains("Not equivalent"), "{out}");
+}
+
 // hevm's equivalence cases: STATICCALL(gas, 0x1234, 0, size, 0, 0) with the size pushed by `size`,
 // then revert with the call's return data.
 fn static_call_then_revert(size: &str) -> String {
