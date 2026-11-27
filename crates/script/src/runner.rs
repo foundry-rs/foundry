@@ -402,22 +402,33 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
         &self,
         res: Result<DeployResult<FEN>, EvmError<FEN>>,
     ) -> Result<ScriptResult<FEN::Network>> {
-        let (address, RawCallResult { gas_used, logs, traces, debug_bytecodes, exit_reason, .. }) =
-            match res {
-                Ok(DeployResult { address, raw }) => (address, raw),
-                Err(EvmError::Execution(err)) => {
-                    let ExecutionErr { raw, reason } = *err;
-                    sh_err!("Failed with `{reason}`:\n")?;
-                    (Address::ZERO, raw)
-                }
-                // Keep how an RPC request failed for `--json`.
-                Err(e) => return Err(flattened(format!("Failed deploying contract: {e:?}"), &e)),
-            };
+        let (
+            address,
+            RawCallResult {
+                gas_used,
+                gas_refunded,
+                logs,
+                traces,
+                debug_bytecodes,
+                exit_reason,
+                ..
+            },
+        ) = match res {
+            Ok(DeployResult { address, raw }) => (address, raw),
+            Err(EvmError::Execution(err)) => {
+                let ExecutionErr { raw, reason } = *err;
+                sh_err!("Failed with `{reason}`:\n")?;
+                (Address::ZERO, raw)
+            }
+            // Keep how an RPC request failed for `--json`.
+            Err(e) => return Err(flattened(format!("Failed deploying contract: {e:?}"), &e)),
+        };
 
         Ok(ScriptResult {
             returned: Bytes::new(),
             success: !address.is_zero(),
-            gas_used,
+            // A deployment needs the gas it spends before refunds.
+            gas_used: gas_used + gas_refunded,
             logs,
             debug_bytecodes: self.maybe_debug_bytecodes(debug_bytecodes),
             // Manually adjust gas for the trace to add back the stipend/real used gas
@@ -525,6 +536,10 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
     /// as gas limit will result in `OutOfGas` so to come up with a better estimate we search over a
     /// possible range we pick a higher gas limit 3x of a succeeded call should be safe.
     ///
+    /// The search starts from the gas spent before refunds, which a transaction needs before its
+    /// refund is credited, and which Tempo's uncapped storage credit refunds (TIP-1060) can make
+    /// many times the gas it uses.
+    ///
     /// This might result in executing the same script multiple times. Depending on the user's goal,
     /// it might be problematic when using `ffi`.
     fn search_optimal_gas_usage(
@@ -535,7 +550,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
         calldata: &Bytes,
         value: U256,
     ) -> Result<u64> {
-        let mut gas_used = res.gas_used;
+        let mut gas_used = res.gas_used + res.gas_refunded;
         if res.exit_reason.is_some_and(InstrStop::is_success) {
             // Store the current gas limit and reset it later.
             let init_gas_limit = self.executor.tx().gas_limit();

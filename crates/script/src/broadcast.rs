@@ -65,6 +65,7 @@ use foundry_evm::{
         constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
         evm::{FoundryEvmNetwork, TempoEvmNetwork},
     },
+    hardforks::FoundryHardfork,
     traces::CallKind,
 };
 use foundry_wallets::wallet_browser::{error::BrowserWalletError, signer::BrowserSigner};
@@ -1327,7 +1328,12 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
 
                     let estimate_via_rpc = self.args.skip_simulation
                         || if self.script_config.evm_opts.networks.is_tempo() {
-                            tempo_needs_rpc_estimate(transactions, tempo_sponsor.is_some())
+                            // Simulation prices transactions at its own hardfork, which a pinned
+                            // `hardfork` can set below the chain's.
+                            !matches!(
+                                self.script_config.hardfork,
+                                Some(FoundryHardfork::Tempo(fork)) if Some(fork) == tempo_hardfork
+                            ) || tempo_needs_rpc_estimate(transactions, tempo_sponsor.is_some())
                         } else {
                             has_different_gas_calc(sequence.chain)
                         };
