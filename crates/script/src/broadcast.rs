@@ -786,7 +786,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
         self.sequence.save(true, false)?;
 
         if !errors.is_empty() {
-            return Err(eyre::eyre!("{}", errors.iter().format("\n")));
+            return Err(crate::joined(errors));
         }
 
         Ok(self)
@@ -2248,7 +2248,11 @@ where
     }
     let estimate =
         provider.estimate_gas(request).await.wrap_err("Failed to estimate gas for tx")?;
-    tx.set_gas_limit(apply_gas_estimate_multiplier(estimate, Some(estimate_multiplier))?);
+    tx.set_gas_limit(apply_gas_estimate_multiplier(
+        estimate,
+        Some(estimate_multiplier),
+        tx.chain_id(),
+    )?);
     Ok(())
 }
 

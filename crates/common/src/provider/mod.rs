@@ -24,6 +24,7 @@ use alloy_transport::{
 use eyre::{Result, WrapErr};
 use foundry_config::Config;
 use reqwest::Url;
+use serde::Serialize;
 use std::{
     marker::PhantomData,
     net::SocketAddr,
@@ -550,6 +551,80 @@ fn rpc_error_code_from_body(body: &str) -> Option<i64> {
     error.get("code")?.as_i64()
 }
 
+/// Returns the code of a JSON-RPC error response, including one in an HTTP error body.
+///
+/// Unlike [`rpc_error_code`], an HTTP error body counts only as a JSON-RPC response, so gateway
+/// JSON with its own `code`, such as `{"status":401,"code":401}`, has none.
+fn json_rpc_error_code(error: &TransportError) -> Option<i64> {
+    if let Some(response) = error.as_error_resp() {
+        return Some(response.code);
+    }
+    let body = &error.as_transport_err()?.as_http_error()?.body;
+    let value =
+        serde_json::Deserializer::from_str(body).into_iter::<serde_json::Value>().next()?.ok()?;
+    value.get("jsonrpc")?;
+    value.get("error")?.get("code")?.as_i64()
+}
+
+/// How an RPC request failed, for programs that decide whether to retry.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct RpcFailure {
+    /// Whether the endpoint answered, with an error or with null where a value must exist. When
+    /// it did not, the connection failed or timed out, or it returned an HTTP error without a
+    /// JSON-RPC error.
+    #[serde(skip)]
+    pub answered: bool,
+    /// The JSON-RPC error code, when the endpoint sent one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<i64>,
+    /// The HTTP status, when the endpoint returned an HTTP error.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<u16>,
+}
+
+impl RpcFailure {
+    /// Returns the machine-readable kind of this failure.
+    pub const fn kind(&self) -> &'static str {
+        if self.answered { "rpc.error" } else { "rpc.transport" }
+    }
+}
+
+/// An endpoint answered without a block that must exist, such as a load-balanced endpoint whose
+/// backend has not seen that block yet.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub struct BlockNotFound(pub String);
+
+/// Classifies the innermost [`TransportError`] in `error`'s chain.
+///
+/// The innermost one is the cause: a retry layer that gives up wraps the last error it got in a
+/// transport error.
+pub fn rpc_failure(error: &(dyn std::error::Error + 'static)) -> Option<RpcFailure> {
+    let error = std::iter::successors(Some(error), |error| error.source())
+        .filter_map(|error| error.downcast_ref::<TransportError>())
+        .last()?;
+    // These fail before a request is sent.
+    if matches!(
+        error,
+        TransportError::LocalUsageError(_)
+            | TransportError::SerError(_)
+            | TransportError::UnsupportedFeature(_)
+    ) {
+        return None;
+    }
+    let code = json_rpc_error_code(error);
+    let status = error.as_transport_err().and_then(|error| error.as_http_error()).map(|e| e.status);
+    // A response that does not parse is still an answer.
+    let answered = code.is_some()
+        || matches!(
+            error,
+            TransportError::ErrorResp(_)
+                | TransportError::NullResp
+                | TransportError::DeserError { .. }
+        );
+    Some(RpcFailure { answered, code, status })
+}
+
 /// Constructs a provider using [`try_get_http_provider`].
 ///
 /// # Panics
@@ -666,6 +741,38 @@ mod tests {
         assert!(!is_rpc_method_not_found(&internal_error));
         assert!(!is_rpc_method_not_found(&http_internal_error));
         assert!(!is_rpc_method_not_found(&transport_error));
+    }
+
+    #[test]
+    fn gateway_error_code_is_not_a_json_rpc_code() {
+        for body in [
+            r#"{"code":401,"title":"Unauthorized","type":"about:blank","status":401}"#,
+            r#"{"status":401,"code":401,"message":"Unauthorized"}"#,
+            r#"{"error":{"code":401,"message":"Unauthorized","status":"UNAUTHENTICATED"}}"#,
+        ] {
+            let error = alloy_transport::TransportErrorKind::http_error(401, body.to_string());
+            let failure = rpc_failure(&error).unwrap();
+            assert_eq!(
+                (failure.kind(), failure.code, failure.status),
+                ("rpc.transport", None, Some(401))
+            );
+        }
+        let error = alloy_transport::TransportErrorKind::http_error(
+            429,
+            r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32005,"message":"rate limited"}}"#
+                .to_string(),
+        );
+        let failure = rpc_failure(&error).unwrap();
+        assert_eq!(
+            (failure.kind(), failure.code, failure.status),
+            ("rpc.error", Some(-32005), Some(429))
+        );
+        // The endpoint answered with a body that does not parse.
+        let error: TransportError = TransportError::DeserError {
+            err: serde_json::from_str::<u64>("x").unwrap_err(),
+            text: "<html>".into(),
+        };
+        assert_eq!(rpc_failure(&error).unwrap().kind(), "rpc.error");
     }
 
     #[test]

@@ -50,7 +50,7 @@ use foundry_common::{
 use foundry_compilers::{
     Artifact, ArtifactId, Graph, ProjectCompileOutput,
     artifacts::{
-        BytecodeObject, ConfigurableContractArtifact, Libraries, Source, ast::NodeType,
+        BytecodeObject, ConfigurableContractArtifact, Source, ast::NodeType,
         output_selection::ContractOutputSelection,
     },
     compilers::{
@@ -1207,8 +1207,7 @@ impl TestArgs {
                 trial: self.showmap_trial.clone().unwrap_or_else(|| {
                     let ns = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_nanos())
-                        .unwrap_or(0);
+                        .map_or(0, |d| d.as_nanos());
                     format!("trial-{ns}")
                 }),
                 per_input: self.showmap_per_input,
@@ -1475,8 +1474,9 @@ impl TestArgs {
         }
 
         let display = path.display();
-        let value = fs::read_json_file::<serde_json::Value>(path)
-            .wrap_err(format!("failed to read symbolic counterexample artifact {display}"))?;
+        let value = fs::read_json_file::<serde_json::Value>(path).wrap_err_with(|| {
+            format!("failed to read symbolic counterexample artifact {display}")
+        })?;
         let schema_version =
             value.get("schema_version").and_then(serde_json::Value::as_u64).ok_or_else(|| {
                 eyre::eyre!(
@@ -1495,7 +1495,9 @@ impl TestArgs {
             bail!("unsupported symbolic counterexample artifact schema `{schema}` in {display}");
         }
         let artifact = serde_json::from_value::<SymbolicCounterexampleArtifact>(value)
-            .wrap_err(format!("failed to parse symbolic counterexample artifact {display}"))?;
+            .wrap_err_with(|| {
+                format!("failed to parse symbolic counterexample artifact {display}")
+            })?;
         if artifact.calls.is_empty() {
             bail!("symbolic counterexample artifact {display} has no calls");
         }
@@ -1927,7 +1929,7 @@ impl TestArgs {
         for corpus in [&mut config.fuzz.corpus, &mut config.invariant.corpus] {
             corpus.corpus_dir.get_or_insert_with(|| corpus_dir.to_path_buf());
         }
-        config.fuzz.seed = config.fuzz.seed.or(Some(U256::ZERO));
+        config.fuzz.seed.get_or_insert(U256::ZERO);
 
         evm_opts.infer_network_from_fork().await?;
         config.networks = evm_opts.networks;
@@ -2009,10 +2011,10 @@ impl TestArgs {
         self.apply_gas_report_overrides(&mut config, &mut evm_opts);
 
         // Generate a random fuzz seed if none provided, for reproducibility.
-        config.fuzz.seed = config
+        config
             .fuzz
             .seed
-            .or_else(|| Some(U256::from_be_bytes(rand::rng().random::<[u8; 32]>())));
+            .get_or_insert_with(|| U256::from_be_bytes(rand::rng().random::<[u8; 32]>()));
 
         let trace_output = if self.flamegraph {
             Some(TraceOutputKind::Flamegraph)
@@ -2081,7 +2083,7 @@ impl TestArgs {
                     .run_tests_inner(runner, default_config, default_verbosity, &mut filter, output)
                     .await?;
                 for pass in override_passes {
-                    let (_, pass_outcome) =
+                    let pass_outcome =
                         self.run_network_pass(pass, output, &mut filter, execution.clone()).await?;
                     merge_outcomes(&mut outcome, pass_outcome);
                 }
@@ -2250,7 +2252,7 @@ impl TestArgs {
         }
         let decoder = outcome
             .last_run_decoder
-            .clone()
+            .as_ref()
             .ok_or_else(|| eyre::eyre!("cannot generate {label}: missing trace decoder"))?;
         let (suite_name, test_name, test_result) =
             outcome
@@ -2262,7 +2264,7 @@ impl TestArgs {
                     })
                 })
                 .ok_or_else(|| eyre::eyre!("{no_tests}"))?;
-        let contract = suite_name.split(':').next_back().unwrap();
+        let contract = suite_name.rsplit(':').next().unwrap();
         let test_name = test_name.trim_end_matches("()");
         let (_, arena) =
             test_result.traces.iter_mut().find(|(kind, _)| kind.is_execution()).ok_or_else(
@@ -2273,7 +2275,7 @@ impl TestArgs {
                     )
                 },
             )?;
-        decode_trace_arena(arena, &decoder).await;
+        decode_trace_arena(arena, decoder).await;
 
         match trace_output {
             TraceOutputKind::Flamegraph | TraceOutputKind::Flamechart => {
@@ -2355,7 +2357,7 @@ impl TestArgs {
         output: &ProjectCompileOutput,
         filter: &mut ProjectPathsAwareFilter,
         execution: TestExecutionOptions,
-    ) -> Result<(Libraries, TestOutcome)> {
+    ) -> Result<TestOutcome> {
         let NetworkPass { config, evm_opts, multi_network } = pass;
         let execution = TestExecutionOptions { multi_network, ..execution };
         let verbosity = evm_opts.verbosity;
@@ -2372,9 +2374,7 @@ impl TestArgs {
                     ExecutorBuilder::<Net>::new(),
                 )
                 .await?;
-            let libraries = runner.libraries.clone();
-            let outcome = self.run_tests_inner(runner, config, verbosity, filter, output).await?;
-            Ok((libraries, outcome))
+            self.run_tests_inner(runner, config, verbosity, filter, output).await
         })
     }
 
@@ -2589,7 +2589,10 @@ impl TestArgs {
             let mut gas_snapshots = BTreeMap::<String, BTreeMap<String, String>>::new();
             for result in results.values().flat_map(|suite| suite.test_results.values()) {
                 for (group, new_snapshots) in &result.gas_snapshots {
-                    gas_snapshots.entry(group.clone()).or_default().extend(new_snapshots.clone());
+                    gas_snapshots
+                        .entry(group.clone())
+                        .or_default()
+                        .extend(new_snapshots.iter().map(|(k, v)| (k.clone(), v.clone())));
                 }
             }
             if !gas_snapshots.is_empty() {
@@ -2872,7 +2875,10 @@ impl TestArgs {
 
                 // Collect and merge gas snapshots.
                 for (group, new_snapshots) in &result.gas_snapshots {
-                    gas_snapshots.entry(group.clone()).or_default().extend(new_snapshots.clone());
+                    gas_snapshots
+                        .entry(group.clone())
+                        .or_default()
+                        .extend(new_snapshots.iter().map(|(k, v)| (k.clone(), v.clone())));
                 }
             }
 

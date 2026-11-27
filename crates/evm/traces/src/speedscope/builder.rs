@@ -9,7 +9,6 @@ use crate::{
     folded_stack_trace::call_frame_name,
 };
 use alloy_primitives::map::HashMap;
-use std::borrow::Cow;
 
 struct SpeedscopeBuilder<'a> {
     file: SpeedscopeFile<'a>,
@@ -90,8 +89,7 @@ impl<'a> SpeedscopeBuilder<'a> {
     }
 
     fn exit_previous_steps(&mut self, step_exits: &mut Vec<StepExit>, step_idx: usize) {
-        while step_exits.last().is_some_and(|exit| exit.step_idx <= step_idx) {
-            let step_exit = step_exits.pop().unwrap();
+        while let Some(step_exit) = step_exits.pop_if(|exit| exit.step_idx <= step_idx) {
             self.profile.close_frame(step_exit.frame_idx, self.cumulative_gas);
         }
     }
@@ -101,7 +99,7 @@ impl<'a> SpeedscopeBuilder<'a> {
             return *idx;
         }
 
-        let idx = self.file.add_frame(Frame::new(Cow::Owned(name.to_owned())));
+        let idx = self.file.add_frame(Frame::new(name.to_owned()));
         self.frame_cache.insert(name.to_owned(), idx);
         idx
     }

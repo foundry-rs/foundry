@@ -177,12 +177,7 @@ fn diff(first: &str, second: &str) -> impl std::fmt::Display {
     let diff = similar::TextDiff::from_lines(first, second);
     let mut s = String::new();
     for change in diff.iter_all_changes() {
-        let tag = match change.tag() {
-            similar::ChangeTag::Delete => "-",
-            similar::ChangeTag::Insert => "+",
-            similar::ChangeTag::Equal => " ",
-        };
-        write!(s, "{tag}{change}").unwrap();
+        write!(s, "{}{change}", change.tag()).unwrap();
     }
     s
 }

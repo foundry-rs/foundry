@@ -63,7 +63,6 @@ alloy-network.workspace = true
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-provider = { workspace = true, features = ["reqwest", "ws", "ipc"] }
 alloy-signer.workspace = true
-alloy-transport.workspace = true
 evm2 = { workspace = true, features = ["parse"] }
 
 tempo-alloy.workspace = true

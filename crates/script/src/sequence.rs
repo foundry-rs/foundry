@@ -6,7 +6,7 @@ use alloy_consensus::transaction::SignerRecoverable;
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_network::{Network, ReceiptResponse};
 use alloy_primitives::{Address, B256, Bytes};
-use eyre::{ContextCompat, Report, Result, bail, eyre};
+use eyre::{ContextCompat, Report, Result, bail};
 use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
 use foundry_cli::utils::Git;
 use foundry_common::{FoundryTransactionBuilder, fmt::UIfmt};
@@ -582,11 +582,14 @@ where
             return err;
         }
         let chain = self.sequences()[index].chain;
-        if self.sequences().iter().filter(|sequence| sequence.chain == chain).count() > 1 {
-            eyre!("chain {chain} (sequence #{}): {err}", index + 1)
-        } else {
-            eyre!("chain {chain}: {err}")
-        }
+        // Wrapping keeps the error itself, so callers can tell why the RPC failed.
+        let message =
+            if self.sequences().iter().filter(|sequence| sequence.chain == chain).count() > 1 {
+                format!("chain {chain} (sequence #{}): {err}", index + 1)
+            } else {
+                format!("chain {chain}: {err}")
+            };
+        err.wrap_err(message)
     }
 }
 

@@ -33,6 +33,7 @@ use foundry_compilers::{
         CompilationError, Compiler,
         solc::{Solc, SolcCompiler},
     },
+    error::SolcError as CompilerError,
     info::ContractInfo as CompilerContractInfo,
     multi::{MultiCompiler, MultiCompilerError, MultiCompilerSettings},
     project::Preprocessor,
@@ -304,12 +305,17 @@ impl ProjectCompiler {
         let preprocess = self.dynamic_test_linking;
         let abi_cache = self.abi_cache;
         let external_compilers = self.external_compilers.take();
-        let external_writes = self.external_writes && !project.no_artifacts;
+        let external_writes = self.external_writes && !project.no_artifacts && !project.no_compile;
         self.compile_with(|| {
-            let external = external_compilers
+            let mut external = external_compilers
                 .as_ref()
                 .map(|config| {
-                    ExternalCompilation::compile(config, &selected_paths, external_writes)
+                    ExternalCompilation::compile(
+                        config,
+                        &selected_paths,
+                        external_writes,
+                        project.no_compile,
+                    )
                 })
                 .transpose()?;
             let sources = if explicit_selection {
@@ -339,7 +345,24 @@ impl ProjectCompiler {
                 }
                 Ok(output)
             };
-            let mut output = compile(preprocess)?;
+            let output = compile(preprocess);
+            // Under `no_compile`, report stale external units together with stale built-in
+            // sources.
+            if let Some(external) = &mut external
+                && !external.stale.is_empty()
+            {
+                let mut stale = std::mem::take(&mut external.stale);
+                if let Err(err) = output {
+                    let Some(CompilerError::StaleSources(files)) = err.downcast_ref() else {
+                        return Err(err);
+                    };
+                    stale.extend(files.iter().cloned());
+                }
+                stale.sort();
+                stale.dedup();
+                return Err(CompilerError::StaleSources(stale).into());
+            }
+            let mut output = output?;
             // A retry can only help if DTL changed the compiler input.
             if preprocessor.rewrote_sources()
                 && let Some(reason) = dynamic_test_linking_failure(&output.output().errors)
