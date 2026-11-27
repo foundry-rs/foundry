@@ -23,7 +23,7 @@ use tempo_precompiles::{
 use crate::constants::SYSTEM_PRECOMPILE_STUB;
 
 pub use foundry_common::tempo::{
-    ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
+    ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, OUSD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
 };
 pub use foundry_evm_networks::{
     TEMPO_PRECOMPILE_ADDRESSES, active_tempo_precompile_addresses, is_tempo_precompile_active_at,
@@ -45,7 +45,9 @@ pub use tempo_precompiles::{
 };
 
 /// All well-known TIP20 fee token addresses on Tempo networks.
-pub const TEMPO_TIP20_TOKENS: &[Address] = &[PATH_USD_ADDRESS];
+///
+/// Not every genesis creates OUSD, so its address may have no code.
+pub const TEMPO_TIP20_TOKENS: &[Address] = &[PATH_USD_ADDRESS, OUSD_ADDRESS];
 
 /// Inner genesis initialization logic. Must be called within a [`StorageCtx`] scope
 /// (either via [`StorageCtx::enter`] or [`StorageCtx::enter_evm`]).

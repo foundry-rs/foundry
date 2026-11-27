@@ -60,8 +60,8 @@ use foundry_common::{
 };
 use foundry_evm_core::tempo::{
     ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, ITIP20ChannelReserve, PATH_USD_ADDRESS,
-    TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, THETA_USD_ADDRESS,
-    active_tempo_precompile_addresses, tempo_genesis_contracts,
+    TEMPO_PRECOMPILE_ADDRESSES, THETA_USD_ADDRESS, active_tempo_precompile_addresses,
+    tempo_genesis_contracts,
 };
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::{
@@ -1047,9 +1047,9 @@ async fn test_tempo_precompiles_have_code() {
         assert!(!code.is_empty(), "Precompile {addr} should have code");
     }
 
-    // All TIP20 token addresses should also have code
-    for addr in TEMPO_TIP20_TOKENS {
-        let code = api.get_code(*addr, None).await.unwrap();
+    // The genesis TIP20 tokens should also have code
+    for addr in [PATH_USD_ADDRESS, ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, THETA_USD_ADDRESS] {
+        let code = api.get_code(addr, None).await.unwrap();
         assert!(!code.is_empty(), "Token {addr} should have code deployed");
     }
 }
