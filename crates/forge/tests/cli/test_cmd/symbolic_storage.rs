@@ -819,6 +819,54 @@ Suite result: FAILED. 3 passed; 6 failed; 0 skipped; [ELAPSED]
 "#]]);
 }
 
+// A custom layout base can name a folded entry in an independent namespace of the same contract.
+#[forgetest_init]
+fn symbolic_custom_layout_can_share_a_folded_slot(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_custom_layout_can_share_a_folded_slot");
+
+    prj.update_config(|config| config.optimizer = Some(true));
+    prj.add_test(
+        "CustomLayout.t.sol",
+        r#"
+contract CustomLayout layout at 0xfec507784df8a9f4fe69ac9195e2b98d84aca62ba859568d86694ac851a8eaa6 {
+    // This base equals the entry for (address(0xD00D), 1) in the mapping below.
+    uint256 public value;
+
+    /// @custom:storage-location erc7201:example.storage.ERC20
+    struct Store { mapping(address => mapping(uint256 => uint256)) entries; }
+
+    function store() private pure returns (Store storage s) {
+        assembly { s.slot := 0x792b309ed1024743406dc085f9859a5c6895fd893b6d7dafa1a05c10ff9c8f00 }
+    }
+
+    function write(address owner, uint256 id) external {
+        store().entries[owner][id] = 3;
+    }
+
+    function readFolded() external view returns (uint256) {
+        return store().entries[address(0xD00D)][1];
+    }
+}
+
+contract SymbolicCustomLayout {
+    CustomLayout target = new CustomLayout();
+
+    function checkFoldedRead(address owner, uint256 id) public {
+        target.write(owner, id);
+        assert(target.readFolded() == 0);
+    }
+}
+"#,
+    );
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicCustomLayout"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[0x000000000000000000000000000000000000D00d, 1]] checkFoldedRead(address,uint256) ([METRICS])
+...
+"#]]);
+}
+
 // The members of an ERC-7201 namespace are fixed slots the storage layout declares, so accessing
 // them skips the nested folded-mapping search. With a nested mapping in the namespace and many
 // source literals, the search would exhaust its budget and leave every run incomplete.
