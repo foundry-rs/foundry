@@ -783,7 +783,7 @@ where
                 && self.access_list.is_none()
                 && self.tx.gas_limit().is_none()
                 && self.tx.nonce_key().is_none_or(|key| key.is_zero()))
-            .then(|| self.tx.clone());
+            .then(|| self.gas_estimation_request());
             let fee_token_request = resolve_fee_token.then(|| self.tx.clone());
             let (blob, legacy, browser, eip1559_fee_estimate, gas_estimate_multiplier, sponsored) = (
                 self.blob,
@@ -859,14 +859,9 @@ where
             self.tx.set_access_list(access_list);
         }
         if fill && self.tx.gas_limit().is_none() {
-            let request = if self.browser {
-                self.tx.browser_wallet_gas_estimation_request()
-            } else {
-                self.tx.clone()
-            };
             let estimated = Self::estimate_gas(
                 &self.provider,
-                request,
+                self.gas_estimation_request(),
                 self.gas_estimate_multiplier,
                 self.sponsored,
             )
@@ -1004,6 +999,11 @@ where
             eyre::bail!("Failed to estimate gas: {err}: {decoded_error}");
         }
         eyre::bail!("Failed to estimate gas: {err}");
+    }
+
+    /// Returns the request to estimate gas with, which models a browser wallet's signature.
+    fn gas_estimation_request(&self) -> N::TransactionRequest {
+        if self.browser { self.tx.browser_wallet_gas_estimation_request() } else { self.tx.clone() }
     }
 }
 
@@ -1366,6 +1366,34 @@ mod tests {
         let (_, estimate) =
             requests.iter().find(|(method, _)| method == "eth_estimateGas").unwrap();
         assert!(estimate[0]["feeToken"].is_null());
+    }
+
+    /// A browser wallet send estimates gas with the WebAuthn signature it will carry, also when its
+    /// fees are given and the estimate runs alongside the nonce lookup.
+    #[tokio::test]
+    async fn tempo_browser_concurrent_estimate_models_webauthn() {
+        let transport = BarrierTransport::new(
+            &[
+                ("eth_getTransactionCount", serde_json::json!("0x5")),
+                ("eth_estimateGas", serde_json::json!("0x5208")),
+            ],
+            &["eth_getTransactionCount", "eth_estimateGas"],
+        );
+        let requests = transport.requests.clone();
+        let provider = ProviderBuilder::new_with_network::<TempoNetwork>()
+            .connect_client(RpcClient::new(transport, true));
+
+        let args = ["--gas-price", "1", "--priority-gas-price", "1"];
+        let builder = tempo_builder(&provider, &args).await.with_browser_wallet();
+        timeout(Duration::from_secs(1), builder.build(Address::repeat_byte(0x22)))
+            .await
+            .expect("nonce and gas requests were not in flight together")
+            .unwrap();
+
+        let requests = requests.lock().unwrap();
+        let (_, estimate) =
+            requests.iter().find(|(method, _)| method == "eth_estimateGas").unwrap();
+        assert_eq!(estimate[0]["keyType"], "webAuthn");
     }
 
     /// A Tempo nonce lane transaction estimates its gas with the lane's nonce, even when its fees

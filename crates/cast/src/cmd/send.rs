@@ -291,8 +291,12 @@ impl SendTxArgs {
         let fee_provider = (!config.eth_rpc_curl).then_some(&provider);
 
         // An unsponsored sender's fee token is resolved while building the transaction, alongside
-        // its nonce and fees, unless the request is only rendered as `curl`.
-        let build_resolves_fee_token = !config.eth_rpc_curl && !tx.tempo.is_sponsored();
+        // its nonce and fees, unless the request is only rendered as `curl`. A browser wallet send
+        // attaches its fee payment after building, which leaves legacy requests without one.
+        let build_resolves_fee_token = !config.eth_rpc_curl
+            && !tx.tempo.is_sponsored()
+            && !send_tx.browser.browser
+            && pre_resolved_browser.is_none();
 
         let resolved_lane = resolve_lane(&mut tx.tempo, &config.root)?;
         let lane = resolved_lane.as_ref();
@@ -460,17 +464,13 @@ impl SendTxArgs {
             else {
                 return Ok(());
             };
-            if tempo_sponsor.is_some() {
-                tempo::apply_fee_payment::<N, _>(
-                    tempo_sponsor.as_ref(),
-                    fee_provider,
-                    &mut tx_request,
-                    from,
-                )
-                .await?;
-            } else {
-                fee_send_opts.resolve_and_print_fee_token(&provider, &mut tx_request).await?;
-            }
+            tempo::apply_fee_payment::<N, _>(
+                tempo_sponsor.as_ref(),
+                fee_provider,
+                &mut tx_request,
+                from,
+            )
+            .await?;
 
             if chain.id() != browser.chain_id() {
                 sh_warn!("Switching browser wallet to chain {}", chain)?;
