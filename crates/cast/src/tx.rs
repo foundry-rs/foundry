@@ -23,8 +23,8 @@ use foundry_common::{
     provider::fee::{estimate_eip1559_fees, resolve_broadcast_eip1559_fees},
     shell,
     tempo::{
-        ensure_expiring_nonce_discriminator_active, is_tempo_hardfork_active,
-        mark_sponsored_gas_estimation,
+        ensure_expiring_nonce_discriminator_active, explain_fee_allowance_error,
+        is_tempo_hardfork_active, mark_sponsored_gas_estimation,
     },
 };
 use foundry_config::{Chain, Config, Eip1559FeeEstimatePreset};
@@ -944,10 +944,17 @@ where
             mark_sponsored_gas_estimation(provider, &mut request).await;
         }
         let chain_id = request.chain_id();
-        let err = match provider.estimate_gas(request).await {
+        let err = match provider.estimate_gas(request.clone()).await {
             Ok(estimated) => return apply_gas_estimate_multiplier(estimated, multiplier, chain_id),
             Err(err) => err,
         };
+        if !sponsored
+            && let Some(explanation) = explain_fee_allowance_error(provider, &request, &err).await
+        {
+            return Err(
+                eyre::Report::new(err).wrap_err(format!("Failed to estimate gas: {explanation}"))
+            );
+        }
         // If execution reverted with code 3 during provider gas estimation then try to decode
         // custom errors and append it to the error message.
         if let TransportError::ErrorResp(payload) = &err

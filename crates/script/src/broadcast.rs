@@ -55,7 +55,8 @@ use foundry_common::{
         configurable_account::{
             ConfigurableAccountSigner, detect_configurable_account, reaches_threshold,
         },
-        mark_sponsored_gas_estimation, maybe_print_fee_token, resolve_and_set_fee_token,
+        explain_fee_allowance_error, mark_sponsored_gas_estimation, maybe_print_fee_token,
+        resolve_and_set_fee_token,
     },
 };
 use foundry_config::Config;
@@ -2256,8 +2257,20 @@ where
     if sponsored {
         mark_sponsored_gas_estimation(provider, &mut request).await;
     }
-    let estimate =
-        provider.estimate_gas(request).await.wrap_err("Failed to estimate gas for tx")?;
+    let estimate = match provider.estimate_gas(request.clone()).await {
+        Ok(estimate) => estimate,
+        Err(err) => {
+            let explanation = if sponsored {
+                None
+            } else {
+                explain_fee_allowance_error(provider, &request, &err).await
+            };
+            return Err(eyre::Report::new(err).wrap_err(explanation.map_or_else(
+                || "Failed to estimate gas for tx".to_string(),
+                |explanation| format!("Failed to estimate gas for tx: {explanation}"),
+            )));
+        }
+    };
     tx.set_gas_limit(apply_gas_estimate_multiplier(
         estimate,
         Some(estimate_multiplier),

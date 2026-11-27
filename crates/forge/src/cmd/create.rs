@@ -29,8 +29,8 @@ use foundry_common::{
     retry::Retry,
     shell,
     tempo::{
-        configurable_account::ConfigurableAccountSigner, mark_sponsored_gas_estimation,
-        maybe_print_fee_token, resolve_and_set_fee_token,
+        configurable_account::ConfigurableAccountSigner, explain_fee_allowance_error,
+        mark_sponsored_gas_estimation, maybe_print_fee_token, resolve_and_set_fee_token,
     },
 };
 use foundry_compilers::{
@@ -639,10 +639,23 @@ impl CreateArgs {
             } else {
                 deployer.tx.clone()
             };
-            if self.tx.tempo.is_sponsored() {
+            let sponsored = self.tx.tempo.is_sponsored();
+            if sponsored {
                 mark_sponsored_gas_estimation(&provider, &mut request).await;
             }
-            let estimated = provider.estimate_gas(request).await?;
+            let estimated = match provider.estimate_gas(request.clone()).await {
+                Ok(estimated) => estimated,
+                Err(err) => {
+                    let explanation = if sponsored {
+                        None
+                    } else {
+                        explain_fee_allowance_error(provider.as_ref(), &request, &err).await
+                    };
+                    let Some(explanation) = explanation else { return Err(err.into()) };
+                    return Err(eyre::Report::new(err)
+                        .wrap_err(format!("Failed to estimate gas: {explanation}")));
+                }
+            };
             deployer.tx.set_gas_limit(apply_gas_estimate_multiplier(
                 estimated,
                 self.gas_estimate_multiplier,

@@ -4,8 +4,11 @@ pub mod auth;
 pub mod configurable_account;
 
 use crate::FoundryTransactionBuilder;
+use alloy_chains::NamedChain;
 use alloy_network::{Network, TransactionBuilder};
-use alloy_primitives::{Address, B256, Signature, TxKind, U256, address, uint};
+use alloy_primitives::{
+    Address, B256, Signature, TxKind, U256, address, uint, utils::format_units,
+};
 use alloy_provider::Provider;
 use alloy_signer::Signer;
 use alloy_sol_types::SolCall;
@@ -590,6 +593,65 @@ where
         }
     }
     Ok(())
+}
+
+/// Explains a node's "gas required exceeds allowance" gas estimation error for a Tempo request.
+///
+/// A Tempo node caps gas by the fee payer's fee-token balance, so the error does not say which
+/// token is missing. Returns the fee tokens the payer could pay with, their balances and how to
+/// choose or fund one, or `None` when `error` is another error or `request` does not pay fees in a
+/// fee token. The payer is `request`'s sender, so callers skip sponsored requests.
+pub async fn explain_fee_allowance_error<N, P>(
+    provider: &P,
+    request: &N::TransactionRequest,
+    error: &impl std::fmt::Display,
+) -> Option<String>
+where
+    N: Network,
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+    P: Provider<N>,
+{
+    if !request.supports_fee_token()
+        || !error.to_string().contains("gas required exceeds allowance")
+    {
+        return None;
+    }
+    let payer = request.from()?;
+    let tokens = match request.fee_token() {
+        Some(token) => vec![token],
+        None => match stored_user_fee_token(provider, payer).await.ok().flatten() {
+            Some(token) => vec![token],
+            None => FALLBACK_FEE_TOKENS.to_vec(),
+        },
+    };
+    let mut balances = Vec::with_capacity(tokens.len());
+    for token in tokens {
+        let call = ITIP20::balanceOfCall { account: payer };
+        let tx = N::TransactionRequest::default().with_to(token).with_input(call.abi_encode());
+        let balance = provider
+            .call(tx)
+            .await
+            .ok()
+            .and_then(|output| ITIP20::balanceOfCall::abi_decode_returns(&output).ok())
+            .unwrap_or_default();
+        let balance = format_units(balance, 6).unwrap_or_else(|_| balance.to_string());
+        let balance = balance.trim_end_matches('0').trim_end_matches('.');
+        balances.push(match resolve_fee_token_symbol(provider, token).await {
+            Some(symbol) => format!("{balance} {symbol} ({token})"),
+            None => format!("{balance} of {token}"),
+        });
+    }
+    let mut message = format!(
+        "the Tempo fee payer {payer} holds {}, not enough for the transaction fee. Fund it, or \
+         pass --tempo.fee-token with a USD TIP-20 it holds",
+        balances.join(" and ")
+    );
+    if request.chain_id() != Some(NamedChain::Tempo as u64) {
+        message.push_str(&format!(
+            "; on a testnet, `cast rpc tempo_fundAddress {payer}` mints test fee tokens"
+        ));
+    }
+    Some(message)
 }
 
 /// Resolves the signer and Tempo Accounts wallet selected by `wallet`, pinning the Tempo wallet

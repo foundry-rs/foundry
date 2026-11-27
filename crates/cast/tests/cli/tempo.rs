@@ -2394,3 +2394,24 @@ async fn tempo_send_pins_inferred_fee_token_only_when_it_can_pay(cmd: _) {
     assert_eq!(receipt["status"], "0x1", "{receipt}");
     assert_eq!(tx.fee_token(), Some(OUSD_ADDRESS), "{receipt}");
 }
+
+/// A Tempo node reports a fee payer without fee tokens as "gas required exceeds allowance (0)";
+/// the error names the tokens it could pay with and how to get one.
+#[casttest]
+async fn tempo_send_explains_missing_fee_token_balance(cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo().with_chain_id(Some(42431u64))).await;
+    let sender = PrivateKeySigner::random();
+    cmd.cast_fuse()
+        .args(["send", &PATH_USD_ADDRESS.to_string(), "transfer(address,uint256)"])
+        .args(["0x7373737373737373737373737373737373737373", "1"])
+        .args(["--private-key", &hex::encode_prefixed(sender.credential().to_bytes())])
+        .args(["--rpc-url", &handle.http_endpoint()])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: Failed to estimate gas: the Tempo fee payer [..] holds 0 PathUSD (0x20C0000000000000000000000000000000000000) and 0 OUSD (0x20c0000000000000000000006a37DA5C996874BE), not enough for the transaction fee. Fund it, or pass --tempo.fee-token with a USD TIP-20 it holds; on a testnet, `cast rpc tempo_fundAddress [..]` mints test fee tokens
+
+Context:
+- [..]gas required exceeds allowance[..]
+
+"#]]);
+}
