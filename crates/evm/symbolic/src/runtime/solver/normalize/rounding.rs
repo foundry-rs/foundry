@@ -161,7 +161,7 @@ impl ConstraintContext {
     /// `a + (c - a) * t / d` is at most `c`, and a decay `c - (c - a) * t / d` is at least `a`,
     /// once `a <= c` and the quotient is at most `c - a`.
     /// A weighted average `(p * u + q * v) / k` with `u + v <= k` is at most a bound on `p` and
-    /// `q`.
+    /// `q`. Another conjunct's `x <= m * d` gives `x / d <= m` for a nonzero `d`.
     pub(super) fn division_comparison_value(&self, expr: &SymBoolExpr) -> Option<bool> {
         if let SymBoolExprKind::Not(inner) = expr.kind() {
             return self.division_comparison_value(inner).map(|value| !value);
@@ -190,6 +190,20 @@ impl ConstraintContext {
                 SymCmpOp::Ult => Some(false),
                 SymCmpOp::Ugt if strict => Some(true),
                 SymCmpOp::Ule if strict => Some(false),
+                _ => None,
+            };
+        }
+        if self.asserts_quotient_bound(left, right, &mut intervals, &mut remaining) {
+            return match op {
+                SymCmpOp::Ule => Some(true),
+                SymCmpOp::Ugt => Some(false),
+                _ => None,
+            };
+        }
+        if self.asserts_quotient_bound(right, left, &mut intervals, &mut remaining) {
+            return match op {
+                SymCmpOp::Uge => Some(true),
+                SymCmpOp::Ult => Some(false),
                 _ => None,
             };
         }
@@ -511,6 +525,26 @@ impl ConstraintContext {
                 .is_some_and(|(k, l)| !k.min.is_zero() && l.max <= k.min)
                 && self.mul_cannot_overflow_256(small, &k)
         })
+    }
+
+    /// Returns whether another conjunct asserts `x <= m * d` for `small = x / d`, `large = m`,
+    /// and a nonzero `d`, as in a rate limit. `x` is at most the wrapped product, which is at
+    /// most `m * d` over the integers, so `x / d <= m`. `x / 0` is all ones, so `d != 0`. The
+    /// bound is only non-strict, so it is tried after every other order proof in both
+    /// directions, and not inside the recursive order search, where it could end the search
+    /// before a strict proof.
+    fn asserts_quotient_bound(
+        &self,
+        small: &SymExpr,
+        large: &SymExpr,
+        intervals: &mut HashMap<SymExpr, Option<WordInterval>>,
+        remaining: &mut usize,
+    ) -> bool {
+        let Some((dividend, divisor)) = small.udiv_operands() else { return false };
+        self.asserted_upper_bounds(dividend).iter().any(|bound| {
+            matches!(bound.kind(), SymExprKind::BinOp(SymBinOp::Mul, a, b)
+                if (a == large && b == divisor) || (a == divisor && b == large))
+        }) && self.interval_cached(divisor, intervals, remaining).is_some_and(|d| !d.min.is_zero())
     }
 
     /// Returns `w` for the shares `w * a / k` and `w * b / k` of a nonzero `k` once `a + b <= k`,
