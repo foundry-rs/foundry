@@ -59,7 +59,7 @@ impl BindJsonArgs {
         // compiler and pull unpinned sources into its group, so imports of the bindings file are
         // left out here. The file on disk stays untouched until the new bindings are written.
         let mut resolve_sources = inputs.clone();
-        self.strip_bindings_imports(&project, &mut resolve_sources, &target_path)?;
+        self.strip_bindings_imports(&project, &mut resolve_sources, &target_path);
         let graph = Graph::<MultiCompilerParser>::resolve_sources(&project.paths, resolve_sources)?;
 
         // We only generate bindings for a single Solidity version to avoid conflicts.
@@ -151,52 +151,60 @@ impl BindJsonArgs {
     }
 
     /// Removes the imports of the bindings file at `target_path` from `sources`.
-    fn strip_bindings_imports(
-        &self,
-        project: &Project,
-        sources: &mut Sources,
-        target_path: &Path,
-    ) -> Result<()> {
+    ///
+    /// Only Solidity files that mention the bindings file name are parsed. A file that fails to
+    /// parse is left as it is: the compiler reports its errors later, as it would without
+    /// bindings.
+    fn strip_bindings_imports(&self, project: &Project, sources: &mut Sources, target_path: &Path) {
         // Imports can only resolve to the bindings file when it exists.
-        let Ok(target) = foundry_compilers::utils::canonicalize(target_path) else { return Ok(()) };
-        let sess = Session::builder().with_stderr_emitter().build();
-        let result = sess.enter(|| -> solar::interface::Result<()> {
-            sources.0.par_iter_mut().try_for_each(|(path, source)| {
-                let arena = Arena::new();
-                let ast = {
-                    let mut parser = SolarParser::from_source_code(
+        let Ok(target) = foundry_compilers::utils::canonicalize(target_path) else { return };
+        let Some(file_name) = target_path.file_name().and_then(|name| name.to_str()) else {
+            return;
+        };
+        let sess = Session::builder().with_silent_emitter(None).build();
+        sess.enter(|| {
+            sources
+                .0
+                .par_iter_mut()
+                .filter(|(path, source)| {
+                    path.extension().is_some_and(|ext| ext == "sol")
+                        && source.content.contains(file_name)
+                })
+                .for_each(|(path, source)| {
+                    let arena = Arena::new();
+                    let Ok(mut parser) = SolarParser::from_source_code(
                         &sess,
                         &arena,
                         FileName::Real(path.clone()),
                         source.content.to_string(),
-                    )?;
-                    parser.parse_file().map_err(|e| e.emit())?
-                };
-
-                let cwd = path.parent().unwrap_or(path);
-                let mut visitor = PreprocessorVisitor::new();
-                for item in ast.items.iter() {
-                    let ast::ItemKind::Import(import) = &item.kind else { continue };
-                    let Ok(resolved) =
-                        project.paths.resolve_import(cwd, Path::new(import.path.value.as_str()))
-                    else {
-                        continue;
+                    ) else {
+                        return;
                     };
-                    if foundry_compilers::utils::canonicalize(&resolved).is_ok_and(|p| p == target)
-                    {
-                        visitor.updates.push((item.span, ""));
+                    let Ok(ast) = parser.parse_file().map_err(|e| e.cancel()) else { return };
+
+                    let cwd = path.parent().unwrap_or(path);
+                    let mut visitor = PreprocessorVisitor::new();
+                    for item in ast.items.iter() {
+                        let ast::ItemKind::Import(import) = &item.kind else { continue };
+                        let Ok(resolved) = project
+                            .paths
+                            .resolve_import(cwd, Path::new(import.path.value.as_str()))
+                        else {
+                            continue;
+                        };
+                        if foundry_compilers::utils::canonicalize(&resolved)
+                            .is_ok_and(|p| p == target)
+                        {
+                            visitor.updates.push((item.span, ""));
+                        }
                     }
-                }
-                if !visitor.updates.is_empty() {
-                    let mut content = source.content.to_string();
-                    visitor.update(&sess, &mut content);
-                    source.content = Arc::new(content);
-                }
-                Ok(())
-            })
+                    if !visitor.updates.is_empty() {
+                        let mut content = source.content.to_string();
+                        visitor.update(&sess, &mut content);
+                        source.content = Arc::new(content);
+                    }
+                });
         });
-        eyre::ensure!(result.is_ok(), "failed parsing");
-        Ok(())
     }
 
     /// Find structs, resolve conflicts, and prepare them for writing

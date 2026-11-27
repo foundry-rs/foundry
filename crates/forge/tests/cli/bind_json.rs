@@ -292,3 +292,49 @@ fn test_bind_json_failure_keeps_bindings(prj: _, cmd: _) {
     assert_eq!(std::fs::read_to_string(&bindings_path).unwrap(), existing);
     assert_eq!(std::fs::metadata(&bindings_path).unwrap().modified().unwrap(), modified);
 }
+
+// Stripping imports of existing bindings must not parse files solar can't parse, such as Yul or
+// Solidity for an old compiler: reruns must succeed like the first run.
+#[forgetest]
+fn test_bind_json_rerun_with_unparsable_sources(prj: _, cmd: _) {
+    std::fs::write(prj.root().join("src/Y.yul"), "object \"Y\" { code { sstore(0, 1) } }\n")
+        .unwrap();
+    prj.add_raw_source(
+        "Old",
+        r#"
+pragma solidity ^0.4.24;
+
+contract Old {
+    function f() public {
+        throw;
+    }
+}
+"#,
+    );
+    prj.add_raw_source(
+        "Uses",
+        r#"
+pragma solidity =0.8.26;
+
+import {JsonBindings} from "utils/JsonBindings.sol";
+
+struct Point {
+    uint256 x;
+}
+
+contract Uses {
+    using JsonBindings for *;
+
+    function x(string memory json) public pure returns (uint256) {
+        return json.deserializePoint().x;
+    }
+}
+"#,
+    );
+
+    cmd.arg("bind-json").assert_success();
+    cmd.forge_fuse().arg("bind-json").assert_success();
+
+    let bindings = std::fs::read_to_string(prj.root().join("utils/JsonBindings.sol")).unwrap();
+    assert!(bindings.contains("schema_Point"), "{bindings}");
+}
