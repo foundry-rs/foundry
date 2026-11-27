@@ -16,7 +16,9 @@ use super::{
 use crate::eth::error::BlockchainError;
 use alloy_primitives::{Address, U256, address};
 use anvil_core::types::TempoCreateTokenRequest;
-use evm2::evm::{AccountChangeRef, BlockStateAccumulator, StateChangeSink, StorageChange};
+use evm2::evm::{
+    AccountChangeRef, BlockStateAccumulator, DynDatabase, StateChangeSink, StorageChange,
+};
 use foundry_evm_core::{
     backend::DatabaseResult,
     tempo::{
@@ -25,6 +27,8 @@ use foundry_evm_core::{
     },
 };
 use foundry_evm_hardforks::FoundryHardfork;
+use std::collections::{BTreeMap, BTreeSet};
+use tempo_evm::TempoStateAccess;
 use tempo_hardfork::TempoHardfork;
 use tempo_precompiles::{
     ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, CONFIGURABLE_ACCOUNT_ADDRESS,
@@ -38,9 +42,12 @@ use tempo_precompiles::{
         IAccountKeychain::{KeyRestrictions, SignatureType},
     },
     error::TempoPrecompileError,
-    storage::{Handler, StorageCtx},
+    storage::{ContractStorage, Handler, StorageActions, StorageCtx},
     tip_fee_manager::{IFeeManager, TipFeeManager},
-    tip20::{IRolesAuth, ITIP20, TIP20Error, TIP20Token, USD_CURRENCY, roles::UNGRANTABLE_ROLE},
+    tip20::{
+        IRolesAuth, ITIP20, TIP20Error, TIP20Token, Tip20TokenMetadata, USD_CURRENCY,
+        roles::UNGRANTABLE_ROLE,
+    },
     tip20_factory::{TIP20Factory, TIP20FactoryError},
 };
 use tempo_primitives::TempoAddressExt;
@@ -426,6 +433,37 @@ pub(super) fn create_token(
         token.mint(request.admin, ITIP20::mintCall { to: mint.to, amount: mint.amount })?;
     }
     Ok(request.address)
+}
+
+/// Returns the metadata of each deployed TIP-20 token among `tokens` in `db`.
+///
+/// Addresses without a deployed token are skipped, as are tokens whose metadata cannot be read.
+pub(super) fn tip20_metadata(
+    db: &dyn DatabaseRef,
+    hardfork: TempoHardfork,
+    tokens: BTreeSet<Address>,
+) -> BTreeMap<Address, Tip20TokenMetadata> {
+    let mut state: &mut dyn DynDatabase = &mut EvmDb::for_storage(db);
+    state.with_read_only_storage_ctx(hardfork, StorageActions::disabled(), || {
+        tokens
+            .into_iter()
+            .filter_map(|address| {
+                let token = TIP20Token::from_address_unchecked(address);
+                let metadata = match token.is_initialized() {
+                    Ok(true) => token.metadata(),
+                    Ok(false) => return None,
+                    Err(err) => Err(err),
+                };
+                match metadata {
+                    Ok(metadata) => Some((address, metadata)),
+                    Err(err) => {
+                        warn!(target: "backend", %address, %err, "failed to read TIP-20 metadata");
+                        None
+                    }
+                }
+            })
+            .collect()
+    })
 }
 
 #[cfg(test)]
