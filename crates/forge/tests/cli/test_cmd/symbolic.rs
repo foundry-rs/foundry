@@ -12029,7 +12029,9 @@ contract SymbolicDivisorOrder {
 // Rewards earned as `balance * (rewardPerToken - paid) / 1e18 + rewards` only grow with the index,
 // which takes ordering differences with a common subtrahend and sums with a common addend. A
 // checked sum does not wrap even for unbounded `rewards`, and an unchecked one does not when its
-// operands' ranges fit.
+// operands' ranges fit. Voting power `slope * (end - t)` decays the same way with a common minuend,
+// but not for swapped or unordered times, not strictly at equal times, and a difference past `end`
+// wraps.
 #[forgetest_init]
 fn symbolic_orders_earned_rewards_by_index(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_orders_earned_rewards_by_index");
@@ -12101,6 +12103,42 @@ contract SymbolicEarnedOrder {
     function checkOtherAddend(uint128 b, uint128 x, uint128 c, uint128 d) public pure {
         assert(uint256(c) + uint256(b) * x / 1e18 <= uint256(d) + uint256(b) * x / 1e18);
     }
+
+    function checkVotingPowerDecays(uint128 slope, uint64 t1, uint64 t2, uint64 end) public pure {
+        require(t1 <= t2 && t2 <= end);
+        assert(uint256(slope) * (end - t2) <= uint256(slope) * (end - t1));
+    }
+
+    function checkVotingPowerSwappedTimes(uint128 slope, uint64 t1, uint64 t2, uint64 end)
+        public
+        pure
+    {
+        require(t1 <= t2 && t2 <= end);
+        assert(uint256(slope) * (end - t1) <= uint256(slope) * (end - t2));
+    }
+
+    function checkVotingPowerUnorderedTimes(uint128 slope, uint64 t1, uint64 t2, uint64 end)
+        public
+        pure
+    {
+        require(t1 <= end && t2 <= end);
+        assert(uint256(slope) * (end - t2) <= uint256(slope) * (end - t1));
+    }
+
+    function checkDifferencePastEnd(uint64 t1, uint64 t2, uint64 end) public pure {
+        require(t1 <= t2);
+        unchecked {
+            assert(uint256(end) - t2 <= uint256(end) - t1);
+        }
+    }
+
+    function checkVotingPowerStrictlyDecays(uint128 slope, uint64 t1, uint64 t2, uint64 end)
+        public
+        pure
+    {
+        require(t1 <= t2 && t2 <= end);
+        assert(uint256(slope) * (end - t2) < uint256(slope) * (end - t1));
+    }
 }
 "#,
     );
@@ -12117,6 +12155,7 @@ contract SymbolicEarnedOrder {
         for signature in [
             "checkEarnedGrowsWithIndex(uint128,uint128,uint128,uint128,uint256)",
             "checkBoundedSum(uint128,uint128,uint128,uint128)",
+            "checkVotingPowerDecays(uint128,uint64,uint64,uint64)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(result["symbolic"]["status"], "pass", "{signature} optimized={optimized}");
@@ -12133,6 +12172,10 @@ contract SymbolicEarnedOrder {
             "checkWrappedSum(uint128,uint128,uint128,uint256)",
             "checkGuardedSmallerSum(uint128,uint128,uint128,uint256)",
             "checkOtherAddend(uint128,uint128,uint128,uint128)",
+            "checkVotingPowerSwappedTimes(uint128,uint64,uint64,uint64)",
+            "checkVotingPowerUnorderedTimes(uint128,uint64,uint64,uint64)",
+            "checkDifferencePastEnd(uint64,uint64,uint64)",
+            "checkVotingPowerStrictlyDecays(uint128,uint64,uint64,uint64)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(
