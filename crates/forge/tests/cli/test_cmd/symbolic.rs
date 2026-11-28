@@ -8686,7 +8686,8 @@ contract SymbolicCeilDivTest {
 
 // Rounding a quotient up covers its dividend: `ceil(n / d) * d >= n`, so shares previewed with
 // rounding up always pay for the requested assets. OpenZeppelin's `Math.ceilDiv` (MIT) rounds up as
-// `(a - 1) / b + 1` for a nonzero `a`; v4 branches on `a == 0` and v5 multiplies by `a > 0`.
+// `(a - 1) / b + 1` for a nonzero `a`; v4 branches on `a == 0` and v5 multiplies by `a > 0`. The
+// next multiple `(a / b + 1) * b` is strictly above `a`.
 #[forgetest_init]
 fn symbolic_proves_ceil_multiple_covers_dividend(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_ceil_multiple_covers_dividend");
@@ -8772,6 +8773,66 @@ contract SymbolicCeilMultipleTest {
         }
         assert(x < 2 ** 255);
     }
+
+    // The next epoch boundary, as in ve tokens, gauges, and staking periods, is after `t`.
+    function checkNextEpochAfter(uint64 t) public pure {
+        assert((uint256(t) / 1 weeks + 1) * 1 weeks > t);
+        assert(uint256(t) - uint256(t) % 1 weeks + 1 weeks > t);
+        assert(uint256(t) / 1 weeks * 1 weeks + 1 weeks > t);
+        assert((uint256(t) + 1 weeks) / 1 weeks * 1 weeks > t);
+    }
+
+    function checkNextMultipleAfter(uint64 t, uint32 period) public pure {
+        if (period == 0) return;
+        assert((uint256(t) / period + 1) * period > t);
+        assert(uint256(t) / period * period + period > t);
+        assert((uint256(t) + period) / period * period > t);
+    }
+
+    // A multiple `t` is a whole period below the next boundary.
+    function checkNextEpochWithinPeriod(uint64 t) public pure {
+        assert((uint256(t) / 1 weeks + 1) * 1 weeks - t < 1 weeks);
+    }
+
+    function checkNextEpochAbovePeriod(uint64 t) public pure {
+        assert((uint256(t) / 1 weeks + 1) * 1 weeks > t + 1 weeks);
+    }
+
+    // The next multiple after a `t` near the word's end wraps around.
+    function checkWrappedNextEpoch(uint256 t) public pure {
+        unchecked {
+            assert((t / 1 weeks + 1) * 1 weeks > t);
+        }
+    }
+
+    function checkNextEpochOfOtherPeriod(uint64 t) public pure {
+        assert((uint256(t) / 1 weeks + 1) * 1 days > t);
+    }
+
+    function checkNextEpochPlusOtherPeriod(uint64 t) public pure {
+        assert(uint256(t) / 1 weeks * 1 weeks + 1 days > t);
+    }
+
+    function checkNextEpochOfOtherOffset(uint64 t) public pure {
+        assert((uint256(t) + 1 days) / 1 weeks * 1 weeks > t);
+    }
+
+    function checkNextEpochOverOtherPeriod(uint64 t) public pure {
+        assert((uint256(t) + 1 weeks) / 2 weeks * 1 weeks > t);
+    }
+
+    function checkNextEpochInOtherUnits(uint64 t) public pure {
+        assert(uint256(t) / 1 weeks * 1 days + 1 weeks > t);
+    }
+
+    // A zero period makes the next multiple zero.
+    function checkNextMultipleOfZeroPeriod(uint64 t, uint32 period) public pure {
+        uint256 next;
+        assembly {
+            next := mul(add(div(t, period), 1), period)
+        }
+        assert(next > t);
+    }
 }
 "#,
     );
@@ -8805,6 +8866,8 @@ contract SymbolicCeilMultipleTest {
         for signature in [
             "checkCeilDivV5MultipleCoversDividend(uint128,uint128)",
             "checkSharesCoverAssets(uint128,uint128,uint128)",
+            "checkNextEpochAfter(uint64)",
+            "checkNextMultipleAfter(uint64,uint32)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(result["symbolic"]["status"], "pass", "{signature} optimized={optimized}");
@@ -8819,6 +8882,15 @@ contract SymbolicCeilMultipleTest {
             "checkWrappedCeil(uint256,uint256)",
             "checkWrappedCeilMultiple(uint256,uint256)",
             "checkNestedCeilRoundingErrors(uint256,uint256)",
+            "checkNextEpochWithinPeriod(uint64)",
+            "checkNextEpochAbovePeriod(uint64)",
+            "checkWrappedNextEpoch(uint256)",
+            "checkNextEpochOfOtherPeriod(uint64)",
+            "checkNextEpochPlusOtherPeriod(uint64)",
+            "checkNextEpochOfOtherOffset(uint64)",
+            "checkNextEpochOverOtherPeriod(uint64)",
+            "checkNextEpochInOtherUnits(uint64)",
+            "checkNextMultipleOfZeroPeriod(uint64,uint32)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(
