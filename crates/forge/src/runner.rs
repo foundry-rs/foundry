@@ -982,6 +982,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
 
         let setup_time = Instant::now();
         let mut setup = self.setup(call_setup);
+        setup.logs.share_setup();
         debug!("finished setting up in {:?}", setup_time.elapsed());
 
         if let Some(prev_tracer) = prev_tracer {
@@ -1699,7 +1700,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             target_invariant,
             &self.cr.mcr.known_contracts,
             identified_contracts.clone(),
-            &mut self.result.logs,
+            &mut self.result.logs.execution,
             &mut self.result.traces,
             &mut self.result.debug_bytecodes,
             &mut self.result.line_coverage,
@@ -5139,7 +5140,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 self.clone_invariant_executor(),
                 &self.cr.mcr.known_contracts,
                 identified_contracts.clone(),
-                &mut self.result.logs,
+                &mut self.result.logs.execution,
                 &mut self.result.traces,
                 &mut self.result.debug_bytecodes,
                 &mut self.result.line_coverage,

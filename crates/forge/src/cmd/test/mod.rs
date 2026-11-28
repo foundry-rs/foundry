@@ -1,7 +1,6 @@
 use super::{fuzz::FuzzRunArgs, watch::WatchArgs};
 use crate::{
     MultiContractRunner, MultiContractRunnerBuilder, brutalizer,
-    decode::decode_console_logs,
     gas_report::GasReport,
     multi_runner::{
         FuzzFailureReplayConfig, FuzzMinimizeConfig, FuzzMinimizeEdgeIndices, FuzzMinimizeMode,
@@ -2789,7 +2788,7 @@ impl TestArgs {
                     // We only display logs at level 2 and above
                     if verbosity >= 2 && show_traces {
                         // We only decode logs from Hardhat and DS-style console events
-                        let console_logs = decode_console_logs(&result.logs);
+                        let console_logs = result.logs.decode();
                         if !console_logs.is_empty() {
                             sh_println!("Logs:")?;
                             for log in console_logs {
@@ -3113,9 +3112,9 @@ fn prepare_results_for_json(
             test_result.traces = Vec::new();
         }
         if verbosity >= 2 {
-            test_result.decoded_logs = decode_console_logs(&test_result.logs);
+            test_result.decoded_logs = test_result.logs.decode();
         } else {
-            test_result.logs = Vec::new();
+            test_result.logs = Default::default();
         }
         for (_, arena) in &mut test_result.traces {
             // Discard presentation-only decoding populated by the streaming renderer.
@@ -3828,7 +3827,7 @@ impl JunitOutput {
         Self {
             result_report: test_result.kind.report(),
             logs: (verbosity >= 2 && !test_result.logs.is_empty())
-                .then(|| decode_console_logs(&test_result.logs)),
+                .then(|| test_result.logs.decode()),
         }
     }
 

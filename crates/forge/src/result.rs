@@ -28,12 +28,12 @@ use foundry_evm::{
     traces::{CallTraceArena, CallTraceDecoder, TraceKind, Traces},
 };
 use foundry_evm_symbolic::{SymbolicStats, SymbolicStopReason, SymbolicStorageAssignment};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap as Map},
     fmt::{self, Write},
     path::PathBuf,
-    sync::OnceLock,
+    sync::{Arc, OnceLock},
     time::Duration,
 };
 use yansi::Paint;
@@ -1247,6 +1247,50 @@ impl SymbolicCounterexampleCall {
     }
 }
 
+/// Logs from deployment and setup followed by those emitted during the test.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(from = "Vec<Log>")]
+pub struct TestLogs {
+    setup: Arc<[Log]>,
+    pub(crate) execution: Vec<Log>,
+}
+
+impl TestLogs {
+    /// Shares the completed setup prefix across all test results in the suite.
+    pub(crate) fn share_setup(&mut self) {
+        if !self.execution.is_empty() {
+            self.setup = std::mem::take(&mut self.execution).into();
+        }
+    }
+
+    /// Iterates over raw logs in execution order.
+    pub fn iter(&self) -> impl Iterator<Item = &Log> {
+        self.setup.iter().chain(&self.execution)
+    }
+
+    /// Returns whether setup and test execution both emitted no logs.
+    pub fn is_empty(&self) -> bool {
+        self.setup.is_empty() && self.execution.is_empty()
+    }
+
+    /// Decodes the console events in execution order.
+    pub(crate) fn decode(&self) -> Vec<String> {
+        self.iter().filter_map(foundry_evm::decode::decode_console_log).collect()
+    }
+}
+
+impl From<Vec<Log>> for TestLogs {
+    fn from(execution: Vec<Log>) -> Self {
+        Self { execution, ..Default::default() }
+    }
+}
+
+impl Serialize for TestLogs {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_seq(self.iter())
+    }
+}
+
 /// The result of an executed test.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct TestResult {
@@ -1313,7 +1357,7 @@ pub struct TestResult {
 
     /// Any captured & parsed as strings logs along the test's execution which should
     /// be printed to the user.
-    pub logs: Vec<Log>,
+    pub logs: TestLogs,
 
     /// The decoded DSTest logging events and Hardhat's `console.log` from [logs](Self::logs).
     /// Used for json output.
@@ -1560,7 +1604,7 @@ macro_rules! extend {
         if $b.fork_block_number.is_some() {
             $a.fork_block_number = $b.fork_block_number;
         }
-        $a.logs.extend($b.logs);
+        $a.logs.execution.extend($b.logs);
         $a.labels.extend($b.labels);
         $a.traces.extend($b.traces.map(|traces| ($trace_kind, traces)));
         $a.debug_bytecodes.extend($b.debug_bytecodes);
@@ -2150,7 +2194,7 @@ pub struct TestSetup {
     pub fuzz_fixtures: FuzzFixtures,
 
     /// The logs emitted during setup.
-    pub logs: Vec<Log>,
+    pub logs: TestLogs,
     /// Addresses labeled during setup.
     pub labels: AddressHashMap<String>,
     /// Call traces of the setup.
@@ -2349,6 +2393,23 @@ mod tests {
             .collect();
         let suite = SuiteResult::new(Duration::ZERO, test_results, Vec::new());
         TestOutcome::new(None, BTreeMap::from([("suite".to_string(), suite)]), false, None)
+    }
+
+    #[test]
+    fn setup_logs_are_shared_and_serialize_in_order() {
+        let event = |byte| Log::new_unchecked(Address::ZERO, vec![], Bytes::from(vec![byte]));
+        let mut setup = TestSetup::default();
+        setup.logs.execution.push(event(1));
+        setup.logs.share_setup();
+        let mut first = TestResult::new(&setup);
+        let second = TestResult::new(&setup);
+        assert!(Arc::ptr_eq(&first.logs.setup, &second.logs.setup));
+        first.logs.execution.push(event(2));
+        assert_eq!(second.logs.iter().collect::<Vec<_>>(), [&event(1)]);
+        let json = serde_json::to_value(&first.logs).unwrap();
+        assert_eq!(json, serde_json::to_value([event(1), event(2)]).unwrap());
+        let decoded: TestLogs = serde_json::from_value(json).unwrap();
+        assert!(decoded.iter().eq(first.logs.iter()));
     }
 
     fn failed_result(kind: TestKind) -> TestResult {
