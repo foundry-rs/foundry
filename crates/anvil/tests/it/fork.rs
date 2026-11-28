@@ -2112,10 +2112,9 @@ async fn test_fork_state_snapshotting_blocks() {
     let balance_before = provider.get_balance(to).await.unwrap();
     let amount = handle.genesis_balance().checked_div(U256::from(2u64)).unwrap();
 
-    // send the transaction
     let tx = TransactionRequest::default().to(to).value(amount).from(from);
     let tx = WithOtherFields::new(tx);
-    let _ = provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
+    assert!(provider.send_transaction_sync(tx.clone()).await.unwrap().status());
 
     let block_number_after = provider.get_block_number().await.unwrap();
     assert_eq!(block_number_after, block_number + 1);
@@ -2131,8 +2130,8 @@ async fn test_fork_state_snapshotting_blocks() {
     let block_number_after = provider.get_block_number().await.unwrap();
     assert_eq!(block_number_after, block_number);
 
-    // repeat transaction
-    let _ = provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
+    // Wait for Anvil to mine the replay. The provider's watcher can still see the reverted block.
+    assert!(provider.send_transaction_sync(tx).await.unwrap().status());
     let nonce = provider.get_transaction_count(from).await.unwrap();
     assert_eq!(nonce, initial_nonce + 1);
 
