@@ -4089,3 +4089,36 @@ async fn test_call_tracer_mined_gas_limits() {
         );
     }
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_debug_trace_transaction_unsupported_tracer() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let from = handle.dev_wallets().next().unwrap().address();
+    let tx = TransactionRequest::default().from(from).to(from);
+    let provider = handle.http_provider();
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(tx.clone()))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    for tracer in [
+        GethDebugBuiltInTracerType::FlatCallTracer,
+        GethDebugBuiltInTracerType::MuxTracer,
+        GethDebugBuiltInTracerType::Erc7562Tracer,
+    ] {
+        let opts = GethDebugTracingOptions::default().with_tracer(tracer.into());
+        let call_err = api
+            .debug_trace_call(
+                WithOtherFields::new(tx.clone()),
+                None,
+                GethDebugTracingCallOptions::default().with_tracing_options(opts.clone()),
+            )
+            .await
+            .unwrap_err();
+        let tx_err = api.debug_trace_transaction(receipt.transaction_hash, opts).await.unwrap_err();
+        assert_eq!(tx_err.to_string(), call_err.to_string());
+    }
+}
