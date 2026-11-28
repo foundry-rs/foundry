@@ -732,3 +732,8 @@ Error: cannot parse integer from empty string
 "#]]);
     }
 }
+
+#[casttest]
+fn conversion_with_global_threads_and_stdin(cmd: _) {
+    cmd.args(["-j", "1", "to-hex"]).stdin("42").assert_success().stdout_eq("0x2a\n");
+}
