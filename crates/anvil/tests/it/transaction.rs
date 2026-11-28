@@ -2680,3 +2680,47 @@ async fn legacy_transaction_signed_for_another_chain_is_rejected() {
         "{error}"
     );
 }
+
+/// A raw transaction followed by extra bytes is rejected, as it is on mainnet.
+///
+/// Clients decode the first transaction, ignore the rest, and mine it, so code
+/// that concatenates raw transactions wrongly passes against anvil and fails on
+/// a real network. reth decodes the whole input exactly and rejects the leftover
+/// bytes; so must anvil. A transaction cut short is still short, not long, and
+/// keeps its own error.
+#[tokio::test(flavor = "multi_thread")]
+async fn raw_transaction_with_trailing_bytes_is_rejected() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_wallets().next().unwrap();
+    let recipient = handle.dev_accounts().nth(1).unwrap();
+
+    let mut tx = TxEip1559 {
+        chain_id: provider.get_chain_id().await.unwrap(),
+        nonce: 0,
+        to: TxKind::Call(recipient),
+        value: U256::from(1),
+        max_fee_per_gas: 2_000_000_000,
+        max_priority_fee_per_gas: 1_000_000_000,
+        gas_limit: 21_000,
+        ..Default::default()
+    };
+    let signature = sender.sign_transaction_sync(&mut tx).unwrap();
+    let encoded = tx.into_signed(signature).encoded_2718();
+
+    let mut trailing = encoded.clone();
+    trailing.push(0xff);
+    let error = provider.send_raw_transaction(&trailing).await.unwrap_err().to_string();
+    assert!(
+        error.contains("Failed to decode transaction"),
+        "trailing byte should be rejected: {error}"
+    );
+
+    // A transaction cut short is still short, not long.
+    let short = &encoded[..encoded.len() / 2];
+    let error = provider.send_raw_transaction(short).await.unwrap_err().to_string();
+    assert!(
+        error.contains("Failed to decode transaction"),
+        "truncated transaction should be rejected: {error}"
+    );
+}

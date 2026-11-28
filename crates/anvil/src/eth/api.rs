@@ -1906,12 +1906,12 @@ impl EthApi<FoundryNetwork> {
     ) -> Result<TraceResults> {
         node_info!("trace_rawTransaction");
 
-        let mut data = tx.as_ref();
+        let data = tx.as_ref();
         if data.is_empty() {
             return Err(BlockchainError::EmptyRawTransactionData);
         }
 
-        let transaction = FoundryTxEnvelope::decode_2718(&mut data)
+        let transaction = FoundryTxEnvelope::decode_2718_exact(data)
             .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
         self.ensure_typed_transaction_supported(&transaction)?;
 
@@ -3426,13 +3426,13 @@ impl EthApi<FoundryNetwork> {
             // Pooled EIP-4844 decoding uses large stack frames for inline blobs. Isolate it from
             // the already-large RPC dispatcher without increasing every worker's stack.
             let raw = raw.clone();
-            tokio::task::spawn_blocking(move || FoundryTxEnvelope::decode_2718(&mut raw.as_ref()))
+            tokio::task::spawn_blocking(move || FoundryTxEnvelope::decode_2718_exact(&raw))
                 .await
                 .map_err(|_| {
                     BlockchainError::Internal("transaction decoding task panicked".into())
                 })?
         } else {
-            FoundryTxEnvelope::decode_2718(&mut raw.as_ref())
+            FoundryTxEnvelope::decode_2718_exact(&raw)
         }
         .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
 
@@ -3481,12 +3481,12 @@ impl EthApi<FoundryNetwork> {
     /// Classifies a raw transaction with the active Anvil Tempo/T5 payment-lane classifier.
     pub fn anvil_classify_transaction(&self, tx: Bytes) -> Result<PaymentLaneClassification> {
         node_info!("anvil_classifyTransaction");
-        let mut data = tx.as_ref();
+        let data = tx.as_ref();
         if data.is_empty() {
             return Err(BlockchainError::EmptyRawTransactionData);
         }
 
-        FoundryTxEnvelope::decode_2718(&mut data)
+        FoundryTxEnvelope::decode_2718_exact(data)
             .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
 
         Ok(self.classify_transaction_lane(tx.as_ref()))
@@ -3541,9 +3541,9 @@ impl EthApi<FoundryNetwork> {
         // Fee payer service clients submit the request in the service encoding, which carries a
         // `0x00` placeholder in the fee payer signature field.
         let service_encoded = normalize_fee_payer_service_encoding(tx.as_ref());
-        let mut data = service_encoded.as_deref().unwrap_or(tx.as_ref());
+        let data = service_encoded.as_deref().unwrap_or(tx.as_ref());
 
-        let transaction = FoundryTxEnvelope::decode_2718(&mut data)
+        let transaction = FoundryTxEnvelope::decode_2718_exact(data)
             .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
 
         let FoundryTxEnvelope::Tempo(aa_tx) = transaction else {
@@ -3728,11 +3728,11 @@ impl EthApi<FoundryNetwork> {
             .txs
             .iter()
             .map(|raw| {
-                let mut data = raw.as_ref();
+                let data = raw.as_ref();
                 if data.is_empty() {
                     return Err(BlockchainError::EmptyRawTransactionData);
                 }
-                let transaction = FoundryTxEnvelope::decode_2718(&mut data)
+                let transaction = FoundryTxEnvelope::decode_2718_exact(data)
                     .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
                 self.ensure_typed_transaction_supported(&transaction)?;
                 PendingTransaction::new(transaction).map_err(Into::into)
@@ -4817,8 +4817,8 @@ impl EthApi<FoundryNetwork> {
 
                 let pending = match tx_data {
                     TransactionData::Raw(bytes) => {
-                        let mut data = bytes.as_ref();
-                        let decoded = FoundryTxEnvelope::decode_2718(&mut data)
+                        let data = bytes.as_ref();
+                        let decoded = FoundryTxEnvelope::decode_2718_exact(data)
                             .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
                         if matches!(&decoded, FoundryTxEnvelope::Celo(_)) {
                             self.ensure_typed_transaction_supported(&decoded)?;

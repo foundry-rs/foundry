@@ -10,7 +10,7 @@ use alloy_primitives::{
     Address, B256, Bytes, U256, b256, hex, keccak256,
     map::{AddressMap, AddressSet, B256Map, HashMap},
 };
-use alloy_rlp::Decodable;
+use alloy_rlp::decode_exact;
 use alloy_sol_types::{SolCall, SolValue};
 use evm2::{
     EvmFeatures, SpecId,
@@ -1372,7 +1372,7 @@ impl Cheatcode for broadcastRawTransactionCall {
         ccx: &mut CheatsCtxt<'_, '_, FEN>,
         executor: &mut dyn CheatcodesExecutor<FEN>,
     ) -> Result {
-        let tx = TxEnvelopeFor::<FEN>::decode(&mut self.data.as_ref())
+        let tx = decode_exact::<TxEnvelopeFor<FEN>>(&self.data[..])
             .map_err(|err| fmt_err!("failed to decode RLP-encoded transaction: {err}"))?;
 
         let sender =
@@ -1475,7 +1475,7 @@ impl Cheatcode for executeTransactionCall {
         }
 
         // Decode the RLP-encoded signed transaction.
-        let tx = TxEnvelopeFor::<FEN>::decode(&mut self.rawTx.as_ref())
+        let tx = decode_exact::<TxEnvelopeFor<FEN>>(&self.rawTx[..])
             .map_err(|err| fmt_err!("failed to decode RLP-encoded transaction: {err}"))?;
 
         ensure!(

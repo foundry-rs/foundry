@@ -14,6 +14,14 @@ contract BroadcastRawTransactionTest is Test {
         vm.broadcastRawTransaction(hex"dd806483030d40940993863c19b0defb183ca2b502db7d1b331ded757b80");
     }
 
+    function test_revert_trailing_bytes() public {
+        // The legacy transaction ends at its signature, so the 0xff is not part of it.
+        vm._expectCheatcodeRevert("failed to decode RLP-encoded transaction: unexpected length");
+        vm.broadcastRawTransaction(
+            hex"f860806483030d40946fd0a0cff9a87adf51695b40b4fa267855a8f4c6118025a03ebeabbcfe43c2c982e99b376b5fb6e765059d7f215533c8751218cac99bbd80a00a56cf5c382442466770a756e81272d06005c9e90fb8dbc5b53af499d5aca856ff"
+        );
+    }
+
     function test_revert_wrong_chainid() public {
         vm._expectCheatcodeRevert("transaction validation error: invalid chain ID");
         vm.broadcastRawTransaction(
