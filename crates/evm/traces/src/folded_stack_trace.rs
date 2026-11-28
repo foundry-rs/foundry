@@ -225,6 +225,36 @@ mod tests {
     use alloy_primitives::U256;
     use evm2::interpreter::{InstrStop, opcode::OpCode};
 
+    #[ephyra::test]
+    fn folded_stacks_preserve_exclusive_gas(frames: Vec<(u8, u16)>) {
+        // Pick an ancestor for each successive frame and assign its exclusive gas directly.
+        let mut stack: Vec<usize> = Vec::new();
+        let mut gross = vec![0u64; frames.len()];
+        let mut expected = Vec::new();
+        let mut depths = Vec::new();
+        for (i, (keep, cost)) in frames.into_iter().enumerate() {
+            stack.truncate(usize::from(keep) % (stack.len() + 1));
+            depths.push(stack.len());
+            stack.push(i);
+            for &ancestor in &stack {
+                gross[ancestor] += u64::from(cost);
+            }
+            let path = stack.iter().map(usize::to_string).collect::<Vec<_>>().join(";");
+            expected.push(format!("{path} {cost}"));
+        }
+
+        let mut builder = FoldedStackTraceBuilder::default();
+        let mut open = 0;
+        for (i, depth) in depths.into_iter().enumerate() {
+            for _ in depth..open {
+                builder.exit();
+            }
+            builder.enter(i.to_string(), gross[i]);
+            open = depth + 1;
+        }
+        assert_eq!(builder.build(), expected);
+    }
+
     fn trace_step(gas_remaining: u64) -> CallTraceStep {
         CallTraceStep {
             pc: 0,

@@ -58,6 +58,7 @@ tracing.workspace = true
 yansi.workspace = true
 
 [dev-dependencies]
+ephyra.workspace = true
 alloy-network.workspace = true
 ron.workspace = true
 snapbox.workspace = true

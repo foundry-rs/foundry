@@ -1318,6 +1318,7 @@ dependencies = [
  "commonware-parallel",
  "commonware-utils",
  "ctrlc",
+ "ephyra",
  "ethereum_ssz",
  "evm2",
  "evm2-inspectors",
@@ -5363,6 +5364,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "ephyra"
+version = "0.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd1a1caa1aec3df700ce0d4d791f725cbea8db09c6df739f1768c84bf3f44d67"
+dependencies = [
+ "ephyra-macros",
+ "rand_chacha 0.9.0",
+ "rand_core 0.9.5",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "ephyra-macros"
+version = "0.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4f9ccd9870afa5da6d9450ec5d7a1f5815cc4ef27c06b12cb8e0726796d5c9f9"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.9",
+]
+
+[[package]]
 name = "equator"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6614,6 +6639,7 @@ dependencies = [
  "base-common-network",
  "base-common-rpc-types",
  "base-evm2",
+ "ephyra",
  "evm2",
  "evm2-macros",
  "eyre",
@@ -6772,6 +6798,7 @@ dependencies = [
  "async-trait",
  "base-common-precompiles",
  "ciborium",
+ "ephyra",
  "evm2",
  "evm2-inspectors",
  "eyre",

@@ -835,7 +835,103 @@ fn halt_reason_debug(stop: InstrStop) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::eth::backend::{
+        db::{DatabaseRef, Db},
+        env::{BlockEnv, CfgEnv, EvmEnv, SpecId},
+        evm::{EthEvmNetwork, EvmOptions, build_evm},
+        mem::in_memory_db::MemDb,
+    };
+    use alloy_consensus::{Signed, TxLegacy};
     use alloy_eips::eip6110::MAINNET_DEPOSIT_CONTRACT_ADDRESS;
+    use alloy_primitives::{Signature, TxKind};
+
+    #[derive(Clone, Debug, ephyra::Arbitrary)]
+    struct Transfer {
+        from_second_account: bool,
+        self_transfer: bool,
+        amount: u8,
+        future_nonce: bool,
+    }
+
+    #[ephyra::test(tests = 256)]
+    fn transfers_match_account_model(capacity: u8, transfers: Vec<Transfer>) {
+        const GAS: u64 = 21_000;
+        let capacity = u64::from(capacity % 8) + 1;
+        let env = EvmEnv {
+            cfg_env: CfgEnv { spec: SpecId::PRAGUE, ..Default::default() },
+            block_env: BlockEnv { gas_limit: GAS * capacity, basefee: 0, ..Default::default() },
+        };
+        let opts = EvmOptions {
+            hardfork: FoundryHardfork::Ethereum(EthereumHardfork::Prague),
+            ..Default::default()
+        };
+        let addresses = [Address::repeat_byte(0xaa), Address::repeat_byte(0xbb)];
+        let initial = U256::from(128);
+        let mut balances = [initial; 2];
+        let mut nonces = [0u64; 2];
+        let mut db = MemDb::default();
+        for address in addresses {
+            db.insert_account(address, AccountInfo { balance: initial, ..Default::default() });
+        }
+        let evm = build_evm::<EthEvmNetwork>(&db, &env, &opts).unwrap();
+        let mut executor = AnvilBlockExecutor::<EthEvmNetwork>::new(
+            evm,
+            Default::default(),
+            B256::ZERO,
+            true,
+            None,
+        );
+        let inspector = InspectorTxConfig {
+            print_logs: false,
+            print_traces: false,
+            call_trace_decoder: Default::default(),
+        };
+        let mut included = 0;
+        for Transfer { from_second_account, self_transfer, amount, future_nonce } in transfers {
+            let from = usize::from(from_second_account);
+            let to = if self_transfer { from } else { 1 - from };
+            let value = U256::from(amount);
+            let tx = TxLegacy {
+                chain_id: Some(1),
+                nonce: nonces[from] + u64::from(future_nonce),
+                gas_limit: GAS,
+                to: TxKind::Call(addresses[to]),
+                value,
+                ..Default::default()
+            };
+            let tx =
+                FoundryTxEnvelope::Legacy(Signed::new_unhashed(tx, Signature::test_signature()));
+            let result = executor.execute_transaction(
+                &tx,
+                addresses[from],
+                &TxContext::default(),
+                &inspector,
+            );
+            let accepted = !future_nonce && included < capacity && balances[from] >= value;
+            assert_eq!(result.is_ok(), accepted);
+            if accepted {
+                assert!(result.unwrap().result.status);
+                balances[from] -= value;
+                balances[to] += value;
+                nonces[from] += 1;
+                included += 1;
+                assert_eq!(executor.receipts.last().unwrap().cumulative_gas_used(), included * GAS);
+            }
+            assert_eq!(executor.gas_used, included * GAS);
+            assert_eq!(executor.receipts.len() as u64, included);
+            for (i, address) in addresses.iter().enumerate() {
+                let account = executor.account(*address).unwrap();
+                assert_eq!((account.balance, account.nonce), (balances[i], nonces[i]));
+            }
+        }
+        let (block, changes, _) = executor.finish().unwrap();
+        assert_eq!(block.gas_used, included * GAS);
+        db.commit(&changes);
+        for (i, address) in addresses.iter().enumerate() {
+            let account = db.basic_ref(*address).unwrap().unwrap();
+            assert_eq!((account.balance, account.nonce), (balances[i], nonces[i]));
+        }
+    }
 
     fn deposit_log(address: Address) -> Log {
         let event = DepositEvent {
