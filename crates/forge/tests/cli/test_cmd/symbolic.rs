@@ -8448,7 +8448,8 @@ contract SymbolicSqrt {
 }
 
 // Lending checks cross-multiply `debt * BPS <= collateral * ltv`, and an `ltv` of at most `BPS`
-// then bounds the debt by the collateral.
+// then bounds the debt by the collateral. A rate limit `x <= m * d` bounds the quotient `x / d` by
+// `m` for a nonzero `d`, even when the product wraps.
 #[forgetest_init]
 fn symbolic_proves_scaled_order(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_scaled_order");
@@ -8486,6 +8487,72 @@ contract SymbolicScaledOrder {
         }
         assert(debt <= collateral);
     }
+
+    function checkQuotientWithinScaledBound(uint256 x, uint128 m, uint128 d) public pure {
+        require(d != 0);
+        require(x <= uint256(m) * d);
+        assert(x / d <= m);
+    }
+
+    function checkQuotientWithinWrappingBound(uint256 x, uint256 m, uint256 d) public pure {
+        require(d != 0);
+        unchecked {
+            require(x <= m * d);
+        }
+        assert(x / d <= m);
+    }
+
+    // The guard also matches `x * y <= x * (y + z)`, which must not hide the strict share bound.
+    function checkShareStrictlyBelowWithCrossBound(uint256 x, uint112 y, uint112 z) public pure {
+        require(x > 0 && z > 0);
+        unchecked {
+            require(x * y <= x * (uint256(y) + z));
+            assert(x * y / (uint256(y) + z) < x);
+        }
+    }
+
+    // `p <= m` from the guard must not stop the factor search before the strict `s < m`.
+    function checkProductStrictlyBelowWithCrossBound(
+        uint256 m,
+        uint256 a,
+        uint256 n,
+        uint128 h,
+        uint256 k
+    ) public pure {
+        require(m > 0 && h > 0 && k > 0);
+        unchecked {
+            uint256 numerator = n + 1;
+            require(numerator <= m * h);
+            uint256 p = numerator / h;
+            uint256 s = a % m;
+            require(p <= k);
+            require(s <= k);
+            assert(p * s / k < m);
+        }
+    }
+
+    function checkQuotientWithoutBound(uint256 x, uint128 m, uint128 d) public pure {
+        require(d != 0);
+        assert(x / d <= m);
+    }
+
+    function checkQuotientBoundByOtherDivisor(uint256 x, uint128 m, uint128 d, uint128 e)
+        public
+        pure
+    {
+        require(d != 0);
+        require(x <= uint256(m) * e);
+        assert(x / d <= m);
+    }
+
+    function checkQuotientStrictlyBelowScaledBound(uint256 x, uint128 m, uint128 d)
+        public
+        pure
+    {
+        require(d != 0);
+        require(x <= uint256(m) * d);
+        assert(x / d < m);
+    }
 }
 "#,
     );
@@ -8504,8 +8571,22 @@ contract SymbolicScaledOrder {
         assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
 
         for signature in [
+            "checkQuotientWithinScaledBound(uint256,uint128,uint128)",
+            "checkQuotientWithinWrappingBound(uint256,uint256,uint256)",
+            "checkShareStrictlyBelowWithCrossBound(uint256,uint112,uint112)",
+            "checkProductStrictlyBelowWithCrossBound(uint256,uint256,uint256,uint128,uint256)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+            assert_eq!(result["symbolic"]["solver"]["stats"]["smt_queries"], 0, "{signature}");
+        }
+
+        for signature in [
             "checkBorrowAboveFullLtv(uint128,uint16,uint128)",
             "checkBorrowWithWrappingDebt(uint128,uint16,uint256)",
+            "checkQuotientWithoutBound(uint256,uint128,uint128)",
+            "checkQuotientBoundByOtherDivisor(uint256,uint128,uint128,uint128)",
+            "checkQuotientStrictlyBelowScaledBound(uint256,uint128,uint128)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(result["symbolic"]["status"], "fail_counterexample", "{signature}");
