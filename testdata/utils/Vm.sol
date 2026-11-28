@@ -336,6 +336,8 @@ interface Vm {
     function getChain(uint256 chainId) external view returns (Chain memory chain);
     function getCode(string calldata artifactPath) external view returns (bytes memory creationBytecode);
     function getDeployedCode(string calldata artifactPath) external view returns (bytes memory runtimeBytecode);
+    function getDeploymentByLabel(string calldata label) external view returns (address deployedAddress);
+    function getDeploymentByLabel(string calldata label, uint64 chainId) external view returns (address deployedAddress);
     function getDeployment(string calldata contractName) external view returns (address deployedAddress);
     function getDeployment(string calldata contractName, uint64 chainId) external view returns (address deployedAddress);
     function getDeployments(string calldata contractName, uint64 chainId) external view returns (address[] memory deployedAddresses);

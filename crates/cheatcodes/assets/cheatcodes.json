@@ -6889,6 +6889,46 @@
     },
     {
       "func": {
+        "id": "getDeploymentByLabel_0",
+        "description": "Returns the deployment whose recorded `vm.label` is `label` on the current `chainId`.\nLooks in the most recent broadcast on that chain, from any script, with a confirmed deployment carrying that label, including contracts created by other contracts.\nLater broadcasts without a receipt for that label, such as an interrupted redeploy, are skipped, so the previous deployment is returned.\nReverts if no deployment has the label, or if several deployments in that broadcast share it.",
+        "declaration": "function getDeploymentByLabel(string calldata label) external view returns (address deployedAddress);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getDeploymentByLabel(string)",
+        "selector": "0xa2a37c28",
+        "selectorBytes": [
+          162,
+          163,
+          124,
+          40
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getDeploymentByLabel_1",
+        "description": "Returns the deployment whose recorded `vm.label` is `label` on `chainId`.\nLooks in the most recent broadcast on that chain, from any script, with a confirmed deployment carrying that label, including contracts created by other contracts.\nLater broadcasts without a receipt for that label, such as an interrupted redeploy, are skipped, so the previous deployment is returned.\nReverts if no deployment has the label, or if several deployments in that broadcast share it.",
+        "declaration": "function getDeploymentByLabel(string calldata label, uint64 chainId) external view returns (address deployedAddress);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getDeploymentByLabel(string,uint64)",
+        "selector": "0x61fc190c",
+        "selectorBytes": [
+          97,
+          252,
+          25,
+          12
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "getDeployment_0",
         "description": "Returns the most recent deployment for the current `chainId`.",
         "declaration": "function getDeployment(string calldata contractName) external view returns (address deployedAddress);",

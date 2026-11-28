@@ -2389,6 +2389,22 @@ interface Vm {
     #[cheatcode(group = Filesystem)]
     function getDeployments(string calldata contractName, uint64 chainId) external view returns (address[] memory deployedAddresses);
 
+    /// Returns the deployment whose recorded `vm.label` is `label` on the current `chainId`.
+    ///
+    /// Looks in the most recent broadcast on that chain, from any script, with a confirmed deployment carrying that label, including contracts created by other contracts.
+    /// Later broadcasts without a receipt for that label, such as an interrupted redeploy, are skipped, so the previous deployment is returned.
+    /// Reverts if no deployment has the label, or if several deployments in that broadcast share it.
+    #[cheatcode(group = Filesystem)]
+    function getDeploymentByLabel(string calldata label) external view returns (address deployedAddress);
+
+    /// Returns the deployment whose recorded `vm.label` is `label` on `chainId`.
+    ///
+    /// Looks in the most recent broadcast on that chain, from any script, with a confirmed deployment carrying that label, including contracts created by other contracts.
+    /// Later broadcasts without a receipt for that label, such as an interrupted redeploy, are skipped, so the previous deployment is returned.
+    /// Reverts if no deployment has the label, or if several deployments in that broadcast share it.
+    #[cheatcode(group = Filesystem)]
+    function getDeploymentByLabel(string calldata label, uint64 chainId) external view returns (address deployedAddress);
+
     // -------- Foreign Function Interface --------
 
     /// Performs a foreign function call via the terminal.
