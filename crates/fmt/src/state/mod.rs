@@ -662,7 +662,11 @@ impl<'sess> State<'sess, '_> {
     /// Returns `None` if the span is disabled and has been printed as-is.
     #[must_use]
     fn handle_comment(&mut self, cmnt: Comment, skip_break: bool) -> Option<Comment> {
-        if self.cursor.enabled {
+        // A disabled comment that does not continue the previous disabled region (e.g. a
+        // `disable-next-line` right after a `disable-line`) must be laid out like the enabled case.
+        let continues_disabled_region = !self.cursor.enabled
+            && self.inline_config.is_disabled(self.cursor.span(cmnt.span.hi()));
+        if !continues_disabled_region {
             if self.inline_config.is_disabled(cmnt.span) {
                 // The comment is copied verbatim below, which appends it to whatever was printed
                 // last. An isolated comment had a line of its own in the source, so give it that
