@@ -477,6 +477,7 @@ evmole = "0.10"
 eyre = "0.6"
 figment = { package = "figment2", version = "0.11" }
 futures = { version = "0.3", default-features = false }
+h2 = { version = "0.4", default-features = false }
 hashbrown = "0.17.1"
 hyper = "1.8"
 indicatif = "0.18"
