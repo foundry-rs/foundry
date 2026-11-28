@@ -40,6 +40,7 @@ pub(crate) const fn foundry_cheatcode_min_input_size(selector: [u8; 4]) -> Optio
         | stopSnapshotGas_0Call::SELECTOR
         | getEvmVersionCall::SELECTOR
         | getFoundryVersionCall::SELECTOR
+        | verbosityCall::SELECTOR
         | projectRootCall::SELECTOR
         | unixTimeCall::SELECTOR
         | noAccessListCall::SELECTOR

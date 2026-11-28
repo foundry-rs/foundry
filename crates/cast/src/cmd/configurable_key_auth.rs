@@ -3,8 +3,8 @@
 //! `cast keychain authorize` sends `authorizeKey` from the account in a `0x05` transaction.
 //! `cast key-authorization sign` signs an inline key authorization: the owners approve
 //! `configurable_account_digest(authorization.signature_hash(), account, version)`, and their
-//! approvals form its `0x05` signature. The account's configuration is read from the chain, as
-//! `cast wallet` does.
+//! approvals form its `0x05` signature. An unregistered multisig supplies its initial
+//! configuration with `--tempo.config`.
 
 use crate::{
     cmd::{
@@ -14,31 +14,33 @@ use crate::{
     tempo::{apply_fee_payment, print_expires, resolve_configurable_account, tempo_provider},
     tx::{CastTxBuilder, SendTxOpts, apply_poll_interval},
 };
+use alloy_eips::BlockId;
 use alloy_ens::NameOrAddress;
 use alloy_primitives::{Address, hex};
 use alloy_provider::Provider;
 use alloy_signer::Signer;
 use clap::Args;
-use eyre::{Result, WrapErr};
+use eyre::{OptionExt, Result, WrapErr};
 use foundry_cli::{
     opts::TransactionOpts,
     utils::{LoadConfig, resolve_lane},
 };
 use foundry_common::tempo::configurable_account::{
-    combine_approvals, current_config, parse_owner_signature,
+    combine_approvals, detect_configurable_account, parse_config, parse_owner_signature,
 };
 use foundry_wallets::WalletSigner;
 use tempo_alloy::TempoNetwork;
 use tempo_contracts::precompiles::ACCOUNT_KEYCHAIN_ADDRESS;
 use tempo_primitives::transaction::{
-    KeyAuthorization, PrimitiveSignature, SignedKeyAuthorization, configurable_account_digest,
+    ConfigurableAccountConfig, KeyAuthorization, PrimitiveSignature, SignedKeyAuthorization,
+    configurable_account_digest,
 };
 
 /// Sign a key authorization as a Tempo configurable account's owners (T14, TIP-1111).
 #[derive(Clone, Debug, Args)]
 #[command(next_help_heading = "Configurable account (T14)")]
 pub struct ConfigurableAccountArgs {
-    /// Sign as this configurable account, whose current configuration is read from the RPC.
+    /// Sign as this configurable account's owners.
     ///
     /// The authorization is bound to the account and stays valid only while the configuration
     /// does not change. The wallet signer approves as one owner; `--tempo.owner-signature` adds
@@ -46,6 +48,16 @@ pub struct ConfigurableAccountArgs {
     /// first transaction can carry it.
     #[arg(long = "tempo.configurable-account", value_name = "ADDRESS")]
     configurable_account: Option<Address>,
+
+    /// Current owner configuration (JSON or file). Supply the initial config for a fresh
+    /// multisig. It must derive the account before registration or match its onchain commitment.
+    #[arg(
+        long = "tempo.config",
+        value_name = "CONFIG",
+        value_parser = parse_config,
+        requires = "configurable_account"
+    )]
+    config: Option<ConfigurableAccountConfig>,
 
     /// An owner approval made elsewhere: a hex Tempo primitive signature, a JSON signature or a
     /// WebAuthn assertion, or a file holding one. Owners sign the owner digest with
@@ -68,7 +80,7 @@ impl ConfigurableAccountArgs {
     /// Signs `authorization`, bound to `account`, with the approvals of `owner` and
     /// `--tempo.owner-signature`.
     pub async fn sign(
-        &self,
+        self,
         rpc: &impl LoadConfig,
         account: Address,
         owner: Option<&WalletSigner>,
@@ -84,22 +96,28 @@ impl ConfigurableAccountArgs {
         );
         let inner = authorization.signature_hash();
 
-        // A 1-of-1, salt-0 account is recomputed from an owner's key before it registers.
-        let initial = configurable_account_digest(inner, account, 0);
-        let mut keys = self
-            .owner_signatures
-            .iter()
-            .filter_map(|approval| approval.recover_signer(&initial).ok())
-            .collect::<Vec<_>>();
-        keys.extend(owner.map(Signer::address));
-        let config = current_config(&provider, account, &keys).await?.ok_or_else(|| {
-            eyre::eyre!(
-                "{account} is not a registered configurable account, and no owner key derives it"
-            )
-        })?;
+        let mut keys = Vec::new();
+        if self.config.is_none() {
+            // A fresh 1-of-1, salt-0 account can be derived from an owner's key alone.
+            let initial = configurable_account_digest(inner, account, 0);
+            keys.extend(owner.map(Signer::address));
+            keys.extend(
+                self.owner_signatures.iter().filter_map(|sig| sig.recover_signer(&initial).ok()),
+            );
+        }
+        let config = detect_configurable_account(
+            &provider,
+            account,
+            &keys,
+            self.config,
+            true,
+            BlockId::latest(),
+        )
+        .await?
+        .ok_or_eyre("expected a Tempo configurable account")?;
 
         let digest = configurable_account_digest(inner, account, config.version);
-        let mut approvals = self.owner_signatures.clone();
+        let mut approvals = self.owner_signatures;
         if let Some(owner) = owner {
             approvals.push(PrimitiveSignature::Secp256k1(owner.sign_hash(&digest).await?));
         }

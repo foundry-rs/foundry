@@ -649,6 +649,7 @@ interface Vm {
     function tryFfi(string[] calldata commandInput) external returns (FfiResult memory result);
     function txGasPrice(uint256 newGasPrice) external;
     function unixTime() external view returns (uint256 milliseconds);
+    function verbosity() external view returns (uint8 level);
     function verifyEd25519(bytes calldata signature, bytes calldata namespace, bytes calldata message, bytes32 publicKey) external pure returns (bool valid);
     function warmSlot(address target, bytes32 slot) external;
     function warp(uint256 newTimestamp) external;

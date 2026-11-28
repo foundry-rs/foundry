@@ -161,7 +161,9 @@ impl ConstraintContext {
     /// `a + (c - a) * t / d` is at most `c`, and a decay `c - (c - a) * t / d` is at least `a`,
     /// once `a <= c` and the quotient is at most `c - a`.
     /// A weighted average `(p * u + q * v) / k` with `u + v <= k` is at most a bound on `p` and
-    /// `q`. A remainder `x % (s + 1)` is at most `s`, so `a + x % (c - a + 1)` is at most `c` once
+    /// `q`. Another conjunct's `x <= m * d` gives `x / d <= m` for a nonzero `d`.
+    /// The next multiple of a nonzero `d` after `n` is above `n` once `n + d` cannot wrap.
+    /// A remainder `x % (s + 1)` is at most `s`, so `a + x % (c - a + 1)` is at most `c` once
     /// `a <= c`.
     pub(super) fn division_comparison_value(&self, expr: &SymBoolExpr) -> Option<bool> {
         if let SymBoolExprKind::Not(inner) = expr.kind() {
@@ -191,6 +193,20 @@ impl ConstraintContext {
                 SymCmpOp::Ult => Some(false),
                 SymCmpOp::Ugt if strict => Some(true),
                 SymCmpOp::Ule if strict => Some(false),
+                _ => None,
+            };
+        }
+        if self.asserts_quotient_bound(left, right, &mut intervals, &mut remaining) {
+            return match op {
+                SymCmpOp::Ule => Some(true),
+                SymCmpOp::Ugt => Some(false),
+                _ => None,
+            };
+        }
+        if self.asserts_quotient_bound(right, left, &mut intervals, &mut remaining) {
+            return match op {
+                SymCmpOp::Uge => Some(true),
+                SymCmpOp::Ult => Some(false),
                 _ => None,
             };
         }
@@ -230,7 +246,8 @@ impl ConstraintContext {
         }
         // The same sum compared with `(b + 1) * k`, as written in the source or as
         // `normalize_udiv_comparison` cross-multiplies the quotient form, is at most `b * k`, so
-        // strictly below it once `b + 1` and that product do not wrap.
+        // strictly below it once `b + 1` and that product do not wrap. So is a pro-rata share of
+        // `b * k`.
         if let SymExprKind::BinOp(SymBinOp::Mul, x, y) = large.kind()
             && [(x, y), (y, x)].into_iter().any(|(multiplier, divisor)| {
                 matches!(multiplier.kind(), SymExprKind::BinOp(SymBinOp::Add, bound, one)
@@ -241,7 +258,8 @@ impl ConstraintContext {
                         && self.mul_cannot_overflow_256_cached(
                             multiplier, divisor, intervals, remaining,
                         )
-                        && self.weighted_within(small, divisor, bound, intervals, remaining))
+                        && (self.weighted_within(small, divisor, bound, intervals, remaining)
+                            || self.share_within(small, bound, divisor, intervals, remaining)))
             })
         {
             return Some(true);
@@ -267,6 +285,18 @@ impl ConstraintContext {
                 .is_some_and(|range| !range.min.is_zero())
         {
             return Some(false);
+        }
+        // The next multiple `(q + 1) * d` after `n = q * d + r` with `r < d` is strictly above
+        // `n`, as for the next epoch boundary. Over the integers it is `n - r + d <= n + d`, so it
+        // cannot wrap once `n + d` does not, and `(n + d) / d` is then `q + 1`. SMT's `n / 0` is
+        // all ones, so `d` must be nonzero.
+        if let Some(divisor) = next_multiple_divisor(large, small)
+            && self
+                .interval_cached(divisor, intervals, remaining)
+                .is_some_and(|range| !range.min.is_zero())
+            && self.sum_cannot_wrap(small, divisor, intervals, remaining)
+        {
+            return Some(true);
         }
         // With `n = q * d + r` and `r < d`, `(n + d - 1) / d` is `q` or `q + 1`, so it lies between
         // `n / d` and `n / d + 1`. A wrapped `n + d` breaks the lower bound and lets `n / d + 1`
@@ -521,6 +551,26 @@ impl ConstraintContext {
         })
     }
 
+    /// Returns whether another conjunct asserts `x <= m * d` for `small = x / d`, `large = m`,
+    /// and a nonzero `d`, as in a rate limit. `x` is at most the wrapped product, which is at
+    /// most `m * d` over the integers, so `x / d <= m`. `x / 0` is all ones, so `d != 0`. The
+    /// bound is only non-strict, so it is tried after every other order proof in both
+    /// directions, and not inside the recursive order search, where it could end the search
+    /// before a strict proof.
+    fn asserts_quotient_bound(
+        &self,
+        small: &SymExpr,
+        large: &SymExpr,
+        intervals: &mut HashMap<SymExpr, Option<WordInterval>>,
+        remaining: &mut usize,
+    ) -> bool {
+        let Some((dividend, divisor)) = small.udiv_operands() else { return false };
+        self.asserted_upper_bounds(dividend).iter().any(|bound| {
+            matches!(bound.kind(), SymExprKind::BinOp(SymBinOp::Mul, a, b)
+                if (a == large && b == divisor) || (a == divisor && b == large))
+        }) && self.interval_cached(divisor, intervals, remaining).is_some_and(|d| !d.min.is_zero())
+    }
+
     /// Returns `w` for the shares `w * a / k` and `w * b / k` of a nonzero `k` once `a + b <= k`,
     /// only matching `whole` when given. Their floors sum to at most `w * (a + b) / k <= w`, so the
     /// sum cannot wrap, and a wrapped product only shrinks its share.
@@ -657,6 +707,32 @@ impl ConstraintContext {
                     && self.weights_fit(u, v, divisor, k_min, intervals, remaining)
             },
         )
+    }
+
+    /// Returns whether `(b * k / t) * w <= b * k` for a nonzero `k` once `w <= t`, as for
+    /// Synthetix's `earned`, a balance times a per-token rate. The product is at most
+    /// `(b * k / t) * t`, so it does not wrap, and a zero `t` forces a zero `w`. A zero `k` makes
+    /// both sides of the caller's strict `share < (b + 1) * k` zero, so it is ruled out here.
+    /// The caller's proof that `(b + 1) * k` does not wrap also rules out a wrapped `b * k`.
+    fn share_within(
+        &self,
+        share: &SymExpr,
+        bound: &SymExpr,
+        scale: &SymExpr,
+        intervals: &mut HashMap<SymExpr, Option<WordInterval>>,
+        remaining: &mut usize,
+    ) -> bool {
+        let SymExprKind::BinOp(SymBinOp::Mul, a, b) = share.kind() else { return false };
+        if !self.interval_cached(scale, intervals, remaining).is_some_and(|k| !k.min.is_zero()) {
+            return false;
+        }
+        [(a, b), (b, a)].into_iter().any(|(quotient, weight)| {
+            quotient.udiv_operands().is_some_and(|(dividend, divisor)| {
+                matches!(dividend.kind(), SymExprKind::BinOp(SymBinOp::Mul, x, y)
+                    if (x, y) == (bound, scale) || (x, y) == (scale, bound))
+                    && self.factor_within_divisor(weight, divisor, intervals, remaining)
+            })
+        })
     }
 
     /// Returns whether `a + b` cannot wrap, from value ranges or a checked addition's `b <= ~a`
@@ -850,4 +926,28 @@ fn ceil_sum_operands(ceiling: &SymExpr) -> Option<(&SymExpr, &SymExpr)> {
         return None;
     };
     (decrement.as_const() == Some(U256::ONE)).then_some((n, divisor))
+}
+
+/// Returns `d` for the multiple of `d` after `n`, written `(n / d + 1) * d`, `n / d * d + d`, or
+/// `(n + d) / d * d`. Unlike a ceiling, it is `n + d` rather than `n` for a multiple `n`.
+fn next_multiple_divisor<'a>(next: &'a SymExpr, n: &SymExpr) -> Option<&'a SymExpr> {
+    let floor = |quotient: &SymExpr, d: &SymExpr| quotient.udiv_operands() == Some((n, d));
+    let sum = |sum: &SymExpr, d: &SymExpr| {
+        matches!(sum.kind(), SymExprKind::BinOp(SymBinOp::Add, a, b)
+            if (a == n && b == d) || (a == d && b == n))
+    };
+    let SymExprKind::BinOp(op, a, b) = next.kind() else { return None };
+    [(a, b), (b, a)].into_iter().find_map(|(x, d)| {
+        let found = match (op, x.kind()) {
+            (SymBinOp::Mul, SymExprKind::BinOp(SymBinOp::Add, quotient, one)) => {
+                one.as_const() == Some(U256::ONE) && floor(quotient, d)
+            }
+            (SymBinOp::Mul, _) => x.udiv_operands().is_some_and(|(s, y)| y == d && sum(s, d)),
+            (SymBinOp::Add, SymExprKind::BinOp(SymBinOp::Mul, p, q)) => {
+                (floor(p, d) && q == d) || (floor(q, d) && p == d)
+            }
+            _ => false,
+        };
+        found.then_some(d)
+    })
 }

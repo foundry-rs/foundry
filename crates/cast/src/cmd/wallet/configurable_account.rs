@@ -31,8 +31,8 @@ use foundry_common::{
     tempo::{
         active_tempo_hardfork,
         configurable_account::{
-            abi_owners, ca_error, combine_approvals, current_config, decode_unsigned_tx,
-            parse_owner_signature, simulation_spec,
+            abi_owners, ca_error, combine_approvals, current_config, current_config_with_witness,
+            decode_unsigned_tx, parse_config, parse_owner_signature, simulation_spec,
         },
     },
 };
@@ -543,13 +543,17 @@ pub struct AssembleArgs {
     #[arg(long, value_name = "ACCOUNT")]
     from: Address,
 
+    /// The current configuration (JSON or file). Supply it for an unregistered multisig.
+    #[arg(long = "tempo.config", value_name = "CONFIG", value_parser = parse_config)]
+    config: Option<ConfigurableAccountConfig>,
+
     #[command(flatten)]
     rpc: RpcOpts,
 }
 
 impl AssembleArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { unsigned_tx, signatures, from: account, rpc } = self;
+        let Self { unsigned_tx, signatures, from: account, config, rpc } = self;
         let tx = decode_unsigned_tx(
             &hex::decode(unsigned_tx.trim()).wrap_err("invalid hex transaction")?,
         )?;
@@ -562,19 +566,24 @@ impl AssembleArgs {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        // A 1-of-1, salt-0 account is recomputed from its approval of the version-zero digest.
         let inner = tx.signature_hash();
-        let initial_digest = configurable_account_digest(inner, account, 0);
-        let keys = approvals
-            .iter()
-            .filter_map(|approval| approval.recover_signer(&initial_digest).ok())
-            .collect::<Vec<_>>();
+        // Without a witness, try the 1-of-1, salt-zero account of each recovered owner.
+        let keys = if config.is_none() {
+            let initial_digest = configurable_account_digest(inner, account, 0);
+            approvals
+                .iter()
+                .filter_map(|approval| approval.recover_signer(&initial_digest).ok())
+                .collect()
+        } else {
+            Vec::new()
+        };
         let (_, provider) = tempo_provider(&rpc)?;
-        let config = current_config(&provider, account, &keys).await?.ok_or_else(|| {
-            eyre::eyre!(
-                "{account} is not a registered configurable account, and no approval derives it"
-            )
-        })?;
+        let config = current_config_with_witness(&provider, account, &keys, config)
+            .await?
+            .ok_or_else(|| eyre::eyre!(
+                "{account} is not a registered configurable account, and no approval derives it. \
+                 Pass its initial configuration with --tempo.config"
+            ))?;
 
         let signature = combine_approvals(account, &config, inner, approvals)?;
         let raw =
@@ -589,15 +598,16 @@ impl AssembleArgs {
 /// Returns the owner digest and the configuration-change quorum for `account`, used by
 /// `cast mktx --tempo.digest`.
 ///
-/// An unregistered account's configuration is only known to its owners, so its quorum cannot be
-/// simulated: it needs an explicit `gas_limit`.
+/// For an unregistered account, `--tempo.config` supplies the quorum for gas estimation.
+/// Without it, the caller must provide the gas limit.
 pub(crate) async fn digest_context(
     eth: &impl LoadConfig,
     account: Address,
-    gas_limit: bool,
+    tx: &TransactionOpts,
 ) -> Result<(u64, Option<ConfigurableAccountSimulationSpec>)> {
+    let config = tx.tempo.configurable_account_config.as_deref().map(parse_config).transpose()?;
     let (_, provider) = tempo_provider(eth)?;
-    match current_config(&provider, account, &[]).await? {
+    match current_config_with_witness(&provider, account, &[], config).await? {
         Some(config) => Ok((config.version, Some(simulation_spec(account, &config, &[])))),
         None => {
             eyre::ensure!(
@@ -605,10 +615,9 @@ pub(crate) async fn digest_context(
                 "{account} is not a configurable account"
             );
             eyre::ensure!(
-                gas_limit,
-                "{account} is not registered yet, so its owners and the gas of its registration \
-                 are unknown. Send its first transaction with `cast wallet owners`, or pass \
-                 --gas-limit"
+                tx.gas_limit.is_some(),
+                "{account} is not registered yet. Pass --tempo.config to estimate its \
+                 registration gas, or set --gas-limit"
             );
             sh_warn!("{account} is not registered yet: the digest is for configuration version 0")?;
             Ok((0, None))

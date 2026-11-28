@@ -13165,6 +13165,26 @@
     },
     {
       "func": {
+        "id": "verbosity",
+        "description": "Returns the current forge verbosity level (`-v` / `-vv` / …).\nMatches `foundry_common::shell::verbosity()`: higher values enable more detail\n(traces, stack dumps, etc.). Quiet mode does not change this value.",
+        "declaration": "function verbosity() external view returns (uint8 level);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "verbosity()",
+        "selector": "0xd5cfa7b1",
+        "selectorBytes": [
+          213,
+          207,
+          167,
+          177
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "verifyEd25519",
         "description": "Verifies an Ed25519 signature over namespace || message.\nReturns true if signature is valid, false otherwise.",
         "declaration": "function verifyEd25519(bytes calldata signature, bytes calldata namespace, bytes calldata message, bytes32 publicKey) external pure returns (bool valid);",
