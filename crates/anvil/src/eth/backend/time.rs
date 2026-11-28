@@ -373,7 +373,10 @@ impl TimeManager {
 
 /// Returns the `Utc` datetime for the given seconds since unix epoch
 pub fn utc_from_secs(secs: u64) -> DateTime<Utc> {
-    DateTime::from_timestamp(secs as i64, 0).unwrap_or(DateTime::<Utc>::MAX_UTC)
+    i64::try_from(secs)
+        .ok()
+        .and_then(|secs| DateTime::from_timestamp(secs, 0))
+        .unwrap_or(DateTime::<Utc>::MAX_UTC)
 }
 
 /// Returns the current duration since unix epoch.
@@ -386,6 +389,33 @@ pub fn duration_since_unix_epoch() -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn out_of_range_block_time_saturates() {
+        assert_eq!(utc_from_secs(u64::MAX), DateTime::<Utc>::MAX_UTC);
+    }
+
+    #[ephyra::test]
+    fn utc_block_time_matches_unsigned_seconds(seconds: u64) {
+        let max = DateTime::<Utc>::MAX_UTC.timestamp() as u64;
+        assert_eq!(utc_from_secs(seconds).timestamp(), seconds.min(max) as i64);
+    }
+
+    #[ephyra::test]
+    fn mining_consumes_exact_time_once(start: u64, steps: Vec<(u64, Option<u64>)>) {
+        let time = TimeManager::new(start);
+        let mut head = start;
+        for (interval, override_delta) in steps {
+            time.set_block_timestamp_interval(interval);
+            if let Some(delta) = override_delta {
+                time.set_next_block_timestamp(head.saturating_add(delta)).unwrap();
+            }
+            head = head.saturating_add(override_delta.unwrap_or(interval));
+            assert_eq!(time.current_call_timestamp(), head);
+            assert_eq!(time.next_timestamp(), head);
+            assert_eq!(time.current_call_timestamp(), head.saturating_add(interval));
+        }
+    }
 
     #[test]
     fn candidate_consumes_only_its_timestamp_override() {

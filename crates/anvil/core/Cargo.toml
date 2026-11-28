@@ -43,3 +43,6 @@ optimism = [
     "foundry-primitives/optimism",
     "foundry-common/optimism",
 ]
+
+[dev-dependencies]
+ephyra.workspace = true

@@ -120,3 +120,19 @@ pub mod trace_address {
         usize::from_str_radix(digits, 16).ok().map(Index::from)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::lenient_block_number::{lenient_block_number, lenient_block_number_seq};
+    use alloy_rpc_types::BlockNumberOrTag;
+    use serde_json::json;
+
+    #[ephyra::test]
+    fn block_height_accepts_quantity_and_number(height: u64) {
+        let expected = BlockNumberOrTag::Number(height);
+        for value in [json!(height), json!(format!("0x{height:x}"))] {
+            assert_eq!(lenient_block_number(value.clone()).unwrap(), expected);
+            assert_eq!(lenient_block_number_seq(json!([value])).unwrap(), expected);
+        }
+    }
+}
