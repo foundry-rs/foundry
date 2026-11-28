@@ -77,16 +77,6 @@ impl SymExpr {
             SymExprKind::BinOp(SymBinOp::And, left, right) if right.is_address_mask() => {
                 left.address_expr_equivalent(alias)
             }
-            SymExprKind::BinOp(SymBinOp::Shr, value, shift) if shift.is_shift_96() => {
-                match value.kind() {
-                    SymExprKind::BinOp(SymBinOp::Shl, inner, inner_shift)
-                        if inner_shift.is_shift_96() =>
-                    {
-                        inner.address_expr_equivalent(alias)
-                    }
-                    _ => false,
-                }
-            }
             _ => false,
         }
     }
@@ -95,16 +85,6 @@ impl SymExpr {
         match self.kind() {
             SymExprKind::BinOp(SymBinOp::And, left, right) if right.is_address_mask() => {
                 left.symbolic_address_canonical()
-            }
-            SymExprKind::BinOp(SymBinOp::Shr, value, shift) if shift.is_shift_96() => {
-                match value.kind() {
-                    SymExprKind::BinOp(SymBinOp::Shl, inner, inner_shift)
-                        if inner_shift.is_shift_96() =>
-                    {
-                        inner.symbolic_address_canonical()
-                    }
-                    _ => self,
-                }
             }
             _ => self,
         }
@@ -116,10 +96,6 @@ impl SymExpr {
 
     fn is_address_mask(&self) -> bool {
         self.as_const() == Some((U256::ONE << 160) - U256::ONE)
-    }
-
-    fn is_shift_96(&self) -> bool {
-        self.as_const() == Some(U256::from(96))
     }
 }
 
