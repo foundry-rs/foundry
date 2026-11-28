@@ -7901,22 +7901,57 @@ where
             .await?
     }
 
+    /// Returns the account, using the fork root for a contract that has no local account entry.
+    /// Local entries use a root covering only their locally known storage.
     pub async fn get_account_at_block(
         &self,
         address: Address,
         block_request: Option<BlockRequest<FoundryTxEnvelope>>,
     ) -> Result<TrieAccount, BlockchainError> {
-        self.with_database_at(block_request, |block_db, _| {
-            let db = block_db.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
-            let account = db.get(&address).cloned().unwrap_or_default();
-            let storage_root = storage_root(&account.storage);
-            let code_hash = account.info.code_hash;
-            let balance = account.info.balance;
-            let nonce = account.info.nonce;
-            Ok(TrieAccount::new(nonce, balance, storage_root, code_hash)
-                .with_extension(AccountExtension::copy_from_slice(&account.info.extension)))
-        })
-        .await?
+        let pending_root = self
+            .pending_base_account(address, &block_request)
+            .await
+            .map(|account| storage_root(&account.storage));
+        let (info, storage_root, fork) = self
+            .with_database_at(block_request, |block_db, _| -> Result<_, BlockchainError> {
+                let db = block_db.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
+                let storage_root =
+                    db.get(&address).map(|account| storage_root(&account.storage)).or(pending_root);
+                let info = block_db.basic_ref(address)?.unwrap_or_default();
+                // Only contracts take the fork root. A codeless account with storage, such as an
+                // EOA that cleared its EIP-7702 delegation, reports an empty root instead.
+                let fork = if storage_root.is_none() && !info.is_empty_code_hash() {
+                    self.get_fork().map(|fork| {
+                        let block = fork.block_number();
+                        (fork, block)
+                    })
+                } else {
+                    None
+                };
+                Ok((info, storage_root, fork))
+            })
+            .await??;
+        let storage_root = match (storage_root, fork) {
+            (Some(root), _) => root,
+            (None, Some((fork, block))) => fork.get_account(address, block).await?.storage_root,
+            (None, None) => EMPTY_ROOT_HASH,
+        };
+        Ok(TrieAccount::new(info.nonce, info.balance, storage_root, info.code_hash)
+            .with_extension(AccountExtension::copy_from_slice(&info.extension)))
+    }
+
+    /// Returns the local account that a pending request inherits from the current state, since
+    /// the pending map only holds the pending block's changes. A block mined before the pending
+    /// state is built can make this stale.
+    async fn pending_base_account(
+        &self,
+        address: Address,
+        block_request: &Option<BlockRequest<FoundryTxEnvelope>>,
+    ) -> Option<DbAccount> {
+        if !matches!(block_request, Some(BlockRequest::Pending(_))) {
+            return None;
+        }
+        self.db.read().await.maybe_as_full_db()?.get(&address).cloned()
     }
 
     pub async fn get_account_info_at_block(
@@ -8019,12 +8054,44 @@ where
             }
         }
 
-        self.with_database_at(block_request, |block_db, _| {
-            trace!(target: "backend", "get proof for {:?} at {:?}", address, block_number);
-            let db = block_db.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
-            Ok(prove_account(db, address, &keys))
-        })
-        .await?
+        let pending_base = self.pending_base_account(address, &block_request).await;
+        let proof =
+            self.with_database_at(block_request, |block_db, _| -> Result<_, BlockchainError> {
+                trace!(target: "backend", "get proof for {:?} at {:?}", address, block_number);
+                let db = block_db.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
+                let Some(fork) = self.get_fork() else {
+                    return Ok(Ok(prove_account(db, address, &keys)));
+                };
+                let info = block_db.basic_ref(address)?;
+                // A fork contract without local changes is unchanged since the fork block, so the
+                // fork proves it against the same storage root `eth_getAccount` reports.
+                if pending_base.is_none()
+                    && !db.contains_key(&address)
+                    && info.as_ref().is_some_and(|info| !info.is_empty_code_hash())
+                {
+                    let block = fork.block_number();
+                    return Ok(Err((fork, block)));
+                }
+                // Fork state is only partially cached locally, so add the account and requested
+                // slots read through the database, keeping uncached values consistent with their
+                // proof.
+                let Some(info) = info else {
+                    return Ok(Ok(prove_account(db, address, &keys)));
+                };
+                let mut accounts = db.clone();
+                let account =
+                    accounts.entry(address).or_insert_with(|| pending_base.unwrap_or_default());
+                account.info = info;
+                for key in &keys {
+                    let slot: U256 = (*key).into();
+                    account.storage.insert(slot, block_db.storage_ref(address, slot)?);
+                }
+                Ok(Ok(prove_account(&accounts, address, &keys)))
+            });
+        match proof.await?? {
+            Ok(proof) => Ok(proof),
+            Err((fork, block)) => Ok(fork.get_proof(address, keys, Some(block.into())).await?),
+        }
     }
 }
 
