@@ -7,6 +7,7 @@ pragma experimental ABIEncoderV2;
 
 interface Vm {
     enum CallerMode { None, Broadcast, RecurrentBroadcast, Prank, RecurrentPrank }
+    enum CallKind { Call, DelegateCall, StaticCall }
     enum AccountAccessKind { Call, DelegateCall, CallCode, StaticCall, Create, SelfDestruct, Resume, Balance, Extcodesize, Extcodehash, Extcodecopy }
     enum ForgeContext { TestGroup, Test, Coverage, Snapshot, ScriptGroup, ScriptDryRun, ScriptBroadcast, ScriptResume, Unknown }
     enum BroadcastTxType { Call, Create, Create2 }
@@ -276,6 +277,7 @@ interface Vm {
     function expectCall(address callee, uint256 msgValue, bytes calldata data, uint64 count) external;
     function expectCall(address callee, uint256 msgValue, uint64 gas, bytes calldata data) external;
     function expectCall(address callee, uint256 msgValue, uint64 gas, bytes calldata data, uint64 count) external;
+    function expectCall(CallKind kind, address callee, bytes calldata data) external;
     function expectCreate(bytes calldata bytecode, address deployer) external;
     function expectCreate2(bytes calldata bytecode, address deployer) external;
     function expectDelegateCall(address callee, bytes calldata data) external;
@@ -334,6 +336,8 @@ interface Vm {
     function getChain(uint256 chainId) external view returns (Chain memory chain);
     function getCode(string calldata artifactPath) external view returns (bytes memory creationBytecode);
     function getDeployedCode(string calldata artifactPath) external view returns (bytes memory runtimeBytecode);
+    function getDeploymentByLabel(string calldata label) external view returns (address deployedAddress);
+    function getDeploymentByLabel(string calldata label, uint64 chainId) external view returns (address deployedAddress);
     function getDeployment(string calldata contractName) external view returns (address deployedAddress);
     function getDeployment(string calldata contractName, uint64 chainId) external view returns (address deployedAddress);
     function getDeployments(string calldata contractName, uint64 chainId) external view returns (address[] memory deployedAddresses);
@@ -581,6 +585,9 @@ interface Vm {
     function signKeychainAdmin(uint256 privateKey, address account, bytes32 digest) external pure returns (bytes memory signature);
     function signKeychainConfigurableAccount(OwnerKey[] calldata ownerKeys, address configurableAccount, ConfigurableAccountConfig calldata config, address account, bytes32 digest) external pure returns (bytes memory signature);
     function signP256(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 s);
+    function signTypedData(uint256 privateKey, string calldata jsonData) external pure returns (uint8 v, bytes32 r, bytes32 s);
+    function signTypedData(string calldata jsonData) external pure returns (uint8 v, bytes32 r, bytes32 s);
+    function signTypedData(address signer, string calldata jsonData) external pure returns (uint8 v, bytes32 r, bytes32 s);
     function signWithNonceUnsafe(uint256 privateKey, bytes32 digest, uint256 nonce) external pure returns (uint8 v, bytes32 r, bytes32 s);
     function sign(Wallet calldata wallet, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
     function sign(uint256 privateKey, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);

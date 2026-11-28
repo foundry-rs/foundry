@@ -1,8 +1,8 @@
 use clap::{Parser, ValueHint};
 use eyre::{Result, eyre};
 use forge_lint::{
-    linter::Linter,
-    sol::{SolLint, SolLintError, SolidityLinter},
+    linter::{Lint, Linter},
+    sol::{SolLint, SolLintError, SolidityLinter, TEST_AND_SCRIPT_LINTS},
 };
 use foundry_cli::{
     opts::{BuildOpts, configure_pcx_all_sources},
@@ -21,6 +21,9 @@ use std::path::PathBuf;
 #[derive(Clone, Debug, Parser)]
 pub struct LintArgs {
     /// Path to the file to be checked. Overrides the `ignore` project config.
+    ///
+    /// Files under the configured `test` and `script` directories are only checked by the lints
+    /// that apply to tests and scripts, even when named here.
     #[arg(value_hint = ValueHint::FilePath, value_name = "PATH", num_args(1..))]
     pub(crate) paths: Vec<PathBuf>,
 
@@ -110,6 +113,25 @@ impl LintArgs {
 
         if project.compiler.solc.is_none() {
             return Err(eyre!("linting not supported for this language"));
+        }
+
+        // Most lints do not run on tests and scripts. Say so when such a file was named
+        // explicitly, instead of reporting a clean run for lints that never ran.
+        if !self.paths.is_empty()
+            && include.as_ref().is_none_or(|lints| {
+                lints.iter().any(|lint| !TEST_AND_SCRIPT_LINTS.contains(&lint.id()))
+            })
+            && input.iter().any(|path| {
+                foundry_common::fs::canonicalize_path(path)
+                    .is_ok_and(|path| path_config.is_test_or_script(&path))
+            })
+        {
+            sh_warn!(
+                "test and script files are only checked by `{}`; \
+                 all other lints are skipped for files under the configured `test` and `script` \
+                 directories",
+                TEST_AND_SCRIPT_LINTS.join("` and `")
+            )?;
         }
 
         let linter = SolidityLinter::new(path_config)
