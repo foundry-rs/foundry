@@ -131,7 +131,12 @@ impl<'a> Parser<'a> {
             }
             self.chars.next();
         }
-        self.input[start..end].parse().ok()
+        let digits = &self.input[start..end];
+        // Reject redundant leading zeros so that the specifier is written back as-is.
+        if digits.len() > 1 && digits.starts_with('0') {
+            return None;
+        }
+        digits.parse().ok()
     }
 
     fn current_pos(&mut self) -> usize {
@@ -620,6 +625,11 @@ mod tests {
         // Invalid precisions remain literal and do not consume the value.
         assert_eq!("%1025e 1", fmt_1("%1025e", &U256::ONE));
         assert_eq!("%99999999999999999999e 1", fmt_1("%99999999999999999999e", &U256::ONE));
+
+        // Leading zeros do not round-trip, so they are not a valid precision either.
+        assert_eq!("%03e 1", fmt_1("%03e", &U256::ONE));
+        assert_eq!("%00e 1", fmt_1("%00e", &U256::ONE));
+        assert_eq!("%03e", console_format("%03e", &[]));
 
         assert_eq!("1", fmt_1("%18e", &U256::from(1_000_000_000_000_000_000u64)));
 
