@@ -3570,7 +3570,7 @@ contract SymbolicPrankedMany is Test {
         .stdout_eq(str![[r#"
 ...
 Ran 16 tests for test/SymbolicPrankedAddress.t.sol:SymbolicPrankedAddress
-[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic address whose representative account holds state from before the run knew an account it may name] checkDealtBalanceBeforeDeployment(address) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic address fixed to an account the run knew only after state was written through the address] checkDealtBalanceBeforeDeployment(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealtBalanceOnceFixed(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealtBalanceThroughOtherDirtyWord(address,uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealtBalanceThroughOtherWord(address,uint256) ([METRICS])
@@ -3656,8 +3656,8 @@ contract SymbolicLaterCandidates is Test {
         assert(keccak256(callee.callSenderAndCount()) != keccak256(hex"0102"));
     }
 
-    // A dealt address may still be the identity precompile. Its balance belongs to the
-    // precompile on that branch, which the run does not model, so this reports incomplete.
+    // Fails for `who == address(4)`: the balance dealt through the address settles onto the
+    // identity precompile, which echoes the input.
     function checkDealtAddressCallsPrecompile(address who) public {
         vm.deal(who, 1);
         (, bytes memory out) = who.staticcall(hex"0102");
@@ -3695,7 +3695,7 @@ contract SymbolicLaterCandidates is Test {
     assert_symbolic(cmd.args(["test", "--symbolic"])).failure().stdout_eq(str![[r#"
 ...
 Ran 7 tests for test/SymbolicLaterCandidates.t.sol:SymbolicLaterCandidates
-[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic address whose representative account holds state from before the run knew an account it may name] checkDealtAddressCallsPrecompile(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealtAddressCallsPrecompile(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealtPrankedBalanceThroughOtherWord(address,uint256) ([METRICS])
 [FAIL: vm.etch: cannot use precompile [..] as an argument; counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkEtchFreeAddress(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedPrecompileSender(address) ([METRICS])
@@ -3703,6 +3703,164 @@ Ran 7 tests for test/SymbolicLaterCandidates.t.sol:SymbolicLaterCandidates
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankedSenderEtchedAfterPrank(address) ([METRICS])
 [FAIL: vm.store: cannot use precompile [..] as an argument; counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkStoreFreeAddress(address) ([METRICS])
 Suite result: FAILED. 0 passed; 7 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+// State that cheatcodes wrote through a free address lands on the account the path later fixes
+// the address to.
+#[forgetest_init]
+fn symbolic_fixed_address_keeps_cheatcode_state(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_fixed_address_keeps_cheatcode_state");
+
+    prj.add_test(
+        "SymbolicFixedAddress.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Target {
+    function ping() external payable {}
+
+    function peek() external view {}
+}
+
+contract Salted {
+    constructor(Target target) {
+        target.ping();
+    }
+
+    function boom() external pure {
+        revert();
+    }
+}
+
+contract Fixer {
+    function callFixed(address who) external returns (bool ok) {
+        require(who == address(0xB0B));
+        (ok,) = address(0xB0B).call("");
+    }
+}
+
+contract SymbolicFixedAddress is Test {
+    Target target;
+    Fixer fixer;
+
+    function setUp() public {
+        target = new Target();
+        fixer = new Fixer();
+    }
+
+    // Fails: the pranked sender holds the 5 wei `vm.deal` gave it, so the call succeeds.
+    function checkDealtSenderPays(address who) public {
+        vm.deal(who, 5);
+        vm.prank(who);
+        vm.assume(who == address(0xB0B));
+        (bool ok,) = address(target).call{value: 3}(abi.encodeCall(Target.ping, ()));
+        assert(!ok);
+    }
+
+    function checkDealtSenderCannotOverpay(address who) public {
+        vm.deal(who, 5);
+        vm.prank(who);
+        vm.assume(who == address(0xB0B));
+        (bool ok,) = address(target).call{value: 6}(abi.encodeCall(Target.ping, ()));
+        assert(!ok);
+    }
+
+    function checkNonceOnceFixed(address who) public {
+        vm.setNonce(who, 5);
+        vm.assume(who == address(0xB0B));
+        assert(vm.getNonce(address(0xB0B)) != 5);
+    }
+
+    function checkPersistentOnceFixed(address who) public {
+        vm.makePersistent(who);
+        vm.assume(who == address(0xB0B));
+        assert(!vm.isPersistent(address(0xB0B)));
+    }
+
+    // Fails: a contract created at a symbolic CREATE2 address keeps its code when the salt is
+    // fixed, so `boom` reverts.
+    function checkSaltedCreate(uint8 salt) public {
+        vm.assume(salt == 1);
+        Salted salted = new Salted{salt: bytes32(uint256(salt))}(target);
+        (bool ok,) = address(salted).call(abi.encodeCall(Salted.boom, ()));
+        assert(ok);
+    }
+
+    // Code written through the address may run in a caller frame of the call that fixes it.
+    function checkEtchedFixedInCall(address who) public {
+        vm.assume(uint160(who) > 0x200);
+        vm.etch(who, hex"fe");
+        assert(fixer.callFixed(who));
+    }
+
+    function dealThenFail(address who) external {
+        vm.deal(who, 5);
+        require(who == address(0xB0B));
+        address(0xB0B).call("");
+        revert();
+    }
+
+    // Fails: the balance survives the revert on the account a call in the failed frame fixed
+    // the address to.
+    function checkDealtInFailedCall(address who) public {
+        try this.dealThenFail(who) {} catch {}
+        if (who == address(0xB0B)) assert(who.balance != 5);
+    }
+
+    function dealSelfThenFail(address who) external {
+        vm.deal(address(this), 7);
+        require(who == address(target));
+        address(target).call("");
+        revert();
+    }
+
+    // Fails: settling `who` inside the failed call drops the representative's earlier balance
+    // write, which must not hide the `vm.deal` that survives the revert.
+    function checkDealSurvivesDroppedWrite(address who) public {
+        vm.deal(who, 5);
+        try this.dealSelfThenFail(who) {} catch {}
+        if (who == address(target)) assert(address(this).balance != 7);
+    }
+
+    // `vm.deal` reaches 0xB0B, but the earlier `vm.store` through the address did not.
+    function checkStoreBeforeAccountKnown(address who) public {
+        vm.assume(uint160(who) > 0x200);
+        vm.store(who, 0, bytes32(uint256(42)));
+        vm.deal(address(0xB0B), 1);
+        vm.deal(who, 5);
+        vm.assume(who == address(0xB0B));
+        assert(uint256(vm.load(address(0xB0B), 0)) != 42);
+    }
+
+    // The pranked static call guards the untouched precompiles, which `vm.deal` does not reach.
+    function checkPrankThenDeal(address who) public {
+        vm.prank(who);
+        target.peek();
+        vm.deal(who, 5);
+        if (who == address(4)) assert(who.balance != 5);
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicFixedAddress"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 10 tests for test/SymbolicFixedAddress.t.sol:SymbolicFixedAddress
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealSurvivesDroppedWrite(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealtInFailedCall(address) ([METRICS])
+[PASS] checkDealtSenderCannotOverpay(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkDealtSenderPays(address) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic address with code fixed below the root frame] checkEtchedFixedInCall(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkNonceOnceFixed(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPersistentOnceFixed(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkPrankThenDeal(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[..]] checkSaltedCreate(uint8) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic address fixed to an account the run knew only after state was written through the address] checkStoreBeforeAccountKnown(address) ([METRICS])
+Suite result: FAILED. 1 passed; 9 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }

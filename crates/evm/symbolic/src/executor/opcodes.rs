@@ -533,6 +533,24 @@ impl SymbolicExecutor {
             state.return_data = SymReturnData::empty(&mut self.cx);
             return Ok(StepOutcome::ExceptionalHalt);
         }
+        // An account the path fixed a free address to must hold the state written through the
+        // address before an opcode reads or writes it.
+        if matches!(
+            op,
+            opcode::BALANCE
+                | opcode::EXTCODESIZE
+                | opcode::EXTCODECOPY
+                | opcode::EXTCODEHASH
+                | opcode::CALL
+                | opcode::CALLCODE
+                | opcode::DELEGATECALL
+                | opcode::STATICCALL
+                | opcode::CREATE
+                | opcode::CREATE2
+                | opcode::SELFDESTRUCT
+        ) {
+            state.settle_fixed_addresses(&mut self.cx, executor)?;
+        }
 
         match op {
             opcode::PUSH0 => {
