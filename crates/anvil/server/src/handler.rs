@@ -228,6 +228,28 @@ mod tests {
         }
     }
 
+    #[ephyra::test]
+    fn batch_executes_each_call_and_replies_to_its_id(ids: Vec<Option<i64>>) {
+        let calls = ids.iter().map(|id| id.map_or_else(notification, method_call)).collect();
+        let handler = TestHandler::default();
+        let response = run_ready(handle_request(Request::Batch(calls), handler.clone()));
+        assert_eq!(handler.requests.load(Ordering::Relaxed), ids.len());
+
+        let replies: Vec<_> = ids
+            .iter()
+            .flatten()
+            .map(|id| RpcResponse::new(Id::Number(*id), ResponseResult::success(())))
+            .collect();
+        let expected = if ids.is_empty() {
+            Some(Response::error(RpcError::invalid_request()))
+        } else if replies.is_empty() {
+            None
+        } else {
+            Some(Response::Batch(replies))
+        };
+        assert_eq!(response, expected);
+    }
+
     #[test]
     fn empty_batch_returns_invalid_request() {
         let response = run_ready(handle_request(Request::Batch(vec![]), TestHandler::default()));
