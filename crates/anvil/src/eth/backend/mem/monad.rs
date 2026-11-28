@@ -685,12 +685,11 @@ impl<N: Network> Backend<N> {
 
     fn monad_context_for_mined_transactions(
         &self,
-        block: &Block,
+        parent_hash: B256,
         current: &[Participant],
         current_tx_index: usize,
     ) -> Result<MonadChainContext, BlockchainError> {
-        let (_, grandparent_hash, parent) =
-            self.monad_block_participants(block.header.parent_hash)?;
+        let (_, grandparent_hash, parent) = self.monad_block_participants(parent_hash)?;
         let grandparent = if grandparent_hash.is_zero() {
             MonadBlockParticipants::default()
         } else {
@@ -707,7 +706,7 @@ impl<N: Network> Backend<N> {
             &self.blockchain.storage.read(),
             &block.body.transactions,
         )?;
-        self.monad_context_for_mined_transactions(block, &current, 0)
+        self.monad_context_for_mined_transactions(block.header.parent_hash, &current, 0)
     }
 
     pub(super) fn active_monad_context_for_mined_block(
@@ -719,18 +718,17 @@ impl<N: Network> Backend<N> {
 
     fn monad_context_before_mined_transaction(
         &self,
-        block: &Block,
+        parent_hash: B256,
+        transactions: &[MaybeImpersonatedTransaction<FoundryTxEnvelope>],
         current_tx_index: usize,
     ) -> Result<MonadChainContext, BlockchainError> {
-        let current = self.monad_participants_from_storage(
-            &self.blockchain.storage.read(),
-            &block.body.transactions,
-        )?;
+        let current =
+            self.monad_participants_from_storage(&self.blockchain.storage.read(), transactions)?;
         if current_tx_index > current.len() {
             return Err(BlockchainError::DataUnavailable);
         }
         self.monad_context_for_mined_transactions(
-            block,
+            parent_hash,
             &current[..current_tx_index],
             current_tx_index,
         )
@@ -738,11 +736,18 @@ impl<N: Network> Backend<N> {
 
     pub(super) fn active_monad_context_before_mined_transaction(
         &self,
-        block: &Block,
+        parent_hash: B256,
+        transactions: &[MaybeImpersonatedTransaction<FoundryTxEnvelope>],
         current_tx_index: usize,
     ) -> Result<Option<MonadChainContext>, BlockchainError> {
         self.is_monad()
-            .then(|| self.monad_context_before_mined_transaction(block, current_tx_index))
+            .then(|| {
+                self.monad_context_before_mined_transaction(
+                    parent_hash,
+                    transactions,
+                    current_tx_index,
+                )
+            })
             .transpose()
     }
 }
