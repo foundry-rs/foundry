@@ -1453,6 +1453,32 @@ fn fractional_and_wide_number_literals() {
 }
 
 #[test]
+fn trailing_comment_before_fn_body_is_idempotent() {
+    let cases = [
+        (
+            "contract C {\n    function f() internal returns (uint256 a) // note\n    {\n        a = 1;\n    }\n}\n",
+            IndentStyle::Space,
+        ),
+        (
+            "contract C {\n    function f() internal returns (uint256 a) // note\n    {\n        a = 1;\n    }\n}\n",
+            IndentStyle::Tab,
+        ),
+        ("function f() pure returns (uint256 a) // note\n{ a = 1; }\n", IndentStyle::Space),
+        ("function f() pure returns (uint256 a) // note\n{ a = 1; }\n", IndentStyle::Tab),
+        (
+            "contract C {\n    function f() internal returns (uint256 a) /* note */ {\n        a = 1;\n    }\n}\n",
+            IndentStyle::Space,
+        ),
+    ];
+    for (source, style) in cases {
+        let config = Arc::new(FormatterConfig { style, ..Default::default() });
+        let once = format(source, Path::new("test.sol"), config.clone());
+        let twice = format(&once, Path::new("test.sol"), config);
+        assert_eq!(once, twice, "not idempotent for {source:?} ({style:?})\n{once}");
+    }
+}
+
+#[test]
 fn own_line_comment_in_call_options_args_is_idempotent() {
     let cases = [
         (
