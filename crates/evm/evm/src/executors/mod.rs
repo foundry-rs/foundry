@@ -20,7 +20,8 @@ use evm2::{
     Evm, TxResultWithState,
     bytecode::Bytecode,
     evm::{AccountInfo, PendingState, SystemTx},
-    interpreter::InstrStop,
+    interpreter::{GasTracker, InstrStop},
+    version::GasId,
 };
 use foundry_cheatcodes::CheatcodesBackend;
 use foundry_common::FoundryTransactionBuilder;
@@ -1234,6 +1235,10 @@ struct Execution<FEN: FoundryEvmNetwork> {
     state: PendingState,
     /// The environment after the transaction.
     env: EvmEnvFor<FEN>,
+    /// Block gas limit the transaction started with.
+    ///
+    /// Synthetic calls set this to the transaction gas limit.
+    initial_block_gas_limit: u64,
     /// Whether the inspectors halted the execution due to cancellation.
     cancelled: bool,
 }
@@ -1251,6 +1256,9 @@ fn execute<FEN: FoundryEvmNetwork>(
     let edgecov_opcode = stack.inner.edgecov_opcode;
     let instrumented_edges = stack.inner.instrumented_edges;
     let instrumented_cmp_log = stack.inner.instrumented_cmp_log;
+    // Synthetic calls set the block gas limit to the transaction gas limit. Cheatcodes can replace
+    // the block later, so keep the limit the transaction started with.
+    let initial_block_gas_limit = u64::try_from(env.block.gas_limit).unwrap_or(u64::MAX);
     let mut evm = backend.backend().create_evm();
     install_env::<FEN>(backend.backend(), &mut evm, env);
     match ext {
@@ -1280,7 +1288,13 @@ fn execute<FEN: FoundryEvmNetwork>(
         env = EvmFactoryFor::<FEN>::default().env_with_spec(env, spec);
     }
     Ok((
-        Execution { result, state: pending_state, env, cancelled: stack.execution_cancelled() },
+        Execution {
+            result,
+            state: pending_state,
+            env,
+            initial_block_gas_limit,
+            cancelled: stack.execution_cancelled(),
+        },
         evm,
     ))
 }
@@ -1824,11 +1838,24 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
     mut inspector: InspectorStack<FEN>,
     backend: &Backend<FEN>,
 ) -> eyre::Result<RawCallResult<FEN>> {
-    let Execution { result: tx_result, state: state_changeset, env: evm_env, cancelled } =
-        execution;
+    let Execution {
+        result: tx_result,
+        state: state_changeset,
+        env: evm_env,
+        initial_block_gas_limit,
+        cancelled,
+    } = execution;
     let exit_reason = tx_result.stop;
-    let gas_refunded = if tx_result.status { tx_result.refunded } else { 0 };
-    let gas_used = tx_result.tx_gas_used();
+    let (gas_used, gas_refunded) = metered_gas_after_limit_billing::<FEN>(
+        initial_block_gas_limit,
+        &tx_result,
+        &evm_env,
+        inspector.inner.root_frame_gas,
+    )
+    .unwrap_or_else(|| {
+        let gas_refunded = if tx_result.status { tx_result.refunded } else { 0 };
+        (tx_result.tx_gas_used(), gas_refunded)
+    });
     let created_address = tx_result.created_address.filter(|_| tx_result.status);
     let result = if created_address.is_some() { Bytes::new() } else { tx_result.output };
 
@@ -1929,6 +1956,45 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         SancovGuard::drain_cmp_into(&mut raw);
     }
     Ok(raw)
+}
+
+/// Receipt gas after undoing a gas-limit billing replacement, when one happened.
+///
+/// From Base Everest on, including Zenith, a fee-charged transaction's receipt uses the whole gas
+/// limit and drops the refund. Forge's synthetic calls keep fee charging enabled, so that receipt
+/// is what `tx_gas_used` returns. The root frame still holds the tracker `finalize_gas` folds into
+/// the metered total: `gas_limit - remaining - reservoir`, then the EIP-3529 refund cap and the
+/// calldata floor. The returned pair is `(gas_used, refunded)`.
+fn metered_gas_after_limit_billing<FEN: FoundryEvmNetwork>(
+    tx_gas_limit: u64,
+    tx_result: &TxResultFor<FEN>,
+    evm_env: &EvmEnvFor<FEN>,
+    root_frame_gas: Option<GasTracker>,
+) -> Option<(u64, u64)> {
+    // Billing writes the gas limit into `total_gas_spent` and clears `refunded`. A transaction
+    // that consumed its whole limit has the same receipt and keeps it.
+    let root = root_frame_gas?;
+    if tx_result.refunded != 0 || tx_result.total_gas_spent != tx_gas_limit {
+        return None;
+    }
+    let metered_spent =
+        tx_gas_limit.saturating_sub(root.remaining()).saturating_sub(root.reservoir());
+    if metered_spent >= tx_gas_limit {
+        return None;
+    }
+
+    let quotient = evm_env.version.gas_params.get(GasId::MaxRefundQuotient).max(1);
+    let raw_refund =
+        if tx_result.status && root.refunded() > 0 { root.refunded() as u64 } else { 0 };
+    let cap = metered_spent / quotient;
+    let refunded = if raw_refund < cap { raw_refund } else { cap };
+    let net = metered_spent.saturating_sub(refunded);
+    let gas_used = if net > tx_result.floor_gas { net } else { tx_result.floor_gas };
+    if gas_used >= tx_result.tx_gas_used() {
+        return None;
+    }
+    let gas_refunded = if tx_result.status { refunded } else { 0 };
+    Some((gas_used, gas_refunded))
 }
 
 /// Returns the runtime bytecode of every traced account, as of after the call.
