@@ -237,7 +237,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 .wrap_err("Could not convert to uint")?
                 .0;
             let unit = unit.parse().wrap_err("could not parse units")?;
-            print_scalar(format_unit_as_string(ParseUnits::U256(value), unit))?;
+            print_scalar(trim_empty_fraction(ParseUnits::U256(value).format_units(unit)))?;
         }
         CastSubcommand::Conversion(ConversionSubcommand::ParseUnits { value, unit }) => {
             let value = stdin::unwrap_line(value)?;
@@ -249,10 +249,8 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             print_scalar(format_units(&stdin::unwrap_line(value)?, unit)?)?;
         }
         CastSubcommand::Conversion(ConversionSubcommand::FromWei { value, unit }) => {
-            print_scalar(
-                signed_parse_units(&NumberWithBase::parse_int(&stdin::unwrap_line(value)?, None)?)?
-                    .format_units(unit.parse()?),
-            )?;
+            let value = NumberWithBase::parse_int(&stdin::unwrap_line(value)?, None)?;
+            print_scalar(format_signed_units(value, unit.parse()?))?;
         }
         CastSubcommand::Conversion(ConversionSubcommand::ToWei { value, unit }) => {
             let value = stdin::unwrap_line(value)?;
@@ -1575,33 +1573,20 @@ fn int_bound(s: &str, max: bool) -> Result<String> {
     }
 }
 
-/// Converts a parsed, possibly-negative [`NumberWithBase`] into a [`ParseUnits`], preserving
-/// its sign.
-///
-/// `NumberWithBase::number()` returns the two's-complement bits of a negative value modulo
-/// 2^256, which is a wider range than [`I256`] can represent (magnitudes up to 2^255 only).
-/// A magnitude beyond that range would silently reinterpret as a small *positive* [`I256`]
-/// if constructed unconditionally via [`I256::from_raw`] -- reject it instead.
-fn signed_parse_units(value: &NumberWithBase) -> Result<ParseUnits> {
-    // Zero has no sign, so "-0" takes the unsigned path instead of failing the I256 check.
+/// Formats the unsigned magnitude because the divisor for 77 decimals exceeds `I256::MAX`.
+fn format_signed_units(value: NumberWithBase, unit: Unit) -> String {
     if value.is_nonnegative() || value.number().is_zero() {
-        return Ok(ParseUnits::U256(value.number()));
+        return ParseUnits::U256(value.number()).format_units(unit);
     }
-    let signed = I256::from_raw(value.number());
-    if !signed.is_negative() {
-        eyre::bail!("value out of range for a signed 256-bit integer");
-    }
-    Ok(ParseUnits::I256(signed))
+    let magnitude = I256::from_raw(value.number()).unsigned_abs();
+    format!("-{}", ParseUnits::U256(magnitude).format_units(unit))
 }
 
-fn format_unit_as_string(value: ParseUnits, unit: Unit) -> String {
-    let mut formatted = value.format_units(unit);
-    // Trim empty fractional part.
-    if let Some(dot) = formatted.find('.') {
-        let fractional = &formatted[dot + 1..];
-        if fractional.chars().all(|c: char| c == '0') {
-            formatted = formatted[..dot].to_string();
-        }
+fn trim_empty_fraction(mut formatted: String) -> String {
+    if let Some(dot) = formatted.find('.')
+        && formatted[dot + 1..].bytes().all(|digit| digit == b'0')
+    {
+        formatted.truncate(dot);
     }
     formatted
 }
@@ -1609,8 +1594,7 @@ fn format_unit_as_string(value: ParseUnits, unit: Unit) -> String {
 pub(super) fn format_units(value: &str, unit: u8) -> Result<String> {
     let value = NumberWithBase::parse_int(value, None)?;
     let unit = Unit::new(unit).ok_or_else(|| eyre::eyre!("invalid unit"))?;
-    let parsed = signed_parse_units(&value)?;
-    Ok(format_unit_as_string(parsed, unit))
+    Ok(trim_empty_fraction(format_signed_units(value, unit)))
 }
 
 fn to_base(value: &str, base_in: Option<&str>, base_out: &str) -> Result<String> {
@@ -1917,5 +1901,18 @@ mod tests {
         // Too few arguments never mention flags, even when one starts with `--`.
         assert_eq!(hint(2, &["--packed"]), "encode length mismatch");
         assert_eq!(hint(1, &[]), "encode length mismatch");
+    }
+
+    #[ephyra::test(tests = 256)]
+    fn ephyra_format_units_round_trip(
+        limbs: [u64; 4],
+        signed: bool,
+        #[ephyra(gen = ephyra::gens::int(0..=Unit::MAX.get()))] decimals: u8,
+    ) {
+        let raw = U256::from_limbs(limbs);
+        let amount = if signed { I256::from_raw(raw).to_string() } else { raw.to_string() };
+        let formatted = format_units(&amount, decimals).unwrap();
+        let parsed = ParseUnits::parse_units(&formatted, Unit::new(decimals).unwrap()).unwrap();
+        assert_eq!(parsed.to_string(), amount, "{formatted} at {decimals} decimals");
     }
 }

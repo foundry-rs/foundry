@@ -3398,6 +3398,7 @@ dependencies = [
  "clap_complete",
  "comfy-table",
  "dirs",
+ "ephyra",
  "evm2",
  "evmole",
  "eyre",
