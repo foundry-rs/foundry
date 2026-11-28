@@ -69,4 +69,15 @@ contract ReturnStatement {
             .scaleBySomeFactor(1000)
             .transformToTuple();
     }
+
+    function commentedSum(uint256 x) external pure returns (uint256) {
+        return x // marker_0_
+            + 0 // marker_1_
+            + 1 + /* marker_2_ */ 2 + /* marker_3_ */ 3;
+    }
+
+    function inlineComments(uint256 x) external pure returns (uint256) {
+        return x + /* first quantity */ 1 + /* next increment */ 2
+            + /* final quantity */ 3;
+    }
 }

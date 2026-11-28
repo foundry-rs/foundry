@@ -473,6 +473,7 @@ comfy-table = "8"
 crossterm = "0.29"
 dirs = "7"
 dunce = "1"
+ephyra = "0.0.1"
 evmole = "0.10"
 eyre = "0.6"
 figment = { package = "figment2", version = "0.11" }
