@@ -33,8 +33,8 @@ pub struct IgnoredTraces {
 impl Cheatcode for labelCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { account, newLabel } = self;
-        let rpc = ccx.active_fork_url();
-        ccx.state.fork_labels.insert((rpc, *account), newLabel.clone());
+        let chain_id = ccx.chain_id();
+        ccx.state.chain_labels.insert((chain_id, *account), newLabel.clone());
         ccx.state.core.labels.insert(*account, newLabel.clone());
         Ok(Default::default())
     }

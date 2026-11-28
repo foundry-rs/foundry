@@ -10562,7 +10562,8 @@ contract DeploymentByLabelTest is Test {
 }
 
 // One key deploys to the same address on two chains, and each chain's run records the label set
-// on that chain.
+// on that chain, even through another URL for it. Addresses without a label on their chain keep
+// the script's last label, including configured ones.
 #[forgetest_init]
 async fn multichain_fork_broadcast_records_labels_per_chain(prj: _, cmd: _) {
     prj.add_script(
@@ -10584,6 +10585,7 @@ contract DeployPerChain is Script {
         vm.startBroadcast(KEY);
         Pool onA = new Pool();
         require(address(new Pool()) == shared);
+        new Pool();
         vm.stopBroadcast();
         vm.label(address(onA), "OnA");
 
@@ -10592,16 +10594,24 @@ contract DeployPerChain is Script {
         Pool onB = new Pool();
         require(address(new Pool()) == shared);
         vm.stopBroadcast();
+        vm.createSelectFork(vm.envString("CHAIN_B_ALIAS"));
         vm.label(address(onB), "OnB");
         require(address(onA) == address(onB));
     }
 }
 "#,
     );
+    prj.update_config(|config| {
+        config
+            .tracing
+            .labels
+            .insert(address!("0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"), "Configured".into());
+    });
     let (_api_a, chain_a) = spawn(NodeConfig::test().with_chain_id(Some(1001u64))).await;
     let (_api_b, chain_b) = spawn(NodeConfig::test().with_chain_id(Some(1002u64))).await;
     cmd.env("CHAIN_A", chain_a.http_endpoint());
     cmd.env("CHAIN_B", chain_b.http_endpoint());
+    cmd.env("CHAIN_B_ALIAS", chain_b.http_endpoint().replace("127.0.0.1", "localhost"));
     cmd.args(["script", "DeployPerChain", "--broadcast"]).assert_success();
 
     let run: Value = foundry_common::fs::read_json_file(
@@ -10626,7 +10636,7 @@ contract DeployPerChain is Script {
         serde_json::to_string(&labels).unwrap().is_json(),
         str![[r#"
 [
-  [1001, ["OnA", "Shared"]],
+  [1001, ["OnA", "Shared", "Configured"]],
   [1002, ["OnB", "Shared"]]
 ]
 "#]]

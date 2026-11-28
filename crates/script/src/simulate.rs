@@ -15,7 +15,11 @@ use crate::{
 };
 use alloy_chains::{Chain, NamedChain};
 use alloy_network::{Network, TransactionBuilder};
-use alloy_primitives::{Address, U256, map::HashMap, utils::format_units};
+use alloy_primitives::{
+    Address, U256,
+    map::{AddressHashMap, HashMap},
+    utils::format_units,
+};
 use alloy_provider::Provider;
 use dialoguer::Confirm;
 use eyre::{Context, Result};
@@ -204,30 +208,11 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
 
     fn into_filled(
         self,
-        mut transactions: VecDeque<TransactionWithMetadata<FEN::Network>>,
+        transactions: VecDeque<TransactionWithMetadata<FEN::Network>>,
     ) -> FilledTransactionsState<FEN> {
-        // Use the final script labels set on each transaction's fork, including labels set after a
-        // deployment, so an address deployed on several chains keeps each chain's label. Labels
-        // set while no fork was active apply to every chain. Additional contracts are only known
-        // after transaction simulation.
-        let labels = &self.execution_result.fork_labels;
-        for transaction in &mut transactions {
-            let rpc = Some(transaction.rpc.clone());
-            let label = |address| {
-                labels
-                    .get(&(rpc.clone(), address))
-                    .or_else(|| labels.get(&(None, address)))
-                    .cloned()
-            };
-            if transaction.call_kind.is_any_create() {
-                transaction.label = transaction.contract_address.and_then(label);
-            }
-            for contract in &mut transaction.additional_contracts {
-                contract.label = label(contract.address);
-            }
-        }
-
         FilledTransactionsState {
+            labels: self.execution_result.labeled_addresses,
+            chain_labels: self.execution_result.chain_labels,
             args: self.args,
             script_config: self.script_config,
             script_wallets: self.script_wallets,
@@ -699,6 +684,10 @@ pub struct FilledTransactionsState<FEN: FoundryEvmNetwork> {
     pub build_data: LinkedBuildData,
     pub execution_artifacts: ExecutionArtifacts,
     pub transactions: VecDeque<TransactionWithMetadata<FEN::Network>>,
+    /// The script's final address labels, including configured ones.
+    pub labels: AddressHashMap<String>,
+    /// The script's labels by the chain ID active when they were set.
+    pub chain_labels: HashMap<(u64, Address), String>,
 }
 
 impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
@@ -740,6 +729,23 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
             if let Some(tx) = tx.tx_mut().as_unsigned_mut() {
                 // Handles chain specific requirements for unsigned transactions.
                 tx.set_chain_id(provider_info.chain);
+            }
+
+            // Record the final label set on this chain, including labels set after a deployment,
+            // so an address deployed on several chains keeps each chain's label. Otherwise use
+            // the script's last label for the address. Additional contracts are only known after
+            // transaction simulation.
+            let label = |address| {
+                self.chain_labels
+                    .get(&(provider_info.chain, address))
+                    .or_else(|| self.labels.get(&address))
+                    .cloned()
+            };
+            if tx.call_kind.is_any_create() {
+                tx.label = tx.contract_address.and_then(label);
+            }
+            for contract in &mut tx.additional_contracts {
+                contract.label = label(contract.address);
             }
 
             if !self.args.skip_simulation {
