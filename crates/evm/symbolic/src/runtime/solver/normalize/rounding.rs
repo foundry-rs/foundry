@@ -243,7 +243,8 @@ impl ConstraintContext {
         }
         // The same sum compared with `(b + 1) * k`, as written in the source or as
         // `normalize_udiv_comparison` cross-multiplies the quotient form, is at most `b * k`, so
-        // strictly below it once `b + 1` and that product do not wrap.
+        // strictly below it once `b + 1` and that product do not wrap. So is a pro-rata share of
+        // `b * k`.
         if let SymExprKind::BinOp(SymBinOp::Mul, x, y) = large.kind()
             && [(x, y), (y, x)].into_iter().any(|(multiplier, divisor)| {
                 matches!(multiplier.kind(), SymExprKind::BinOp(SymBinOp::Add, bound, one)
@@ -254,7 +255,8 @@ impl ConstraintContext {
                         && self.mul_cannot_overflow_256_cached(
                             multiplier, divisor, intervals, remaining,
                         )
-                        && self.weighted_within(small, divisor, bound, intervals, remaining))
+                        && (self.weighted_within(small, divisor, bound, intervals, remaining)
+                            || self.share_within(small, bound, divisor, intervals, remaining)))
             })
         {
             return Some(true);
@@ -683,6 +685,32 @@ impl ConstraintContext {
                     && self.weights_fit(u, v, divisor, k_min, intervals, remaining)
             },
         )
+    }
+
+    /// Returns whether `(b * k / t) * w <= b * k` for a nonzero `k` once `w <= t`, as for
+    /// Synthetix's `earned`, a balance times a per-token rate. The product is at most
+    /// `(b * k / t) * t`, so it does not wrap, and a zero `t` forces a zero `w`. A zero `k` makes
+    /// both sides of the caller's strict `share < (b + 1) * k` zero, so it is ruled out here.
+    /// The caller's proof that `(b + 1) * k` does not wrap also rules out a wrapped `b * k`.
+    fn share_within(
+        &self,
+        share: &SymExpr,
+        bound: &SymExpr,
+        scale: &SymExpr,
+        intervals: &mut HashMap<SymExpr, Option<WordInterval>>,
+        remaining: &mut usize,
+    ) -> bool {
+        let SymExprKind::BinOp(SymBinOp::Mul, a, b) = share.kind() else { return false };
+        if !self.interval_cached(scale, intervals, remaining).is_some_and(|k| !k.min.is_zero()) {
+            return false;
+        }
+        [(a, b), (b, a)].into_iter().any(|(quotient, weight)| {
+            quotient.udiv_operands().is_some_and(|(dividend, divisor)| {
+                matches!(dividend.kind(), SymExprKind::BinOp(SymBinOp::Mul, x, y)
+                    if (x, y) == (bound, scale) || (x, y) == (scale, bound))
+                    && self.factor_within_divisor(weight, divisor, intervals, remaining)
+            })
+        })
     }
 
     /// Returns whether `a + b` cannot wrap, from value ranges or a checked addition's `b <= ~a`
