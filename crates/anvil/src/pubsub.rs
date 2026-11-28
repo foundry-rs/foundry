@@ -77,10 +77,9 @@ where
                         }
                         let hash = block.hash;
                         let logs = self.storage.with_block_and_receipts(hash, |block, receipts| {
-                            let pruned = block.body.transactions.len() != receipts.len()
-                                || (block.body.transactions.is_empty()
-                                    && block.header.transactions_root()
-                                        != alloy_consensus::constants::EMPTY_ROOT_HASH);
+                            let pruned = block.body.transactions.is_empty()
+                                && block.header.transactions_root()
+                                    != alloy_consensus::constants::EMPTY_ROOT_HASH;
                             (!pruned).then(|| filter_logs(block, receipts, &self.filter))
                         });
                         match logs {
