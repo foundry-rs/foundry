@@ -705,3 +705,14 @@ fn keccak_text(cmd: _) {
         .assert_success()
         .stdout_eq("0x7f8b6b088b6d74c2852fc86c796dca07b44eed6fb3daf5e6b59f7c364db14528\n");
 }
+
+// tests that `cast` rejects empty integer input instead of converting it to zero.
+#[casttest]
+fn rejects_empty_integer(cmd: _) {
+    for subcmd in ["--to-dec", "--to-hex"] {
+        cmd.cast_fuse().args([subcmd, ""]).assert_failure().stderr_eq(str![[r#"
+Error: cannot parse integer from empty string
+
+"#]]);
+    }
+}
