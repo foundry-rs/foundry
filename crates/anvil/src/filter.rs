@@ -227,10 +227,12 @@ where
         while let Poll::Ready(Some(notification)) = self.blocks.poll_next_unpin(cx) {
             match notification {
                 ChainNotification::Block(block) => {
-                    let b = self.storage.block(block.hash);
-                    let receipts = self.storage.receipts(block.hash);
-                    if let (Some(receipts), Some(block)) = (receipts, b) {
-                        logs.extend(filter_logs(block, receipts, &self.filter))
+                    if let Some(block_logs) =
+                        self.storage.with_block_and_receipts(block.hash, |block, receipts| {
+                            filter_logs(block, receipts, &self.filter)
+                        })
+                    {
+                        logs.extend(block_logs)
                     }
                 }
                 ChainNotification::RemovedLogs(removed) => {
