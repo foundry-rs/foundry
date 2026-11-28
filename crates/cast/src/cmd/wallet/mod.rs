@@ -1,7 +1,7 @@
 use crate::cmd::{confirm_continue, rpc_provider};
 use alloy_chains::Chain;
 use alloy_dyn_abi::TypedData;
-use alloy_primitives::{Address, B256, Signature, U256, hex};
+use alloy_primitives::{Address, B256, Bytes, U256, eip191_hash_message, hex};
 use alloy_provider::Provider;
 use alloy_rpc_types::Authorization;
 use alloy_signer::Signer;
@@ -54,6 +54,9 @@ use touch_id::TouchIdArgs;
 
 pub(crate) mod configurable_account;
 use configurable_account::{AssembleArgs, OwnersArgs, UpgradeArgs};
+
+mod signature;
+use signature::ConfigurableSignOpts;
 
 /// CLI arguments for `cast wallet`.
 #[derive(Debug, Parser)]
@@ -210,6 +213,8 @@ pub enum WalletSubcommands {
     /// - cast wallet sign "hello" --private-key $PK
     /// - cast wallet sign --data --from-file typed_data.json --ledger
     /// - cast wallet sign --no-hash --p256 $DIGEST --private-key $P256_KEY
+    /// - cast wallet sign "hello" --tempo.configurable-account $ADDRESS --account owner --rpc-url
+    ///   $RPC
     #[command(verbatim_doc_comment, visible_alias = "s")]
     Sign {
         /// The message, typed data, or hash to sign.
@@ -257,6 +262,12 @@ pub enum WalletSubcommands {
 
         #[command(flatten)]
         browser: BrowserWalletOpts,
+
+        #[command(flatten)]
+        configurable: ConfigurableSignOpts,
+
+        #[command(flatten)]
+        rpc: RpcOpts,
     },
 
     /// EIP-7702 sign authorization.
@@ -310,8 +321,8 @@ pub enum WalletSubcommands {
         /// The data should be formatted as JSON.
         message: String,
 
-        /// The signature to verify.
-        signature: Signature,
+        /// An ECDSA signature or a Tempo configurable account envelope (verified via RPC).
+        signature: Bytes,
 
         /// The address of the message signer.
         #[arg(long, short)]
@@ -328,6 +339,9 @@ pub enum WalletSubcommands {
         /// Treat the message as a raw 32-byte hash and sign it directly without hashing it again.
         #[arg(long, conflicts_with = "data")]
         no_hash: bool,
+
+        #[command(flatten)]
+        rpc: RpcOpts,
     },
 
     /// Import a private key into an encrypted keystore
@@ -679,14 +693,27 @@ impl WalletSubcommands {
                 };
                 print_scalar(hex::encode_prefixed(wallet.public_key()))?;
             }
-            Self::Sign { message, data, from_file, no_hash, p256, wallet, browser } => {
+            Self::Sign {
+                message,
+                data,
+                from_file,
+                no_hash,
+                p256,
+                wallet,
+                browser,
+                configurable,
+                rpc,
+            } => {
                 if browser.browser && no_hash {
                     eyre::bail!("Raw hash signing is not supported with a browser wallet");
                 }
 
                 let typed_data = data.then(|| parse_typed_data(&message, from_file)).transpose()?;
 
-                let (signature, address) = if p256 {
+                let (signature, address) = if let Some(account) = configurable.account {
+                    let hash = message_hash(&message, typed_data.as_ref(), no_hash)?;
+                    (configurable.sign(account, hash, wallet, &rpc).await?.to_vec(), account)
+                } else if p256 {
                     let private_key = match wallet.raw.private_key {
                         _ if wallet.raw.interactive => {
                             rpassword::prompt_password("Enter P-256 private key: ")?
@@ -782,11 +809,10 @@ impl WalletSubcommands {
                     sh_println!("{signed}")?;
                 }
             }
-            Self::Verify { message, signature, address, data, from_file, no_hash } => {
-                let recovered_address =
-                    recover_signer(&message, &signature, data, from_file, no_hash)?;
-
-                if address != recovered_address {
+            Self::Verify { message, signature, address, data, from_file, no_hash, rpc } => {
+                let typed_data = data.then(|| parse_typed_data(&message, from_file)).transpose()?;
+                let hash = message_hash(&message, typed_data.as_ref(), no_hash)?;
+                if !signature::verify(address, hash, signature, &rpc).await? {
                     eyre::bail!("Validation failed. Address {address} did not sign this message.");
                 }
                 if shell::is_json() {
@@ -1516,22 +1542,14 @@ fn ensure_touch_id_sidecar_available(keystore_path: &Path) -> Result<()> {
     }
 }
 
-/// Recovers the signer of `message`, interpreted as EIP-712 typed data (`data`), a prehashed
-/// digest (`no_hash`) or a plain message.
-fn recover_signer(
-    message: &str,
-    signature: &Signature,
-    data: bool,
-    from_file: bool,
-    no_hash: bool,
-) -> Result<Address> {
-    Ok(if data {
-        let typed_data = parse_typed_data(message, from_file)?;
-        signature.recover_address_from_prehash(&typed_data.eip712_signing_hash()?)?
+/// The signing hash of EIP-712 typed data, a raw digest, or an EIP-191 message.
+fn message_hash(message: &str, typed_data: Option<&TypedData>, no_hash: bool) -> Result<B256> {
+    Ok(if let Some(typed_data) = typed_data {
+        typed_data.eip712_signing_hash()?
     } else if no_hash {
-        signature.recover_address_from_prehash(&hex::decode(message)?[..].try_into()?)?
+        message.parse().wrap_err("invalid 32-byte hash")?
     } else {
-        signature.recover_address_from_msg(hex_str_to_bytes(message)?)?
+        eip191_hash_message(hex_str_to_bytes(message)?)
     })
 }
 
@@ -1618,7 +1636,7 @@ fn touch_id_enrollment_failure(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::address;
+    use alloy_primitives::{Signature, address};
 
     fn sidecar_json(version: u32, policy: &str, se_key: &str, sealed_password: &str) -> String {
         json!({
@@ -1641,13 +1659,20 @@ mod tests {
         let prehash = alloy_primitives::keccak256("hello");
         let signature = Signature::from_str("433ec3d37e4f1253df15e2dea412fed8e915737730f74b3dfb1353268f932ef5557c9158e0b34bce39de28d11797b42e9b1acb2749230885fe075aedc3e491a41b").unwrap();
         assert_eq!(
-            recover_signer(&hex::encode(prehash), &signature, false, false, true).unwrap(),
+            signature
+                .recover_address_from_prehash(
+                    &message_hash(&hex::encode(prehash), None, true).unwrap()
+                )
+                .unwrap(),
             address
         );
 
         let typed_data = r#"{"domain":{"name":"Test","version":"1","chainId":1,"verifyingContract":"0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF"},"message":{"value":123},"primaryType":"Data","types":{"Data":[{"name":"value","type":"uint256"}]}}"#;
         let signature = Signature::from_str("0285ff83b93bd01c14e201943af7454fe2bc6c98be707a73888c397d6ae3b0b92f73ca559f81cbb19fe4e0f1dc4105bd7b647c6a84b033057977cf2ec982daf71b").unwrap();
-        assert_eq!(recover_signer(typed_data, &signature, true, false, false).unwrap(), address);
+        let hash =
+            message_hash(typed_data, Some(&parse_typed_data(typed_data, false).unwrap()), false)
+                .unwrap();
+        assert_eq!(signature.recover_address_from_prehash(&hash).unwrap(), address);
     }
 
     #[test]
