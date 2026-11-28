@@ -669,10 +669,28 @@ impl PathState {
                                 .map_or(mask, |bound| bound.min(mask))
                         }),
                     SymBinOp::Shr => {
-                        let left =
-                            self.expr_upper_bound_usize_cached(left, bounds, ordering, remaining)?;
-                        let shift = usize::try_from(right.as_const()?).ok()?;
-                        Some(if shift >= usize::BITS as usize { 0 } else { left >> shift })
+                        let shift = right.as_const()?;
+                        if shift >= U256::from(256) {
+                            return Some(0);
+                        }
+                        let shift = usize::try_from(shift).ok()?;
+                        let shifted_bound = self
+                            .expr_upper_bound_usize_cached(left, bounds, ordering, remaining)
+                            .map(
+                                |left| {
+                                    if shift >= usize::BITS as usize { 0 } else { left >> shift }
+                                },
+                            );
+                        // Any word shifted right by `shift` is below `2^(256 - shift)`, which
+                        // bounds field extractions such as `(x << 48) >>
+                        // 232` whose operand has no bound.
+                        let word_bound = shift
+                            .checked_sub(256 - usize::BITS as usize)
+                            .map(|excess| usize::MAX >> excess);
+                        match (shifted_bound, word_bound) {
+                            (Some(left), Some(right)) => Some(left.min(right)),
+                            (bound @ Some(_), None) | (None, bound) => bound,
+                        }
                     }
                     SymBinOp::Sub => {
                         if let Some(difference) = left
