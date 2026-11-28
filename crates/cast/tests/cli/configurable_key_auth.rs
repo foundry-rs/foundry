@@ -1,15 +1,19 @@
 //! CLI tests for Tempo key authorizations signed by a configurable account's owners (T14,
 //! TIP-1111).
 
+use super::configurable_account::two_of_three;
 use alloy_eips::Decodable2718;
+use alloy_network::{AnyTransactionReceipt, ReceiptResponse};
 use alloy_primitives::{Address, B256, U256, hex};
+use alloy_provider::Provider;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use anvil::NodeConfig;
 use foundry_cli::utils::parse_json;
-use foundry_common::tempo::configurable_account::single_owner_account;
+use foundry_common::tempo::configurable_account::{parse_config, single_owner_account};
 use foundry_evm::core::tempo::PATH_USD_ADDRESS;
 use foundry_test_utils::{TestCommand, assert_data_eq, snapbox::IntoData, util::OutputExt};
+use tempo_contracts::precompiles::{CONFIGURABLE_ACCOUNT_ADDRESS, IConfigurableAccount};
 use tempo_hardfork::TempoHardfork;
 use tempo_primitives::{
     TempoTxEnvelope,
@@ -558,4 +562,134 @@ Error: an access key cannot manage the keys of the account it signs for
         assert_eq!(keychain.user_address, root.address());
         assert_eq!(keychain.key_id(&sent.signature_hash()).unwrap(), account);
     }
+}
+
+/// An access key carries a fresh multisig's two-owner grant in the account's first transaction.
+#[casttest]
+async fn tempo_t14_fresh_multisig_authorizes_first_send(prj: _, cmd: _) {
+    let (api, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T14.into()))).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let (account, config, [alice, bob, _]) = two_of_three();
+    let initial = parse_config(&config).unwrap();
+    let config_path = prj.root().join("config.json");
+    std::fs::write(&config_path, &config).unwrap();
+    let key = PrivateKeySigner::from_bytes(&B256::repeat_byte(0x34)).unwrap();
+    let key_arg = key.address().to_string();
+    let sign = [
+        "key-authorization",
+        "sign",
+        &key_arg,
+        "--chain-id",
+        &CHAIN_ID.to_string(),
+        "--rpc-url",
+        &rpc,
+    ];
+    let account_arg = account.to_string();
+    let alice_args = ["--private-key", &hex::encode_prefixed(alice.to_bytes())];
+    let authorization =
+        KeyAuthorization::unrestricted(CHAIN_ID, SignatureType::Secp256k1, key.address())
+            .with_account(account);
+    let digest = configurable_account_digest(authorization.signature_hash(), account, 0);
+    cmd.cast_fuse()
+        .args(sign)
+        .args(["--tempo.configurable-account", &key_arg])
+        .args(["--tempo.config", &config])
+        .assert_failure()
+        .stderr_eq(format!(
+            "Error: the given configuration does not derive {key_arg}, which has no registered \
+             configuration\n"
+        ));
+    cmd.cast_fuse()
+        .args(sign)
+        .args(["--tempo.configurable-account", &account_arg])
+        .args(alice_args)
+        .args(["--tempo.config", &config])
+        .assert_failure()
+        .stderr_eq(format!(
+            "Error: other owners sign the owner digest with `cast wallet sign --no-hash {digest}`; \
+             pass their signatures with --tempo.owner-signature\n\nContext:\n- the approvals reach \
+             weight 1, but {account} requires 2\n"
+        ));
+    let bob_approval = cmd
+        .cast_fuse()
+        .args([
+            "wallet",
+            "sign",
+            "--no-hash",
+            &digest.to_string(),
+            "--private-key",
+            &hex::encode_prefixed(bob.to_bytes()),
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let signed = cmd
+        .cast_fuse()
+        .args(sign)
+        .args(["--tempo.configurable-account", &account_arg])
+        .args(alice_args)
+        .arg("--tempo.config")
+        .arg(&config_path)
+        .args(["--tempo.owner-signature", bob_approval.trim()])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let store = prj.root().join("tempo");
+    cmd.cast_fuse();
+    cmd.env("TEMPO_HOME", &store);
+    cmd.args([
+        "tempo",
+        "import-access-key",
+        "--account",
+        &account_arg,
+        "--access-key",
+        &hex::encode_prefixed(key.to_bytes()),
+        "--authorization",
+        signed.trim(),
+    ])
+    .assert_success();
+    api.anvil_deal_tip20(account, PATH_USD_ADDRESS, U256::from(1_000_000_000_000u64))
+        .await
+        .unwrap();
+    let contract = IConfigurableAccount::new(CONFIGURABLE_ACCOUNT_ADDRESS, &provider);
+    assert_eq!(contract.getConfigCommitment(account).call().await.unwrap(), B256::ZERO);
+    assert_eq!(provider.get_transaction_count(account).await.unwrap(), 0);
+    assert!(!is_provisioned(&mut cmd, &rpc, account, key.address()));
+    let fee_token = PATH_USD_ADDRESS.to_string();
+    cmd.cast_fuse();
+    cmd.env("TEMPO_HOME", &store);
+    let output = cmd
+        .args(["send", &fee_token, "approve(address,uint256)", &key_arg, "1"])
+        .args([
+            "--from",
+            &account_arg,
+            "--tempo.fee-token",
+            &fee_token,
+            "--rpc-url",
+            &rpc,
+            "--json",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let receipt = parse_json::<AnyTransactionReceipt>(&output).unwrap();
+    assert!(receipt.status());
+    assert_eq!(receipt.from(), account);
+    let raw =
+        provider.get_raw_transaction_by_hash(receipt.transaction_hash()).await.unwrap().unwrap();
+    let TempoTxEnvelope::AA(sent) = TempoTxEnvelope::decode_2718_exact(&raw).unwrap() else {
+        panic!("expected a Tempo transaction");
+    };
+    assert_eq!(sent.tx().nonce, 0);
+    let signer = sent.signature().as_keychain().unwrap();
+    assert_eq!(signer.key_id(&sent.signature_hash()).unwrap(), key.address());
+    let grant = sent.tx().key_authorization.as_ref().unwrap();
+    assert_eq!(grant.authorization(), &authorization);
+    let approvals = grant.signature().as_configurable_account().unwrap();
+    assert_eq!(approvals.config(), &initial);
+    assert_eq!(approvals.signatures().len(), 2);
+    assert!(is_provisioned(&mut cmd, &rpc, account, key.address()));
 }
