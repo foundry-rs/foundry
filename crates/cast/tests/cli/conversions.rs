@@ -420,6 +420,11 @@ fn concat_hex(cmd: _) {
 }
 
 #[casttest]
+fn to_hexdata_normalizes_mixed_case_prefixes(cmd: _) {
+    cmd.args(["to-hexdata", "0XbE:0xEF:CaFe"]).assert_success().stdout_eq("0xbeefcafe\n");
+}
+
+#[casttest]
 fn to_uint256(cmd: _) {
     cmd.cast_fuse()
         .args(["to-uint256", "100"])
