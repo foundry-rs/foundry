@@ -20,6 +20,7 @@ use crate::{
 };
 use alloy_consensus::{Eip658Value, Receipt, Transaction, TransactionEnvelope};
 use alloy_eips::{
+    eip2935::HISTORY_SERVE_WINDOW,
     eip6110::DEPOSIT_REQUEST_TYPE,
     eip7002::WITHDRAWAL_REQUEST_TYPE,
     eip7251::CONSOLIDATION_REQUEST_TYPE,
@@ -78,6 +79,53 @@ pub(crate) struct EthereumBlockTransitions {
     /// beacon chain, such as Scroll, never do.
     pub(crate) eip4788: bool,
     pub(crate) execution_kind: BlockExecutionKind,
+}
+
+/// Length of the EIP-4788 beacon roots ring buffer.
+///
+/// See <https://eips.ethereum.org/EIPS/eip-4788>.
+const BEACON_ROOTS_HISTORY_BUFFER_LENGTH: u64 = 8191;
+
+/// Returns the accounts and storage slots the system calls of a block at `number` and `timestamp`
+/// read, so that a fork can fetch them at once instead of one round trip per read.
+///
+/// The EIP-2935 call stores the parent hash in slot `(number - 1) % 8191`, the EIP-4788 call
+/// stores the timestamp and the root in slots `timestamp % 8191` and `timestamp % 8191 + 8191`,
+/// and the EIP-7002/7251 calls read their excess, count, queue head and queue tail (slots 0 to 3)
+/// after the transactions.
+pub(crate) fn system_call_prefetch_keys(
+    transitions: &EthereumBlockTransitions,
+    number: u64,
+    timestamp: u64,
+) -> (Vec<Address>, Vec<(Address, U256)>) {
+    let mut accounts = Vec::new();
+    let mut slots = Vec::new();
+    if number == 0 {
+        return (accounts, slots);
+    }
+    if transitions.hardfork >= EthereumHardfork::Prague {
+        let slot = (number - 1) % HISTORY_SERVE_WINDOW as u64;
+        accounts.push(HISTORY_STORAGE_ADDRESS);
+        slots.push((HISTORY_STORAGE_ADDRESS, U256::from(slot)));
+    }
+    if transitions.hardfork >= EthereumHardfork::Cancun
+        && transitions.eip4788
+        && transitions.parent_beacon_block_root.is_some()
+    {
+        let slot = timestamp % BEACON_ROOTS_HISTORY_BUFFER_LENGTH;
+        accounts.push(BEACON_ROOTS_ADDRESS);
+        slots.push((BEACON_ROOTS_ADDRESS, U256::from(slot)));
+        slots.push((BEACON_ROOTS_ADDRESS, U256::from(slot + BEACON_ROOTS_HISTORY_BUFFER_LENGTH)));
+    }
+    if transitions.hardfork >= EthereumHardfork::Prague
+        && transitions.execution_kind == BlockExecutionKind::Complete
+    {
+        for address in [WITHDRAWAL_REQUEST_ADDRESS, CONSOLIDATION_REQUEST_ADDRESS] {
+            accounts.push(address);
+            slots.extend((0..4u64).map(|slot| (address, U256::from(slot))));
+        }
+    }
+    (accounts, slots)
 }
 
 /// Outputs of a complete block execution.
@@ -842,5 +890,65 @@ mod tests {
         let request = requests.first().expect("configured deposit should be collected");
         assert_eq!(request[0], DEPOSIT_REQUEST_TYPE);
         assert_eq!(request.len(), 1 + 48 + 32 + 8 + 96 + 8);
+    }
+
+    #[test]
+    fn system_call_prefetch_keys_follow_the_system_contracts() {
+        let transitions = |hardfork, execution_kind| EthereumBlockTransitions {
+            hardfork,
+            deposit_contract_address: Address::ZERO,
+            parent_beacon_block_root: Some(B256::ZERO),
+            eip4788: true,
+            execution_kind,
+        };
+
+        let (accounts, slots) = system_call_prefetch_keys(
+            &transitions(EthereumHardfork::Prague, BlockExecutionKind::Complete),
+            100,
+            8191 * 2 + 5,
+        );
+        assert_eq!(
+            accounts,
+            [
+                HISTORY_STORAGE_ADDRESS,
+                BEACON_ROOTS_ADDRESS,
+                WITHDRAWAL_REQUEST_ADDRESS,
+                CONSOLIDATION_REQUEST_ADDRESS,
+            ]
+        );
+        let mut expected = vec![
+            (HISTORY_STORAGE_ADDRESS, U256::from(99)),
+            (BEACON_ROOTS_ADDRESS, U256::from(5)),
+            (BEACON_ROOTS_ADDRESS, U256::from(5 + 8191)),
+        ];
+        for address in [WITHDRAWAL_REQUEST_ADDRESS, CONSOLIDATION_REQUEST_ADDRESS] {
+            expected.extend((0..4u64).map(|slot| (address, U256::from(slot))));
+        }
+        assert_eq!(slots, expected);
+
+        // A transaction prefix does not drain the request queues.
+        let (_, slots) = system_call_prefetch_keys(
+            &transitions(EthereumHardfork::Prague, BlockExecutionKind::TransactionPrefix),
+            100,
+            5,
+        );
+        assert_eq!(slots.len(), 3);
+
+        // Before Prague there is no block hash history nor request queues.
+        let (accounts, slots) = system_call_prefetch_keys(
+            &transitions(EthereumHardfork::Cancun, BlockExecutionKind::Complete),
+            100,
+            5,
+        );
+        assert_eq!(accounts, [BEACON_ROOTS_ADDRESS]);
+        assert_eq!(slots.len(), 2);
+
+        // The genesis block runs no system calls.
+        let (accounts, slots) = system_call_prefetch_keys(
+            &transitions(EthereumHardfork::Prague, BlockExecutionKind::Complete),
+            0,
+            5,
+        );
+        assert!(accounts.is_empty() && slots.is_empty());
     }
 }

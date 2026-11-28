@@ -60,8 +60,7 @@ impl FsPermissions {
     /// ./out/contracts = read
     /// ./out/contracts = write
     /// ```
-    /// Checking `./out/contracts/MyContract.sol` returns `write` (highest privilege, which also
-    /// grants read access)
+    /// Checking `./out/contracts/MyContract.sol` returns `read-write` (the union of both grants)
     pub fn find_permission(&self, path: &Path) -> Option<FsAccessPermission> {
         let mut max_path_len = 0;
         let mut highest_permission = FsAccessPermission::None;
@@ -77,15 +76,7 @@ impl FsPermissions {
                     highest_permission = perm.access;
                 } else if path_len == max_path_len {
                     // Same path length, keep the highest privilege
-                    highest_permission = match (highest_permission, perm.access) {
-                        (FsAccessPermission::ReadWrite, _)
-                        | (FsAccessPermission::Read, FsAccessPermission::Write)
-                        | (FsAccessPermission::Write, FsAccessPermission::Read) => {
-                            FsAccessPermission::ReadWrite
-                        }
-                        (FsAccessPermission::None, perm) => perm,
-                        (existing_perm, _) => existing_perm,
-                    }
+                    highest_permission = highest_permission.merge(perm.access);
                 }
             }
         }
@@ -206,6 +197,16 @@ impl FsAccessPermission {
             _ => false,
         }
     }
+
+    /// Combines two permissions for the same path into the union of their grants.
+    pub const fn merge(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::None, perm) | (perm, Self::None) => perm,
+            (Self::Read, Self::Read) => Self::Read,
+            (Self::Write, Self::Write) => Self::Write,
+            _ => Self::ReadWrite,
+        }
+    }
 }
 
 impl FromStr for FsAccessPermission {
@@ -309,6 +310,22 @@ mod tests {
         let permission =
             permissions.find_permission(Path::new("./out/contracts/MyContract.sol")).unwrap();
         assert_eq!(FsAccessPermission::ReadWrite, permission);
+    }
+
+    #[test]
+    fn same_path_permissions_merge_in_any_order() {
+        let path = Path::new("./out/contracts/MyContract.sol");
+        let cases = [
+            (PathPermission::read("./out"), PathPermission::read_write("./out")),
+            (PathPermission::write("./out"), PathPermission::read_write("./out")),
+            (PathPermission::read("./out"), PathPermission::write("./out")),
+        ];
+        for (a, b) in cases {
+            for permissions in [vec![a.clone(), b.clone()], vec![b.clone(), a.clone()]] {
+                let permission = FsPermissions::new(permissions).find_permission(path);
+                assert_eq!(Some(FsAccessPermission::ReadWrite), permission, "{a:?} {b:?}");
+            }
+        }
     }
 
     #[test]
