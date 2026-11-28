@@ -1156,7 +1156,7 @@ pub struct ScriptResult<N: Network> {
     pub address: Option<Address>,
     #[serde(skip)]
     pub breakpoints: Breakpoints,
-    /// Labels by the chain ID active when they were set.
+    /// Labels by the chain ID of the RPC fork active when they were set.
     #[serde(skip)]
     pub chain_labels: HashMap<(u64, Address), String>,
     /// How the RPC request failed when a cheatcode error that failure caused is the revert data.

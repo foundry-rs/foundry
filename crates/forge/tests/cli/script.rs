@@ -10587,6 +10587,9 @@ contract DeployPerChain is Script {
         require(address(new Pool()) == shared);
         new Pool();
         vm.stopBroadcast();
+        // A simulated chain ID does not move the label off the RPC's chain.
+        vm.label(address(onA), "Initial");
+        vm.chainId(12345);
         vm.label(address(onA), "OnA");
 
         vm.createSelectFork(vm.envString("CHAIN_B"));

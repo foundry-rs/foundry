@@ -33,8 +33,12 @@ pub struct IgnoredTraces {
 impl Cheatcode for labelCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { account, newLabel } = self;
-        let chain_id = ccx.chain_id();
-        ccx.state.chain_labels.insert((chain_id, *account), newLabel.clone());
+        // Key by the chain the fork's RPC reports, which `vm.chainId` does not change, so it
+        // matches the chain the script broadcasts to.
+        if let Some(fork) = ccx.db().active_fork_info().and_then(|info| info.remote.as_ref()) {
+            let chain_id = fork.context().execution_chain_id;
+            ccx.state.chain_labels.insert((chain_id, *account), newLabel.clone());
+        }
         ccx.state.core.labels.insert(*account, newLabel.clone());
         Ok(Default::default())
     }

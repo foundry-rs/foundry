@@ -753,8 +753,8 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Breakpoints supplied by the `breakpoint` cheatcode.
     /// `char -> (address, pc)`
     pub breakpoints: Breakpoints,
-    /// Labels by the chain ID active when they were set, so a script's broadcasts on each chain
-    /// record the labels set on that chain.
+    /// Labels by the chain ID of the RPC fork active when they were set, so a script's broadcasts
+    /// on each chain record the labels set on that chain.
     pub chain_labels: HashMap<(u64, Address), String>,
 
     /// The revert data of each cheatcode error an RPC failure caused, and how it failed, oldest
