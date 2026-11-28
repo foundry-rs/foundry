@@ -57,6 +57,16 @@ contract ExecuteTransactionStateTest is Test {
         vm.executeTransaction(RAW_TX);
     }
 
+    // The transaction ends at its signature, so the 0xff is not part of it.
+    function test_execute_trailing_bytes() public {
+        vm._expectCheatcodeRevert(
+            "vm.executeTransaction: failed to decode RLP-encoded transaction: unexpected length"
+        );
+        vm.executeTransaction(
+            hex"f860806483030d40946fd0a0cff9a87adf51695b40b4fa267855a8f4c6118025a03ebeabbcfe43c2c982e99b376b5fb6e765059d7f215533c8751218cac99bbd80a00a56cf5c382442466770a756e81272d06005c9e90fb8dbc5b53af499d5aca856ff"
+        );
+    }
+
     // An underfunded sender fails validation without a nonce increment, also inside an isolated
     // call. The sender only needs to afford the value, not the gas.
     function test_execute_underfunded_sender_keeps_nonce() public {
