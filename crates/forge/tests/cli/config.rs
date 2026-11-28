@@ -4650,3 +4650,30 @@ fn virtual_import_alias_does_not_warn_about_metadata_paths(prj: _, cmd: _) {
         );
     }
 }
+
+// Entries for the same path grant the union of their access, in any order.
+#[forgetest_init]
+fn same_path_fs_permissions_merge_in_any_order(prj: _, cmd: _) {
+    prj.add_test(
+        "FsPermissionsMerge.t.sol",
+        r#"
+        import {Test} from "forge-std/Test.sol";
+
+        contract FsPermissionsMergeTest is Test {
+            function testWriteFile() public {
+                vm.writeFile("./data/new.txt", "hello");
+                vm.removeFile("./data/new.txt");
+            }
+        }
+    "#,
+    );
+    std::fs::create_dir_all(prj.root().join("data")).unwrap();
+
+    for permissions in [
+        vec![PathPermission::read("./data"), PathPermission::read_write("./data")],
+        vec![PathPermission::read_write("./data"), PathPermission::read("./data")],
+    ] {
+        prj.update_config(|config| config.fs_permissions = FsPermissions::new(permissions));
+        cmd.forge_fuse().args(["test", "--match-test", "testWriteFile"]).assert_success();
+    }
+}

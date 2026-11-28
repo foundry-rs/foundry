@@ -96,6 +96,18 @@ impl SymExpr {
         let (Some(read), Some(write)) =
             (self.storage_mapping_key(cx), other.storage_mapping_key(cx))
         else {
+            // Nested slots such as struct members `keccak(..) + i` or fixed mapping roots compare
+            // as storage keys. Two bare hash bases, or a large constant that may be a folded entry
+            // with no recorded hash base, stay a word equality.
+            let is_base = |key: Option<(Self, Self)>| {
+                key.is_some_and(|(_, offset)| offset.as_const() == Some(U256::ZERO))
+            };
+            if !(is_base(self.storage_layout_key(cx)) && is_base(other.storage_layout_key(cx)))
+                && !is_unresolved_slot(cx, self, other)
+                && !is_unresolved_slot(cx, other, self)
+            {
+                return self.storage_key_eq(cx, other);
+            }
             return SymBoolExpr::eq(cx, self.clone(), other.clone());
         };
 
@@ -246,6 +258,38 @@ fn storage_mapping_key_eq(
     } else {
         SymBoolExpr::eq(cx, read.key.clone(), write.key.clone())
     }
+}
+
+/// Returns the slot word of every level of the mapping chain of `key`, outermost first.
+fn storage_mapping_slot_words(cx: &mut SymCx, key: &SymExpr) -> Vec<SymExpr> {
+    let mut words = Vec::new();
+    let Some((mut current, _)) = key.storage_layout_key(cx) else { return words };
+    while let Some(bytes) = current.keccak_preimage(cx, 64) {
+        let slot = SymExpr::from_bytes(cx, bytes[32..64].iter().cloned());
+        words.push(slot.clone());
+        let Some((base, _)) = slot.storage_layout_key(cx) else { break };
+        current = base;
+    }
+    words
+}
+
+/// Returns whether `slot` is within `2^64` of the root of the mapping chain of `entry`, a range no
+/// entry of that chain reaches.
+fn is_near_chain_root(cx: &mut SymCx, slot: U256, entry: &SymExpr) -> bool {
+    storage_mapping_slot_words(cx, entry)
+        .last()
+        .and_then(SymExpr::as_const)
+        .is_some_and(|root| slot.abs_diff(root) < U256::ONE << STORAGE_LAYOUT_OFFSET_BITS)
+}
+
+/// Returns whether `slot` is a constant that may be a folded mapping entry `keccak(..) + offset`
+/// with no recorded hash base, other than near the root of the chain of `entry`. Below `2^128`
+/// that needs a hash with 128 leading zero or one bits.
+fn is_unresolved_slot(cx: &mut SymCx, slot: &SymExpr, entry: &SymExpr) -> bool {
+    let Some(slot) = slot.as_const() else { return false };
+    slot >= U256::ONE << 128
+        && cx.concrete_keccak_base(slot, STORAGE_LAYOUT_OFFSET_BITS).is_none()
+        && !is_near_chain_root(cx, slot, entry)
 }
 
 /// Returns the condition under which a storage layout offset is too large to assume no aliasing.

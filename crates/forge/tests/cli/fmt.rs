@@ -114,6 +114,16 @@ Diff in stdin:
 "#]]);
 }
 
+#[forgetest]
+fn fmt_check_mode_raw_stdin(cmd: _) {
+    cmd.args(["fmt", "-", "--check", "--raw"]);
+    cmd.stdin(FORMATTED.as_bytes());
+    cmd.assert_success().stderr_eq("").stdout_eq(FORMATTED);
+
+    cmd.stdin(UNFORMATTED.as_bytes());
+    cmd.assert_code(1).stderr_eq("").stdout_eq(FORMATTED);
+}
+
 // Test that fmt can format a simple contract file
 #[forgetest]
 fn fmt_file_config_parms_first(prj: _, cmd: _) {

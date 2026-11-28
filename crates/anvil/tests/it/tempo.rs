@@ -3155,19 +3155,7 @@ async fn test_tempo_sponsor_without_preference_uses_fallback_fee_tokens() {
         let (api, handle) =
             spawn(NodeConfig::test_tempo().with_hardfork(Some(hardfork.into()))).await;
         let provider = handle.http_provider();
-        let accounts: Vec<Address> = handle.dev_accounts().collect();
-        let sponsor = *accounts.last().unwrap();
-        api.anvil_tempo_create_token(TempoCreateTokenRequest {
-            address: OUSD_ADDRESS,
-            name: "OUSD".into(),
-            symbol: "OUSD".into(),
-            currency: "USD".into(),
-            quote_token: PATH_USD,
-            admin: accounts[0],
-            mint: vec![],
-        })
-        .await
-        .unwrap();
+        let sponsor = handle.dev_accounts().last().unwrap();
         let slot = TipFeeManager::new().user_tokens[sponsor].slot();
         api.anvil_set_storage_at(TIP_FEE_MANAGER_ADDRESS, slot, B256::ZERO).await.unwrap();
         // PathUSD comes first but cannot cover the fee.
