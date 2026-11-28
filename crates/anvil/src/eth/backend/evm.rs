@@ -176,6 +176,13 @@ pub trait AnvilEvmNetwork: FoundryEvmNetwork {
     /// Returns the network spec executing `hardfork`.
     fn spec(hardfork: FoundryHardfork) -> SpecFor<Self>;
 
+    /// Converts an Anvil envelope for execution on this network.
+    fn transaction_envelope(
+        tx: &FoundryTxEnvelope,
+    ) -> Result<TxEnvelopeFor<Self>, BlockchainError> {
+        decode_envelope::<Self>(tx)
+    }
+
     /// Returns the factory configured by `opts`.
     fn factory(_opts: &EvmOptions) -> EvmFactoryFor<Self> {
         Default::default()
@@ -276,6 +283,16 @@ fn override_authorities(tx: &mut evm2::ethereum::LazyTxEip7702, overrides: &[(us
 }
 
 impl AnvilEvmNetwork for EthEvmNetwork {
+    fn transaction_envelope(
+        tx: &FoundryTxEnvelope,
+    ) -> Result<TxEnvelopeFor<Self>, BlockchainError> {
+        // Pooled blob transactions use the wire decoder to validate the sidecar representation.
+        if tx.sidecar().is_some() {
+            return decode_envelope::<Self>(tx);
+        }
+        tx.clone().try_into_eth().or_else(|tx| decode_envelope::<Self>(&tx))
+    }
+
     fn spec(hardfork: FoundryHardfork) -> evm2::SpecId {
         hardfork.into()
     }
@@ -587,7 +604,7 @@ pub fn evm_tx<N: AnvilEvmNetwork>(
     payload: TxPayload,
     cheats: Option<&CheatsManager>,
 ) -> Result<Recovered<TxFor<N>>, BlockchainError> {
-    let envelope = decode_envelope::<N>(tx)?;
+    let envelope = N::transaction_envelope(tx)?;
     let mut evm_tx = TypesFor::<N>::evm_tx(envelope, sender, payload)
         .map_err(|err| BlockchainError::Message(err.to_string()))?;
     if !payload.is_simulated() {
@@ -928,5 +945,24 @@ fn execute_extra<T: evm2::EvmTypes>(
             let input = Bytes::copy_from_slice(evm.message_input(message));
             celo_transfer(evm, &input, gas)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_consensus::{Transaction, TxEip1559};
+    use alloy_primitives::Signature;
+
+    #[test]
+    fn ethereum_execution_shares_transaction_input() {
+        let tx = Signed::new_unhashed(
+            TxEip1559 { input: Bytes::from(vec![0x42; 4096]), ..Default::default() },
+            Signature::new(U256::ONE, U256::ONE, false),
+        );
+        let envelope = FoundryTxEnvelope::Eip1559(tx);
+        let converted = EthEvmNetwork::transaction_envelope(&envelope).unwrap();
+        assert_eq!(converted, decode_envelope::<EthEvmNetwork>(&envelope).unwrap());
+        assert!(std::ptr::eq(converted.input().as_ptr(), envelope.input().as_ptr()));
     }
 }
