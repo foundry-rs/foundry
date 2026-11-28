@@ -3369,6 +3369,37 @@ interface Vm {
     #[cheatcode(group = Crypto)]
     function signCompact(address signer, bytes32 digest) external pure returns (bytes32 r, bytes32 vs);
 
+    /// Signs human-readable typed data `jsonData` following the EIP-712 standard with `privateKey`
+    /// using the secp256k1 curve.
+    ///
+    /// `jsonData` uses the JSON format of `eth_signTypedData_v4`, like `eip712HashTypedData`.
+    #[cheatcode(group = Crypto)]
+    function signTypedData(uint256 privateKey, string calldata jsonData) external pure returns (uint8 v, bytes32 r, bytes32 s);
+
+    /// Signs human-readable typed data `jsonData` following the EIP-712 standard with signer
+    /// provided to script using the secp256k1 curve.
+    ///
+    /// The wallet backend controls what the device displays. The Ledger backend signs the domain
+    /// separator and message hash and may require blind signing.
+    ///
+    /// If `--sender` is provided, the signer with provided address is used, otherwise,
+    /// if exactly one signer is provided to the script, that signer is used.
+    ///
+    /// Raises error if signer passed through `--sender` does not match any unlocked signers or
+    /// if `--sender` is not provided and not exactly one signer is passed to the script.
+    #[cheatcode(group = Crypto)]
+    function signTypedData(string calldata jsonData) external pure returns (uint8 v, bytes32 r, bytes32 s);
+
+    /// Signs human-readable typed data `jsonData` following the EIP-712 standard with signer
+    /// provided to script using the secp256k1 curve.
+    ///
+    /// The wallet backend controls what the device displays. The Ledger backend signs the domain
+    /// separator and message hash and may require blind signing.
+    ///
+    /// Raises error if none of the signers passed into the script have provided address.
+    #[cheatcode(group = Crypto)]
+    function signTypedData(address signer, string calldata jsonData) external pure returns (uint8 v, bytes32 r, bytes32 s);
+
     /// Signs `digest` with `privateKey` using the secp256r1 curve.
     #[cheatcode(group = Crypto)]
     function signP256(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 s);
