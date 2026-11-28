@@ -8789,13 +8789,18 @@ where
                             Err(e) => Err(RpcError::invalid_params(e.to_string()).into()),
                         };
                     }
-                    GethDebugBuiltInTracerType::NoopTracer
-                    | GethDebugBuiltInTracerType::MuxTracer
+                    GethDebugBuiltInTracerType::NoopTracer => {}
+                    GethDebugBuiltInTracerType::MuxTracer
                     | GethDebugBuiltInTracerType::Erc7562Tracer
                     | GethDebugBuiltInTracerType::FlatCallTracer
-                    | GethDebugBuiltInTracerType::StateGasTracer => {}
+                    | GethDebugBuiltInTracerType::StateGasTracer => {
+                        return Err(RpcError::invalid_params("unsupported tracer type").into());
+                    }
                 },
-                GethDebugTracerType::JsTracer(_code) => {}
+                #[cfg(not(feature = "js-tracer"))]
+                GethDebugTracerType::JsTracer(_) => return Err(js_tracer_unsupported()),
+                #[cfg(feature = "js-tracer")]
+                GethDebugTracerType::JsTracer(_) => {}
             }
 
             return Ok(NoopFrame::default().into());
