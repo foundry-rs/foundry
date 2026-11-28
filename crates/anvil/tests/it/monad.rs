@@ -2986,3 +2986,41 @@ async fn monad_bundle_separates_consumption_from_charged_fees() {
     assert_eq!(provider.get_balance(coinbase).await.unwrap(), balance);
     assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 0);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_transfer_receipts_match_charged_fees() {
+    let (api, handle) = spawn(NodeConfig::test_monad()).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    let to = Address::repeat_byte(0x55);
+    let transfer = TransactionRequest::default().from(sender).to(to).value(U256::from(1));
+    assert_eq!(
+        provider.estimate_gas(WithOtherFields::new(transfer.clone())).await.unwrap(),
+        21_000
+    );
+
+    let limits = [100_000, 200_000];
+    let balance = provider.get_balance(sender).await.unwrap();
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let mut hashes = Vec::new();
+    for (nonce, limit) in limits.into_iter().enumerate() {
+        let tx = transfer.clone().nonce(nonce as u64).gas_limit(limit);
+        hashes.push(api.send_transaction(WithOtherFields::new(tx)).await.unwrap());
+    }
+    api.mine_one().await.unwrap();
+
+    // Receipts, cumulative gas, block gas and the sender debit all use the charged limit.
+    let mut cumulative = 0;
+    let mut fees = U256::ZERO;
+    for (hash, limit) in hashes.into_iter().zip(limits) {
+        let receipt = provider.get_transaction_receipt(hash).await.unwrap().unwrap();
+        assert!(receipt.status());
+        cumulative += limit;
+        assert_eq!(receipt.gas_used(), limit);
+        assert_eq!(receipt.cumulative_gas_used(), cumulative);
+        fees += U256::from(receipt.gas_used()) * U256::from(receipt.effective_gas_price());
+    }
+    let block = provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(block.header.gas_used, cumulative);
+    assert_eq!(balance - provider.get_balance(sender).await.unwrap(), fees + U256::from(2));
+}
