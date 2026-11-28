@@ -82,6 +82,7 @@ tracing.workspace = true
 url.workspace = true
 
 [dev-dependencies]
+ephyra.workspace = true
 alloy-serde.workspace = true
 alloy-signer.workspace = true
 alloy-signer-local.workspace = true

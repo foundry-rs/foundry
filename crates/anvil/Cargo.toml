@@ -136,6 +136,7 @@ ctrlc = { version = "3", optional = true }
 fdlimit = { version = "0.3", optional = true }
 
 [dev-dependencies]
+ephyra.workspace = true
 alloy-provider = { workspace = true, features = ["txpool-api"] }
 alloy-pubsub.workspace = true
 rand.workspace = true

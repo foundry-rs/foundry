@@ -80,3 +80,32 @@ fn make_map<const PC_FIRST: bool>(code: &[u8]) -> FxHashMap<u32, u32> {
     map.shrink_to_fit();
     map
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[ephyra::test]
+    fn maps_only_instruction_starts(ops: Vec<(u8, Vec<u8>)>, trim: u8) {
+        let mut code = Vec::new();
+        let mut starts = Vec::new();
+        for (width, data) in ops {
+            let width = usize::from(width % 33);
+            starts.push(code.len());
+            code.push(0x5f + width as u8);
+            code.extend(data.into_iter().chain(std::iter::repeat(0x5b)).take(width));
+            starts.push(code.len());
+            code.push(0x00);
+        }
+        code.truncate(code.len().saturating_sub(usize::from(trim % 34)));
+        starts.retain(|&pc| pc < code.len());
+        let pc_ic = PcIcMap::new(&code);
+        let ic_pc = IcPcMap::new(&code);
+        assert_eq!(pc_ic.len(), starts.len());
+        assert_eq!(ic_pc.len(), starts.len());
+        for (ic, pc) in starts.into_iter().enumerate() {
+            assert_eq!(ic_pc.get(ic as u32), Some(pc as u32));
+            assert_eq!(pc_ic.get(pc as u32), Some(ic as u32));
+        }
+    }
+}
