@@ -2,7 +2,10 @@ use crate::utils::http_provider;
 use alloy_consensus::{SignableTransaction, transaction::TxEip7702};
 use alloy_network::{ReceiptResponse, TransactionBuilder, TxSignerSync};
 use alloy_primitives::{U256, address, bytes};
-use alloy_provider::{PendingTransactionConfig, Provider, ext::TraceApi};
+use alloy_provider::{
+    PendingTransactionConfig, Provider,
+    ext::{TraceApi, TxPoolApi},
+};
 use alloy_rpc_types::{Authorization, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use alloy_signer::{Signature, SignerSync};
@@ -351,4 +354,50 @@ async fn eip7702_access_list_excludes_authorities() {
     let access_list =
         provider.create_access_list(&WithOtherFields::new(tx)).await.unwrap().access_list;
     assert!(access_list.0.is_empty(), "{access_list:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn eip7702_authorizations_promote_queued_transactions() {
+    let node_config = NodeConfig::test()
+        .with_hardfork(Some(EthereumHardfork::Prague.into()))
+        .with_no_mining(true);
+    let (api, handle) = spawn(node_config).await;
+    let provider = http_provider(&handle.http_endpoint());
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let authority = wallets[0].address();
+    let recipient = wallets[2].address();
+    let mut hashes = Vec::new();
+    for nonce in 1..=2 {
+        let tx =
+            TransactionRequest::default().with_from(authority).with_to(recipient).with_nonce(nonce);
+        hashes.push(*provider.send_transaction(WithOtherFields::new(tx)).await.unwrap().tx_hash());
+    }
+
+    // Another account sends authorizations that use nonces 0 and 1.
+    let authorization_list = (0..2)
+        .map(|nonce| {
+            let authorization = Authorization {
+                chain_id: U256::from(31337u64),
+                address: address!("0x000000000000000000000000000000000000dEaD"),
+                nonce,
+            };
+            let signature = wallets[0].sign_hash_sync(&authorization.signature_hash()).unwrap();
+            authorization.into_signed(signature)
+        })
+        .collect();
+    let tx =
+        TransactionRequest { authorization_list: Some(authorization_list), ..Default::default() }
+            .with_from(wallets[1].address())
+            .with_to(recipient);
+    let _ = provider.send_transaction(WithOtherFields::new(tx)).await.unwrap();
+
+    // Nonce 1 becomes stale and nonce 2 becomes ready.
+    api.mine_one().await.unwrap();
+    assert_eq!(provider.get_transaction_count(authority).await.unwrap(), 2);
+    let status = provider.txpool_status().await.unwrap();
+    assert_eq!((status.pending, status.queued), (1, 0));
+
+    api.mine_one().await.unwrap();
+    assert!(provider.get_transaction_by_hash(hashes[0]).await.unwrap().is_none());
+    assert!(provider.get_transaction_receipt(hashes[1]).await.unwrap().unwrap().status());
 }
