@@ -10561,6 +10561,92 @@ contract DeploymentByLabelTest is Test {
     cmd.forge_fuse().args(["test", "--mc", "DeploymentByLabelTest"]).assert_success();
 }
 
+// One key deploys to the same address on two chains, and each chain's run records the label set
+// on that chain, even through another URL for it. Addresses without a label on their chain keep
+// the script's last label, including configured ones.
+#[forgetest_init]
+async fn multichain_fork_broadcast_records_labels_per_chain(prj: _, cmd: _) {
+    prj.add_script(
+        "DeployPerChain.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract Pool {}
+
+contract DeployPerChain is Script {
+    uint256 constant KEY = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
+
+    function run() external {
+        // Set before any fork is active, so it applies to every chain.
+        address shared = vm.computeCreateAddress(vm.addr(KEY), 1);
+        vm.label(shared, "Shared");
+
+        vm.createSelectFork(vm.envString("CHAIN_A"));
+        vm.startBroadcast(KEY);
+        Pool onA = new Pool();
+        require(address(new Pool()) == shared);
+        new Pool();
+        vm.stopBroadcast();
+        // A simulated chain ID does not move the label off the RPC's chain.
+        vm.label(address(onA), "Initial");
+        vm.chainId(12345);
+        vm.label(address(onA), "OnA");
+
+        vm.createSelectFork(vm.envString("CHAIN_B"));
+        vm.startBroadcast(KEY);
+        Pool onB = new Pool();
+        require(address(new Pool()) == shared);
+        vm.stopBroadcast();
+        vm.createSelectFork(vm.envString("CHAIN_B_ALIAS"));
+        vm.label(address(onB), "OnB");
+        require(address(onA) == address(onB));
+    }
+}
+"#,
+    );
+    prj.update_config(|config| {
+        config
+            .tracing
+            .labels
+            .insert(address!("0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"), "Configured".into());
+    });
+    let (_api_a, chain_a) = spawn(NodeConfig::test().with_chain_id(Some(1001u64))).await;
+    let (_api_b, chain_b) = spawn(NodeConfig::test().with_chain_id(Some(1002u64))).await;
+    cmd.env("CHAIN_A", chain_a.http_endpoint());
+    cmd.env("CHAIN_B", chain_b.http_endpoint());
+    cmd.env("CHAIN_B_ALIAS", chain_b.http_endpoint().replace("127.0.0.1", "localhost"));
+    cmd.args(["script", "DeployPerChain", "--broadcast"]).assert_success();
+
+    let run: Value = foundry_common::fs::read_json_file(
+        &prj.root().join("broadcast/multi/DeployPerChain.s.sol-latest/run.json"),
+    )
+    .unwrap();
+    let labels = run["deployments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|deployment| {
+            let labels = deployment["transactions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|tx| tx["label"].clone())
+                .collect::<Vec<_>>();
+            (deployment["chain"].clone(), labels)
+        })
+        .collect::<Vec<_>>();
+    assert_data_eq!(
+        serde_json::to_string(&labels).unwrap().is_json(),
+        str![[r#"
+[
+  [1001, ["OnA", "Shared", "Configured"]],
+  [1002, ["OnB", "Shared"]]
+]
+"#]]
+        .is_json(),
+    );
+}
+
 // A local proxy cannot grant forked code cheatcode access, and a rejected call must not interrupt
 // the script's intended broadcast.
 #[forgetest]

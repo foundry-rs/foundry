@@ -197,6 +197,7 @@ impl<FEN: FoundryEvmNetwork> PreExecutionState<FEN> {
             setup_result.returned = script_result.returned;
             setup_result.exit_reason = script_result.exit_reason;
             setup_result.breakpoints = script_result.breakpoints;
+            setup_result.chain_labels = script_result.chain_labels;
             setup_result.rpc_failure = script_result.rpc_failure;
 
             match (&mut setup_result.transactions, script_result.transactions) {

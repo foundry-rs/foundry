@@ -1156,6 +1156,9 @@ pub struct ScriptResult<N: Network> {
     pub address: Option<Address>,
     #[serde(skip)]
     pub breakpoints: Breakpoints,
+    /// Labels by the chain ID of the RPC fork active when they were set.
+    #[serde(skip)]
+    pub chain_labels: HashMap<(u64, Address), String>,
     /// How the RPC request failed when a cheatcode error that failure caused is the revert data.
     #[serde(skip)]
     pub rpc_failure: Option<RpcFailure>,
@@ -1175,6 +1178,7 @@ impl<N: Network> Default for ScriptResult<N> {
             exit_reason: Default::default(),
             address: Default::default(),
             breakpoints: Default::default(),
+            chain_labels: Default::default(),
             rpc_failure: Default::default(),
         }
     }
