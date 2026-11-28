@@ -118,6 +118,7 @@ windows-sys = { version = "0.61", features = [
 rexpect.workspace = true
 
 [dev-dependencies]
+ephyra.workspace = true
 alloy-hardforks.workspace = true
 alloy-serde.workspace = true
 axum.workspace = true

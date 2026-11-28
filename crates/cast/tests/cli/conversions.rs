@@ -244,6 +244,14 @@ fn format_units(cmd: _) {
     cmd.cast_fuse().args(["format-units", "1000000000000", "12"]).assert_success().stdout_eq("1\n");
 }
 
+#[casttest]
+fn format_negative_at_max_unit(cmd: _) {
+    let expected = format!("-0.{}1\n", "0".repeat(76));
+    for command in ["format-units", "from-wei"] {
+        cmd.cast_fuse().args([command, "--", "-1", "77"]).assert_success().stdout_eq(&expected);
+    }
+}
+
 // <https://github.com/foundry-rs/foundry/issues> negative wei/unit values must round-trip
 // through from-wei/format-units instead of silently wrapping to U256::MAX-derived garbage.
 #[casttest]
