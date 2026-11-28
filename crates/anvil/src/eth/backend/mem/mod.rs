@@ -1669,7 +1669,8 @@ impl<N: Network> Backend<N> {
     #[cfg(not(feature = "monad"))]
     fn active_monad_context_before_mined_transaction(
         &self,
-        _block: &Block,
+        _parent_hash: B256,
+        _transactions: &[MaybeImpersonatedTransaction<FoundryTxEnvelope>],
         _current_tx_index: usize,
     ) -> Result<Option<MonadReplayContext>, BlockchainError> {
         Ok(None)
@@ -6634,26 +6635,46 @@ where
         parent_beacon_block_root: Option<B256>,
         block_access_list: Option<&BlockAccessList>,
     ) -> BlockInfo<N> {
+        let header = self.executed_block_header(
+            evm_env,
+            parent_hash,
+            number,
+            &block_result,
+            parent_beacon_block_root,
+            block_access_list,
+        );
+        self.finish_block_info(
+            header,
+            state_root,
+            block_result.receipts,
+            transactions,
+            transaction_infos,
+        )
+    }
+
+    /// Builds the header fields known after execution, before computing the trie roots.
+    fn executed_block_header(
+        &self,
+        evm_env: &EvmEnv,
+        parent_hash: B256,
+        number: u64,
+        block_result: &BlockExecutionResult,
+        parent_beacon_block_root: Option<B256>,
+        block_access_list: Option<&BlockAccessList>,
+    ) -> Header {
         let spec_id = *evm_env.spec_id();
         let is_shanghai = spec_id >= SpecId::SHANGHAI;
         let is_cancun = spec_id >= SpecId::CANCUN;
         let is_prague = spec_id >= SpecId::PRAGUE;
 
-        let receipts_root = calculate_receipt_root(&block_result.receipts);
-        let cumulative_blob_gas_used = is_cancun.then_some(block_result.blob_gas_used);
-        let bloom = block_result.receipts.iter().fold(Bloom::default(), |mut b, r| {
-            b.accrue_bloom(r.logs_bloom());
-            b
-        });
-
-        let header = Header {
+        Header {
             parent_hash,
             ommers_hash: Default::default(),
             beneficiary: evm_env.block_env.beneficiary,
-            state_root,
+            state_root: Default::default(),
             transactions_root: Default::default(),
-            receipts_root,
-            logs_bloom: bloom,
+            receipts_root: Default::default(),
+            logs_bloom: Default::default(),
             difficulty: evm_env.block_env.difficulty,
             number,
             gas_limit: evm_env.block_env.gas_limit,
@@ -6665,17 +6686,33 @@ where
             base_fee_per_gas: (spec_id >= SpecId::LONDON).then_some(evm_env.block_env.basefee),
             parent_beacon_block_root: is_cancun
                 .then(|| parent_beacon_block_root.unwrap_or_default()),
-            blob_gas_used: cumulative_blob_gas_used,
+            blob_gas_used: is_cancun.then_some(block_result.blob_gas_used),
             excess_blob_gas: if is_cancun { evm_env.block_env.blob_excess_gas() } else { None },
             withdrawals_root: is_shanghai.then_some(EMPTY_WITHDRAWALS),
             requests_hash: is_prague.then(|| block_result.requests.requests_hash()),
             block_access_list_hash: block_access_list
                 .map(|bal| compute_block_access_list_hash(bal.as_slice())),
             slot_number: None,
-        };
+        }
+    }
+
+    /// Computes the roots and logs bloom for a block that will be returned or published.
+    fn finish_block_info(
+        &self,
+        mut header: Header,
+        state_root: B256,
+        receipts: Vec<FoundryReceiptEnvelope>,
+        transactions: Vec<MaybeImpersonatedTransaction<FoundryTxEnvelope>>,
+        transaction_infos: Vec<TransactionInfo>,
+    ) -> BlockInfo<N> {
+        header.state_root = state_root;
+        header.receipts_root = calculate_receipt_root(&receipts);
+        for receipt in &receipts {
+            header.logs_bloom.accrue_bloom(receipt.logs_bloom());
+        }
 
         let block = create_block(foundry_header(self.fees.tempo_hardfork(), header), transactions);
-        BlockInfo { block, transactions: transaction_infos, receipts: block_result.receipts }
+        BlockInfo { block, transactions: transaction_infos, receipts }
     }
 
     async fn do_mine_block(
@@ -7150,6 +7187,29 @@ where
     where
         F: FnOnce(Box<dyn MaybeFullDatabase + '_>, BlockInfo<N>) -> T,
     {
+        self.with_pending_execution(pool_transactions, |state, header, pool, receipts| {
+            let root = state.maybe_state_root().unwrap_or_default();
+            let block = self.finish_block_info(header, root, receipts, pool.txs, pool.tx_info);
+            f(Box::new(state), block)
+        })
+        .await
+    }
+
+    /// Executes and commits the pending transactions to a disposable overlay. State reads only
+    /// need its environment; consumers returning a block also compute its commitments.
+    async fn with_pending_execution<F, T>(
+        &self,
+        pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
+        f: F,
+    ) -> Result<T, BlockchainError>
+    where
+        F: FnOnce(
+            CacheDB<&dyn Db>,
+            Header,
+            ExecutedPoolTransactions<FoundryTxEnvelope>,
+            Vec<FoundryReceiptEnvelope>,
+        ) -> T,
+    {
         let db = self.db.read().await;
         let evm_env = self.next_evm_env(&**db)?;
 
@@ -7213,20 +7273,15 @@ where
 
         cache_db.commit(&state);
 
-        let state_root = cache_db.maybe_state_root().unwrap_or_default();
-        let block_info = self.build_block_info(
+        let header = self.executed_block_header(
             &evm_env,
             parent_hash,
             block_number,
-            state_root,
-            block_result,
-            pool_result.txs,
-            pool_result.tx_info,
+            &block_result,
             parent_beacon_block_root,
             None,
         );
-
-        Ok(f(Box::new(cache_db), block_info))
+        Ok(f(cache_db, header, pool_result, block_result.receipts))
     }
 
     /// Returns the account used to sponsor Tempo fee-payer requests handled by this node.
@@ -7478,7 +7533,11 @@ where
                 tracing_options,
                 state_overrides,
                 block_overrides,
-                self.active_monad_context_before_mined_transaction(block, tx_index)?,
+                self.active_monad_context_before_mined_transaction(
+                    block.header.parent_hash,
+                    &block.body.transactions,
+                    tx_index,
+                )?,
                 Some((evm_env, hardfork)),
             )
         };
@@ -7681,9 +7740,8 @@ where
         let block_number = match block_request {
             Some(BlockRequest::Pending(pool_transactions)) => {
                 let result = self
-                    .with_pending_block(pool_transactions, |state, block| {
-                        let block = block.block;
-                        f(state, self.block_env_from_header(&block.header))
+                    .with_pending_execution(pool_transactions, |state, header, _, _| {
+                        f(Box::new(state), self.block_env_from_header(&header))
                     })
                     .await?;
                 return Ok(result);
@@ -7772,13 +7830,13 @@ where
         let block_number = match block_request {
             Some(BlockRequest::Pending(pool_transactions)) => {
                 return self
-                    .with_pending_block(pool_transactions, |state, block_info| {
+                    .with_pending_execution(pool_transactions, |state, header, pool, _| {
                         let context = self.active_monad_context_before_mined_transaction(
-                            &block_info.block,
-                            block_info.block.body.transactions.len(),
+                            header.parent_hash,
+                            &pool.txs,
+                            pool.txs.len(),
                         )?;
-                        let block_env = self.block_env_from_header(&block_info.block.header);
-                        f(state, block_env, context)
+                        f(Box::new(state), self.block_env_from_header(&header), context)
                     })
                     .await?;
             }
@@ -10412,7 +10470,8 @@ impl Backend<FoundryNetwork> {
                     let optimism_jovian =
                         self.is_optimism_jovian_at_header(header, parent_fees.optimism_jovian);
                     let monad_context = self.active_monad_context_before_mined_transaction(
-                        &block.block,
+                        block.block.header.parent_hash,
+                        &block.block.body.transactions,
                         block.block.body.transactions.len(),
                     )?;
                     #[cfg(feature = "monad")]

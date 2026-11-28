@@ -334,7 +334,11 @@ async fn can_get_pending_block() {
 
     let tx = TransactionRequest::default().with_from(from).with_to(to).with_value(U256::from(100));
 
+    let balance = provider.get_balance(to).await.unwrap();
     let pending = provider.send_transaction(tx.clone()).await.unwrap().register().await.unwrap();
+
+    assert_eq!(provider.get_balance(to).pending().await.unwrap(), balance + U256::from(100));
+    assert_eq!(provider.get_balance(to).await.unwrap(), balance);
 
     let num = provider.get_block_number().await.unwrap();
     assert_eq!(num, 0);
