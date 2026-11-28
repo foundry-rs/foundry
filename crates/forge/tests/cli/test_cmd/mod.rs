@@ -9659,3 +9659,20 @@ contract SecretTest {
         .is_json(),
     );
 }
+
+#[forgetest]
+fn verbosity_cheatcode_reflects_cli_flags(prj: _, cmd: _) {
+    prj.add_test(
+        "Verbosity.t.sol",
+        r#"
+        interface Vm { function verbosity() external view returns (uint8); }
+        contract VerbosityTest {
+            Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+            function testDefault() public view { require(vm.verbosity() == 0); }
+            function testVerbose() public view { require(vm.verbosity() == 3); }
+        }
+    "#,
+    );
+    cmd.args(["test", "--match-test", "testDefault"]).assert_success();
+    cmd.forge_fuse().args(["test", "-vvv", "--match-test", "testVerbose"]).assert_success();
+}

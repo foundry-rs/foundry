@@ -1,5 +1,5 @@
 use foundry_cheatcodes_spec::Vm::*;
-use foundry_common::{contracts::ContractsByArtifact, version::SEMVER_VERSION};
+use foundry_common::{contracts::ContractsByArtifact, shell, version::SEMVER_VERSION};
 use foundry_evm::{
     core::{backend::GLOBAL_FAIL_SLOT, decode::ASSERTION_FAILED_PREFIX},
     inspectors::cheatcodes::current_execution_context,
@@ -2528,6 +2528,10 @@ impl SymbolicExecutor {
             getFoundryVersionCall::SELECTOR => Ok(CheatcodeOutcome::ContinueData(
                 abi_concrete_bytes_return(&mut self.cx, SEMVER_VERSION.as_bytes()),
             )),
+            verbosityCall::SELECTOR => {
+                let level = SymExpr::constant(&mut self.cx, U256::from(shell::verbosity()));
+                Ok(CheatcodeOutcome::Continue(vec![level]))
+            }
             projectRootCall::SELECTOR => {
                 self.stateless_retry_safe = false;
                 let root = std::env::current_dir()

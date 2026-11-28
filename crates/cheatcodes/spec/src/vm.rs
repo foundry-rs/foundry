@@ -1298,6 +1298,12 @@ interface Vm {
     #[cheatcode(group = Testing, safety = Safe)]
     function getFoundryVersion() external view returns (string memory version);
 
+    /// Returns the current forge verbosity level (`-v` / `-vv` / …).
+    /// Matches `foundry_common::shell::verbosity()`: higher values enable more detail
+    /// (traces, stack dumps, etc.). Quiet mode does not change this value.
+    #[cheatcode(group = Testing, safety = Safe)]
+    function verbosity() external view returns (uint8 level);
+
     /// Returns the RPC url for the given alias.
     #[cheatcode(group = Testing, safety = Safe)]
     function rpcUrl(string calldata rpcAlias) external view returns (string memory json);

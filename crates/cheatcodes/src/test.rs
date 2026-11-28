@@ -4,7 +4,7 @@ use crate::{Cheatcode, Cheatcodes, CheatcodesCore, CheatsCtxt, Result, Vm::*};
 use alloy_chains::Chain as AlloyChain;
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolValue;
-use foundry_common::version::SEMVER_VERSION;
+use foundry_common::{shell, version::SEMVER_VERSION};
 use foundry_evm_core::{constants::MAGIC_SKIP, evm::FoundryEvmNetwork};
 use std::str::FromStr;
 
@@ -31,6 +31,13 @@ impl Cheatcode for getFoundryVersionCall {
     fn apply_context_free(&self) -> Result {
         let Self {} = self;
         Ok(SEMVER_VERSION.abi_encode())
+    }
+}
+
+impl Cheatcode for verbosityCall {
+    fn apply_context_free(&self) -> Result {
+        let Self {} = self;
+        Ok(U256::from(shell::verbosity()).abi_encode())
     }
 }
 
