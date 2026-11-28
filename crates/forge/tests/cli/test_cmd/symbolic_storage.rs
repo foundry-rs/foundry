@@ -6,7 +6,9 @@ use foundry_test_utils::{
     util::{OTHER_SOLC_VERSION, OutputExt},
 };
 
-use super::symbolic_helpers::{assert_symbolic, assert_symbolic_witness, z3_available};
+use super::symbolic_helpers::{
+    assert_symbolic, assert_symbolic_witness, json_test_result, read_artifact_ref, z3_available,
+};
 use crate::skip_unless_z3;
 
 #[forgetest_init]
@@ -446,6 +448,147 @@ Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 
     assert!(!stdout.contains("symbolic SLOAD key"), "{stdout}");
     assert!(!stdout.contains("symbolic Halmos compatibility cheatcode"), "{stdout}");
+}
+
+// Two terms can name the same arbitrary slot: a pranked `msg.sender` key is the
+// masked caller word, while solar, once its ABI decoder checked the high bits,
+// hashes an address argument word as is. Both must read the same value, under
+// `vm.setArbitraryStorage` and under the generic layout, while a wrong balance
+// claim still replays as a counterexample.
+#[forgetest_init]
+fn symbolic_arbitrary_storage_relates_equal_symbolic_keys(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_arbitrary_storage_relates_equal_symbolic_keys");
+
+    prj.add_test(
+        "SymbolicEqualKeys.t.sol",
+        r#"
+interface Vm {
+    function assume(bool condition) external pure;
+    function prank(address sender) external;
+    function setArbitraryStorage(address target) external;
+    function snapshotState() external returns (uint256);
+    function revertToState(uint256 id) external returns (bool);
+}
+
+contract Balances {
+    mapping(address => uint256) balances;
+
+    function sub(uint256 value) external {
+        balances[msg.sender] -= value;
+    }
+
+    function balanceOfWord(uint256 account) external view returns (uint256 value) {
+        assembly {
+            mstore(0, account)
+            mstore(0x20, 0)
+            value := sload(keccak256(0, 0x40))
+        }
+    }
+
+    function revertWithSecond(uint256 first, uint256 second) external view {
+        this.balanceOfWord(first);
+        uint256 value = this.balanceOfWord(second);
+        assembly {
+            mstore(0, value)
+            revert(0, 0x20)
+        }
+    }
+}
+
+contract SymbolicEqualKeys {
+    Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+    Balances immutable arbitrary = new Balances();
+    Balances immutable generic = new Balances();
+
+    function setUp() public {
+        vm.setArbitraryStorage(address(arbitrary));
+    }
+
+    function subtract(Balances balances, uint256 account, uint256 value) internal returns (uint256, uint256) {
+        vm.assume(account < 1 << 160);
+        uint256 balance = balances.balanceOfWord(account);
+        vm.assume(value != 0 && value <= balance);
+        vm.prank(address(uint160(account)));
+        balances.sub(value);
+        return (balance, balances.balanceOfWord(account));
+    }
+
+    function checkSenderKey(uint256 account, uint256 value) public {
+        (uint256 before, uint256 afterSub) = subtract(arbitrary, account, value);
+        assert(afterSub == before - value);
+    }
+
+    function checkSenderKeyWrong(uint256 account, uint256 value) public {
+        (uint256 before, uint256 afterSub) = subtract(arbitrary, account, value);
+        assert(afterSub == before);
+    }
+
+    function checkKeyAfterRevertedCall(uint256 first, uint256 second) public {
+        uint256 seen;
+        try arbitrary.revertWithSecond(first, second) {} catch (bytes memory data) {
+            seen = abi.decode(data, (uint256));
+        }
+        assert(arbitrary.balanceOfWord(second) == seen);
+    }
+
+    function checkKeyAfterRevertToState(uint256 first, uint256 second) public {
+        uint256 id = vm.snapshotState();
+        arbitrary.balanceOfWord(first);
+        uint256 seen = arbitrary.balanceOfWord(second);
+        vm.revertToState(id);
+        assert(arbitrary.balanceOfWord(second) == seen);
+    }
+
+    /// forge-config: default.symbolic.storage_layout = "generic"
+    function checkSenderKeyGeneric(uint256 account, uint256 value) public {
+        (uint256 before, uint256 afterSub) = subtract(generic, account, value);
+        assert(afterSub == before - value);
+    }
+
+    /// forge-config: default.symbolic.storage_layout = "generic"
+    function checkSenderKeyGenericWrong(uint256 account, uint256 value) public {
+        (uint256 before, uint256 afterSub) = subtract(generic, account, value);
+        assert(afterSub == before);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicEqualKeys"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 6 tests for test/SymbolicEqualKeys.t.sol:SymbolicEqualKeys
+[PASS] checkKeyAfterRevertToState(uint256,uint256) ([METRICS])
+[PASS] checkKeyAfterRevertedCall(uint256,uint256) ([METRICS])
+[PASS] checkSenderKey(uint256,uint256) ([METRICS])
+[PASS] checkSenderKeyGeneric(uint256,uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: [..]] checkSenderKeyGenericWrong(uint256,uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: [..]] checkSenderKeyWrong(uint256,uint256) ([METRICS])
+Suite result: FAILED. 4 passed; 2 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    // The generic counterexample only fails with the storage it read, so its artifact carries
+    // that storage and replays from it.
+    let output = cmd
+        .forge_fuse()
+        .args(["test", "--symbolic", "--json", "--match-test", "checkSenderKeyGenericWrong"])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkSenderKeyGenericWrong(uint256,uint256)");
+    let symbolic = &result["symbolic"];
+    assert_eq!(symbolic["replay"]["status"], "confirmed", "{result}");
+    let artifact = read_artifact_ref(&symbolic["artifact"]);
+    assert!(!artifact["storage"].as_array().is_none_or(Vec::is_empty), "{artifact}");
+    let artifact_path = symbolic["artifact"]["path"].as_str().unwrap().to_string();
+    cmd.forge_fuse().args(["test", "--replay-symbolic-artifact", &artifact_path]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: panic: assertion failed (0x01); counterexample: [..]] checkSenderKeyGenericWrong(uint256,uint256) ([GAS])
+...
+"#]]);
 }
 
 // Reading an unwritten mapping at a symbolic key must yield a fresh symbolic
@@ -1626,6 +1769,19 @@ contract SymbolicStorageReplay {
         if (x == 42 || y == 99) revert("ordinary revert");
     }
 
+    // The copy reads the value its source drew for the slot, so the assertion cannot fail.
+    function checkCopyAfterSourceKeys(uint256 a, uint256 b) public view {
+        copySource.values(a);
+        uint256 value = copySource.values(b);
+        assert(copyTarget.values(b) == value);
+    }
+
+    // The same holds when the copy reads the slot through another key.
+    function checkCopyCrossKey(uint256 a, uint256 b) public view {
+        uint256 value = copySource.values(a);
+        if (a == b) assert(copyTarget.values(b) == value);
+    }
+
     // The first read of the copy writes its value back to the source.
     function checkCopyWriteBack() public {
         copySource.set(5);
@@ -1650,7 +1806,9 @@ contract SymbolicStorageReplay {
 
     assert_symbolic_witness(cmd.args(["test", "--symbolic"])).failure().stdout_eq(str![[r#"
 ...
-[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkAliased(uint256,uint256) ([METRICS])
+[PASS] checkAliased(uint256,uint256) ([METRICS])
+[PASS] checkCopyAfterSourceKeys(uint256,uint256) ([METRICS])
+[PASS] checkCopyCrossKey(uint256,uint256) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkCopyWriteBack() ([METRICS])
 [FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkLoad() ([METRICS])
 [FAIL: assertion failed: [..]; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMint(uint256,address) ([METRICS])
