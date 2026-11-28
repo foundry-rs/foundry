@@ -6,6 +6,7 @@ use foundry_evm::{
 };
 
 use super::{
+    CallKind,
     create::{runtime_exceeds_code_size_limit, runtime_has_rejected_prefix},
     *,
 };
