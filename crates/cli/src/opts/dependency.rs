@@ -122,7 +122,8 @@ impl FromStr for Dependency {
             // treat everything after the last `@` as the version tag there's still the
             // case that the user tries to use `@<org>/<project>`, so we need to check that the
             // `tag` does not contain a slash
-            let mut split = url_with_version.rsplit(VERSION_SEPARATOR);
+            // Split only once so an `@` in the URL itself, like `git@` or a token, is kept.
+            let mut split = url_with_version.rsplitn(2, VERSION_SEPARATOR);
 
             let mut url = url_with_version.as_str();
 
@@ -200,6 +201,18 @@ mod tests {
             (
                 "git@github.com:gakonst/lootloose@tag=v1",
                 "git@github.com:gakonst/lootloose",
+                Some("v1"),
+                None,
+            ),
+            (
+                "git@github.com:gakonst/lootloose@v1",
+                "git@github.com:gakonst/lootloose",
+                Some("v1"),
+                None,
+            ),
+            (
+                "https://token@github.com/gakonst/lootloose@v1",
+                "https://token@github.com/gakonst/lootloose",
                 Some("v1"),
                 None,
             ),

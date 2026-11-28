@@ -1,6 +1,7 @@
 //! Implementations of [`Crypto`](spec::Group::Crypto) Cheatcodes.
 
 use crate::{Cheatcode, CheatcodesCore, Error, Result, Vm::*};
+use alloy_dyn_abi::TypedData;
 use alloy_primitives::{Address, B256, U256, keccak256};
 use alloy_signer::{Signer, SignerSync};
 use alloy_signer_local::{
@@ -15,6 +16,7 @@ use foundry_common::{
     tempo::configurable_account::{self, p256_public_key, quorum, sign_p256_low_s},
     wallet::{derive_private_key, derive_private_key_with_language},
 };
+use foundry_wallets::WalletSigner;
 use k256::{
     AffinePoint, EncodedPoint, FieldBytes, FieldElement, ProjectivePoint, Scalar,
     ecdsa::{SigningKey, hazmat},
@@ -290,6 +292,31 @@ impl Cheatcode for signCompact_3Call {
         let Self { signer, digest } = self;
         let sig = sign_with_wallet(state, Some(*signer), digest)?;
         Ok(encode_compact_sig(sig))
+    }
+}
+
+impl Cheatcode for signTypedData_0Call {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
+        let Self { privateKey, jsonData } = self;
+        let digest = serde_json::from_str::<TypedData>(jsonData)?.eip712_signing_hash()?;
+        let sig = sign_cached(state, privateKey, &digest)?;
+        Ok(encode_full_sig(sig))
+    }
+}
+
+impl Cheatcode for signTypedData_1Call {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
+        let Self { jsonData } = self;
+        let sig = sign_typed_data_with_wallet(state, None, jsonData)?;
+        Ok(encode_full_sig(sig))
+    }
+}
+
+impl Cheatcode for signTypedData_2Call {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
+        let Self { signer, jsonData } = self;
+        let sig = sign_typed_data_with_wallet(state, Some(*signer), jsonData)?;
+        Ok(encode_full_sig(sig))
     }
 }
 
@@ -670,6 +697,39 @@ fn sign_with_wallet(
     signer: Option<Address>,
     digest: &B256,
 ) -> Result<alloy_primitives::Signature> {
+    with_wallet_signer(state, signer, "vm.sign(signer, digest)", |signer, wallet| {
+        let sig = foundry_common::block_on(wallet.sign_hash(digest))?;
+        debug_assert_eq!(sig.recover_address_from_prehash(digest)?, signer);
+        Ok(sig)
+    })
+}
+
+fn sign_typed_data_with_wallet(
+    state: &mut CheatcodesCore,
+    signer: Option<Address>,
+    json_data: &str,
+) -> Result<alloy_primitives::Signature> {
+    let typed_data = serde_json::from_str::<TypedData>(json_data)?;
+    with_wallet_signer(state, signer, "vm.signTypedData(signer, jsonData)", |signer, wallet| {
+        let sig = foundry_common::block_on(wallet.sign_dynamic_typed_data(&typed_data))?;
+        debug_assert_eq!(
+            sig.recover_address_from_prehash(&typed_data.eip712_signing_hash()?)?,
+            signer
+        );
+        Ok(sig)
+    })
+}
+
+/// Calls `f` with the script wallet that signs for `signer`, or for the default signer of the
+/// script if `signer` is `None`.
+///
+/// `signer_overload` is the cheatcode overload suggested when the default signer is ambiguous.
+fn with_wallet_signer<R>(
+    state: &mut CheatcodesCore,
+    signer: Option<Address>,
+    signer_overload: &str,
+    f: impl FnOnce(Address, &WalletSigner) -> Result<R>,
+) -> Result<R> {
     let mut wallets = state.wallets().inner.lock();
     // A sender without a key of its own signs with its owner's key.
     let default_signer =
@@ -687,7 +747,7 @@ fn sign_with_wallet(
         *signers.keys().next().unwrap()
     } else {
         bail!(
-            "could not determine signer, there are multiple signers available use vm.sign(signer, digest) to specify one"
+            "could not determine signer, there are multiple signers available use {signer_overload} to specify one"
         );
     };
 
@@ -695,9 +755,7 @@ fn sign_with_wallet(
         .get(&signer)
         .ok_or_else(|| fmt_err!("signer with address {signer} is not available"))?;
 
-    let sig = foundry_common::block_on(wallet.sign_hash(digest))?;
-    debug_assert_eq!(sig.recover_address_from_prehash(digest)?, signer);
-    Ok(sig)
+    f(signer, wallet)
 }
 
 fn sign_p256(private_key: &U256, digest: &B256) -> Result {

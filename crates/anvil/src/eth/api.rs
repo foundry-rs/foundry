@@ -24,7 +24,7 @@ use crate::{
         },
         fees::{
             FeeDetails, FeeHistoryCache, FeeHistoryCacheItem, MIN_SUGGESTED_PRIORITY_FEE,
-            REWARD_PERCENTILE_RESOLUTION, create_fee_history_cache_item,
+            create_fee_history_cache_item,
         },
         macros::node_info,
         miner::FixedBlockTimeMiner,
@@ -301,7 +301,7 @@ impl<N: Network> EthApi<N> {
             .backend
             .mined_block_hash_by_number(block_number)
             .and_then(|hash| cache.get(&block_number).filter(|item| item.block_hash == hash))
-            .and_then(|item| item.rewards.iter().copied().min());
+            .and_then(|item| item.transactions.first().map(|&(_, reward)| reward));
 
         latest_tip
             .or_else(|| {
@@ -310,7 +310,7 @@ impl<N: Network> EthApi<N> {
                     .filter(|(number, item)| {
                         self.backend.mined_block_hash_by_number(**number) == Some(item.block_hash)
                     })
-                    .flat_map(|(_, item)| item.rewards.iter().copied())
+                    .filter_map(|(_, item)| item.transactions.first().map(|&(_, reward)| reward))
                     .min()
             })
             .map(|fee| fee.max(MIN_SUGGESTED_PRIORITY_FEE))
@@ -1204,10 +1204,7 @@ impl<N: Network> EthApi<N> {
         hash: B256,
     ) -> Result<Option<WithOtherFields<AnyRpcHeader>>> {
         node_info!("eth_getHeaderByHash");
-        Ok(self.backend.block_by_hash(hash).await?.map(|block| {
-            let WithOtherFields { inner: block, other } = block.0;
-            WithOtherFields { inner: block.header, other }
-        }))
+        Ok(self.backend.block_by_hash(hash).await?.map(rpc_header))
     }
 
     /// Returns a _full_ block with given hash.
@@ -1578,11 +1575,7 @@ impl<N: Network> EthApi<N> {
 
                 // requested percentiles
                 if !reward_percentiles.is_empty() {
-                    let mut block_rewards = Vec::new();
-                    for p in &reward_percentiles {
-                        block_rewards.push(reward_at_percentile(&item.rewards, *p));
-                    }
-                    rewards.push(block_rewards);
+                    rewards.push(item.rewards(&reward_percentiles));
                 }
             }
         }
@@ -3011,14 +3004,10 @@ impl EthApi<FoundryNetwork> {
     ) -> Result<Option<WithOtherFields<AnyRpcHeader>>> {
         node_info!("eth_getHeaderByNumber");
         if number.is_pending() {
-            let WithOtherFields { inner: block, other } = self.pending_block().await?.0;
-            return Ok(Some(WithOtherFields { inner: block.header, other }));
+            return Ok(Some(rpc_header(self.pending_block().await?)));
         }
 
-        Ok(self.backend.block_by_number(number).await?.map(|block| {
-            let WithOtherFields { inner: block, other } = block.0;
-            WithOtherFields { inner: block.header, other }
-        }))
+        Ok(self.backend.block_by_number(number).await?.map(rpc_header))
     }
 
     /// Returns a _full_ block with given number
@@ -4149,17 +4138,17 @@ impl EthApi<FoundryNetwork> {
             }
         }
 
-        // search in the target block
+        // Search the target block, which may predate the fork.
         let target_block = low;
         if target_block <= latest_block
-            && let Some(txs) =
-                self.backend.mined_transactions_by_block_number(target_block.into()).await
+            && let Some(block) = self.backend.block_by_number_full(target_block.into()).await?
         {
-            for tx in txs {
-                if tx.from() == sender && tx.nonce() == target_nonce {
-                    return Ok(Some(tx));
-                }
-            }
+            return Ok(block
+                .0
+                .inner
+                .transactions
+                .into_transactions()
+                .find(|tx| tx.from() == sender && tx.nonce() == target_nonce));
         }
 
         Ok(None)
@@ -4879,9 +4868,16 @@ impl EthApi<FoundryNetwork> {
                             .await?,
                         );
 
-                        // Build typed transaction request
+                        // Build typed transaction request. Estimate missing gas on the common
+                        // block: the head this reorg discards can price storage more cheaply than
+                        // the state these transactions execute on.
                         let typed_tx = self
-                            .build_tx_request_with_fee_defaults(request, *curr_nonce, fee_defaults)
+                            .build_tx_request_with_fee_defaults(
+                                request,
+                                *curr_nonce,
+                                fee_defaults,
+                                Some(common_block.header.number().into()),
+                            )
                             .await?;
 
                         // Increment nonce
@@ -5433,7 +5429,7 @@ impl EthApi<FoundryNetwork> {
         request: FoundryTransactionRequest,
         nonce: u64,
     ) -> Result<FoundryTypedTx> {
-        self.build_tx_request_with_fee_defaults(request, nonce, None).await
+        self.build_tx_request_with_fee_defaults(request, nonce, None, None).await
     }
 
     async fn build_tx_request_with_fee_defaults(
@@ -5441,6 +5437,7 @@ impl EthApi<FoundryNetwork> {
         mut request: FoundryTransactionRequest,
         nonce: u64,
         fee_defaults: Option<TransactionFeeDefaults>,
+        gas_estimation_block: Option<BlockId>,
     ) -> Result<FoundryTypedTx> {
         let from = request.from().or(self.accounts()?.first().copied());
         if let Some(from) = from {
@@ -5461,7 +5458,7 @@ impl EthApi<FoundryNetwork> {
                 self.backend.fallback_tx_gas_limit(&evm_env)
             };
             let estimated_gas = self
-                .do_estimate_gas_typed(request.clone(), None)
+                .do_estimate_gas_typed(request.clone(), gas_estimation_block)
                 .await
                 .map(|v| v as u64)
                 .unwrap_or_else(|_| {
@@ -6225,11 +6222,6 @@ fn merge_pre_fork_fee_history(
     response.blob_gas_used_ratio.resize(count, 0.0);
 }
 
-fn reward_at_percentile(rewards: &[u128], percentile: f64) -> u128 {
-    let index = (percentile * REWARD_PERCENTILE_RESOLUTION).round() as usize;
-    rewards.get(index).copied().unwrap_or_default()
-}
-
 /// The block a simulation builds on.
 enum SimulationBase {
     /// A block that predates the fork, simulated by the fork's upstream.
@@ -6243,6 +6235,15 @@ enum SimulationBase {
         request: SimulatePayload<WithOtherFields<TransactionRequest>>,
         block_request: BlockRequest<FoundryTxEnvelope>,
     },
+}
+
+/// Splits the header out of a block, dropping the block-only `size` and `totalDifficulty`.
+fn rpc_header(block: AnyRpcBlock) -> WithOtherFields<AnyRpcHeader> {
+    let WithOtherFields { inner: block, other } = block.0;
+    let mut header = block.header;
+    header.size = None;
+    header.total_difficulty = None;
+    WithOtherFields { inner: header, other }
 }
 
 #[cfg(test)]
@@ -6500,16 +6501,6 @@ mod tests {
         for percentiles in [vec![], vec![0.0, 100.0]] {
             api.fee_history(U256::ONE, BlockNumber::Latest, percentiles).await.unwrap();
         }
-    }
-
-    #[test]
-    fn fractional_reward_percentiles_use_cache_resolution() {
-        let rewards = (0..=200).collect::<Vec<_>>();
-
-        assert_eq!(reward_at_percentile(&rewards, 0.0), 0);
-        assert_eq!(reward_at_percentile(&rewards, 0.5), 1);
-        assert_eq!(reward_at_percentile(&rewards, 1.0), 2);
-        assert_eq!(reward_at_percentile(&rewards, 100.0), 200);
     }
 
     #[test]
