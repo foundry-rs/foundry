@@ -152,10 +152,15 @@ impl SlotInfo {
             }
             // A dynamic array's own slot holds its length; the elements live at keccak256(slot).
             DynSolType::Array(_) => DynSolType::Uint(256).abi_decode(&value.0).ok(),
-            _ => {
-                // Decode based on the actual type
-                actual_type.abi_decode(&value.0).ok()
+            DynSolType::Int(_)
+            | DynSolType::Uint(_)
+            | DynSolType::FixedBytes(_)
+            | DynSolType::Bool
+                if !matches!(self.slot_type.dyn_sol_type, DynSolType::FixedArray(..)) =>
+            {
+                decode_packed(actual_type, 0, value)
             }
+            _ => actual_type.abi_decode(value.as_slice()).ok(),
         }
     }
 
@@ -2292,5 +2297,50 @@ mod tests {
             let info = StorageTypeInfo { label: label.to_string(), dyn_sol_type: ty };
             assert_eq!(info.to_string(), shown, "{label}");
         }
+    }
+
+    /// Narrow values alone in their slot are stored unpadded in its low-order bytes.
+    #[test]
+    fn decodes_narrow_values_alone_in_their_slot() {
+        let layout = serde_json::from_value::<StorageLayout>(serde_json::json!({
+            "storage": [
+                { "astId": 1, "contract": "C", "label": "small", "offset": 0, "slot": "0", "type": "t_int8" },
+                { "astId": 2, "contract": "C", "label": "tag", "offset": 0, "slot": "1", "type": "t_bytes4" },
+                { "astId": 3, "contract": "C", "label": "deltas", "offset": 0, "slot": "2", "type": "t_mapping(t_uint256,t_int16)" },
+                { "astId": 4, "contract": "C", "label": "counts", "offset": 0, "slot": "3", "type": "t_array(t_uint8)4_storage" }
+            ],
+            "types": {
+                "t_int8": { "encoding": "inplace", "label": "int8", "numberOfBytes": "1" },
+                "t_bytes4": { "encoding": "inplace", "label": "bytes4", "numberOfBytes": "4" },
+                "t_int16": { "encoding": "inplace", "label": "int16", "numberOfBytes": "2" },
+                "t_uint8": { "encoding": "inplace", "label": "uint8", "numberOfBytes": "1" },
+                "t_uint256": { "encoding": "inplace", "label": "uint256", "numberOfBytes": "32" },
+                "t_mapping(t_uint256,t_int16)": {
+                    "encoding": "mapping", "label": "mapping(uint256 => int16)", "numberOfBytes": "32",
+                    "key": "t_uint256", "value": "t_int16"
+                },
+                "t_array(t_uint8)4_storage": {
+                    "encoding": "inplace", "label": "uint8[4]", "numberOfBytes": "32", "base": "t_uint8"
+                }
+            }
+        }))
+        .unwrap();
+        let identifier = SlotIdentifier::new(Arc::new(layout));
+        let mut slots = MappingSlots::default();
+        let key = B256::from(U256::from(7));
+        let entry = keccak256([key.0, B256::from(U256::from(2)).0].concat());
+        slots.record_hash(entry, key, B256::from(U256::from(2)));
+        slots.insert(entry);
+
+        let new_value = |slot: B256, value: U256| {
+            let mut info = identifier.identify(&slot, Some(&slots)).unwrap();
+            info.decode_values(B256::ZERO, B256::from(value));
+            format_token_raw(&info.decoded.unwrap().new_value)
+        };
+        assert_eq!(new_value(B256::ZERO, U256::from(0xff)), "-1");
+        assert_eq!(new_value(B256::from(U256::from(1)), U256::from(0xdeadbeef_u64)), "0xdeadbeef");
+        assert_eq!(new_value(entry, U256::from(0xfffe)), "-2");
+        // `counts[0]` and `counts[1]` share the slot, so a change to either stays visible.
+        assert_eq!(new_value(B256::from(U256::from(3)), U256::from(0x0901)), "[1, 9, 0, 0]");
     }
 }
