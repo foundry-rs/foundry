@@ -38,6 +38,7 @@ evm2-inspectors.workspace = true
 
 tempo-contracts.workspace = true
 monad-evm2 = { workspace = true, optional = true }
+arc-evm2 = { workspace = true, optional = true }
 base-common-precompiles = { workspace = true, optional = true, features = ["std"] }
 
 async-trait.workspace = true
@@ -69,6 +70,12 @@ monad = [
     "foundry-evm-core/monad",
     "foundry-evm-hardforks/monad",
     "foundry-evm-networks/monad",
+]
+arc = [
+    "dep:arc-evm2",
+    "foundry-evm-core/arc",
+    "foundry-evm-hardforks/arc",
+    "foundry-evm-networks/arc",
 ]
 base = [
     "dep:base-common-precompiles",

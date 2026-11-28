@@ -64,3 +64,4 @@ syn = { workspace = true, features = ["full"] }
 [features]
 monad = ["foundry-evm-hardforks/monad", "foundry-evm-networks/monad"]
 base = ["foundry-evm-hardforks/base", "foundry-evm-networks/base"]
+arc = ["foundry-evm-hardforks/arc", "foundry-evm-networks/arc"]

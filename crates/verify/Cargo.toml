@@ -59,6 +59,13 @@ monad = [
     "foundry-evm-networks/monad",
     "foundry-cli/monad",
 ]
+arc = [
+    "foundry-common/arc",
+    "foundry-config/arc",
+    "foundry-evm/arc",
+    "foundry-evm-networks/arc",
+    "foundry-cli/arc",
+]
 base = [
     "foundry-common/base",
     "foundry-evm/base",

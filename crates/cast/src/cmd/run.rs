@@ -68,6 +68,8 @@ use foundry_evm_networks::{NetworkConfigs, NetworkVariant, arbitrum};
 use futures::{StreamExt, TryFutureExt};
 use std::sync::Arc;
 
+#[cfg(feature = "arc")]
+use foundry_evm::core::evm::ArcEvmNetwork;
 #[cfg(feature = "base")]
 use foundry_evm::core::evm::BaseEvmNetwork;
 
@@ -301,6 +303,10 @@ impl RunArgs {
         match evm_opts.networks.execution_network() {
             NetworkVariant::Tempo => {
                 self.run_with_evm(config, evm_opts, ExecutorBuilder::<TempoEvmNetwork>::new()).await
+            }
+            #[cfg(feature = "arc")]
+            NetworkVariant::Arc => {
+                self.run_with_evm(config, evm_opts, ExecutorBuilder::<ArcEvmNetwork>::new()).await
             }
             #[cfg(feature = "base")]
             NetworkVariant::Base => {

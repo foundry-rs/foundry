@@ -58,6 +58,11 @@ use foundry_evm_networks::{active_base_precompiles, is_base_precompile_active_at
 #[cfg(feature = "monad")]
 use foundry_evm_hardforks::MonadHardfork;
 
+#[cfg(feature = "arc")]
+use foundry_evm_hardforks::ArcHardfork;
+
+#[cfg(feature = "arc")]
+mod arc;
 #[cfg(feature = "base")]
 mod base;
 #[cfg(feature = "monad")]
@@ -223,6 +228,8 @@ impl CallTraceDecoderBuilder {
         self.decoder.register_monad_metadata();
         #[cfg(feature = "base")]
         self.decoder.register_base_metadata();
+        #[cfg(feature = "arc")]
+        self.decoder.register_arc_metadata();
         self.decoder
     }
 }
@@ -590,6 +597,8 @@ impl CallTraceDecoder {
         self.register_monad_metadata();
         #[cfg(feature = "base")]
         self.register_base_metadata();
+        #[cfg(feature = "arc")]
+        self.register_arc_metadata();
     }
 
     /// Returns labels for precompiles active in this decoder's chain context.
@@ -871,7 +880,39 @@ impl CallTraceDecoder {
         }
     }
 
-    #[cfg(any(feature = "base", feature = "monad"))]
+    #[cfg(feature = "arc")]
+    fn register_arc_metadata(&mut self) {
+        if self.networks.is_some_and(|networks| !networks.is_arc()) {
+            return;
+        }
+        let Some(hardfork @ FoundryHardfork::Arc(arc_hardfork)) = self.hardfork else {
+            return;
+        };
+        for (address, label) in foundry_evm_networks::resolved_precompile_labels(Some(hardfork)) {
+            self.labels.entry(address).or_insert(label);
+        }
+        self.register_address_abi(
+            arc_evm2::NATIVE_COIN_AUTHORITY_ADDRESS,
+            &arc::INativeCoinAuthority::abi::contract(),
+        );
+        self.register_address_abi(
+            arc_evm2::NATIVE_COIN_CONTROL_ADDRESS,
+            &arc::INativeCoinControl::abi::contract(),
+        );
+        self.register_address_abi(
+            arc_evm2::SYSTEM_ACCOUNTING_ADDRESS,
+            &arc::ISystemAccounting::abi::contract(),
+        );
+        self.register_address_abi(arc_evm2::PQ_ADDRESS, &arc::IPQ::abi::contract());
+        if arc_hardfork >= ArcHardfork::Zero7 {
+            self.register_address_abi(
+                arc_evm2::CALL_FROM_ADDRESS,
+                &arc::ICallFrom::abi::contract(),
+            );
+        }
+    }
+
+    #[cfg(any(feature = "base", feature = "monad", feature = "arc"))]
     fn register_address_abi(&mut self, address: Address, abi: &JsonAbi) {
         for function in abi.functions() {
             self.push_address_function(address, function.clone());
@@ -2049,6 +2090,83 @@ mod tests {
         let signature_topics = usize::from(!E::ANONYMOUS);
         let indexed_inputs = <E::TopicList as alloy_sol_types::TopicList>::COUNT - signature_topics;
         (E::SIGNATURE_HASH.to_string(), indexed_inputs, E::SIGNATURE.to_string())
+    }
+
+    #[cfg(feature = "arc")]
+    fn arc_decoder(hardfork: ArcHardfork) -> CallTraceDecoder {
+        CallTraceDecoderBuilder::new()
+            .with_execution_network(NetworkVariant::Arc)
+            .with_chain_id(Some(5_042))
+            .with_hardfork(Some(hardfork.into()))
+            .build()
+    }
+
+    #[test]
+    #[cfg(feature = "arc")]
+    fn test_arc_decoder_abis_match_arc_evm2() {
+        use alloy_sol_types::SolCall;
+        use arc_evm2::precompiles as canonical;
+        use std::collections::BTreeSet;
+
+        let selectors = |functions: std::collections::BTreeMap<String, Vec<Function>>| {
+            functions.into_values().flatten().map(|f| f.selector()).collect::<BTreeSet<Selector>>()
+        };
+        assert_eq!(
+            selectors(arc::INativeCoinAuthority::abi::functions()),
+            BTreeSet::from([
+                canonical::INativeCoinAuthority::mintCall::SELECTOR.into(),
+                canonical::INativeCoinAuthority::burnCall::SELECTOR.into(),
+                canonical::INativeCoinAuthority::transferCall::SELECTOR.into(),
+                canonical::INativeCoinAuthority::totalSupplyCall::SELECTOR.into(),
+            ])
+        );
+        assert_eq!(
+            selectors(arc::INativeCoinControl::abi::functions()),
+            BTreeSet::from([
+                canonical::INativeCoinControl::blocklistCall::SELECTOR.into(),
+                canonical::INativeCoinControl::isBlocklistedCall::SELECTOR.into(),
+                canonical::INativeCoinControl::unBlocklistCall::SELECTOR.into(),
+            ])
+        );
+        assert_eq!(
+            selectors(arc::ISystemAccounting::abi::functions()),
+            BTreeSet::from([
+                canonical::ISystemAccounting::storeGasValuesCall::SELECTOR.into(),
+                canonical::ISystemAccounting::getGasValuesCall::SELECTOR.into(),
+            ])
+        );
+        assert_eq!(
+            selectors(arc::ICallFrom::abi::functions()),
+            BTreeSet::from([canonical::ICallFrom::callFromCall::SELECTOR.into()])
+        );
+        assert_eq!(
+            selectors(arc::IPQ::abi::functions()),
+            BTreeSet::from([canonical::IPQ::verifySlhDsaSha2128sCall::SELECTOR.into()])
+        );
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "arc")]
+    async fn test_decodes_arc_native_coin_authority_call() {
+        let trace = CallTrace {
+            address: arc_evm2::NATIVE_COIN_AUTHORITY_ADDRESS,
+            data: arc::INativeCoinAuthority::totalSupplyCall {}.abi_encode().into(),
+            output: U256::from(7).abi_encode().into(),
+            success: true,
+            ..Default::default()
+        };
+
+        let decoded = arc_decoder(ArcHardfork::Zero8).decode_function(&trace).await;
+        assert_eq!(decoded.label.as_deref(), Some("NativeCoinAuthority"));
+        assert_eq!(decoded.call_data.expect("call data").signature, "totalSupply()");
+
+        // `CallFrom` only exists from Zero7.
+        let labels = |hardfork| arc_decoder(hardfork).labels;
+        assert!(!labels(ArcHardfork::Zero6).contains_key(&arc_evm2::CALL_FROM_ADDRESS));
+        assert_eq!(
+            labels(ArcHardfork::Zero7).get(&arc_evm2::CALL_FROM_ADDRESS).map(String::as_str),
+            Some("CallFrom")
+        );
     }
 
     #[cfg(feature = "monad")]

@@ -2,6 +2,8 @@ mod abi;
 mod anvil;
 mod anvil_api;
 mod api;
+#[cfg(feature = "arc")]
+mod arc;
 #[cfg(feature = "base")]
 mod base;
 mod beacon_api;

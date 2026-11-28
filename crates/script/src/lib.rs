@@ -75,6 +75,8 @@ use serde::Serialize;
 use std::path::PathBuf;
 use tempo_alloy::TempoNetwork;
 
+#[cfg(feature = "arc")]
+use foundry_evm::core::evm::ArcEvmNetwork;
 #[cfg(feature = "base")]
 use foundry_evm::core::evm::BaseEvmNetwork;
 
@@ -611,6 +613,15 @@ impl ScriptArgs {
                     }
                     Ok(())
                 })
+                .await
+            }
+            #[cfg(feature = "arc")]
+            NetworkVariant::Arc => {
+                Box::pin(self.run_generic_script::<ArcEvmNetwork>(
+                    config,
+                    evm_opts,
+                    ExecutorBuilder::<ArcEvmNetwork>::new(),
+                ))
                 .await
             }
             #[cfg(feature = "base")]

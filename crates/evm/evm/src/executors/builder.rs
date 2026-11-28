@@ -14,6 +14,9 @@ use foundry_evm_core::{
 };
 use foundry_evm_networks::NetworkConfigs;
 
+#[cfg(feature = "arc")]
+use foundry_evm_core::evm::ArcEvmNetwork;
+
 #[cfg(feature = "base")]
 use foundry_evm_core::evm::BaseEvmNetwork;
 
@@ -139,6 +142,15 @@ impl<FEN: FoundryEvmNetwork> ExecutorBuilder<FEN> {
 
 impl ExecutorBuilder<EthEvmNetwork> {
     /// Creates the default Ethereum executor builder.
+    #[inline]
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[cfg(feature = "arc")]
+impl ExecutorBuilder<ArcEvmNetwork> {
+    /// Creates the default Arc executor builder.
     #[inline]
     pub fn new() -> Self {
         Self::default()

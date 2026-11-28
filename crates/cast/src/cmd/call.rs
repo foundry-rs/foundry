@@ -60,6 +60,8 @@ use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
 use foundry_wallets::{BrowserWalletOpts, WalletOpts};
 use std::str::FromStr;
 
+#[cfg(feature = "arc")]
+use foundry_evm::core::evm::ArcEvmNetwork;
 #[cfg(feature = "base")]
 use foundry_evm::core::evm::BaseEvmNetwork;
 
@@ -302,6 +304,16 @@ impl CallArgs {
                     evm_opts,
                     auth_preflight,
                     ExecutorBuilder::<TempoEvmNetwork>::new(),
+                )
+                .await
+            }
+            #[cfg(feature = "arc")]
+            NetworkVariant::Arc => {
+                self.run_with_network_and_opts::<ArcEvmNetwork>(
+                    config,
+                    evm_opts,
+                    auth_preflight,
+                    ExecutorBuilder::<ArcEvmNetwork>::new(),
                 )
                 .await
             }

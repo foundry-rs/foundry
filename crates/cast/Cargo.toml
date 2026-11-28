@@ -149,6 +149,14 @@ monad = [
     "foundry-evm/monad",
     "foundry-cli/monad",
 ]
+arc = [
+    "anvil/arc",
+    "foundry-common/arc",
+    "foundry-config/arc",
+    "foundry-evm-networks/arc",
+    "foundry-evm/arc",
+    "foundry-cli/arc",
+]
 base = [
     "anvil/base",
     "dep:base-common-network",

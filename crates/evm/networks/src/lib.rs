@@ -48,11 +48,27 @@ use foundry_evm_hardforks::OpHardfork;
 #[cfg(feature = "monad")]
 use foundry_evm_hardforks::MonadHardfork;
 
+#[cfg(feature = "arc")]
+use foundry_evm_hardforks::{ArcHardfork, arc_hardfork};
+
 /// The Monad cheatcode handler address.
 pub const MONAD_CHEATCODE_ADDRESS: Address = address!("0xc0FFeeCD43A10e1C2b0De63c6CDCFe5B7d0e0CEA");
 
 pub mod arbitrum;
 pub mod celo;
+
+/// Arc mainnet and testnet chain IDs, which `alloy-chains` does not name.
+const ARC_CHAIN_IDS: [ChainId; 2] = [5_042, 5_042_002];
+
+/// Labels of Arc's precompiles, keyed by address.
+#[cfg(feature = "arc")]
+const ARC_PRECOMPILES: &[(&str, Address)] = &[
+    ("NativeCoinAuthority", arc_evm2::NATIVE_COIN_AUTHORITY_ADDRESS),
+    ("NativeCoinControl", arc_evm2::NATIVE_COIN_CONTROL_ADDRESS),
+    ("SystemAccounting", arc_evm2::SYSTEM_ACCOUNTING_ADDRESS),
+    ("CallFrom", arc_evm2::CALL_FROM_ADDRESS),
+    ("PQ", arc_evm2::PQ_ADDRESS),
+];
 
 #[cfg(feature = "optimism")]
 mod optimism;
@@ -149,6 +165,8 @@ pub enum NetworkVariant {
     Tempo,
     #[cfg(feature = "monad")]
     Monad,
+    #[cfg(feature = "arc")]
+    Arc,
 }
 
 /// Runtime and initcode byte-size limits for a configured network.
@@ -173,6 +191,8 @@ impl std::str::FromStr for NetworkVariant {
             "tempo" => Ok(Self::Tempo),
             #[cfg(feature = "monad")]
             "monad" => Ok(Self::Monad),
+            #[cfg(feature = "arc")]
+            "arc" => Ok(Self::Arc),
             _ => Err(format!("unknown network variant: {s}")),
         }
     }
@@ -206,6 +226,13 @@ impl NetworkVariant {
             #[cfg(not(feature = "monad"))]
             return Err("network family `monad` is not enabled in this build".to_string());
         }
+        // Like Monad, Arc errors without its feature: an Ethereum EVM reverts native USDC moves.
+        if ARC_CHAIN_IDS.contains(&chain_id) {
+            #[cfg(feature = "arc")]
+            return Ok(Some(Self::Arc));
+            #[cfg(not(feature = "arc"))]
+            return Err("network family `arc` is not enabled in this build".to_string());
+        }
         if chain.is_optimism() {
             #[cfg(feature = "optimism")]
             return Ok(Some(Self::Optimism));
@@ -232,6 +259,10 @@ impl NetworkVariant {
             "monad" => Ok(Self::Monad),
             #[cfg(not(feature = "monad"))]
             "monad" => Err("network family `monad` is not enabled in this build".to_string()),
+            #[cfg(feature = "arc")]
+            "arc" => Ok(Self::Arc),
+            #[cfg(not(feature = "arc"))]
+            "arc" => Err("network family `arc` is not enabled in this build".to_string()),
             network => {
                 Err(format!("unsupported network family `{network}` reported by fork endpoint"))
             }
@@ -269,6 +300,9 @@ impl NetworkVariant {
             Self::Base => {
                 BaseUpgrade::from_chain_and_timestamp(chain_id, timestamp).map(Into::into)
             }
+            #[cfg(feature = "arc")]
+            Self::Arc => arc_evm2::arc_spec_at_timestamp(chain_id, timestamp)
+                .map(|spec| FoundryHardfork::Arc(arc_hardfork(spec))),
         }
     }
 
@@ -286,6 +320,8 @@ impl NetworkVariant {
             Self::Monad => MonadHardfork::default().into(),
             #[cfg(feature = "base")]
             Self::Base => BaseUpgrade::default().into(),
+            #[cfg(feature = "arc")]
+            Self::Arc => ArcHardfork::default().into(),
         })
     }
 
@@ -329,6 +365,18 @@ impl NetworkVariant {
         false
     }
 
+    /// Returns `true` if this is the Arc network variant.
+    #[cfg(feature = "arc")]
+    pub const fn is_arc(&self) -> bool {
+        matches!(self, Self::Arc)
+    }
+
+    /// Returns `false` when Arc support is not compiled in.
+    #[cfg(not(feature = "arc"))]
+    pub const fn is_arc(&self) -> bool {
+        false
+    }
+
     /// Returns the network variant name.
     pub const fn name(&self) -> &'static str {
         match self {
@@ -340,6 +388,8 @@ impl NetworkVariant {
             Self::Tempo => "tempo",
             #[cfg(feature = "monad")]
             Self::Monad => "monad",
+            #[cfg(feature = "arc")]
+            Self::Arc => "arc",
         }
     }
 
@@ -354,6 +404,8 @@ impl NetworkVariant {
             Self::Tempo => Some("tempo"),
             #[cfg(feature = "monad")]
             Self::Monad => Some("monad"),
+            #[cfg(feature = "arc")]
+            Self::Arc => Some("arc"),
         }
     }
 }
@@ -486,6 +538,11 @@ impl NetworkConfigs {
         Self { network: Some(NetworkVariant::Base), ..Default::default() }
     }
 
+    #[cfg(feature = "arc")]
+    pub fn with_arc() -> Self {
+        Self { network: Some(NetworkVariant::Arc), ..Default::default() }
+    }
+
     pub const fn is_tempo(&self) -> bool {
         if let Some(network) = self.resolved_network() { network.is_tempo() } else { false }
     }
@@ -512,6 +569,10 @@ impl NetworkConfigs {
         matches!(self.resolved_network(), Some(NetworkVariant::Base))
     }
 
+    pub const fn is_arc(&self) -> bool {
+        if let Some(network) = self.resolved_network() { network.is_arc() } else { false }
+    }
+
     /// Coerces `hardfork` into this network's family.
     ///
     /// Execution and fee rules apply the same lossy `From` conversions, so a cross-namespace
@@ -529,6 +590,10 @@ impl NetworkConfigs {
         #[cfg(feature = "base")]
         if self.is_base() {
             return BaseUpgrade::from(hardfork).into();
+        }
+        #[cfg(feature = "arc")]
+        if self.is_arc() {
+            return ArcHardfork::from(hardfork).into();
         }
         hardfork
     }
@@ -590,8 +655,8 @@ impl NetworkConfigs {
     /// Returns whether this execution configuration can use `source` as a fork state source
     /// without rebuilding the instantiated EVM.
     ///
-    /// Monad uses a distinct EVM factory and instruction provider, so forks cannot cross the
-    /// Monad boundary. Base execution requires a Base source. Optimism execution requires an OP
+    /// Monad and Arc use distinct EVM factories and instruction providers, so forks cannot cross
+    /// their boundaries. Base execution requires a Base source. Optimism execution requires an OP
     /// Stack source for its fee accounting. Ethereum and Tempo can use OP Stack state sources
     /// without switching engines.
     pub const fn supports_fork_source(&self, source: &Self) -> bool {
@@ -607,7 +672,9 @@ impl NetworkConfigs {
             },
             #[cfg(feature = "monad")]
             NetworkVariant::Monad => source.is_monad(),
-            _ => !source.is_monad(),
+            #[cfg(feature = "arc")]
+            NetworkVariant::Arc => source.is_arc(),
+            _ => !source.is_monad() && !source.is_arc(),
         }
     }
 
@@ -847,6 +914,8 @@ impl NetworkConfigs {
             FoundryHardfork::Optimism(_) => Self::with_optimism(),
             #[cfg(feature = "monad")]
             FoundryHardfork::Monad(_) => Self::with_monad(),
+            #[cfg(feature = "arc")]
+            FoundryHardfork::Arc(_) => Self::with_arc(),
         };
 
         Ok(network)
@@ -904,6 +973,20 @@ impl NetworkConfigs {
                     .map(|(label, address)| (label.to_string(), address)),
             );
         }
+        #[cfg(feature = "arc")]
+        if self.is_arc() {
+            let arc_hardfork = hardfork.map(ArcHardfork::from);
+            precompiles.extend(
+                ARC_PRECOMPILES
+                    .iter()
+                    .copied()
+                    .filter(|(_, address)| {
+                        arc_hardfork
+                            .is_none_or(|hardfork| is_arc_precompile_active_at(*address, hardfork))
+                    })
+                    .map(|(label, address)| (label.to_string(), address)),
+            );
+        }
         precompiles
     }
 }
@@ -921,6 +1004,8 @@ impl From<NetworkVariant> for NetworkConfigs {
             }
             #[cfg(feature = "base")]
             NetworkVariant::Base => Self { network: Some(network), ..Default::default() },
+            #[cfg(feature = "arc")]
+            NetworkVariant::Arc => Self { network: Some(network), ..Default::default() },
             #[cfg(feature = "optimism")]
             NetworkVariant::Optimism => {
                 Self { network: Some(network), optimism: true, ..Default::default() }
@@ -948,6 +1033,12 @@ pub fn resolved_precompile_labels(hardfork: Option<FoundryHardfork>) -> AddressH
         Some(FoundryHardfork::Base(upgrade)) => BASE_PRECOMPILES
             .iter()
             .filter(|(_, address)| is_base_precompile_active_at(*address, upgrade))
+            .map(|(label, address)| (*address, (*label).to_string()))
+            .collect(),
+        #[cfg(feature = "arc")]
+        Some(FoundryHardfork::Arc(hardfork)) => ARC_PRECOMPILES
+            .iter()
+            .filter(|(_, address)| is_arc_precompile_active_at(*address, hardfork))
             .map(|(label, address)| (*address, (*label).to_string()))
             .collect(),
         _ => AddressHashMap::default(),
@@ -987,6 +1078,12 @@ pub fn is_monad_precompile_active_at(address: Address, hardfork: MonadHardfork) 
     address == monad_evm2::staking::STAKING_ADDRESS
         || (address == monad_evm2::reserve_balance::RESERVE_BALANCE_ADDRESS
             && MonadHardfork::MonadNine.is_enabled_in(hardfork))
+}
+
+/// Returns whether an Arc precompile is active at `hardfork`; `CallFrom` arrives in Zero7.
+#[cfg(feature = "arc")]
+pub fn is_arc_precompile_active_at(address: Address, hardfork: ArcHardfork) -> bool {
+    address != arc_evm2::CALL_FROM_ADDRESS || hardfork >= ArcHardfork::Zero7
 }
 
 /// Returns whether a fixed Base precompile is active at `upgrade`.
@@ -1738,6 +1835,14 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "arc"))]
+    fn arc_chains_require_the_arc_feature() {
+        let error = "network family `arc` is not enabled in this build";
+        assert_eq!(NetworkVariant::from_known_chain_id(5_042).unwrap_err(), error);
+        assert_eq!(NetworkVariant::from_node_info_name("arc").unwrap_err(), error);
+    }
+
+    #[test]
     #[cfg(not(feature = "base"))]
     fn node_info_rejects_disabled_base() {
         assert_eq!(
@@ -1967,6 +2072,76 @@ mod tests {
                     .resolved_network(),
                 Some(NetworkVariant::Base)
             );
+        }
+    }
+
+    #[cfg(feature = "arc")]
+    mod arc {
+        use super::*;
+
+        #[test]
+        fn chain_ids_select_arc() {
+            assert_eq!(NetworkVariant::from(5_042), NetworkVariant::Arc);
+            assert_eq!(NetworkVariant::from(5_042_002), NetworkVariant::Arc);
+            let config = NetworkConfigs::default().try_with_chain_id(5_042).unwrap();
+            assert!(config.is_arc());
+            assert_eq!(config.active_network_name(), Some("arc"));
+            assert_eq!(NetworkVariant::from_node_info_name("arc").unwrap(), NetworkVariant::Arc);
+            assert_eq!("arc".parse::<NetworkVariant>().unwrap(), NetworkVariant::Arc);
+        }
+
+        #[test]
+        fn serde_roundtrip_arc() {
+            let json = serde_json::to_string(&NetworkConfigs::with_arc()).unwrap();
+            let restored: NetworkConfigs = serde_json::from_str(&json).unwrap();
+            assert!(restored.is_arc());
+            let json = r#"{"network": "arc", "celo": false, "bypass_prevrandao": false}"#;
+            let config: NetworkConfigs = serde_json::from_str(json).unwrap();
+            assert!(config.is_arc());
+        }
+
+        #[test]
+        fn hardforks_follow_arc_schedules() {
+            let arc = NetworkVariant::Arc;
+            assert_eq!(
+                arc.historical_hardfork(5_042, 1_789_052_400),
+                Some(FoundryHardfork::Arc(ArcHardfork::Zero8))
+            );
+            assert_eq!(arc.historical_hardfork(1, 0), None);
+            assert_eq!(arc.hardfork_at(1, 0), FoundryHardfork::Arc(ArcHardfork::Zero8));
+            assert_eq!(
+                NetworkConfigs::default()
+                    .normalize_for_hardfork(FoundryHardfork::Arc(ArcHardfork::Zero7))
+                    .unwrap()
+                    .resolved_network(),
+                Some(arc)
+            );
+            assert_eq!(
+                NetworkConfigs::with_arc().executed_hardfork(EthereumHardfork::Prague.into()),
+                FoundryHardfork::Arc(ArcHardfork::Zero8)
+            );
+        }
+
+        #[test]
+        fn forks_do_not_cross_the_arc_boundary() {
+            let arc = NetworkConfigs::with_arc();
+            let ethereum = NetworkConfigs::with_ethereum();
+            assert!(arc.supports_fork_source(&arc));
+            assert!(!arc.supports_fork_source(&ethereum));
+            assert!(!ethereum.supports_fork_source(&arc));
+            assert!(!NetworkConfigs::with_tempo().supports_fork_source(&arc));
+        }
+
+        #[test]
+        fn call_from_precompile_arrives_in_zero7() {
+            let labels = |hardfork| {
+                NetworkConfigs::with_arc().precompiles(Some(FoundryHardfork::Arc(hardfork)))
+            };
+            assert_eq!(labels(ArcHardfork::Zero6).len(), 4);
+            assert_eq!(labels(ArcHardfork::Zero7)["CallFrom"], arc_evm2::CALL_FROM_ADDRESS);
+            let resolved =
+                resolved_precompile_labels(Some(FoundryHardfork::Arc(ArcHardfork::Zero8)));
+            assert_eq!(resolved[&arc_evm2::NATIVE_COIN_AUTHORITY_ADDRESS], "NativeCoinAuthority");
         }
     }
 

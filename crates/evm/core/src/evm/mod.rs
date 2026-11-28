@@ -3,8 +3,8 @@
 //! [`FoundryEvmNetwork`] binds an Alloy network to a [`FoundryEvmFactory`], which owns the
 //! network's evm2 type family ([`EvmTypesHost`]): spec, transaction, block and result extensions,
 //! the transaction registry and the precompiles. One marker exists per network family:
-//! [`EthEvmNetwork`], [`OpEvmNetwork`], [`BaseEvmNetwork`], [`MonadEvmNetwork`] and
-//! [`TempoEvmNetwork`].
+//! [`EthEvmNetwork`], [`OpEvmNetwork`], [`BaseEvmNetwork`], [`MonadEvmNetwork`],
+//! [`ArcEvmNetwork`] and [`TempoEvmNetwork`].
 //!
 //! Transactions stay network-native until execution (see [`tx`](self::TxPayload)).
 //! [`ExecutionLifecycle`] owns the accepted state that evm2's `State` does not.
@@ -45,6 +45,8 @@ pub use snapshot::*;
 mod tx;
 pub use tx::*;
 
+#[cfg(feature = "arc")]
+pub mod arc;
 #[cfg(feature = "base")]
 pub mod base;
 pub mod eth;
@@ -54,6 +56,8 @@ pub mod monad;
 pub mod op;
 pub mod tempo;
 
+#[cfg(feature = "arc")]
+pub use arc::ArcEvmNetwork;
 #[cfg(feature = "base")]
 pub use base::BaseEvmNetwork;
 pub use eth::*;

@@ -106,6 +106,7 @@ k256 = { workspace = true }
 [features]
 default = ["optimism"]
 monad = ["foundry-config/monad"]
+arc = ["foundry-config/arc"]
 base = [
     "dep:base-common-network",
     "dep:base-common-rpc-types",

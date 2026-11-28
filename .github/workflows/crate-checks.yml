@@ -40,7 +40,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo hack check --locked
 
-  # Regular CI always tests with `--features base,monad`, so unit tests gated on those features
+  # Regular CI always tests with `--features arc,base,monad`, so unit tests gated on those features
   # being off only run here, with the default features a plain source build gets.
   default-features-tests:
     if: github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry'

@@ -69,6 +69,7 @@ tempo-precompiles.workspace = true
 op-evm2 = { workspace = true, optional = true }
 base-evm2 = { workspace = true, optional = true }
 monad-evm2 = { workspace = true, optional = true }
+arc-evm2 = { workspace = true, optional = true }
 
 eyre.workspace = true
 futures.workspace = true
@@ -110,6 +111,12 @@ base = [
     "foundry-config/base",
     "foundry-evm-hardforks/base",
     "foundry-evm-networks/base",
+]
+arc = [
+    "dep:arc-evm2",
+    "foundry-config/arc",
+    "foundry-evm-hardforks/arc",
+    "foundry-evm-networks/arc",
 ]
 optimism = [
     "dep:op-alloy-consensus",

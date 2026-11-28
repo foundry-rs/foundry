@@ -1481,6 +1481,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "arc-evm2"
+version = "0.1.0"
+source = "git+https://github.com/foundry-rs/evm2-networks?rev=2cc4a6ff78aeea3fd19f429dfe49c7310e244c5c#2cc4a6ff78aeea3fd19f429dfe49c7310e244c5c"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-sol-types",
+ "evm2",
+ "evm2-macros",
+ "slh-dsa",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "arc-swap"
 version = "1.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6610,6 +6625,7 @@ dependencies = [
  "alloy-signer-local",
  "alloy-sol-types",
  "anvil",
+ "arc-evm2",
  "base-common-consensus",
  "base-common-network",
  "base-common-rpc-types",
@@ -6699,6 +6715,7 @@ dependencies = [
  "alloy-hardforks",
  "alloy-op-hardforks",
  "alloy-rpc-types",
+ "arc-evm2",
  "base-common-genesis",
  "base-evm2",
  "evm2",
@@ -6717,6 +6734,7 @@ dependencies = [
  "alloy-eips",
  "alloy-op-hardforks",
  "alloy-primitives",
+ "arc-evm2",
  "base-common-base-tx",
  "base-evm2",
  "clap",
@@ -6769,6 +6787,7 @@ dependencies = [
  "alloy-network",
  "alloy-primitives",
  "alloy-sol-types",
+ "arc-evm2",
  "async-trait",
  "base-common-precompiles",
  "ciborium",
@@ -12684,6 +12703,25 @@ name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
+
+[[package]]
+name = "slh-dsa"
+version = "0.2.0-rc.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "371c02fe34044d8866ddf7cb0e8204a87ef31a39f0408bed41c4253ea9dd61ed"
+dependencies = [
+ "const-oid 0.10.2",
+ "digest 0.11.3",
+ "hmac 0.13.0",
+ "hybrid-array",
+ "pkcs8 0.11.0",
+ "rand_core 0.10.1",
+ "sha2 0.11.1",
+ "sha3 0.11.0",
+ "signature 3.0.0",
+ "typenum",
+ "zerocopy",
+]
 
 [[package]]
 name = "small_btree"

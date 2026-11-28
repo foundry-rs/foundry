@@ -18,6 +18,8 @@ use rustyline::{Editor, config::Configurer, error::ReadlineError};
 use std::{ops::ControlFlow, path::PathBuf};
 use yansi::Paint;
 
+#[cfg(feature = "arc")]
+use foundry_evm::core::evm::ArcEvmNetwork;
 #[cfg(feature = "base")]
 use foundry_evm::core::evm::BaseEvmNetwork;
 
@@ -88,6 +90,18 @@ pub async fn run_command(args: Chisel) -> Result<()> {
                 config,
                 evm_opts,
                 ExecutorBuilder::<TempoEvmNetwork>::new(),
+                local_networks,
+                local_chain_id,
+            ))
+            .await
+        }
+        #[cfg(feature = "arc")]
+        NetworkVariant::Arc => {
+            Box::pin(run_command_with_network::<ArcEvmNetwork>(
+                args,
+                config,
+                evm_opts,
+                ExecutorBuilder::<ArcEvmNetwork>::new(),
                 local_networks,
                 local_chain_id,
             ))

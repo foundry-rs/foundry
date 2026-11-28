@@ -90,6 +90,12 @@ monad = [
     "foundry-evm-fuzz/monad",
     "foundry-evm-traces/monad",
 ]
+arc = [
+    "foundry-config/arc",
+    "foundry-evm-core/arc",
+    "foundry-evm-fuzz/arc",
+    "foundry-evm-traces/arc",
+]
 base = [
     "foundry-common/base",
     "foundry-evm-core/base",

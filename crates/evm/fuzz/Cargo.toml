@@ -49,6 +49,7 @@ alloy-network.workspace = true
 [features]
 default = ["optimism"]
 monad = ["foundry-evm-core/monad"]
+arc = ["foundry-evm-core/arc"]
 base = [
     "foundry-common/base",
     "foundry-evm-core/base",

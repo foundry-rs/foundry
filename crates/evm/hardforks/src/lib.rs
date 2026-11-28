@@ -1,7 +1,7 @@
 //! EVM hardfork definitions for Foundry.
 //!
-//! Provides [`FoundryHardfork`], a unified enum over Ethereum, Optimism, Tempo, and Monad hardforks
-//! with `FromStr`/`Serialize`/`Deserialize` support for CLI and config usage.
+//! Provides [`FoundryHardfork`], a unified enum over Ethereum, Optimism, Tempo, Monad, and Arc
+//! hardforks with `FromStr`/`Serialize`/`Deserialize` support for CLI and config usage.
 
 use alloy_chains::Chain;
 use alloy_rpc_types::BlockNumberOrTag;
@@ -29,6 +29,9 @@ pub use base_evm2::BaseSpecId;
 #[cfg(feature = "monad")]
 pub use monad_evm2::MonadHardfork;
 
+#[cfg(feature = "arc")]
+pub use arc_evm2::{ArcHardfork, ArcSpecId};
+
 #[cfg(feature = "optimism")]
 pub use alloy_op_hardforks::OpHardfork;
 
@@ -43,6 +46,8 @@ pub enum FoundryHardfork {
     Tempo(TempoHardfork),
     #[cfg(feature = "monad")]
     Monad(MonadHardfork),
+    #[cfg(feature = "arc")]
+    Arc(ArcHardfork),
 }
 
 impl From<FoundryHardfork> for String {
@@ -56,6 +61,8 @@ impl From<FoundryHardfork> for String {
             FoundryHardfork::Tempo(h) => format!("tempo:{h}"),
             #[cfg(feature = "monad")]
             FoundryHardfork::Monad(h) => format!("monad:{h}"),
+            #[cfg(feature = "arc")]
+            FoundryHardfork::Arc(h) => format!("arc:{h}"),
         }
     }
 }
@@ -117,6 +124,13 @@ impl FromStr for FoundryHardfork {
             #[cfg(not(feature = "monad"))]
             "m" | "monad" => Err(format!("hardfork namespace '{ns}' requires the `monad` feature")),
 
+            #[cfg(feature = "arc")]
+            "arc" => ArcHardfork::from_str(&fork)
+                .map(Self::Arc)
+                .map_err(|_| format!("unknown arc hardfork '{fork_raw}'")),
+            #[cfg(not(feature = "arc"))]
+            "arc" => Err(format!("hardfork namespace '{ns}' requires the `arc` feature")),
+
             _ => Err(format!("unknown hardfork namespace '{ns}'")),
         }
     }
@@ -146,6 +160,11 @@ impl FoundryHardfork {
         Self::Monad(h)
     }
 
+    #[cfg(feature = "arc")]
+    pub const fn arc(h: ArcHardfork) -> Self {
+        Self::Arc(h)
+    }
+
     /// Returns the hardfork name without a network namespace prefix.
     pub fn name(&self) -> String {
         match self {
@@ -157,6 +176,8 @@ impl FoundryHardfork {
             Self::Tempo(h) => format!("{h}"),
             #[cfg(feature = "monad")]
             Self::Monad(h) => format!("{h}"),
+            #[cfg(feature = "arc")]
+            Self::Arc(h) => format!("{h}"),
         }
     }
 
@@ -173,12 +194,14 @@ impl FoundryHardfork {
             Self::Tempo(_) => Some("tempo"),
             #[cfg(feature = "monad")]
             Self::Monad(_) => Some("monad"),
+            #[cfg(feature = "arc")]
+            Self::Arc(_) => Some("arc"),
         }
     }
 
     /// Auto-detect the active hardfork for a given chain at a specific timestamp.
     ///
-    /// Tries Ethereum, then Optimism, Tempo, and Monad. Returns `None` for unknown chains.
+    /// Tries Ethereum, then Optimism, Tempo, Monad, and Arc. Returns `None` for unknown chains.
     pub fn from_chain_and_timestamp(chain_id: u64, timestamp: u64) -> Option<Self> {
         let chain = Chain::from_id(chain_id);
         if let Some(fork) = EthereumHardfork::from_chain_and_timestamp(chain, timestamp) {
@@ -198,6 +221,10 @@ impl FoundryHardfork {
         #[cfg(feature = "monad")]
         if let Some(fork) = MonadHardfork::from_chain_and_timestamp(chain_id, timestamp) {
             return Some(Self::Monad(fork));
+        }
+        #[cfg(feature = "arc")]
+        if let Some(spec) = arc_evm2::arc_spec_at_timestamp(chain_id, timestamp) {
+            return Some(Self::Arc(arc_hardfork(spec)));
         }
         None
     }
@@ -294,6 +321,36 @@ impl From<FoundryHardfork> for MonadHardfork {
     }
 }
 
+#[cfg(feature = "arc")]
+impl From<ArcHardfork> for FoundryHardfork {
+    fn from(value: ArcHardfork) -> Self {
+        Self::Arc(value)
+    }
+}
+
+#[cfg(feature = "arc")]
+impl From<FoundryHardfork> for ArcHardfork {
+    fn from(fork: FoundryHardfork) -> Self {
+        match fork {
+            FoundryHardfork::Arc(hardfork) => hardfork,
+            _ => Self::default(),
+        }
+    }
+}
+
+#[cfg(feature = "arc")]
+impl From<FoundryHardfork> for ArcSpecId {
+    fn from(fork: FoundryHardfork) -> Self {
+        ArcHardfork::from(fork).into()
+    }
+}
+
+/// Returns the Arc hardfork of `spec`; Arc testnet's blocks before Zero3 run Zero3's rules.
+#[cfg(feature = "arc")]
+pub fn arc_hardfork(spec: ArcSpecId) -> ArcHardfork {
+    spec.hardfork().unwrap_or(ArcHardfork::Zero3)
+}
+
 impl From<FoundryHardfork> for SpecId {
     fn from(fork: FoundryHardfork) -> Self {
         match fork {
@@ -305,6 +362,8 @@ impl From<FoundryHardfork> for SpecId {
             FoundryHardfork::Tempo(hardfork) => spec_id_from_tempo_hardfork(hardfork),
             #[cfg(feature = "monad")]
             FoundryHardfork::Monad(hardfork) => hardfork.into(),
+            #[cfg(feature = "arc")]
+            FoundryHardfork::Arc(hardfork) => hardfork.eth_spec(),
         }
     }
 }
@@ -664,6 +723,38 @@ impl ExecutionSpec for MonadHardfork {
     }
 }
 
+#[cfg(feature = "arc")]
+impl FromEvmVersion for ArcSpecId {
+    fn from_evm_version(_: EvmVersion) -> Self {
+        Self::default()
+    }
+}
+
+#[cfg(feature = "arc")]
+impl ExecutionSpec for ArcSpecId {
+    // Returns the user-facing name for the active execution spec.
+    fn evm_version_name(&self) -> String {
+        arc_hardfork(*self).to_string()
+    }
+
+    // Parses an unnamespaced Arc hardfork name.
+    fn from_network_hardfork(hardfork: &str) -> Option<Self> {
+        Self::from_str(hardfork).ok()
+    }
+
+    // Converts only Arc namespaced hardforks to an Arc spec.
+    fn from_foundry_hardfork(hardfork: FoundryHardfork) -> Option<Self> {
+        match hardfork {
+            FoundryHardfork::Arc(hardfork) => Some(hardfork.into()),
+            _ => None,
+        }
+    }
+
+    fn reported_hardfork(self) -> Option<FoundryHardfork> {
+        Some(FoundryHardfork::Arc(arc_hardfork(self)))
+    }
+}
+
 #[cfg(feature = "base")]
 impl FromEvmVersion for BaseSpecId {
     fn from_evm_version(version: EvmVersion) -> Self {
@@ -848,6 +939,12 @@ mod tests {
             ("monad:monadnine", Ok(FoundryHardfork::Monad(MonadHardfork::MonadNine))),
             #[cfg(not(feature = "monad"))]
             ("monad:prague", Err("hardfork namespace 'monad' requires the `monad` feature")),
+            #[cfg(feature = "arc")]
+            ("arc:Zero8", Ok(FoundryHardfork::Arc(ArcHardfork::Zero8))),
+            #[cfg(feature = "arc")]
+            ("ARC:zero6", Ok(FoundryHardfork::Arc(ArcHardfork::Zero6))),
+            #[cfg(not(feature = "arc"))]
+            ("arc:zero8", Err("hardfork namespace 'arc' requires the `arc` feature")),
             ("foo:prague", Err("unknown hardfork namespace 'foo'")),
             ("Foo:Prague", Err("unknown hardfork namespace 'foo'")),
         ];
@@ -882,6 +979,34 @@ mod tests {
             MonadHardfork::from(FoundryHardfork::Monad(MonadHardfork::MonadNext)),
             MonadHardfork::MonadNext
         );
+    }
+
+    #[test]
+    #[cfg(feature = "arc")]
+    fn test_arc_hardfork_serialization_and_spec() {
+        let zero7 = FoundryHardfork::Arc(ArcHardfork::Zero7);
+        assert_eq!(String::from(zero7), "arc:Zero7");
+        assert_eq!(zero7.namespace(), Some("arc"));
+        assert_eq!(zero7.name(), "Zero7");
+        assert_eq!(SpecId::from(FoundryHardfork::Arc(ArcHardfork::Zero4)), SpecId::PRAGUE);
+        assert_eq!(SpecId::from(zero7), SpecId::OSAKA);
+        assert_eq!(ArcSpecId::from_foundry_hardfork(zero7), Some(ArcHardfork::Zero7.into()));
+        assert_eq!(ArcSpecId::from_foundry_hardfork(EthereumHardfork::Prague.into()), None);
+        assert_eq!(ArcSpecId::from_network_hardfork("zero7"), Some(ArcHardfork::Zero7.into()));
+        assert_eq!(ArcSpecId::from(ArcHardfork::Zero7).reported_hardfork(), Some(zero7));
+        assert_eq!(evm_spec_id::<ArcSpecId>(EvmVersion::Prague), ArcHardfork::Zero8.into());
+    }
+
+    #[test]
+    #[cfg(feature = "arc")]
+    fn test_arc_hardfork_from_chain_and_timestamp() {
+        let at = FoundryHardfork::from_chain_and_timestamp;
+        assert_eq!(at(5_042, 0), Some(FoundryHardfork::Arc(ArcHardfork::Zero6)));
+        assert_eq!(at(5_042, 1_789_052_400), Some(FoundryHardfork::Arc(ArcHardfork::Zero8)));
+        assert_eq!(at(5_042_002, 1_781_791_200), Some(FoundryHardfork::Arc(ArcHardfork::Zero7)));
+        // Testnet blocks before Zero3 run Zero3's rules.
+        assert_eq!(at(5_042_002, 0), Some(FoundryHardfork::Arc(ArcHardfork::Zero3)));
+        assert_eq!(ArcSpecId::historical_hardfork(1, 0), None);
     }
 
     #[test]
