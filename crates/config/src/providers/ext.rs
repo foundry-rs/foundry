@@ -467,14 +467,14 @@ impl<P: Provider> Provider for BackwardsCompatTomlProvider<P> {
 
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
         let mut map = self.provider.data()?;
-        let solc_env = std::env::var("FOUNDRY_SOLC_VERSION")
-            .or_else(|_| std::env::var("DAPP_SOLC_VERSION"))
+        let solc_env = non_empty_env("FOUNDRY_SOLC_VERSION")
+            .or_else(|| non_empty_env("DAPP_SOLC_VERSION"))
             .map(Value::from)
-            .ok()
             .filter(|_| self.solc_env);
         for_each_profile_dict(&mut map, |dict| {
             rewrite_legacy_profile_keys(dict, solc_env.as_ref())
         });
+
         normalize_legacy_labels(&mut map);
         Ok(map)
     }
@@ -724,39 +724,39 @@ impl Provider for DappEnvCompatProvider {
 
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
         let mut dict = Dict::new();
-        if let Ok(val) = env::var("DAPP_TEST_NUMBER") {
+        if let Some(val) = non_empty_env("DAPP_TEST_NUMBER") {
             dict.insert(
                 "block_number".to_string(),
                 val.parse::<u64>().map_err(figment::Error::custom)?.into(),
             );
         }
-        if let Ok(val) = env::var("DAPP_TEST_ADDRESS") {
+        if let Some(val) = non_empty_env("DAPP_TEST_ADDRESS") {
             dict.insert("sender".to_string(), val.into());
         }
-        if let Ok(val) = env::var("DAPP_FORK_BLOCK") {
+        if let Some(val) = non_empty_env("DAPP_FORK_BLOCK") {
             dict.insert(
                 "fork_block_number".to_string(),
                 val.parse::<u64>().map_err(figment::Error::custom)?.into(),
             );
-        } else if let Ok(val) = env::var("DAPP_TEST_NUMBER") {
+        } else if let Some(val) = non_empty_env("DAPP_TEST_NUMBER") {
             dict.insert(
                 "fork_block_number".to_string(),
                 val.parse::<u64>().map_err(figment::Error::custom)?.into(),
             );
         }
-        if let Ok(val) = env::var("DAPP_TEST_TIMESTAMP") {
+        if let Some(val) = non_empty_env("DAPP_TEST_TIMESTAMP") {
             dict.insert(
                 "block_timestamp".to_string(),
                 val.parse::<u64>().map_err(figment::Error::custom)?.into(),
             );
         }
-        if let Ok(val) = env::var("DAPP_BUILD_OPTIMIZE_RUNS") {
+        if let Some(val) = non_empty_env("DAPP_BUILD_OPTIMIZE_RUNS") {
             dict.insert(
                 "optimizer_runs".to_string(),
                 val.parse::<u64>().map_err(figment::Error::custom)?.into(),
             );
         }
-        if let Ok(val) = env::var("DAPP_BUILD_OPTIMIZE") {
+        if let Some(val) = non_empty_env("DAPP_BUILD_OPTIMIZE") {
             // Activate Solidity optimizer (0 or 1)
             let val = val.parse::<u8>().map_err(figment::Error::custom)?;
             if val > 1 {
@@ -767,13 +767,13 @@ impl Provider for DappEnvCompatProvider {
             dict.insert("optimizer".to_string(), (val == 1).into());
         }
 
-        // libraries in env vars either as `[..]` or single string separated by comma
+        // An empty library list explicitly clears libraries set by a lower-priority provider.
         if let Ok(val) = env::var("DAPP_LIBRARIES").or_else(|_| env::var("FOUNDRY_LIBRARIES")) {
             dict.insert("libraries".to_string(), utils::to_array_value(&val)?);
         }
 
         let mut fuzz_dict = Dict::new();
-        if let Ok(val) = env::var("DAPP_TEST_FUZZ_RUNS") {
+        if let Some(val) = non_empty_env("DAPP_TEST_FUZZ_RUNS") {
             fuzz_dict.insert(
                 "runs".to_string(),
                 val.parse::<u32>().map_err(figment::Error::custom)?.into(),
@@ -782,7 +782,7 @@ impl Provider for DappEnvCompatProvider {
         dict.insert("fuzz".to_string(), fuzz_dict.into());
 
         let mut invariant_dict = Dict::new();
-        if let Ok(val) = env::var("DAPP_TEST_DEPTH") {
+        if let Some(val) = non_empty_env("DAPP_TEST_DEPTH") {
             invariant_dict.insert(
                 "depth".to_string(),
                 val.parse::<u32>().map_err(figment::Error::custom)?.into(),
@@ -1084,4 +1084,11 @@ impl Provider for ProjectRootErrorProvider {
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
         Err(Error::from(format!("could not determine project root: {}", self.0)))
     }
+}
+
+/// Returns an environment variable when it is set to a non-empty value.
+///
+/// Empty values are treated as unset so they do not override `foundry.toml` or fail parsing.
+fn non_empty_env(key: &str) -> Option<String> {
+    env::var(key).ok().filter(|value| !value.is_empty())
 }

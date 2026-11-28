@@ -240,7 +240,7 @@ impl FmtArgs {
 
             let gcx = compiler.gcx();
             let fmt_config = Arc::new(config.fmt);
-            let diffs: Vec<String> = gcx
+            let outputs = gcx
                 .sources
                 .raw
                 .par_iter()
@@ -270,19 +270,16 @@ impl FmtArgs {
                         };
                     let formatted = forge_fmt::format_ast(gcx, source_unit, source_fmt_config)?;
                     let from_stdin = path.is_none();
+                    let changed = original != formatted;
 
-                    // Return formatted code when read from stdin and raw enabled.
+                    // Raw stdin output is required even if formatting did not change.
                     // <https://github.com/foundry-rs/foundry/issues/11871>
-                    if from_stdin && self.raw {
-                        return Some(Ok(formatted));
-                    }
-
-                    if original == formatted {
+                    if !(changed || from_stdin && self.raw) {
                         return None;
                     }
 
                     if self.check || from_stdin {
-                        let summary = if self.raw {
+                        let output = if self.raw {
                             formatted
                         } else {
                             let name = match path {
@@ -295,7 +292,7 @@ impl FmtArgs {
                             };
                             format_diff_summary(&name, &TextDiff::from_lines(original, &formatted))
                         };
-                        Some(Ok(summary))
+                        Some(Ok((output, changed)))
                     } else if let Some(path) = path {
                         match fs::write(path, formatted) {
                             Ok(()) => {}
@@ -307,20 +304,19 @@ impl FmtArgs {
                         unreachable!()
                     }
                 })
-                .collect::<Result<_>>()?;
+                .collect::<Result<Vec<_>>>()?;
 
-            if !diffs.is_empty() {
-                // This block is only reached in --check mode when files need formatting.
+            if !outputs.is_empty() {
                 let mut stdout = io::stdout().lock();
-                for (i, diff) in diffs.iter().enumerate() {
+                for (i, (output, _)) in outputs.iter().enumerate() {
                     if i > 0 {
                         let _ = stdout.write_all(b"\n");
                     }
-                    let _ = stdout.write_all(diff.as_bytes());
+                    let _ = stdout.write_all(output.as_bytes());
                 }
-                if self.check {
-                    std::process::exit(1);
-                }
+            }
+            if self.check && outputs.iter().any(|(_, changed)| *changed) {
+                std::process::exit(1);
             }
 
             convert_solar_errors(compiler.dcx())

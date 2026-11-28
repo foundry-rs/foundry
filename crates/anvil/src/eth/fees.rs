@@ -16,7 +16,7 @@ use std::{
     collections::BTreeMap,
     fmt,
     pin::Pin,
-    sync::{Arc, LazyLock},
+    sync::Arc,
     task::{Context, Poll},
 };
 use tempo_hardfork::{TempoHardfork, constants::gas::tempo_t7_next_block_base_fee};
@@ -29,16 +29,6 @@ mod optimism;
 
 /// Maximum number of entries in the fee history cache
 pub const MAX_FEE_HISTORY_CACHE_SIZE: u64 = 2048u64;
-
-/// Number of cached reward samples per percentile.
-pub(crate) const REWARD_PERCENTILE_RESOLUTION: f64 = 2.0;
-
-/// Percentile list from 0.0 to 100.0 with a 0.5 resolution (201 points).
-///
-/// Constant across blocks, so it is computed once instead of being rebuilt on every
-/// `create_fee_history_cache_item` call.
-static REWARD_PERCENTILES: LazyLock<Vec<f64>> =
-    LazyLock::new(|| (0..=200).map(|index| index as f64 / REWARD_PERCENTILE_RESOLUTION).collect());
 
 /// Initial base fee for EIP-1559 blocks.
 pub const INITIAL_BASE_FEE: u64 = 1_000_000_000;
@@ -566,15 +556,19 @@ pub(crate) fn insert_fee_history_cache_item(
 
 /// Calculates percentile rewards from transactions sorted by effective reward.
 ///
-/// [`REWARD_PERCENTILES`] must remain ascending because the transaction cursor never rewinds.
-fn reward_percentiles(transactions: &[(u64, u128)], block_gas_used: f64) -> Vec<u128> {
-    let mut rewards = Vec::with_capacity(REWARD_PERCENTILES.len());
+/// `percentiles` must be ascending because the transaction cursor never rewinds.
+fn reward_percentiles(
+    transactions: &[(u64, u128)],
+    block_gas_used: f64,
+    percentiles: &[f64],
+) -> Vec<u128> {
+    let mut rewards = Vec::with_capacity(percentiles.len());
     let mut transactions = transactions.iter().copied();
     let Some((mut cumulative_gas, mut current_reward)) = transactions.next() else {
         return rewards;
     };
 
-    for &percentile in REWARD_PERCENTILES.iter() {
+    for &percentile in percentiles {
         let target_gas = (percentile * block_gas_used / 100f64) as u64;
         while target_gas > cumulative_gas {
             let Some((tx_gas_used, effective_reward)) = transactions.next() else { return rewards };
@@ -611,7 +605,8 @@ where
         base_fee: base_fee as u128,
         gas_used_ratio: 0f64,
         blob_gas_used_ratio: 0f64,
-        rewards: Vec::new(),
+        gas_used: 0,
+        transactions: Arc::default(),
         excess_blob_gas,
         base_fee_per_blob_gas,
         blob_gas_used,
@@ -651,12 +646,10 @@ where
         // sort by effective reward asc
         transactions.sort_by_key(|(_, reward)| *reward);
 
-        item.rewards = reward_percentiles(&transactions, gas_used);
+        item.gas_used = block.header.gas_used();
+        item.transactions = transactions.into();
         block.header.number()
     });
-    if block_number.is_none() {
-        item.rewards = vec![0; REWARD_PERCENTILES.len()];
-    }
     (item, block_number)
 }
 
@@ -693,7 +686,22 @@ pub struct FeeHistoryCacheItem {
     pub blob_gas_used_ratio: f64,
     pub excess_blob_gas: Option<u128>,
     pub blob_gas_used: Option<u128>,
-    pub rewards: Vec<u128>,
+    pub gas_used: u64,
+    /// Gas used and effective tip of each transaction, sorted by tip.
+    ///
+    /// Shared so that cloning a cache entry does not copy every transaction.
+    pub transactions: Arc<[(u64, u128)]>,
+}
+
+impl FeeHistoryCacheItem {
+    /// Returns the effective tip at each of the given ascending percentiles, weighted by gas used.
+    ///
+    /// Blocks without transactions return zeros.
+    pub fn rewards(&self, percentiles: &[f64]) -> Vec<u128> {
+        let mut rewards = reward_percentiles(&self.transactions, self.gas_used as f64, percentiles);
+        rewards.resize(percentiles.len(), 0);
+        rewards
+    }
 }
 
 #[derive(Clone, Default)]
@@ -790,11 +798,16 @@ impl fmt::Debug for FeeDetails {
 mod tests {
     use super::*;
 
+    fn sampled_percentiles() -> Vec<f64> {
+        (0..=200).map(|index| index as f64 / 2.0).collect()
+    }
+
     fn reward_percentiles_reference(
         transactions: &[(u64, u128)],
         block_gas_used: f64,
+        percentiles: &[f64],
     ) -> Vec<u128> {
-        REWARD_PERCENTILES
+        percentiles
             .iter()
             .filter_map(|&percentile| {
                 let target_gas = (percentile * block_gas_used / 100f64) as u64;
@@ -810,11 +823,15 @@ mod tests {
             .collect()
     }
 
-    fn assert_reward_percentiles_match(transactions: &mut [(u64, u128)], gas_used: u64) {
+    fn assert_reward_percentiles_match(
+        transactions: &mut [(u64, u128)],
+        gas_used: u64,
+        percentiles: &[f64],
+    ) {
         transactions.sort_by_key(|(_, reward)| *reward);
         assert_eq!(
-            reward_percentiles(transactions, gas_used as f64),
-            reward_percentiles_reference(transactions, gas_used as f64)
+            reward_percentiles(transactions, gas_used as f64, percentiles),
+            reward_percentiles_reference(transactions, gas_used as f64, percentiles)
         );
     }
 
@@ -872,17 +889,25 @@ mod tests {
 
     #[test]
     fn reward_percentile_sweep_preserves_boundaries_and_empty_results() {
-        assert_reward_percentiles_match(&mut [], 0);
+        let sampled = sampled_percentiles();
+        assert_reward_percentiles_match(&mut [], 0, &sampled);
 
         let mut transactions = [(5, 1), (0, 2), (5, 3)];
-        assert_reward_percentiles_match(&mut transactions, 1_000);
-        assert_eq!(reward_percentiles(&transactions, 1_000f64), [1, 1, 3]);
+        assert_reward_percentiles_match(&mut transactions, 1_000, &sampled);
+        assert_eq!(reward_percentiles(&transactions, 1_000f64, &sampled), [1, 1, 3]);
 
         let mut transactions = [(0, 10), (1, 20)];
-        assert_reward_percentiles_match(&mut transactions, 1);
-        let rewards = reward_percentiles(&transactions, 1f64);
+        assert_reward_percentiles_match(&mut transactions, 1, &sampled);
+        let rewards = reward_percentiles(&transactions, 1f64, &sampled);
         assert_eq!(&rewards[..200], &[10; 200]);
         assert_eq!(rewards[200], 20);
+
+        // Geth's thresholds for these are 20958, 21000, 21042, 21100, and 21105 gas.
+        let transactions = [(21_000, 1), (21_000, 2)];
+        assert_eq!(
+            reward_percentiles(&transactions, 42_000f64, &[49.9, 50.0, 50.1, 50.24, 50.25]),
+            [1, 1, 2, 2, 2]
+        );
     }
 
     #[test]
@@ -904,8 +929,13 @@ mod tests {
                 2 => total_gas.saturating_add(next_random(&mut state) % 1_000),
                 _ => 0,
             };
+            let mut percentiles = (0..next_random(&mut state) % 32)
+                .map(|_| (next_random(&mut state) % 100_001) as f64 / 1_000f64)
+                .collect::<Vec<_>>();
+            percentiles.sort_by(f64::total_cmp);
+            percentiles.dedup();
 
-            assert_reward_percentiles_match(&mut transactions, header_gas_used);
+            assert_reward_percentiles_match(&mut transactions, header_gas_used, &percentiles);
         }
     }
 

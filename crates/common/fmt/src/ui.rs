@@ -4,16 +4,14 @@ use crate::configurable_account::ConfigurableAccountSignatureDetails;
 use alloy_consensus::{
     BlockHeader, Eip658Value, Signed, Transaction as TxTrait, TxEip1559, TxEip2930, TxEip4844,
     TxEip4844Variant, TxEip7702, TxEnvelope, TxLegacy, TxReceipt, Typed2718,
-    transaction::TxHashRef,
+    transaction::{TxHashRef, to_eip155_value},
 };
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_network::{
     AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTransactionReceipt, AnyTxEnvelope,
     BlockResponse, Network, ReceiptResponse, primitives::HeaderResponse,
 };
-use alloy_primitives::{
-    Address, Bloom, Bytes, FixedBytes, I256, Signature, U8, U64, U256, Uint, hex,
-};
+use alloy_primitives::{Address, Bloom, Bytes, FixedBytes, I256, Signature, U64, U256, Uint, hex};
 use alloy_rpc_types::{
     AccessListItem, Block, BlockTransactions, Header, Log, Transaction, TransactionReceipt,
 };
@@ -952,7 +950,7 @@ pub trait UIfmtSignatureExt {
 
 impl UIfmtSignatureExt for TxEnvelope {
     fn signature_pretty(&self) -> Option<(String, String, String)> {
-        Some(pretty_signature_fields(self.signature()))
+        Some(pretty_signature_fields(self, self.signature()))
     }
 }
 
@@ -965,14 +963,14 @@ impl UIfmtSignatureExt for AnyTxEnvelope {
 #[cfg(feature = "base")]
 impl UIfmtSignatureExt for BaseTxEnvelope {
     fn signature_pretty(&self) -> Option<(String, String, String)> {
-        self.signature().map(pretty_signature_fields)
+        self.signature().map(|sig| pretty_signature_fields(self, sig))
     }
 }
 
 #[cfg(feature = "optimism")]
 impl UIfmtSignatureExt for OpTxEnvelope {
     fn signature_pretty(&self) -> Option<(String, String, String)> {
-        self.signature().map(pretty_signature_fields)
+        self.signature().map(|sig| pretty_signature_fields(self, sig))
     }
 }
 
@@ -993,16 +991,19 @@ impl UIfmtSignatureExt for TempoTxEnvelope {
                 }
             }
         }?;
-        Some(pretty_signature_fields(sig))
+        Some(pretty_signature_fields(self, sig))
     }
 }
 
-fn pretty_signature_fields(signature: &Signature) -> (String, String, String) {
-    (
-        FixedBytes::from(signature.r()).pretty(),
-        FixedBytes::from(signature.s()).pretty(),
-        U8::from_le_slice(&signature.as_bytes()[64..]).pretty(),
-    )
+/// Returns the `r`, `s` and RPC `v` of a signature: the EIP-155 value for legacy transactions
+/// and the y-parity for typed ones.
+fn pretty_signature_fields(tx: &impl TxTrait, signature: &Signature) -> (String, String, String) {
+    let v = if tx.is_legacy() {
+        to_eip155_value(signature.v(), tx.chain_id())
+    } else {
+        signature.v() as u128
+    };
+    (FixedBytes::from(signature.r()).pretty(), FixedBytes::from(signature.s()).pretty(), v.pretty())
 }
 
 pub trait UIfmtReceiptExt {
@@ -1133,7 +1134,7 @@ where
     N: Network,
     N::TxEnvelope: UIfmtSignatureExt,
 {
-    let (r, s, v) = transaction.as_ref().signature_pretty().unwrap_or_default();
+    let signature = transaction.as_ref().signature_pretty();
     match attr {
         "blockHash" | "block_hash" => {
             Some(alloy_network::TransactionResponse::block_hash(transaction).pretty())
@@ -1147,13 +1148,13 @@ where
         "hash" => Some(alloy_network::TransactionResponse::tx_hash(transaction).pretty()),
         "input" => Some(TxTrait::input(transaction).pretty()),
         "nonce" => Some(TxTrait::nonce(transaction).to_string()),
-        "s" => Some(s),
-        "r" => Some(r),
+        "s" => signature.map(|(_, s, _)| s),
+        "r" => signature.map(|(r, _, _)| r),
         "to" => Some(TxTrait::to(transaction).pretty()),
         "transactionIndex" | "transaction_index" => {
             Some(alloy_network::TransactionResponse::transaction_index(transaction).pretty())
         }
-        "v" => Some(v),
+        "v" => signature.map(|(_, _, v)| v),
         "value" => Some(TxTrait::value(transaction).pretty()),
         _ => None,
     }
@@ -1304,7 +1305,7 @@ fn fmt_timestamp(timestamp: u64) -> String {
 mod tests {
 
     use super::*;
-    use alloy_network::Ethereum;
+    use alloy_network::{AnyNetwork, Ethereum};
     use alloy_primitives::{B256, address, bytes};
     use alloy_rpc_types::Authorization;
     use similar_asserts::assert_eq;
@@ -1840,8 +1841,29 @@ yParity              0"
             Some("0".to_string()),
             get_pretty_tx_attr::<Ethereum>(&txs[0], "transactionIndex")
         );
-        assert_eq!(Some("27".to_string()), get_pretty_tx_attr::<Ethereum>(&txs[0], "v"));
+        assert_eq!(Some("37".to_string()), get_pretty_tx_attr::<Ethereum>(&txs[0], "v"));
         assert_eq!(Some("0".to_string()), get_pretty_tx_attr::<Ethereum>(&txs[0], "value"));
+    }
+
+    #[test]
+    fn test_pretty_tx_attr_signature() {
+        // Polygon tx 0x0cce35f11198684fa35cbf6d58ad1161be4aa70192ab23dcbe6d1c7ee6cd8443.
+        let tx = r#"{"blockHash":"0x3e9d9c262501ec57960ccb11f15b63c85630568d19a8414f564b739a23a15b79","blockNumber":"0x5d0b1ee","chainId":"0x89","from":"0x83c974367995a8381f0d4e3f33fe88bd6496002f","gas":"0x5a3c","gasPrice":"0x6148700755","hash":"0x0cce35f11198684fa35cbf6d58ad1161be4aa70192ab23dcbe6d1c7ee6cd8443","input":"0x","nonce":"0x5808","r":"0xc2b949e5f0be88a32ade6ea2c3efd9a8d1c3c4caad13bde3803eee7a3268ccd5","s":"0xa2f0b7001c348f11a852ef78f09e7006fbdd0d49662cd1bb9495b994a3d5be3","to":"0xac81a99d4439885b764dae7c7f1ec384a0ca5b32","transactionIndex":"0x3","type":"0x0","v":"0x136","value":"0x85a46e67f53c00"}"#;
+        let tx: AnyRpcTransaction = serde_json::from_str(tx).unwrap();
+        assert_eq!(Some("310".to_string()), get_pretty_tx_attr::<AnyNetwork>(&tx, "v"));
+
+        // Anvil EIP-1559 tx, whose `v` is the y-parity.
+        let tx = r#"{"hash":"0x018b2331d461a4aeedf6a1f9cc37463377578244e6a35216057a8370714e798f","nonce":"0x1","blockHash":"0x6e4e53d1de650d5a5ebed19b38321db369ef1dc357904284ecf4d89b8834969c","blockNumber":"0x2","transactionIndex":"0x0","from":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","to":"0x5fbdb2315678afecb367f032d93f642f64180aa3","value":"0x0","gasPrice":"0x3a29f0f8","gas":"0x1c9c380","maxFeePerGas":"0xba43b7400","maxPriorityFeePerGas":"0x5f5e100","input":"0xd09de08a","r":"0xd309309a59a49021281cb6bb41d164c96eab4e50f0c1bd24c03ca336e7bc2bb7","s":"0x28a7f089143d0a1355ebeb2a1b9f0e5ad9eca4303021c1400d61bc23c9ac5319","v":"0x0","yParity":"0x0","chainId":"0x7a69","accessList":[],"type":"0x2"}"#;
+        let tx: AnyRpcTransaction = serde_json::from_str(tx).unwrap();
+        assert_eq!(Some("0".to_string()), get_pretty_tx_attr::<AnyNetwork>(&tx, "v"));
+
+        // Celo tx 0xf0df07f033151f05662dabc5cb9c97984b5789d777a848b0aea320f5c6e2b38d has no known
+        // envelope, so `r`, `s` and `v` are left to the RPC fields.
+        let tx = r#"{"accessList":[],"blockHash":"0xca3c5366456dfd949103f9be9d64801c09d59c4dfda760776975d0213f31e6f8","blockNumber":"0x4f4c24a","blockTimestamp":"0x6afe4aa0","chainId":"0xa4ec","feeCurrency":"0x0e2a3e05bc9a16f5292a6170456a710cb89c6f72","from":"0x3c7040d8116f03805dd82ad12ddc4d37127a3bd1","gas":"0x3ed5d","gasPrice":"0x2cc43fc0c","hash":"0xf0df07f033151f05662dabc5cb9c97984b5789d777a848b0aea320f5c6e2b38d","input":"0xb5b27b7e00000000000000000000000048065fbbe25f71c9282ddf5e1cd6d6a887483d5e000000000000000000000000fb4863fc2fe52a8131696e4a3a86676cff40a8060000000000000000000000003c7040d8116f03805dd82ad12ddc4d37127a3bd10000000000000000000000000000000000000000000000000000000000001518000000000000000000000000000000000000000000000000000000006afef35000000000000000000000000000000000000000000000000000000000000000c000000000000000000000000000000000000000000000000000000000000000412f80a932c028a2ecf8ae1e36a4ddfa09b35d7ccf66661384ec6921c6f0b5f964457076ed6d3efd7f0f6b39e232a185211756eb4ceb6ab047efa3c24777f2c1ab1c00000000000000000000000000000000000000000000000000000000000000","maxFeePerGas":"0x3fbd65ef3","maxPriorityFeePerGas":"0x1022c","nonce":"0x284","r":"0x303f765de0cb04d064dc0f11474368fc3f29d967dafe9e2bea22a40f1b7e617e","s":"0x2fb003717e884bc672b59c080323b4104e26e7574984fea899c9894982056af2","to":"0xbedaccbd65230ea441e7955c0f5344acfc2a45e5","transactionIndex":"0x4","type":"0x7b","v":"0x1","value":"0x0","yParity":"0x1"}"#;
+        let tx: AnyRpcTransaction = serde_json::from_str(tx).unwrap();
+        assert_eq!(None, get_pretty_tx_attr::<AnyNetwork>(&tx, "v"));
+        assert_eq!(None, get_pretty_tx_attr::<AnyNetwork>(&tx, "r"));
+        assert_eq!(None, get_pretty_tx_attr::<AnyNetwork>(&tx, "s"));
     }
 
     #[test]

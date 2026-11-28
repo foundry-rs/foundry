@@ -14,7 +14,7 @@ use alloy_network::Network;
 use alloy_primitives::{Address, B256, Bytes, U256, map::AddressMap};
 use evm2::evm::BlockStateAccumulator;
 use foundry_evm_core::evm::ForkCode;
-use foundry_fork_db::cache::MemDb as RemoteState;
+use foundry_fork_db::{backend::BlockingMode, cache::MemDb as RemoteState};
 use parking_lot::Mutex;
 use std::sync::OnceLock;
 
@@ -33,6 +33,19 @@ impl<N: Network> RemoteDb<N> {
 }
 
 impl<N: Network> DatabaseRef for RemoteDb<N> {
+    fn prefetch(&self, accounts: &[Address], slots: &[(Address, U256)]) {
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else { return };
+        let backend = self.backend.with_blocking_mode(BlockingMode::Block);
+        for &address in accounts {
+            let backend = backend.clone();
+            runtime.spawn_blocking(move || backend.prefetch_basic(address));
+        }
+        for &(address, slot) in slots {
+            let backend = backend.clone();
+            runtime.spawn_blocking(move || backend.prefetch_storage(address, slot));
+        }
+    }
+
     fn basic_ref(&self, address: Address) -> DatabaseResult<Option<AccountInfo>> {
         let info = self.backend.account(address)?.map(|info| self.code.account(info));
         Ok(info.filter(|info| !info.is_empty()))
@@ -162,6 +175,10 @@ impl<N: Network> ForkedDatabase<N> {
 }
 
 impl<N: Network> DatabaseRef for ForkedDatabase<N> {
+    fn prefetch(&self, accounts: &[Address], slots: &[(Address, U256)]) {
+        self.cache_db.prefetch(accounts, slots);
+    }
+
     fn basic_ref(&self, address: Address) -> DatabaseResult<Option<AccountInfo>> {
         self.cache_db.basic_ref(address)
     }

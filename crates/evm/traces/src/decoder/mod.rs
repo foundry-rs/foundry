@@ -1435,9 +1435,10 @@ impl CallTraceDecoder {
             | "signKeychainAdmin"
             | "signConfigurableAccount"
             | "signKeychainConfigurableAccount"
+            | "signTypedData"
                 if !matches!(
                     func.inputs.first().map(|input| input.ty.as_str()),
-                    Some("bytes32" | "address")
+                    Some("bytes32" | "address" | "string")
                 ) =>
             {
                 // Fail closed: when the arguments of a key-taking cheatcode cannot be
@@ -2691,6 +2692,26 @@ mod tests {
 
         let expect_revert_runtime_data = expected_revert_bytes4.clone();
 
+        let typed_data_json = r#"{"types":{"EIP712Domain":[]},"primaryType":"EIP712Domain","domain":{},"message":{}}"#;
+        let sign_typed_data_pk_data = Function::parse("signTypedData(uint256,string)")
+            .unwrap()
+            .abi_encode_input(&[
+                DynSolValue::Uint(alloy_primitives::U256::from(1), 256),
+                DynSolValue::String(typed_data_json.to_string()),
+            ])
+            .unwrap();
+        let sign_typed_data_data = Function::parse("signTypedData(string)")
+            .unwrap()
+            .abi_encode_input(&[DynSolValue::String(typed_data_json.to_string())])
+            .unwrap();
+        let sign_typed_data_signer_data = Function::parse("signTypedData(address,string)")
+            .unwrap()
+            .abi_encode_input(&[
+                DynSolValue::Address(Address::repeat_byte(0x11)),
+                DynSolValue::String(typed_data_json.to_string()),
+            ])
+            .unwrap();
+
         // [function_signature, data, expected]
         let cheatcode_input_test_cases = vec![
             // Should decode the expected revert payload, not full cheatcode calldata:
@@ -2869,6 +2890,15 @@ mod tests {
                         .to_string(),
                 ]),
             ),
+            (
+                "signTypedData(uint256,string)",
+                sign_typed_data_pk_data,
+                Some(vec!["\"<pk>\"".to_string(), format!("{typed_data_json:?}")]),
+            ),
+            // Ignore: `private key` is not passed, typed data is signed by the script signer.
+            ("signTypedData(string)", sign_typed_data_data, None),
+            // Ignore: `signer` is a public address.
+            ("signTypedData(address,string)", sign_typed_data_signer_data, None),
             (
                 "signWithNonceUnsafe(uint256,bytes32,uint256)",
                 hex!(

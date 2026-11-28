@@ -278,6 +278,9 @@ fn deserialize_snapshot_code<'de, D: Deserializer<'de>>(
 /// maps it to evm2's absent account where execution requires it.
 #[auto_impl::auto_impl(&, Box)]
 pub trait DatabaseRef: Debug {
+    /// Starts independent upstream reads for state a block is about to access.
+    fn prefetch(&self, _accounts: &[Address], _slots: &[(Address, U256)]) {}
+
     /// Returns the account at `address`, with its bytecode when available.
     fn basic_ref(&self, address: Address) -> DatabaseResult<Option<AccountInfo>>;
 
@@ -641,6 +644,25 @@ pub(crate) fn commit_changes(cache: &mut Cache, changes: &BlockStateAccumulator)
 }
 
 impl<ExtDB: DatabaseRef> DatabaseRef for CacheDB<ExtDB> {
+    fn prefetch(&self, accounts: &[Address], slots: &[(Address, U256)]) {
+        let accounts = accounts
+            .iter()
+            .copied()
+            .filter(|address| !self.cache.accounts.contains_key(address))
+            .collect::<Vec<_>>();
+        let slots = slots
+            .iter()
+            .copied()
+            .filter(|(address, slot)| {
+                self.cache.accounts.get(address).is_none_or(|account| {
+                    !account.account_state.is_storage_cleared()
+                        && !account.storage.contains_key(slot)
+                })
+            })
+            .collect::<Vec<_>>();
+        self.db.prefetch(&accounts, &slots);
+    }
+
     fn basic_ref(&self, address: Address) -> DatabaseResult<Option<AccountInfo>> {
         match self.cache.accounts.get(&address) {
             Some(account) => Ok(account.info().map(|mut info| {
@@ -1153,6 +1175,10 @@ impl StateDb {
 }
 
 impl DatabaseRef for StateDb {
+    fn prefetch(&self, accounts: &[Address], slots: &[(Address, U256)]) {
+        self.0.prefetch(accounts, slots);
+    }
+
     fn basic_ref(&self, address: Address) -> DatabaseResult<Option<AccountInfo>> {
         self.0.basic_ref(address)
     }

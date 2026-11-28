@@ -3181,15 +3181,7 @@ fn ensure_mutation_workspace_safe(config: &Config) -> Result<()> {
                 max_path_len = path_len;
                 highest_permission = perm.access;
             } else if path_len == max_path_len {
-                highest_permission = match (highest_permission, perm.access) {
-                    (FsAccessPermission::ReadWrite, _)
-                    | (FsAccessPermission::Read, FsAccessPermission::Write)
-                    | (FsAccessPermission::Write, FsAccessPermission::Read) => {
-                        FsAccessPermission::ReadWrite
-                    }
-                    (FsAccessPermission::None, perm) => perm,
-                    (existing_perm, _) => existing_perm,
-                };
+                highest_permission = highest_permission.merge(perm.access);
             }
         }
         (max_path_len > 0).then_some(highest_permission)
@@ -3563,6 +3555,7 @@ fn merge_suite_results(
         if let Some(base_suite) = base.get_mut(&suite_id) {
             base_suite.test_results.extend(other_suite.test_results);
             base_suite.warnings.extend(other_suite.warnings);
+            base_suite.blocked_tests.extend(other_suite.blocked_tests);
             base_suite.duration = base_suite.duration.max(other_suite.duration);
         } else {
             base.insert(suite_id, other_suite);
@@ -3648,12 +3641,20 @@ fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
             .results
             .iter()
             .flat_map(|(contract, suite)| {
-                suite.test_results.iter().filter(|(_, result)| result.status.is_failure()).flat_map(
-                    move |(test_name, test_result)| {
+                // Tests blocked by a suite failure, such as a failed `setUp()`, rerun by name.
+                let blocked_tests = suite
+                    .blocked_tests
+                    .iter()
+                    .map(|test| test.split('(').next().unwrap_or(test).to_owned());
+                suite
+                    .test_results
+                    .iter()
+                    .filter(|(_, result)| result.status.is_failure())
+                    .flat_map(|(test_name, test_result)| {
                         rerun_filter_matches(test_name, test_result)
-                            .map(move |test| RerunFailure { contract: contract.clone(), test })
-                    },
-                )
+                    })
+                    .chain(blocked_tests)
+                    .map(move |test| RerunFailure { contract: contract.clone(), test })
             })
             .collect::<Vec<_>>();
 
@@ -3858,6 +3859,7 @@ impl JunitOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use foundry_config::{FsPermissions, fs_permissions::PathPermission};
 
     #[test]
     fn parses_opcode_names_exactly() {
@@ -4236,5 +4238,24 @@ mod tests {
         assert_eq!(config.invariant.corpus.payable_value_weight, 34);
         assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_splice, 2);
         assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_cmp, 7);
+    }
+
+    #[test]
+    fn mutation_rejects_same_path_read_then_read_write_on_libs() {
+        let root = TempDir::new().unwrap();
+        let lib = root.path().join("lib");
+        std::fs::create_dir(&lib).unwrap();
+        for permissions in [
+            [PathPermission::read("./lib"), PathPermission::read_write("./lib")],
+            [PathPermission::read_write("./lib"), PathPermission::read("./lib")],
+        ] {
+            let config = Config {
+                root: root.path().to_path_buf(),
+                libs: vec![lib.clone()],
+                fs_permissions: FsPermissions::new(permissions),
+                ..Default::default()
+            };
+            assert!(ensure_mutation_workspace_safe(&config).is_err());
+        }
     }
 }
