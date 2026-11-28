@@ -2559,7 +2559,10 @@ impl<N: Network> Backend<N> {
         code_hash: B256,
         block_id: Option<BlockId>,
     ) -> Result<Option<Bytes>, BlockchainError> {
-        if let Ok(code) = self.db.read().await.code_by_hash_ref(code_hash) {
+        // `EmptyDb`-backed local state answers unknown hashes with empty code.
+        if let Ok(code) = self.db.read().await.code_by_hash_ref(code_hash)
+            && !code.is_empty()
+        {
             return Ok(Some(code.original_bytes()));
         }
         if let Some(fork) = self.get_fork() {

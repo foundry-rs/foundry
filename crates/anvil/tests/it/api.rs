@@ -1014,6 +1014,12 @@ async fn can_get_code_by_hash_from_fork() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn unknown_code_by_hash_is_none() {
+    let (api, _) = spawn(NodeConfig::test()).await;
+    assert_eq!(api.debug_code_by_hash(B256::random(), None).await.unwrap(), None);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_debug_get_modified_accounts_by_number() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
