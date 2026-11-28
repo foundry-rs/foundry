@@ -4854,6 +4854,8 @@ impl<N: Network> Backend<N> {
             StagedForkDbUser { db: Some(Arc::clone(&db)), cache_lease: startup_cache_lease };
         #[cfg(feature = "base")]
         let base_activation_admin = node_config.read().await.base_activation_admin;
+        let time = TimeManager::new(start_timestamp);
+        time.set_allow_equal_timestamps(node_config.read().await.allow_equal_timestamps);
 
         let backend = Self {
             db,
@@ -4867,7 +4869,7 @@ impl<N: Network> Backend<N> {
             fork,
             last_fork_cache_source: Arc::new(RwLock::new(last_fork_cache_source)),
             instance_id: Arc::new(RwLock::new(B256::random())),
-            time: TimeManager::new(start_timestamp),
+            time,
             cheats: Default::default(),
             new_block_listeners: Default::default(),
             fees,

@@ -28,6 +28,8 @@ struct TimeState {
     next_override_generation: u64,
     /// Lets the next block reuse `last_timestamp`, so `evm_setTime(T)` mines a block at `T`.
     allow_equal_once: bool,
+    /// Lets blocks without an explicit timestamp share their parent's timestamp.
+    allow_equal_timestamps: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -223,6 +225,12 @@ impl TimeManager {
         }
     }
 
+    /// Lets blocks without an explicit timestamp reuse their parent's timestamp, as sub-second
+    /// chains do.
+    pub fn set_allow_equal_timestamps(&self, allow: bool) {
+        self.state.write().allow_equal_timestamps = allow;
+    }
+
     /// Computes the next timestamp without updating internals
     fn compute_next_timestamp(
         state: &TimeState,
@@ -245,13 +253,15 @@ impl TimeManager {
         };
         // Equal timestamps are only allowed when explicitly requested (exact override, an
         // interval, a zero-interval mine such as `anvil_mine(n, 0)`, or the first block after
-        // `evm_setTime`). On the default path timestamps must strictly increase. The zero-interval
+        // `evm_setTime`) or enabled for every block with `--allow-equal-timestamps`. Otherwise,
+        // on the default path timestamps must strictly increase. The zero-interval
         // flag only allows equality: the timestamp itself still comes from the wall clock or the
         // configured interval.
         let allow_equal = exact_timestamp.is_some()
             || pin_timestamp
             || state.interval.is_some()
-            || state.allow_equal_once;
+            || state.allow_equal_once
+            || state.allow_equal_timestamps;
         let too_low = if allow_equal {
             next_timestamp < last_timestamp
         } else {
@@ -439,6 +449,19 @@ mod tests {
         assert_eq!(TimeManager::compute_next_timestamp(&state, 999, false).0, 1_001);
         assert_eq!(TimeManager::compute_next_timestamp(&state, 1_000, false).0, 1_001);
         assert_eq!(TimeManager::compute_next_timestamp(&state, 1_002, false).0, 1_002);
+    }
+
+    #[test]
+    fn allow_equal_timestamps_reuses_parent_within_second() {
+        let state =
+            TimeState { last_timestamp: 1_000, allow_equal_timestamps: true, ..Default::default() };
+
+        assert_eq!(TimeManager::compute_next_timestamp(&state, 999, false).0, 1_000);
+        assert_eq!(TimeManager::compute_next_timestamp(&state, 1_000, false).0, 1_000);
+        assert_eq!(TimeManager::compute_next_timestamp(&state, 1_002, false).0, 1_002);
+
+        let state = TimeState { time_increase: 10, ..state };
+        assert_eq!(TimeManager::compute_next_timestamp(&state, 1_000, false).0, 1_010);
     }
 
     #[test]
