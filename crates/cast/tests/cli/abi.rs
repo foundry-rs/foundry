@@ -496,6 +496,32 @@ fn abi_encode(cmd: _) {
 }
 
 #[casttest]
+fn abi_encode_file(prj: _, cmd: _) {
+    // The hex argument alone exceeds the 128 KiB per-argument limit on Linux with 4 KiB pages.
+    let len = 65_537;
+    let payload = "ab".repeat(len);
+    let path = prj.root().join("args.txt");
+    fs::write(&path, format!("0x{payload}\r\n\r\n  513  \r\n")).unwrap();
+
+    cmd.args(["abi-encode", "--file"])
+        .arg(&path)
+        .arg("f(bytes,uint16)")
+        .assert_success()
+        .stdout_eq(format!("0x{:064x}{:064x}{len:064x}{payload}{}\n", 64, 513, "00".repeat(31)));
+    cmd.cast_fuse()
+        .args(["abi-encode", "--packed", "--file"])
+        .arg(&path)
+        .arg("f(bytes,uint16)")
+        .assert_success()
+        .stdout_eq(format!("0x{payload}0201\n"));
+}
+
+#[casttest]
+fn abi_encode_file_conflicts_with_args(cmd: _) {
+    cmd.args(["abi-encode", "--file", "args.txt", "f(uint256)", "1"]).assert_code(2).stdout_eq("");
+}
+
+#[casttest]
 fn abi_encode_constructor(cmd: _) {
     cmd.args(["abi-encode", "constructor(uint a)", "1"])
         .assert_success()
