@@ -24,6 +24,8 @@ const RERUN_UNSAFE_CHEATCODE_SIGNATURES: &[&str] = &[
     "sign(address,bytes32)",
     "signCompact(bytes32)",
     "signCompact(address,bytes32)",
+    "signTypedData(string)",
+    "signTypedData(address,string)",
     "rpc(string,string)",
     "rpc(string,string,string)",
     "rpcJson(string,string)",

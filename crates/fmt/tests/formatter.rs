@@ -1479,6 +1479,35 @@ fn trailing_comment_before_fn_body_is_idempotent() {
 }
 
 #[test]
+fn own_line_comment_in_call_options_args_is_idempotent() {
+    let cases = [
+        (
+            "contract C { function f() external { target{value: v}({\n // first\n x: a, y: b }); } }\n",
+            "contract C {\n    function f() external {\n        target{value: v}({\n            // first\n            x: a, y: b\n        });\n    }\n}\n",
+        ),
+        (
+            "contract C { function f() external { target{value: v}(\n // first\n a, b); } }\n",
+            "contract C {\n    function f() external {\n        target{value: v}(\n            // first\n            a, b\n        );\n    }\n}\n",
+        ),
+        // Runs of comments keep their existing handling.
+        (
+            "contract C { function f() external { target{value: v}({\n // first\n /* second */ x: a, y: b }); } }\n",
+            "contract C {\n    function f() external {\n        target{value: v}({\n            // first\n        /* second */ x: a, y: b\n        });\n    }\n}\n",
+        ),
+        (
+            "contract C { function f() external { target{value: v}(\n // first\n /* second */ a, b); } }\n",
+            "contract C {\n    function f() external {\n        target{value: v}(\n            // first\n        /* second */ a, b\n        );\n    }\n}\n",
+        ),
+    ];
+    for (source, expected) in cases {
+        assert_eq!(
+            format(source, Path::new("test.sol"), Arc::new(FormatterConfig::default())),
+            expected
+        );
+    }
+}
+
+#[test]
 fn wrapped_for_header_keeps_body_braces() {
     let source = "contract C { function f() external { for (uint i = f() + g(); i < n; i += 2) x = g() + b; y(); } }";
     let expected = r#"contract C {

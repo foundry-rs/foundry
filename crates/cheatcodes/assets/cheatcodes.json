@@ -35,6 +35,24 @@
       ]
     },
     {
+      "name": "CallKind",
+      "description": "The opcode used for an expected call.",
+      "variants": [
+        {
+          "name": "Call",
+          "description": "CALL."
+        },
+        {
+          "name": "DelegateCall",
+          "description": "DELEGATECALL."
+        },
+        {
+          "name": "StaticCall",
+          "description": "STATICCALL."
+        }
+      ]
+    },
+    {
       "name": "AccountAccessKind",
       "description": "The kind of account access that occurred.",
       "variants": [
@@ -5681,6 +5699,26 @@
           183,
           183,
           204
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectCall_6",
+        "description": "Expects a call of the specified kind to an address with the specified calldata.\nCalldata can either be a strict or a partial match.",
+        "declaration": "function expectCall(CallKind kind, address callee, bytes calldata data) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectCall(uint8,address,bytes)",
+        "selector": "0x5c1a2096",
+        "selectorBytes": [
+          92,
+          26,
+          32,
+          150
         ]
       },
       "group": "testing",
@@ -11833,6 +11871,66 @@
           33,
           27,
           64
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "signTypedData_0",
+        "description": "Signs human-readable typed data `jsonData` following the EIP-712 standard with `privateKey`\nusing the secp256k1 curve.\n`jsonData` uses the JSON format of `eth_signTypedData_v4`, like `eip712HashTypedData`.",
+        "declaration": "function signTypedData(uint256 privateKey, string calldata jsonData) external pure returns (uint8 v, bytes32 r, bytes32 s);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "signTypedData(uint256,string)",
+        "selector": "0xa3f35987",
+        "selectorBytes": [
+          163,
+          243,
+          89,
+          135
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "signTypedData_1",
+        "description": "Signs human-readable typed data `jsonData` following the EIP-712 standard with signer\nprovided to script using the secp256k1 curve.\nThe wallet backend controls what the device displays. The Ledger backend signs the domain\nseparator and message hash and may require blind signing.\nIf `--sender` is provided, the signer with provided address is used, otherwise,\nif exactly one signer is provided to the script, that signer is used.\nRaises error if signer passed through `--sender` does not match any unlocked signers or\nif `--sender` is not provided and not exactly one signer is passed to the script.",
+        "declaration": "function signTypedData(string calldata jsonData) external pure returns (uint8 v, bytes32 r, bytes32 s);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "signTypedData(string)",
+        "selector": "0xce210101",
+        "selectorBytes": [
+          206,
+          33,
+          1,
+          1
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "signTypedData_2",
+        "description": "Signs human-readable typed data `jsonData` following the EIP-712 standard with signer\nprovided to script using the secp256k1 curve.\nThe wallet backend controls what the device displays. The Ledger backend signs the domain\nseparator and message hash and may require blind signing.\nRaises error if none of the signers passed into the script have provided address.",
+        "declaration": "function signTypedData(address signer, string calldata jsonData) external pure returns (uint8 v, bytes32 r, bytes32 s);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "signTypedData(address,string)",
+        "selector": "0x91cdaafc",
+        "selectorBytes": [
+          145,
+          205,
+          170,
+          252
         ]
       },
       "group": "crypto",

@@ -542,6 +542,8 @@ contract SignatureTester {
 
 contract ScriptSign is ForgeTest {
     bytes32 digest = keccak256("something");
+    string constant TYPED_DATA =
+        '{"types":{"EIP712Domain":[{"name":"name","type":"string"}],"Message":[{"name":"contents","type":"string"}]},"primaryType":"Message","domain":{"name":"ScriptSign"},"message":{"contents":"something"}}';
 
     function run() external {
         vm.startBroadcast();
@@ -551,6 +553,9 @@ contract ScriptSign is ForgeTest {
         (, address caller,) = vm.readCallers();
         assertEq(tester.owner(), caller);
         tester.verifySignature(digest, v, r, s);
+
+        (v, r, s) = vm.signTypedData(TYPED_DATA);
+        tester.verifySignature(vm.eip712HashTypedData(TYPED_DATA), v, r, s);
     }
 
     function run(address sender) external {
@@ -559,6 +564,14 @@ contract ScriptSign is ForgeTest {
 
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(sender, digest);
         address actual = ecrecover(digest, v, r, s);
+
+        assertEq(actual, sender);
+
+        vm._expectCheatcodeRevert(bytes("could not determine signer"));
+        vm.signTypedData(TYPED_DATA);
+
+        (v, r, s) = vm.signTypedData(sender, TYPED_DATA);
+        actual = ecrecover(vm.eip712HashTypedData(TYPED_DATA), v, r, s);
 
         assertEq(actual, sender);
     }

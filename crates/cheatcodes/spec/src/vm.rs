@@ -37,6 +37,16 @@ interface Vm {
         RecurrentPrank,
     }
 
+    /// The opcode used for an expected call.
+    enum CallKind {
+        /// CALL.
+        Call,
+        /// DELEGATECALL.
+        DelegateCall,
+        /// STATICCALL.
+        StaticCall,
+    }
+
     /// The kind of account access that occurred.
     enum AccountAccessKind {
         /// The account was called.
@@ -1341,6 +1351,11 @@ interface Vm {
     /// Calldata can either be a strict or a partial match.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectDelegateCall(address callee, bytes calldata data) external;
+
+    /// Expects a call of the specified kind to an address with the specified calldata.
+    /// Calldata can either be a strict or a partial match.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectCall(CallKind kind, address callee, bytes calldata data) external;
 
     /// Expect a call to an address with the specified `msg.value` and calldata, and a *minimum* amount of gas.
     #[cheatcode(group = Testing, safety = Unsafe)]
@@ -3353,6 +3368,37 @@ interface Vm {
     /// Raises error if none of the signers passed into the script have provided address.
     #[cheatcode(group = Crypto)]
     function signCompact(address signer, bytes32 digest) external pure returns (bytes32 r, bytes32 vs);
+
+    /// Signs human-readable typed data `jsonData` following the EIP-712 standard with `privateKey`
+    /// using the secp256k1 curve.
+    ///
+    /// `jsonData` uses the JSON format of `eth_signTypedData_v4`, like `eip712HashTypedData`.
+    #[cheatcode(group = Crypto)]
+    function signTypedData(uint256 privateKey, string calldata jsonData) external pure returns (uint8 v, bytes32 r, bytes32 s);
+
+    /// Signs human-readable typed data `jsonData` following the EIP-712 standard with signer
+    /// provided to script using the secp256k1 curve.
+    ///
+    /// The wallet backend controls what the device displays. The Ledger backend signs the domain
+    /// separator and message hash and may require blind signing.
+    ///
+    /// If `--sender` is provided, the signer with provided address is used, otherwise,
+    /// if exactly one signer is provided to the script, that signer is used.
+    ///
+    /// Raises error if signer passed through `--sender` does not match any unlocked signers or
+    /// if `--sender` is not provided and not exactly one signer is passed to the script.
+    #[cheatcode(group = Crypto)]
+    function signTypedData(string calldata jsonData) external pure returns (uint8 v, bytes32 r, bytes32 s);
+
+    /// Signs human-readable typed data `jsonData` following the EIP-712 standard with signer
+    /// provided to script using the secp256k1 curve.
+    ///
+    /// The wallet backend controls what the device displays. The Ledger backend signs the domain
+    /// separator and message hash and may require blind signing.
+    ///
+    /// Raises error if none of the signers passed into the script have provided address.
+    #[cheatcode(group = Crypto)]
+    function signTypedData(address signer, string calldata jsonData) external pure returns (uint8 v, bytes32 r, bytes32 s);
 
     /// Signs `digest` with `privateKey` using the secp256r1 curve.
     #[cheatcode(group = Crypto)]

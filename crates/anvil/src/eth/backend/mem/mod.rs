@@ -28,6 +28,7 @@ use crate::{
             executor::{
                 AnvilBlockExecutor, BlockExecutionKind, BlockExecutionResult,
                 EthereumBlockTransitions, ExecutedPoolTransactions, PoolTxGasConfig, build_receipt,
+                system_call_prefetch_keys,
             },
             fork::{ClientFork, ForkEndpointIdentity},
             genesis::GenesisConfig,
@@ -3108,6 +3109,16 @@ impl<N: Network> Backend<N> {
     ) -> Result<ExecutedBlock, BlockchainError> {
         let transitions =
             self.ethereum_block_transitions(hardfork, parent_beacon_block_root, execution_kind);
+        if self.is_fork()
+            && let Some(transitions) = &transitions
+        {
+            let (accounts, slots) = system_call_prefetch_keys(
+                transitions,
+                evm_env.block_env.number.saturating_to(),
+                evm_env.block_env.timestamp.saturating_to(),
+            );
+            db.prefetch(&accounts, &slots);
+        }
         let opts = self.evm_options_at(evm_env, hardfork);
         #[cfg(feature = "monad")]
         let mut monad_context =

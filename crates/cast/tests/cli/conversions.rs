@@ -311,6 +311,22 @@ Error: value out of range for a signed 256-bit integer
 "#]]);
 }
 
+// Zero has no sign, so "-0" must print zero instead of failing the signed 256-bit range check.
+#[casttest]
+fn from_wei_negative_zero(cmd: _) {
+    cmd.args(["from-wei", "--", "-0", "ether"]).assert_success().stdout_eq(str![[r#"
+0.000000000000000000
+
+"#]]);
+
+    cmd.cast_fuse().args(["format-units", "--", "-0", "18"]).assert_success().stdout_eq(str![[
+        r#"
+0
+
+"#
+    ]]);
+}
+
 #[casttest]
 fn keccak_stdin_bytes(cmd: _) {
     cmd.args(["keccak"]).stdin("0x12").assert_success().stdout_eq(str![[r#"
