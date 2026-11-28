@@ -153,14 +153,14 @@ struct FrameScan {
     whitespaces: usize,
 }
 
+const fn is_json_whitespace(byte: u8) -> bool {
+    matches!(byte, b' ' | b'\t' | b'\r' | b'\n')
+}
+
 impl FrameScan {
     /// Scans the bytes not scanned yet and returns the index of the frame's last byte, once the
     /// frame is complete.
     fn advance(&mut self, bytes: &[u8]) -> Option<usize> {
-        const fn is_whitespace(byte: u8) -> bool {
-            matches!(byte, 0x0D | 0x0A | 0x20 | 0x09)
-        }
-
         while let Some(&byte) = bytes.get(self.next_idx) {
             let idx = self.next_idx;
             self.next_idx += 1;
@@ -195,7 +195,7 @@ impl FrameScan {
                 },
                 JsonLexer::Escaped => JsonLexer::InString,
             };
-            if is_whitespace(byte) {
+            if is_json_whitespace(byte) {
                 self.whitespaces += 1;
             }
 
@@ -228,6 +228,18 @@ impl tokio_util::codec::Decoder for JsonRpcCodec {
             }
         }
     }
+
+    fn decode_eof(&mut self, buf: &mut BytesMut) -> io::Result<Option<Self::Item>> {
+        if let Some(frame) = self.decode(buf)? {
+            return Ok(Some(frame));
+        }
+        if buf.iter().copied().all(is_json_whitespace) {
+            buf.clear();
+            self.scan = FrameScan::default();
+            return Ok(None);
+        }
+        Err(io::Error::other("bytes remaining on stream"))
+    }
 }
 
 impl tokio_util::codec::Encoder<String> for JsonRpcCodec {
@@ -252,7 +264,47 @@ fn to_name(path: &std::ffi::OsStr) -> io::Result<ls::Name<'_>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio_util::codec::Decoder;
+    use tokio_util::codec::{Decoder, Encoder};
+
+    #[derive(Clone, Debug, ephyra::Arbitrary)]
+    enum Frame {
+        Batch(Vec<String>),
+        Single(String),
+    }
+
+    impl Frame {
+        fn json(self) -> serde_json::Value {
+            let call = |method| serde_json::json!({ "jsonrpc": "2.0", "method": method });
+            match self {
+                Self::Batch(methods) => methods.into_iter().map(call).collect(),
+                Self::Single(method) => call(method),
+            }
+        }
+    }
+
+    #[ephyra::test]
+    fn reads_each_ipc_frame(frames: Vec<(Frame, u8)>, chunk: u8) {
+        let mut wire = Vec::new();
+        let mut expected = Vec::new();
+        for (frame, padding) in frames {
+            let value = frame.json();
+            wire.extend(b" \t\r\n".iter().copied().cycle().take(usize::from(padding)));
+            serde_json::to_writer(&mut wire, &value).unwrap();
+            expected.push(value);
+        }
+        let mut codec = JsonRpcCodec::default();
+        let mut received = Vec::new();
+        let mut buf = BytesMut::new();
+        for part in wire.chunks(usize::from(chunk) + 1) {
+            buf.extend_from_slice(part);
+            while let Some(frame) = codec.decode(&mut buf).unwrap() {
+                received.push(serde_json::from_str::<serde_json::Value>(&frame).unwrap());
+            }
+        }
+        assert_eq!(received, expected);
+        buf.extend_from_slice(b"\n");
+        assert!(codec.decode_eof(&mut buf).unwrap().is_none());
+    }
 
     fn decode_all(input: &str) -> Vec<String> {
         let mut buf = BytesMut::from(input);
@@ -262,6 +314,18 @@ mod tests {
             out.push(msg);
         }
         out
+    }
+
+    #[test]
+    fn accepts_encoder_delimiter_at_eof() {
+        let mut codec = JsonRpcCodec::default();
+        let mut buf = BytesMut::new();
+        codec.encode("[]".to_owned(), &mut buf).unwrap();
+        assert_eq!(codec.decode_eof(&mut buf).unwrap().as_deref(), Some("[]"));
+        assert_eq!(codec.decode_eof(&mut buf).unwrap(), None);
+        assert!(buf.is_empty());
+        buf.extend_from_slice(b" \n{");
+        assert!(codec.decode_eof(&mut buf).is_err());
     }
 
     #[test]

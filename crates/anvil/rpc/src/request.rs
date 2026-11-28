@@ -121,6 +121,44 @@ const fn null_id() -> Id {
 mod tests {
     use super::*;
 
+    #[derive(Clone, Debug, ephyra::Arbitrary)]
+    enum CallId {
+        Missing,
+        Null,
+        Number(i64),
+        String(String),
+    }
+
+    #[ephyra::test]
+    fn batch_preserves_calls(calls: Vec<(CallId, String, Vec<i64>)>) {
+        let mut wire = Vec::new();
+        let mut expected = Vec::new();
+        for (id, method, params) in calls {
+            let mut call =
+                serde_json::json!({ "jsonrpc": "2.0", "method": method, "params": params });
+            let params = RequestParams::Array(params.into_iter().map(Into::into).collect());
+            let id = match id {
+                CallId::Missing => None,
+                CallId::Null => Some(Id::Null),
+                CallId::Number(n) => Some(Id::Number(n)),
+                CallId::String(s) => Some(Id::String(s)),
+            };
+            expected.push(if let Some(id) = id {
+                call["id"] = serde_json::to_value(&id).unwrap();
+                RpcCall::MethodCall(RpcMethodCall { jsonrpc: Version::V2, method, params, id })
+            } else {
+                RpcCall::Notification(RpcNotification {
+                    jsonrpc: Some(Version::V2),
+                    method,
+                    params,
+                })
+            });
+            wire.push(call);
+        }
+        let encoded = serde_json::to_vec(&wire).unwrap();
+        assert_eq!(serde_json::from_slice::<Request>(&encoded).unwrap(), Request::Batch(expected));
+    }
+
     #[test]
     fn can_serialize_batch() {
         let batch = Request::Batch(vec![

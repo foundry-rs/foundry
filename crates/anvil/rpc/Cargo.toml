@@ -15,3 +15,6 @@ workspace = true
 [dependencies]
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
+
+[dev-dependencies]
+ephyra.workspace = true
