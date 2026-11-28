@@ -518,6 +518,98 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 "#]]);
 }
 
+/// `vm.setEvmVersion` must refresh reserve-balance policy so Eight->Nine CREATE2
+/// selfdestruct matches a transaction started directly under Nine (#16143).
+#[cfg(feature = "monad")]
+#[forgetest_init]
+fn test_set_evm_version_refreshes_monad_reserve_policy(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.hardfork = Some("monad:MonadEight".parse().unwrap());
+    });
+    prj.add_test(
+        "MonadReservePolicyTransition.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+interface EvmVm {
+    function setEvmVersion(string calldata evm) external;
+}
+
+interface IReserveBalance {
+    function dippedIntoReserve() external returns (bool);
+}
+
+/// Constructor self-destructs so the CREATE2 destination is created-and-selfdestructed locally.
+contract Boom {
+    constructor() {
+        selfdestruct(payable(address(this)));
+    }
+}
+
+contract MonadReservePolicyTransitionTest is Test {
+    EvmVm constant evm = EvmVm(address(bytes20(uint160(uint256(keccak256("hevm cheat code"))))));
+    IReserveBalance constant RESERVE = IReserveBalance(address(0x1001));
+    bytes32 constant SALT = bytes32(uint256(0x16143));
+    bytes32 constant SALT2 = bytes32(uint256(0x16144));
+    bytes32 constant SALT3 = bytes32(uint256(0x16145));
+
+    function setUp() public {
+        // Fund CREATE2 destinations before any hardfork switch. Pass address(this)
+        // so computeCreate2Address matches the deployer that runs `new Boom{salt}`.
+        vm.deal(predict(SALT), 5 ether);
+        vm.deal(predict(SALT2), 5 ether);
+        vm.deal(predict(SALT3), 5 ether);
+    }
+
+    function test_eight_to_nine_matches_direct_nine() public {
+        // Direct Nine: created-and-selfdestructed accounts are exempt.
+        // Query 0x1001 only under Nine; the precompile is absent on Eight.
+        {
+            evm.setEvmVersion("MonadNine");
+            new Boom{salt: SALT}();
+            assertFalse(queryDip(), "direct Nine must apply the exemption");
+        }
+
+        // Flip to Eight. Do not call 0x1001 here (precompile missing). CREATE2 under
+        // Eight should still track a reserve violation once we return to Nine.
+        evm.setEvmVersion("MonadEight");
+        new Boom{salt: SALT2}();
+
+        // Eight->Nine must refresh policy so the next CREATE2 selfdestruct is exempt.
+        evm.setEvmVersion("MonadNine");
+        // Prior Eight create may have left a dip; clear observation by only checking
+        // the post-Nine create outcome relative to a fresh salt.
+        new Boom{salt: SALT3}();
+        assertFalse(
+            queryDip(),
+            "Eight->Nine setEvmVersion must refresh reserve policy"
+        );
+    }
+
+    function queryDip() internal returns (bool dipped) {
+        (bool ok, bytes memory ret) = address(RESERVE).call(abi.encodeCall(IReserveBalance.dippedIntoReserve, ()));
+        require(ok && ret.length >= 32, "ReserveBalance query failed");
+        dipped = abi.decode(ret, (bool));
+    }
+
+    function predict(bytes32 salt) internal view returns (address) {
+        return vm.computeCreate2Address(salt, keccak256(type(Boom).creationCode), address(this));
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--network", "monad", "--mc", "MonadReservePolicyTransitionTest"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/MonadReservePolicyTransition.t.sol:MonadReservePolicyTransitionTest
+[PASS] test_eight_to_nine_matches_direct_nine() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
 #[cfg(feature = "monad")]
 #[forgetest]
 async fn explicit_network_warns_on_fork_of_another_family(prj: _, cmd: _) {

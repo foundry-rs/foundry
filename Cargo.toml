@@ -381,7 +381,7 @@ reth-evm = { git = "https://github.com/paradigmxyz/reth", rev = "5537d6927c14d0b
 op-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "b90cf83a877af2d9141a282ae493ec54ca50f0c9", default-features = false }
 base-evm2 = { git = "https://github.com/foundry-rs/evm2-networks", rev = "b90cf83a877af2d9141a282ae493ec54ca50f0c9", default-features = false }
 # Monad's maintained evm2 type family.
-monad-evm2 = { git = "https://github.com/category-labs/monad-alloy-evm2", rev = "95db06bd60922cfc01f712ec66be9327df3d7f33", default-features = false }
+monad-evm2 = { git = "https://github.com/kutluhaneth46/monad-alloy-evm2-1", rev = "dd8e9cea506cc30a75bccd57b27e44658ea1b5b1", default-features = false }
 
 ## alloy
 alloy-consensus = { version = "2.6.1", default-features = false }
