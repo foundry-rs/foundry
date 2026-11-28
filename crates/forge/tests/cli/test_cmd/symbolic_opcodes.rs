@@ -364,6 +364,58 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
     assert!(!stdout.contains("symbolic EXP exponent"), "{stdout}");
 }
 
+// A packed field extracted with shifts, as solar emits it, bounds the exponent through the shift
+// width even though the shifted operand has no bound of its own.
+#[forgetest_init]
+fn symbolic_exp_bounds_exponent_extracted_by_shifts(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_exp_bounds_exponent_extracted_by_shifts because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicExpShiftedExponent.t.sol",
+        r#"
+contract SymbolicExpShiftedExponent {
+    function checkShiftedFieldExponent(uint256 word) public pure {
+        uint256 exponent;
+        assembly {
+            exponent := shr(16, shr(232, shl(48, word)))
+        }
+        uint256 y;
+        unchecked {
+            y = 10 ** exponent;
+        }
+        if (exponent == 2) {
+            assert(y == 100);
+        }
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkShiftedFieldExponent",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExpShiftedExponent.t.sol:SymbolicExpShiftedExponent
+[PASS] checkShiftedFieldExponent(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+
+    assert!(!stdout.contains("symbolic EXP exponent"), "{stdout}");
+}
+
 // The engine does not model gas consumption, so `GAS` / `gasleft()` must fail
 // closed instead of returning a concrete max value or a symbolic approximation
 // that can produce non-replaying counterexamples.
