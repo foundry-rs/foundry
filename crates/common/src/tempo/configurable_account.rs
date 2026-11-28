@@ -120,11 +120,22 @@ pub async fn current_config<P: Provider<TempoNetwork>>(
     account: Address,
     keys: &[Address],
 ) -> Result<Option<ConfigurableAccountConfig>> {
+    current_config_with_witness(provider, account, keys, None).await
+}
+
+/// Resolves the current configuration as in [`current_config`]. When supplied, the witness
+/// must match the onchain commitment or, before registration, derive the account address.
+pub async fn current_config_with_witness<P: Provider<TempoNetwork>>(
+    provider: &P,
+    account: Address,
+    keys: &[Address],
+    witness: Option<ConfigurableAccountConfig>,
+) -> Result<Option<ConfigurableAccountConfig>> {
     let block = BlockId::latest();
     let commitment = config_commitment(provider, account, block)
         .await?
         .ok_or_else(|| eyre::eyre!(T14_REQUIRED))?;
-    config_for_commitment(provider, account, keys, commitment, block).await
+    config_for_commitment(provider, account, keys, witness, commitment, block).await
 }
 
 /// Tells whether `account` is a configurable account at `block`, and returns its configuration
@@ -159,11 +170,7 @@ pub async fn detect_configurable_account<P: Provider<TempoNetwork>>(
         eyre::ensure!(!required, T14_REQUIRED);
         return Ok(None);
     };
-    if let Some(config) = config {
-        check_config(account, &config, commitment)?;
-        return Ok(Some(config));
-    }
-    let config = config_for_commitment(provider, account, keys, commitment, block).await?;
+    let config = config_for_commitment(provider, account, keys, config, commitment, block).await?;
     eyre::ensure!(
         config.is_some() || !required,
         "{account} is not a configurable account: it has no registered configuration, and no \
@@ -214,9 +221,14 @@ async fn config_for_commitment<P: Provider<TempoNetwork>>(
     provider: &P,
     account: Address,
     keys: &[Address],
+    witness: Option<ConfigurableAccountConfig>,
     commitment: B256,
     block: BlockId,
 ) -> Result<Option<ConfigurableAccountConfig>> {
+    if let Some(config) = witness {
+        check_config(account, &config, commitment)?;
+        return Ok(Some(config));
+    }
     for key in keys {
         let config = single_owner_config(*key);
         let matches = if commitment.is_zero() {

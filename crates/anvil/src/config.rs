@@ -269,6 +269,8 @@ pub struct NodeConfig {
     pub no_mining: bool,
     /// Enables auto and interval mining mode
     pub mixed_mining: bool,
+    /// Allows blocks without an explicit timestamp to share their parent's timestamp.
+    pub allow_equal_timestamps: bool,
     /// port to use for the server
     pub port: u16,
     /// maximum number of transactions in a block
@@ -680,6 +682,7 @@ impl Default for NodeConfig {
             transaction_coalescing_window: INSTANT_COALESCE_WINDOW,
             no_mining: false,
             mixed_mining: false,
+            allow_equal_timestamps: false,
             port: NODE_PORT,
             max_transactions: 1_000,
             fork_urls: vec![],
@@ -1081,6 +1084,13 @@ impl NodeConfig {
     ) -> Self {
         self.block_time = block_time.map(Into::into);
         self.mixed_mining = mixed_mining;
+        self
+    }
+
+    /// Allows blocks without an explicit timestamp to share their parent's timestamp.
+    #[must_use]
+    pub const fn with_allow_equal_timestamps(mut self, allow: bool) -> Self {
+        self.allow_equal_timestamps = allow;
         self
     }
 

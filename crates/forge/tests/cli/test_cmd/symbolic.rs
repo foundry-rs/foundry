@@ -8448,7 +8448,8 @@ contract SymbolicSqrt {
 }
 
 // Lending checks cross-multiply `debt * BPS <= collateral * ltv`, and an `ltv` of at most `BPS`
-// then bounds the debt by the collateral.
+// then bounds the debt by the collateral. A rate limit `x <= m * d` bounds the quotient `x / d` by
+// `m` for a nonzero `d`, even when the product wraps.
 #[forgetest_init]
 fn symbolic_proves_scaled_order(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_scaled_order");
@@ -8486,6 +8487,72 @@ contract SymbolicScaledOrder {
         }
         assert(debt <= collateral);
     }
+
+    function checkQuotientWithinScaledBound(uint256 x, uint128 m, uint128 d) public pure {
+        require(d != 0);
+        require(x <= uint256(m) * d);
+        assert(x / d <= m);
+    }
+
+    function checkQuotientWithinWrappingBound(uint256 x, uint256 m, uint256 d) public pure {
+        require(d != 0);
+        unchecked {
+            require(x <= m * d);
+        }
+        assert(x / d <= m);
+    }
+
+    // The guard also matches `x * y <= x * (y + z)`, which must not hide the strict share bound.
+    function checkShareStrictlyBelowWithCrossBound(uint256 x, uint112 y, uint112 z) public pure {
+        require(x > 0 && z > 0);
+        unchecked {
+            require(x * y <= x * (uint256(y) + z));
+            assert(x * y / (uint256(y) + z) < x);
+        }
+    }
+
+    // `p <= m` from the guard must not stop the factor search before the strict `s < m`.
+    function checkProductStrictlyBelowWithCrossBound(
+        uint256 m,
+        uint256 a,
+        uint256 n,
+        uint128 h,
+        uint256 k
+    ) public pure {
+        require(m > 0 && h > 0 && k > 0);
+        unchecked {
+            uint256 numerator = n + 1;
+            require(numerator <= m * h);
+            uint256 p = numerator / h;
+            uint256 s = a % m;
+            require(p <= k);
+            require(s <= k);
+            assert(p * s / k < m);
+        }
+    }
+
+    function checkQuotientWithoutBound(uint256 x, uint128 m, uint128 d) public pure {
+        require(d != 0);
+        assert(x / d <= m);
+    }
+
+    function checkQuotientBoundByOtherDivisor(uint256 x, uint128 m, uint128 d, uint128 e)
+        public
+        pure
+    {
+        require(d != 0);
+        require(x <= uint256(m) * e);
+        assert(x / d <= m);
+    }
+
+    function checkQuotientStrictlyBelowScaledBound(uint256 x, uint128 m, uint128 d)
+        public
+        pure
+    {
+        require(d != 0);
+        require(x <= uint256(m) * d);
+        assert(x / d < m);
+    }
 }
 "#,
     );
@@ -8504,8 +8571,22 @@ contract SymbolicScaledOrder {
         assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
 
         for signature in [
+            "checkQuotientWithinScaledBound(uint256,uint128,uint128)",
+            "checkQuotientWithinWrappingBound(uint256,uint256,uint256)",
+            "checkShareStrictlyBelowWithCrossBound(uint256,uint112,uint112)",
+            "checkProductStrictlyBelowWithCrossBound(uint256,uint256,uint256,uint128,uint256)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
+            assert_eq!(result["symbolic"]["solver"]["stats"]["smt_queries"], 0, "{signature}");
+        }
+
+        for signature in [
             "checkBorrowAboveFullLtv(uint128,uint16,uint128)",
             "checkBorrowWithWrappingDebt(uint128,uint16,uint256)",
+            "checkQuotientWithoutBound(uint256,uint128,uint128)",
+            "checkQuotientBoundByOtherDivisor(uint256,uint128,uint128,uint128)",
+            "checkQuotientStrictlyBelowScaledBound(uint256,uint128,uint128)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(result["symbolic"]["status"], "fail_counterexample", "{signature}");
@@ -11141,8 +11222,11 @@ contract SymbolicSignedPrice {
 
 // Synthetix and MasterChef reward accrual scale a staked balance by a per-token rate
 // `reward * 1e18 / supply`. With the balance at most the supply, `balance * rate` cannot overflow
-// and stays within `reward * 1e18`. A balance one above the supply, or a rate over another
-// supply, breaks the bound, and the latter product can overflow.
+// and stays within `reward * 1e18`, so the earned amount `balance * rate / 1e18` stays within
+// `reward`. A balance one above the supply, or a rate over another supply, breaks the bound, and
+// the latter product can overflow. The earned amount reaches `reward` at a balance equal to the
+// supply when the division is exact, and a rate over another reward is not bounded by `reward`. A
+// scale that can be zero breaks the strict bound.
 #[forgetest_init]
 fn symbolic_proves_balance_times_per_token_rate(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_proves_balance_times_per_token_rate");
@@ -11189,6 +11273,43 @@ contract SymbolicRewardAccrual {
         if (other == 0 || balance > supply) return;
         try this.earned(balance, other, reward) {} catch { assert(false); }
     }
+
+    function checkEarnedWithinReward(uint128 balance, uint128 supply, uint128 reward) public pure {
+        if (supply == 0 || balance > supply) return;
+        assert(uint256(balance) * rewardPerToken(reward, supply) / 1e18 <= reward);
+    }
+
+    function checkPendingWithinReward(uint128 amount, uint128 supply, uint128 reward) public pure {
+        if (supply == 0 || amount > supply) return;
+        uint256 accPerShare = uint256(reward) * 1e12 / supply;
+        assert(uint256(amount) * accPerShare / 1e12 <= reward);
+    }
+
+    function checkEarnedAboveSupply(uint128 balance, uint128 supply, uint128 reward) public pure {
+        if (supply == 0 || balance > uint256(supply) + 1) return;
+        assert(uint256(balance) * rewardPerToken(reward, supply) / 1e18 <= reward);
+    }
+
+    function checkEarnedBelowReward(uint128 balance, uint128 supply, uint128 reward) public pure {
+        if (supply == 0 || balance > supply || reward == 0) return;
+        assert(uint256(balance) * rewardPerToken(reward, supply) / 1e18 < reward);
+    }
+
+    function checkEarnedOtherReward(uint128 balance, uint128 supply, uint128 other, uint128 reward)
+        public
+        pure
+    {
+        if (supply == 0 || balance > supply) return;
+        assert(uint256(balance) * rewardPerToken(other, supply) / 1e18 <= reward);
+    }
+
+    function checkEarnedZeroScale(uint128 balance, uint128 supply, uint128 x, uint128 k)
+        public
+        pure
+    {
+        if (supply == 0 || balance > supply) return;
+        assert(uint256(balance) * (uint256(x) * k / supply) < (uint256(x) + 1) * k);
+    }
 }
 "#,
     );
@@ -11204,9 +11325,31 @@ contract SymbolicRewardAccrual {
         let result = json_test_result(&output, "checkAccruedWithinReward(uint128,uint128,uint128)");
         assert_eq!(result["symbolic"]["status"], "pass", "optimized={optimized}: {result}");
         for signature in [
+            "checkEarnedWithinReward(uint128,uint128,uint128)",
+            "checkPendingWithinReward(uint128,uint128,uint128)",
+        ] {
+            let result = json_test_result(&output, signature);
+            assert_eq!(
+                result["symbolic"]["status"], "pass",
+                "{signature}, optimized={optimized}: {result}"
+            );
+            // Without the optimizer, solc's `reward * 1e18` overflow guard, an OR of
+            // complementary bool words, still reaches the solver.
+            if optimized {
+                assert_eq!(
+                    result["symbolic"]["solver"]["stats"]["smt_queries"], 0,
+                    "{signature}: {result}"
+                );
+            }
+        }
+        for signature in [
             "checkBalanceAboveSupply(uint128,uint128,uint128)",
             "checkOtherSupply(uint128,uint128,uint128,uint128)",
             "checkEarnedOverflowsOverOtherSupply(uint128,uint128,uint128,uint128)",
+            "checkEarnedAboveSupply(uint128,uint128,uint128)",
+            "checkEarnedBelowReward(uint128,uint128,uint128)",
+            "checkEarnedOtherReward(uint128,uint128,uint128,uint128)",
+            "checkEarnedZeroScale(uint128,uint128,uint128,uint128)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(
@@ -11958,7 +12101,9 @@ contract SymbolicDivisorOrder {
 // Rewards earned as `balance * (rewardPerToken - paid) / 1e18 + rewards` only grow with the index,
 // which takes ordering differences with a common subtrahend and sums with a common addend. A
 // checked sum does not wrap even for unbounded `rewards`, and an unchecked one does not when its
-// operands' ranges fit.
+// operands' ranges fit. Voting power `slope * (end - t)` decays the same way with a common minuend,
+// but not for swapped or unordered times, not strictly at equal times, and a difference past `end`
+// wraps.
 #[forgetest_init]
 fn symbolic_orders_earned_rewards_by_index(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_orders_earned_rewards_by_index");
@@ -12030,6 +12175,42 @@ contract SymbolicEarnedOrder {
     function checkOtherAddend(uint128 b, uint128 x, uint128 c, uint128 d) public pure {
         assert(uint256(c) + uint256(b) * x / 1e18 <= uint256(d) + uint256(b) * x / 1e18);
     }
+
+    function checkVotingPowerDecays(uint128 slope, uint64 t1, uint64 t2, uint64 end) public pure {
+        require(t1 <= t2 && t2 <= end);
+        assert(uint256(slope) * (end - t2) <= uint256(slope) * (end - t1));
+    }
+
+    function checkVotingPowerSwappedTimes(uint128 slope, uint64 t1, uint64 t2, uint64 end)
+        public
+        pure
+    {
+        require(t1 <= t2 && t2 <= end);
+        assert(uint256(slope) * (end - t1) <= uint256(slope) * (end - t2));
+    }
+
+    function checkVotingPowerUnorderedTimes(uint128 slope, uint64 t1, uint64 t2, uint64 end)
+        public
+        pure
+    {
+        require(t1 <= end && t2 <= end);
+        assert(uint256(slope) * (end - t2) <= uint256(slope) * (end - t1));
+    }
+
+    function checkDifferencePastEnd(uint64 t1, uint64 t2, uint64 end) public pure {
+        require(t1 <= t2);
+        unchecked {
+            assert(uint256(end) - t2 <= uint256(end) - t1);
+        }
+    }
+
+    function checkVotingPowerStrictlyDecays(uint128 slope, uint64 t1, uint64 t2, uint64 end)
+        public
+        pure
+    {
+        require(t1 <= t2 && t2 <= end);
+        assert(uint256(slope) * (end - t2) < uint256(slope) * (end - t1));
+    }
 }
 "#,
     );
@@ -12046,6 +12227,7 @@ contract SymbolicEarnedOrder {
         for signature in [
             "checkEarnedGrowsWithIndex(uint128,uint128,uint128,uint128,uint256)",
             "checkBoundedSum(uint128,uint128,uint128,uint128)",
+            "checkVotingPowerDecays(uint128,uint64,uint64,uint64)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(result["symbolic"]["status"], "pass", "{signature} optimized={optimized}");
@@ -12062,6 +12244,10 @@ contract SymbolicEarnedOrder {
             "checkWrappedSum(uint128,uint128,uint128,uint256)",
             "checkGuardedSmallerSum(uint128,uint128,uint128,uint256)",
             "checkOtherAddend(uint128,uint128,uint128,uint128)",
+            "checkVotingPowerSwappedTimes(uint128,uint64,uint64,uint64)",
+            "checkVotingPowerUnorderedTimes(uint128,uint64,uint64,uint64)",
+            "checkDifferencePastEnd(uint64,uint64,uint64)",
+            "checkVotingPowerStrictlyDecays(uint128,uint64,uint64,uint64)",
         ] {
             let result = json_test_result(&output, signature);
             assert_eq!(

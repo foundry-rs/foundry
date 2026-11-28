@@ -345,6 +345,15 @@ fn expr_less_or_equal<'a>(
         {
             true
         }
+        // `e - b <= e - a` for `a <= b <= e`, so neither difference wraps, as for decaying voting
+        // power.
+        (SymExprKind::BinOp(SymBinOp::Sub, e, b), SymExprKind::BinOp(SymBinOp::Sub, f, a))
+            if e == f
+                && expr_less_or_equal(b, e, facts, bounds)
+                && expr_less_or_equal(a, b, facts, bounds) =>
+        {
+            true
+        }
         // `~x <= ~y` for `y <= x`, as `~x` is `MAX - x`.
         (SymExprKind::Not(x), SymExprKind::Not(y)) => expr_less_or_equal(y, x, facts, bounds),
         // `x - e <= x <= right` when `e <= x`, so the difference does not wrap, as for an accrued
