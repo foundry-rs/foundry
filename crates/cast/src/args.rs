@@ -116,10 +116,14 @@ pub fn run() -> Result<()> {
     let warnings = setup()?;
 
     let args = CastArgs::parse();
-    args.global.init()?;
+    args.global.init_without_thread_pool()?;
     for warning in warnings {
         let _ = foundry_common::sh_warn!("{warning}");
     }
+    if let CastSubcommand::Conversion(command) = args.cmd {
+        return command.run();
+    }
+    args.global.init_thread_pool()?;
     args.global.tokio_runtime().block_on(run_command(args))
 }
 
@@ -131,242 +135,242 @@ pub fn setup() -> Result<Vec<String>> {
     Ok(warnings)
 }
 
+impl ConversionSubcommand {
+    fn run(self) -> Result<()> {
+        match self {
+            // Constants
+            Self::MaxInt { r#type } | Self::MaxUint { r#type } => {
+                print_scalar(int_bound(&r#type, true)?)?;
+            }
+            Self::MinInt { r#type } => print_scalar(int_bound(&r#type, false)?)?,
+            Self::AddressZero => print_scalar(format!("{:?}", Address::ZERO))?,
+            Self::HashZero => print_scalar(format!("{:?}", B256::ZERO))?,
+
+            // Conversions & transformations
+            Self::FromUtf8 { text } => {
+                print_scalar(hex::encode_prefixed(stdin::unwrap(text, false)?))?;
+            }
+            Self::ToAscii { hexdata } => {
+                let bytes = hex::decode(stdin::unwrap(hexdata, false)?.trim())?;
+                eyre::ensure!(bytes.iter().all(u8::is_ascii), "Invalid ASCII bytes");
+                print_scalar(String::from_utf8(bytes).unwrap())?;
+            }
+            Self::ToUtf8 { hexdata } => {
+                let bytes = hex::decode(stdin::unwrap(hexdata, false)?)?;
+                print_scalar(String::from_utf8_lossy(&bytes).into_owned())?;
+            }
+            Self::FromFixedPoint { value, decimals } => {
+                let (value, decimals) = stdin::unwrap2(value, decimals)?;
+                print_scalar(
+                    ParseUnits::parse_units(&value, Unit::from_str(&decimals)?)?.to_string(),
+                )?;
+            }
+            Self::ToFixedPoint { value, decimals } => {
+                let (value, decimals) = stdin::unwrap2(value, decimals)?;
+
+                let number = NumberWithBase::parse_int(&value, None)?;
+                let sign = if number.is_nonnegative() { "" } else { "-" };
+                let mut value = number.to_string().trim_start_matches('-').to_string();
+                let value_len = value.len();
+                let decimals_num = NumberWithBase::parse_uint(&decimals, None)?.number();
+                let decimals: usize = decimals_num
+                    .try_into()
+                    .ok()
+                    .filter(|&d: &usize| d <= u16::MAX as usize)
+                    .ok_or_else(|| eyre::eyre!("decimals out of range: {decimals_num}"))?;
+
+                if decimals >= value_len {
+                    value = format!("0.{value:0>decimals$}");
+                } else {
+                    value.insert(value_len - decimals, '.');
+                }
+                print_scalar(format!("{sign}{value}"))?;
+            }
+            Self::ConcatHex { data } => {
+                let input;
+                let values = if data.is_empty() {
+                    input = stdin::read(true)?;
+                    itertools::Either::Left(input.split_whitespace())
+                } else {
+                    itertools::Either::Right(data.iter().map(String::as_str))
+                };
+                let out = values.map(strip_0x).collect::<String>();
+                print_scalar(format!("0x{out}"))?;
+            }
+            Self::FromBin => {
+                print_scalar(hex::encode_prefixed(stdin::read_bytes(false)?))?;
+            }
+            Self::ToHexdata { input } => {
+                let value = stdin::unwrap_line(input)?;
+                let output = match value {
+                    s if s.starts_with('@') => hex::encode(std::env::var(&s[1..])?),
+                    s if s.starts_with('/') => hex::encode(fs::read(s)?),
+                    s => s.split(':').map(|s| s.trim_start_matches("0x").to_lowercase()).collect(),
+                };
+                print_scalar(format!("0x{output}"))?;
+            }
+            Self::ToCheckSumAddress { address, chain_id } => {
+                print_scalar(stdin::unwrap_line(address)?.to_checksum(chain_id))?;
+            }
+            Self::ToUint256 { value } => {
+                let n = NumberWithBase::parse_uint(&stdin::unwrap_line(value)?, None)?;
+                print_scalar(format!("{n:#066x}"))?;
+            }
+            Self::ToInt256 { value } => {
+                let n = NumberWithBase::parse_int(&stdin::unwrap_line(value)?, None)?;
+                eyre::ensure!(
+                    !n.is_nonnegative() || n.number() <= I256::MAX.into_raw(),
+                    "value out of range for a signed 256-bit integer"
+                );
+                print_scalar(format!("{n:#066x}"))?;
+            }
+            Self::ToUnit { value, unit } => {
+                let value = stdin::unwrap_line(value)?;
+                let value = DynSolType::coerce_str(&DynSolType::Uint(256), &value)?
+                    .as_uint()
+                    .wrap_err("Could not convert to uint")?
+                    .0;
+                let unit = unit.parse().wrap_err("could not parse units")?;
+                print_scalar(format_unit_as_string(ParseUnits::U256(value), unit))?;
+            }
+            Self::ParseUnits { value, unit } => {
+                let value = stdin::unwrap_line(value)?;
+                let unit = Unit::new(unit).ok_or_else(|| eyre::eyre!("invalid unit"))?;
+
+                print_scalar(ParseUnits::parse_units(&value, unit)?.to_string())?;
+            }
+            Self::FormatUnits { value, unit } => {
+                print_scalar(format_units(&stdin::unwrap_line(value)?, unit)?)?;
+            }
+            Self::FromWei { value, unit } => {
+                print_scalar(
+                    signed_parse_units(&NumberWithBase::parse_int(
+                        &stdin::unwrap_line(value)?,
+                        None,
+                    )?)?
+                    .format_units(unit.parse()?),
+                )?;
+            }
+            Self::ToWei { value, unit } => {
+                let value = stdin::unwrap_line(value)?;
+                let unit = unit.parse().wrap_err("could not parse units")?;
+                print_scalar(ParseUnits::parse_units(&value, unit)?.to_string())?;
+            }
+            Self::FromRlp { value, as_int } => {
+                let bytes =
+                    hex::decode(stdin::unwrap_line(value)?).wrap_err("Could not decode hex")?;
+                let value = if as_int {
+                    decode_exact::<U256>(&bytes)?.to_string()
+                } else {
+                    decode_exact::<crate::rlp_converter::Item>(&bytes)
+                        .wrap_err("Could not decode rlp")?
+                        .to_string()
+                };
+                print_scalar(value)?;
+            }
+            Self::ToRlp { value } => {
+                let value = stdin::unwrap_line(value)?;
+                let val = serde_json::from_str(&value)
+                    .unwrap_or_else(|_| serde_json::Value::String(value));
+                let item = crate::rlp_converter::Item::value_to_item(&val)?;
+                print_scalar(hex::encode_prefixed(encode(item)))?;
+            }
+            Self::ToHex(ToBaseArgs { value, base_in }) => {
+                let value = stdin::unwrap_line(value)?;
+                print_scalar(to_base(&value, base_in.as_deref(), "hex")?)?;
+            }
+            Self::ToDec(ToBaseArgs { value, base_in }) => {
+                let value = stdin::unwrap_line(value)?;
+                print_scalar(to_base(&value, base_in.as_deref(), "dec")?)?;
+            }
+            Self::ToBase { base: ToBaseArgs { value, base_in }, base_out } => {
+                let (value, base_out) = stdin::unwrap2(value, base_out)?;
+                print_scalar(to_base(&value, base_in.as_deref(), &base_out)?)?;
+            }
+            Self::ToBytes32 { bytes } => {
+                let s = stdin::unwrap_line(bytes)?;
+                let s = strip_0x(&s);
+                if s.len() > 64 {
+                    eyre::bail!("string >32 bytes");
+                }
+
+                let padded = format!("{s:0<64}");
+                print_scalar(padded.parse::<B256>()?.to_string())?;
+            }
+            Self::ToBytesMemory { data } => {
+                let data = stdin::unwrap_line(data)?;
+                const WORD: usize = 32;
+
+                let data = hex::decode(data).wrap_err("Could not decode hex")?;
+                let padded_len = data.len().next_multiple_of(WORD);
+                let mut out = Vec::with_capacity(WORD + padded_len);
+                out.extend_from_slice(&U256::from(data.len()).to_be_bytes::<WORD>());
+                out.extend_from_slice(&data);
+                out.resize(WORD + padded_len, 0);
+                print_scalar(hex::encode_prefixed(out))?;
+            }
+            Self::Pad { data, right, left: _, len } => {
+                let s = stdin::unwrap_line(data)?;
+                let s = strip_0x(&s);
+                let hex_len = len
+                    .checked_mul(2)
+                    .filter(|&h| h <= u16::MAX as usize)
+                    .ok_or_else(|| eyre::eyre!("len out of range: {len}"))?;
+
+                // Validate input
+                if s.len() > hex_len {
+                    eyre::bail!("input length exceeds target length");
+                }
+                if !s.chars().all(|c| c.is_ascii_hexdigit()) {
+                    eyre::bail!("input is not a valid hex");
+                }
+
+                print_scalar(if right {
+                    format!("0x{s:0<hex_len$}")
+                } else {
+                    format!("0x{s:0>hex_len$}")
+                })?;
+            }
+            Self::FormatBytes32String { string } => {
+                let s = stdin::unwrap_line(string)?;
+                let str_bytes: &[u8] = s.as_bytes();
+                eyre::ensure!(
+                    str_bytes.len() <= 32,
+                    "bytes32 strings must not exceed 32 bytes in length"
+                );
+
+                let mut bytes32: [u8; 32] = [0u8; 32];
+                bytes32[..str_bytes.len()].copy_from_slice(str_bytes);
+                print_scalar(hex::encode_prefixed(bytes32))?;
+            }
+            Self::ParseBytes32String { bytes } => {
+                let s = stdin::unwrap_line(bytes)?;
+                let bytes = hex::decode(s)?;
+                eyre::ensure!(bytes.len() == 32, "expected 32 byte hex-string");
+                let len = bytes.iter().take_while(|x| **x != 0).count();
+                print_scalar(std::str::from_utf8(&bytes[..len])?)?;
+            }
+            Self::ParseBytes32Address { bytes } => {
+                let s = stdin::unwrap_line(bytes)?;
+                let s = strip_0x(&s);
+                if s.len() != 64 {
+                    eyre::bail!("expected 64 byte hex-string, got {s}");
+                }
+                let Some(s) = s.strip_prefix("000000000000000000000000") else {
+                    eyre::bail!("Not convertible to address, there are non-zero bytes");
+                };
+                print_scalar(Address::from_str(s)?.to_checksum(None))?;
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Run the subcommand.
 #[allow(clippy::large_stack_frames)]
 pub async fn run_command(args: CastArgs) -> Result<()> {
     match args.cmd {
-        // Constants
-        CastSubcommand::Conversion(
-            ConversionSubcommand::MaxInt { r#type } | ConversionSubcommand::MaxUint { r#type },
-        ) => {
-            print_scalar(int_bound(&r#type, true)?)?;
-        }
-        CastSubcommand::Conversion(ConversionSubcommand::MinInt { r#type }) => {
-            print_scalar(int_bound(&r#type, false)?)?
-        }
-        CastSubcommand::Conversion(ConversionSubcommand::AddressZero) => {
-            print_scalar(format!("{:?}", Address::ZERO))?
-        }
-        CastSubcommand::Conversion(ConversionSubcommand::HashZero) => {
-            print_scalar(format!("{:?}", B256::ZERO))?
-        }
-
-        // Conversions & transformations
-        CastSubcommand::Conversion(ConversionSubcommand::FromUtf8 { text }) => {
-            print_scalar(hex::encode_prefixed(stdin::unwrap(text, false)?))?;
-        }
-        CastSubcommand::Conversion(ConversionSubcommand::ToAscii { hexdata }) => {
-            let bytes = hex::decode(stdin::unwrap(hexdata, false)?.trim())?;
-            eyre::ensure!(bytes.iter().all(u8::is_ascii), "Invalid ASCII bytes");
-            print_scalar(String::from_utf8(bytes).unwrap())?;
-        }
-        CastSubcommand::Conversion(ConversionSubcommand::ToUtf8 { hexdata }) => {
-            let bytes = hex::decode(stdin::unwrap(hexdata, false)?)?;
-            print_scalar(String::from_utf8_lossy(&bytes).into_owned())?;
-        }
-        CastSubcommand::Conversion(ConversionSubcommand::FromFixedPoint { value, decimals }) => {
-            let (value, decimals) = stdin::unwrap2(value, decimals)?;
-            print_scalar(ParseUnits::parse_units(&value, Unit::from_str(&decimals)?)?.to_string())?;
-        }
-        CastSubcommand::Conversion(ConversionSubcommand::ToFixedPoint { value, decimals }) => {
-            let (value, decimals) = stdin::unwrap2(value, decimals)?;
-
-            let number = NumberWithBase::parse_int(&value, None)?;
-            let sign = if number.is_nonnegative() { "" } else { "-" };
-            let mut value = number.to_string().trim_start_matches('-').to_string();
-            let value_len = value.len();
-            let decimals_num = NumberWithBase::parse_uint(&decimals, None)?.number();
-            let decimals: usize = decimals_num
-                .try_into()
-                .ok()
-                .filter(|&d: &usize| d <= u16::MAX as usize)
-                .ok_or_else(|| eyre::eyre!("decimals out of range: {decimals_num}"))?;
-
-            if decimals >= value_len {
-                value = format!("0.{value:0>decimals$}");
-            } else {
-                value.insert(value_len - decimals, '.');
-            }
-            print_scalar(format!("{sign}{value}"))?;
-        }
-        CastSubcommand::Conversion(ConversionSubcommand::ConcatHex { data }) => {
-            let input;
-            let values = if data.is_empty() {
-                input = stdin::read(true)?;
-                itertools::Either::Left(input.split_whitespace())
-            } else {
-                itertools::Either::Right(data.iter().map(String::as_str))
-            };
-            let out = values.map(strip_0x).collect::<String>();
-            print_scalar(format!("0x{out}"))?;
-        }
-        CastSubcommand::Conversion(ConversionSubcommand::FromBin) => {
-            print_scalar(hex::encode_prefixed(stdin::read_bytes(false)?))?;
-        }
-        CastSubcommand::Conversion(ConversionSubcommand::ToHexdata { input }) => {
-            let value = stdin::unwrap_line(input)?;
-            let output = match value {
-                s if s.starts_with('@') => hex::encode(std::env::var(&s[1..])?),
-                s if s.starts_with('/') => hex::encode(fs::read(s)?),
-                s => s.split(':').map(|s| s.trim_start_matches("0x").to_lowercase()).collect(),
-            };
-            print_scalar(format!("0x{output}"))?;
-        }
-        CastSubcommand::Conversion(ConversionSubcommand::ToCheckSumAddress {
-            address,
-            chain_id,
-        }) => {
-            print_scalar(stdin::unwrap_line(address)?.to_checksum(chain_id))?;
-        }
-        CastSubcommand::Conversion(ConversionSubcommand::ToUint256 { value }) => {
-            let n = NumberWithBase::parse_uint(&stdin::unwrap_line(value)?, None)?;
-            print_scalar(format!("{n:#066x}"))?;
-        }
-        CastSubcommand::Conversion(ConversionSubcommand::ToInt256 { value }) => {
-            let n = NumberWithBase::parse_int(&stdin::unwrap_line(value)?, None)?;
-            eyre::ensure!(
-                !n.is_nonnegative() || n.number() <= I256::MAX.into_raw(),
-                "value out of range for a signed 256-bit integer"
-            );
-            print_scalar(format!("{n:#066x}"))?;
-        }
-        CastSubcommand::Conversion(ConversionSubcommand::ToUnit { value, unit }) => {
-            let value = stdin::unwrap_line(value)?;
-            let value = DynSolType::coerce_str(&DynSolType::Uint(256), &value)?
-                .as_uint()
-                .wrap_err("Could not convert to uint")?
-                .0;
-            let unit = unit.parse().wrap_err("could not parse units")?;
-            print_scalar(format_unit_as_string(ParseUnits::U256(value), unit))?;
-        }
-        CastSubcommand::Conversion(ConversionSubcommand::ParseUnits { value, unit }) => {
-            let value = stdin::unwrap_line(value)?;
-            let unit = Unit::new(unit).ok_or_else(|| eyre::eyre!("invalid unit"))?;
-
-            print_scalar(ParseUnits::parse_units(&value, unit)?.to_string())?;
-        }
-        CastSubcommand::Conversion(ConversionSubcommand::FormatUnits { value, unit }) => {
-            print_scalar(format_units(&stdin::unwrap_line(value)?, unit)?)?;
-        }
-        CastSubcommand::Conversion(ConversionSubcommand::FromWei { value, unit }) => {
-            print_scalar(
-                signed_parse_units(&NumberWithBase::parse_int(&stdin::unwrap_line(value)?, None)?)?
-                    .format_units(unit.parse()?),
-            )?;
-        }
-        CastSubcommand::Conversion(ConversionSubcommand::ToWei { value, unit }) => {
-            let value = stdin::unwrap_line(value)?;
-            let unit = unit.parse().wrap_err("could not parse units")?;
-            print_scalar(ParseUnits::parse_units(&value, unit)?.to_string())?;
-        }
-        CastSubcommand::Conversion(ConversionSubcommand::FromRlp { value, as_int }) => {
-            let bytes = hex::decode(stdin::unwrap_line(value)?).wrap_err("Could not decode hex")?;
-            let value = if as_int {
-                decode_exact::<U256>(&bytes)?.to_string()
-            } else {
-                decode_exact::<crate::rlp_converter::Item>(&bytes)
-                    .wrap_err("Could not decode rlp")?
-                    .to_string()
-            };
-            print_scalar(value)?;
-        }
-        CastSubcommand::Conversion(ConversionSubcommand::ToRlp { value }) => {
-            let value = stdin::unwrap_line(value)?;
-            let val =
-                serde_json::from_str(&value).unwrap_or_else(|_| serde_json::Value::String(value));
-            let item = crate::rlp_converter::Item::value_to_item(&val)?;
-            print_scalar(hex::encode_prefixed(encode(item)))?;
-        }
-        CastSubcommand::Conversion(ConversionSubcommand::ToHex(ToBaseArgs { value, base_in })) => {
-            let value = stdin::unwrap_line(value)?;
-            print_scalar(to_base(&value, base_in.as_deref(), "hex")?)?;
-        }
-        CastSubcommand::Conversion(ConversionSubcommand::ToDec(ToBaseArgs { value, base_in })) => {
-            let value = stdin::unwrap_line(value)?;
-            print_scalar(to_base(&value, base_in.as_deref(), "dec")?)?;
-        }
-        CastSubcommand::Conversion(ConversionSubcommand::ToBase {
-            base: ToBaseArgs { value, base_in },
-            base_out,
-        }) => {
-            let (value, base_out) = stdin::unwrap2(value, base_out)?;
-            print_scalar(to_base(&value, base_in.as_deref(), &base_out)?)?;
-        }
-        CastSubcommand::Conversion(ConversionSubcommand::ToBytes32 { bytes }) => {
-            let s = stdin::unwrap_line(bytes)?;
-            let s = strip_0x(&s);
-            if s.len() > 64 {
-                eyre::bail!("string >32 bytes");
-            }
-
-            let padded = format!("{s:0<64}");
-            print_scalar(padded.parse::<B256>()?.to_string())?;
-        }
-        CastSubcommand::Conversion(ConversionSubcommand::ToBytesMemory { data }) => {
-            let data = stdin::unwrap_line(data)?;
-            const WORD: usize = 32;
-
-            let data = hex::decode(data).wrap_err("Could not decode hex")?;
-            let padded_len = data.len().next_multiple_of(WORD);
-            let mut out = Vec::with_capacity(WORD + padded_len);
-            out.extend_from_slice(&U256::from(data.len()).to_be_bytes::<WORD>());
-            out.extend_from_slice(&data);
-            out.resize(WORD + padded_len, 0);
-            print_scalar(hex::encode_prefixed(out))?;
-        }
-        CastSubcommand::Conversion(ConversionSubcommand::Pad { data, right, left: _, len }) => {
-            let s = stdin::unwrap_line(data)?;
-            let s = strip_0x(&s);
-            let hex_len = len
-                .checked_mul(2)
-                .filter(|&h| h <= u16::MAX as usize)
-                .ok_or_else(|| eyre::eyre!("len out of range: {len}"))?;
-
-            // Validate input
-            if s.len() > hex_len {
-                eyre::bail!("input length exceeds target length");
-            }
-            if !s.chars().all(|c| c.is_ascii_hexdigit()) {
-                eyre::bail!("input is not a valid hex");
-            }
-
-            print_scalar(if right {
-                format!("0x{s:0<hex_len$}")
-            } else {
-                format!("0x{s:0>hex_len$}")
-            })?;
-        }
-        CastSubcommand::Conversion(ConversionSubcommand::FormatBytes32String { string }) => {
-            let s = stdin::unwrap_line(string)?;
-            let str_bytes: &[u8] = s.as_bytes();
-            eyre::ensure!(
-                str_bytes.len() <= 32,
-                "bytes32 strings must not exceed 32 bytes in length"
-            );
-
-            let mut bytes32: [u8; 32] = [0u8; 32];
-            bytes32[..str_bytes.len()].copy_from_slice(str_bytes);
-            print_scalar(hex::encode_prefixed(bytes32))?;
-        }
-        CastSubcommand::Conversion(ConversionSubcommand::ParseBytes32String { bytes }) => {
-            let s = stdin::unwrap_line(bytes)?;
-            let bytes = hex::decode(s)?;
-            eyre::ensure!(bytes.len() == 32, "expected 32 byte hex-string");
-            let len = bytes.iter().take_while(|x| **x != 0).count();
-            print_scalar(std::str::from_utf8(&bytes[..len])?)?;
-        }
-        CastSubcommand::Conversion(ConversionSubcommand::ParseBytes32Address { bytes }) => {
-            let s = stdin::unwrap_line(bytes)?;
-            let s = strip_0x(&s);
-            if s.len() != 64 {
-                eyre::bail!("expected 64 byte hex-string, got {s}");
-            }
-            let Some(s) = s.strip_prefix("000000000000000000000000") else {
-                eyre::bail!("Not convertible to address, there are non-zero bytes");
-            };
-            print_scalar(Address::from_str(s)?.to_checksum(None))?;
-        }
-
+        CastSubcommand::Conversion(command) => command.run()?,
         // ABI encoding & decoding
         CastSubcommand::Abi(AbiSubcommand::DecodeAbi { sig, calldata, input }) => {
             print_tokens(&abi_decode_calldata(&sig, &calldata, input, false)?)?;

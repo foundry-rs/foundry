@@ -71,6 +71,12 @@ impl GlobalArgs {
 
     /// Initialize the global options.
     pub fn init(&self) -> eyre::Result<()> {
+        self.init_without_thread_pool()?;
+        self.init_thread_pool()
+    }
+
+    /// Initializes the CLI profile and shell for commands that do not need worker threads.
+    pub fn init_without_thread_pool(&self) -> eyre::Result<()> {
         if let Some(profile) = &self.profile
             && let Err(selected) = Config::try_set_selected_profile(profile.clone())
         {
@@ -90,13 +96,6 @@ impl GlobalArgs {
             ColorChoice::Never => yansi::disable(),
         }
         shell.set();
-
-        if self.threads.is_some() {
-            self.force_init_thread_pool()?;
-        } else {
-            // The pool may already exist when the CLI runs in-process, which keeps its stack size.
-            let _ = init_thread_pool(0);
-        }
 
         // Display a warning message if the current version is not stable.
         if IS_NIGHTLY_VERSION
@@ -130,6 +129,17 @@ impl GlobalArgs {
     /// Initialize the global thread pool.
     pub fn force_init_thread_pool(&self) -> eyre::Result<()> {
         init_thread_pool(self.threads.unwrap_or(0))
+    }
+
+    /// Configures the global Rayon pool, allowing an existing pool when no size was requested.
+    pub fn init_thread_pool(&self) -> eyre::Result<()> {
+        if self.threads.is_some() {
+            self.force_init_thread_pool()?;
+        } else {
+            // The pool may already exist when the CLI runs in-process, which keeps its stack size.
+            let _ = init_thread_pool(0);
+        }
+        Ok(())
     }
 
     /// Creates a new tokio runtime.
