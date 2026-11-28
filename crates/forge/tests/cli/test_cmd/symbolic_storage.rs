@@ -698,6 +698,7 @@ contract SymbolicKeccakPreimage {
     constructor() {
         holders.push(address(1));
         holders.push(address(2));
+        new FixedSlot();
         proxy = FoldedNested(address(new DelegatingProxy(address(new FoldedNested()))));
     }
 
@@ -773,6 +774,11 @@ contract FoldedNested {
     }
 }
 
+// The nested[KEY][1] entry above is also the declared slot of an unrelated contract.
+contract FixedSlot layout at 0xe630a7a43cc9c09210962c79a00952852b06f41e70dc0c6b5692d61f040d24bb {
+    uint256 public value;
+}
+
 contract DelegatingProxy {
     address immutable implementation;
 
@@ -809,6 +815,187 @@ Ran 9 tests for test/SymbolicKeccakPreimage.t.sol:SymbolicKeccakPreimage
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[0x0000000000000000000000000000000000000004]] checkPinnedKeyAliasesSymbolicWrite(address) ([METRICS])
 [FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=["ab"]] checkStringKeyAliasesLiteralRead(string) ([METRICS])
 Suite result: FAILED. 3 passed; 6 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+// A custom layout base can name a folded entry in an independent namespace of the same contract.
+#[forgetest_init]
+fn symbolic_custom_layout_can_share_a_folded_slot(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_custom_layout_can_share_a_folded_slot");
+
+    prj.update_config(|config| config.optimizer = Some(true));
+    prj.add_test(
+        "CustomLayout.t.sol",
+        r#"
+contract CustomLayout layout at 0xfec507784df8a9f4fe69ac9195e2b98d84aca62ba859568d86694ac851a8eaa6 {
+    // This base equals the entry for (address(0xD00D), 1) in the mapping below.
+    uint256 public value;
+
+    /// @custom:storage-location erc7201:example.storage.ERC20
+    struct Store { mapping(address => mapping(uint256 => uint256)) entries; }
+
+    function store() private pure returns (Store storage s) {
+        assembly { s.slot := 0x792b309ed1024743406dc085f9859a5c6895fd893b6d7dafa1a05c10ff9c8f00 }
+    }
+
+    function write(address owner, uint256 id) external {
+        store().entries[owner][id] = 3;
+    }
+
+    function readFolded() external view returns (uint256) {
+        return store().entries[address(0xD00D)][1];
+    }
+}
+
+contract SymbolicCustomLayout {
+    CustomLayout target = new CustomLayout();
+
+    function checkFoldedRead(address owner, uint256 id) public {
+        target.write(owner, id);
+        assert(target.readFolded() == 0);
+    }
+}
+"#,
+    );
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicCustomLayout"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=[..] args=[0x000000000000000000000000000000000000D00d, 1]] checkFoldedRead(address,uint256) ([METRICS])
+...
+"#]]);
+}
+
+// The members of an ERC-7201 namespace are fixed slots the storage layout declares, so accessing
+// them skips the nested folded-mapping search. With a nested mapping in the namespace and many
+// source literals, the search would exhaust its budget and leave every run incomplete.
+#[forgetest_init]
+fn symbolic_erc7201_member_slot_skips_folded_mapping_search(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_erc7201_member_slot_skips_folded_mapping_search");
+
+    let literals = (1..=600u64)
+        .map(|i| format!("        if (i == {}) return {};\n", i * 7919, i * 104729))
+        .collect::<String>();
+    prj.add_source(
+        "Literals.sol",
+        &r#"
+contract Literals {
+    function pick(uint256 i) external pure returns (uint256) {
+LITERALS        return 0;
+    }
+}
+"#
+        .replace("LITERALS", &literals),
+    );
+    prj.add_test(
+        "SymbolicNamespacedToken.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract NamespacedToken {
+    /// @custom:storage-location erc7201:example.storage.ERC20
+    struct ERC20Storage {
+        mapping(address => uint256) balances;
+        mapping(address => mapping(address => uint256)) allowances;
+        uint256 totalSupply;
+    }
+
+    /// @custom:storage-location erc7201:example.Config
+    struct ConfigStorage {
+        bool paused;
+    }
+
+    // keccak256(abi.encode(uint256(keccak256("example.storage.ERC20")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant ERC20_LOCATION = 0x792b309ed1024743406dc085f9859a5c6895fd893b6d7dafa1a05c10ff9c8f00;
+    // keccak256(abi.encode(uint256(keccak256("example.Config")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant CONFIG_LOCATION = 0xad5f12b6f2da3f140fa73432525af77e82ef6cf189251aab860ba0f4444fa300;
+
+    function _erc20() private pure returns (ERC20Storage storage $) {
+        assembly {
+            $.slot := ERC20_LOCATION
+        }
+    }
+
+    function _config() private pure returns (ConfigStorage storage $) {
+        assembly {
+            $.slot := CONFIG_LOCATION
+        }
+    }
+
+    function isPaused() external view returns (bool) {
+        return _config().paused;
+    }
+
+    function balanceOf(address account) external view returns (uint256) {
+        return _erc20().balances[account];
+    }
+
+    function totalSupply() external view returns (uint256) {
+        return _erc20().totalSupply;
+    }
+
+    function transfer(address to, uint256 value) external {
+        require(!_config().paused);
+        ERC20Storage storage $ = _erc20();
+        uint256 fromBalance = $.balances[msg.sender];
+        require(fromBalance >= value);
+        unchecked {
+            $.balances[msg.sender] = fromBalance - value;
+            $.balances[to] += value;
+        }
+    }
+}
+
+contract SymbolicNamespacedToken is Test {
+    NamespacedToken token;
+
+    function setUp() public {
+        token = new NamespacedToken();
+        vm.setArbitraryStorage(address(token));
+    }
+
+    function checkTransferKeepsOthers(address from, address to, address other, uint256 value) public {
+        require(!token.isPaused());
+        require(from != to && other != from && other != to);
+        uint256 supply = token.totalSupply();
+        uint256 fromBalance = token.balanceOf(from);
+        uint256 toBalance = token.balanceOf(to);
+        uint256 otherBalance = token.balanceOf(other);
+        require(fromBalance <= supply && toBalance <= supply - fromBalance && value <= fromBalance);
+        vm.prank(from);
+        token.transfer(to, value);
+        assertEq(token.balanceOf(from), fromBalance - value);
+        assertEq(token.balanceOf(to), toBalance + value);
+        assertEq(token.balanceOf(other), otherBalance);
+        assertEq(token.totalSupply(), supply);
+    }
+
+    function checkTransferKeepsReceiver(address from, address to, uint256 value) public {
+        require(!token.isPaused());
+        require(from != to);
+        uint256 toBalance = token.balanceOf(to);
+        vm.prank(from);
+        token.transfer(to, value);
+        assertEq(token.balanceOf(to), toBalance);
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicNamespacedToken",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicNamespacedToken.t.sol:SymbolicNamespacedToken
+[PASS] checkTransferKeepsOthers(address,address,address,uint256) ([METRICS])
+[FAIL: [..]; counterexample: [..]] checkTransferKeepsReceiver(address,address,uint256) ([METRICS])
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
@@ -1495,4 +1682,217 @@ contract SymbolicStorageReplay {
 ...
 "#]]);
     }
+}
+
+// Two members of a struct in a mapping, `keccak(key, slot)` and `keccak(key', slot) + 1`, do not
+// alias when `key'` is the same value as `key` in another expression, here a masked copy.
+#[forgetest_init]
+fn symbolic_struct_member_mapping_roots_do_not_alias(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_struct_member_mapping_roots_do_not_alias");
+
+    prj.add_test(
+        "SymbolicStructMemberRoots.t.sol",
+        r#"
+struct Pair {
+    mapping(uint256 => uint256) first;
+    mapping(uint256 => uint256) second;
+}
+
+contract Store {
+    mapping(uint256 => Pair) pairs;
+
+    function setSecond(uint256 key, uint256 id, uint256 amount) external {
+        pairs[key].second[id] = amount;
+    }
+
+    function getSecond(uint256 key, uint256 id) external view returns (uint256) {
+        return pairs[key].second[id];
+    }
+
+    function setMaskedFirst(uint256 key, uint256 id, uint256 amount) external {
+        pairs[uint160(key)].first[id] = amount;
+    }
+
+    function setMaskedSecond(uint256 key, uint256 id, uint256 amount) external {
+        pairs[uint160(key)].second[id] = amount;
+    }
+}
+
+contract SymbolicStructMemberRoots {
+    Store store = new Store();
+
+    function checkOtherMemberKeepsValue(uint256 key, uint256 id, uint256 a, uint256 b) public {
+        require(key <= type(uint160).max);
+        store.setSecond(key, id, a);
+        store.setMaskedFirst(key, id, b);
+        assert(store.getSecond(key, id) == a);
+    }
+
+    function checkSameMemberOverwritesValue(uint256 key, uint256 id, uint256 a, uint256 b) public {
+        require(key <= type(uint160).max);
+        store.setSecond(key, id, a);
+        store.setMaskedSecond(key, id, b);
+        assert(store.getSecond(key, id) == a);
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicStructMemberRoots"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicStructMemberRoots.t.sol:SymbolicStructMemberRoots
+[PASS] checkOtherMemberKeepsValue(uint256,uint256,uint256,uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [..]] checkSameMemberOverwritesValue(uint256,uint256,uint256,uint256) ([METRICS])
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+// A nested entry `keccak(id, keccak(key, root) + 1)` does not alias a top-level entry
+// `keccak(other, root)` when `id == other`, for a root at slot 0 and at a fixed namespaced slot.
+#[forgetest_init]
+fn symbolic_nested_mapping_entry_does_not_alias_fixed_root_entry(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_nested_mapping_entry_does_not_alias_fixed_root_entry");
+
+    prj.add_test(
+        "SymbolicNestedFixedRoot.t.sol",
+        r#"
+struct Node {
+    uint32 tag;
+    mapping(uint256 => uint256) inner;
+}
+
+contract SlotZeroStore {
+    mapping(uint256 => Node) outer;
+
+    function setTag(uint256 key, uint32 tag) external {
+        outer[key].tag = tag;
+    }
+
+    function setInner(uint256 key, uint256 id, uint256 value) external {
+        outer[key].inner[id] = value;
+    }
+
+    function getInner(uint256 key, uint256 id) external view returns (uint256) {
+        return outer[key].inner[id];
+    }
+}
+
+contract NamespacedStore {
+    struct Layout {
+        mapping(uint256 => Node) outer;
+    }
+
+    function layout() internal pure returns (Layout storage l) {
+        assembly {
+            l.slot := 0x183a6125c38840424c4a85fa12bab2ab606c4b6d0e7cc73c0c06ba5300eab514
+        }
+    }
+
+    function setTag(uint256 key, uint32 tag) external {
+        layout().outer[key].tag = tag;
+    }
+
+    function setInner(uint256 key, uint256 id, uint256 value) external {
+        layout().outer[key].inner[id] = value;
+    }
+
+    function getInner(uint256 key, uint256 id) external view returns (uint256) {
+        return layout().outer[key].inner[id];
+    }
+}
+
+contract SymbolicNestedFixedRoot {
+    SlotZeroStore slotZero = new SlotZeroStore();
+    NamespacedStore namespaced = new NamespacedStore();
+
+    function checkSlotZeroTagKeepsInner(uint256 key, uint256 id, uint256 other, uint256 value, uint32 tag) public {
+        slotZero.setInner(key, id, value);
+        slotZero.setTag(other, tag);
+        assert(slotZero.getInner(key, id) == value);
+    }
+
+    function checkNamespacedTagKeepsInner(uint256 key, uint256 id, uint256 other, uint256 value, uint32 tag) public {
+        namespaced.setInner(key, id, value);
+        namespaced.setTag(other, tag);
+        assert(namespaced.getInner(key, id) == value);
+    }
+
+    function checkNamespacedInnerOverwritesInner(uint256 key, uint256 id, uint256 value, uint256 next) public {
+        namespaced.setInner(key, id, value);
+        namespaced.setInner(key, id, next);
+        assert(namespaced.getInner(key, id) == value);
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicNestedFixedRoot"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 3 tests for test/SymbolicNestedFixedRoot.t.sol:SymbolicNestedFixedRoot
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [..]] checkNamespacedInnerOverwritesInner(uint256,uint256,uint256,uint256) ([METRICS])
+[PASS] checkNamespacedTagKeepsInner(uint256,uint256,uint256,uint256,uint32) ([METRICS])
+[PASS] checkSlotZeroTagKeepsInner(uint256,uint256,uint256,uint256,uint32) ([METRICS])
+Suite result: FAILED. 2 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+// The optimizer folds the inner mapping root of `cells[7][9]` into a constant. Compared inside a
+// preimage with the symbolic root of `cells[k1][k2]`, it may be that entry, so it stays a word
+// equality instead of a fixed slot and the write through `k1 = 7, k2 = 9` still aliases.
+#[forgetest_init]
+fn symbolic_folded_nested_mapping_root_is_not_a_fixed_slot(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_folded_nested_mapping_root_is_not_a_fixed_slot");
+
+    prj.update_config(|config| config.optimizer = Some(true));
+    prj.add_test(
+        "SymbolicFoldedNestedRoot.t.sol",
+        r#"
+struct Cell {
+    uint32 tag;
+    mapping(uint256 => uint256) inner;
+}
+
+contract Store {
+    mapping(uint256 => mapping(uint256 => Cell)) cells;
+
+    function setConstCell(uint256 id, uint256 value) external {
+        cells[7][9].inner[id] = value;
+    }
+
+    function getConstCell(uint256 id) external view returns (uint256) {
+        return cells[7][9].inner[id];
+    }
+
+    function setCell(uint256 k1, uint256 k2, uint256 id, uint256 value) external {
+        cells[k1][k2].inner[id] = value;
+    }
+}
+
+contract SymbolicFoldedNestedRoot {
+    Store store = new Store();
+
+    function checkStructMemberEntryAliases(uint256 k1, uint256 k2, uint256 id, uint256 a, uint256 b) public {
+        store.setConstCell(id, a);
+        store.setCell(k1, k2, id, b);
+        assert(store.getConstCell(id) == a);
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicFoldedNestedRoot"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicFoldedNestedRoot.t.sol:SymbolicFoldedNestedRoot
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [..]] checkStructMemberEntryAliases(uint256,uint256,uint256,uint256,uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }

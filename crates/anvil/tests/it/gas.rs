@@ -1134,3 +1134,27 @@ async fn access_list_gas_retains_ethereum_floor_and_refunds() {
     let block = provider.get_block_by_hash(receipt.block_hash().unwrap()).await.unwrap().unwrap();
     assert_eq!(block.header.gas_used, receipt.gas_used());
 }
+
+// Reward percentiles are exact like geth's, not rounded to a fixed resolution.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fee_history_fractional_reward_percentiles() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let accounts = handle.dev_accounts().take(2).collect::<Vec<_>>();
+    for (from, tip) in accounts.iter().zip([1_000_000_000, 2_000_000_000]) {
+        let tx = TransactionRequest::default()
+            .from(*from)
+            .to(Address::random())
+            .max_fee_per_gas(100_000_000_000)
+            .max_priority_fee_per_gas(tip);
+        let _ = provider.send_transaction(WithOtherFields::new(tx)).await.unwrap();
+    }
+    api.mine_one().await.unwrap();
+
+    // Both transfers use 21000 gas, so 50.1% of the block's gas lies in the higher tip.
+    let history =
+        api.fee_history(U256::ONE, BlockNumberOrTag::Latest, vec![50.0, 50.1]).await.unwrap();
+    assert_eq!(history.reward, Some(vec![vec![1_000_000_000, 2_000_000_000]]));
+}
