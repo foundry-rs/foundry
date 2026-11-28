@@ -1202,6 +1202,24 @@ impl Cheatcode for getDeploymentsCall {
     }
 }
 
+impl Cheatcode for getDeploymentByLabel_0Call {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { label } = self;
+        let chain_id = ccx.chain_id();
+        let reader =
+            BroadcastReader::new(String::new(), chain_id, &ccx.state.core.config.broadcast)?;
+        Ok(reader.read_latest_deployment_by_label::<AnyNetwork>(label)?.abi_encode())
+    }
+}
+
+impl Cheatcode for getDeploymentByLabel_1Call {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
+        let Self { label, chainId } = self;
+        let reader = BroadcastReader::new(String::new(), *chainId, &state.config.broadcast)?;
+        Ok(reader.read_latest_deployment_by_label::<AnyNetwork>(label)?.abi_encode())
+    }
+}
+
 fn map_broadcast_tx_type(tx_type: BroadcastTxType) -> CallKind {
     match tx_type {
         BroadcastTxType::Call => CallKind::Call,
