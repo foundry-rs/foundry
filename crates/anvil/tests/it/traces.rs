@@ -4108,6 +4108,7 @@ async fn test_debug_trace_transaction_unsupported_tracer() {
         GethDebugBuiltInTracerType::FlatCallTracer,
         GethDebugBuiltInTracerType::MuxTracer,
         GethDebugBuiltInTracerType::Erc7562Tracer,
+        GethDebugBuiltInTracerType::StateGasTracer,
     ] {
         let opts = GethDebugTracingOptions::default().with_tracer(tracer.into());
         let call_err = api
