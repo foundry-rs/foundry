@@ -25,6 +25,7 @@ use alloy_sol_types::SolValue;
 use anvil::{NodeConfig, spawn};
 use anvil_core::eth::block::Block;
 use eyre::Ok;
+use foundry_common::provider::RetryProvider;
 use foundry_evm_hardforks::EthereumHardfork;
 use foundry_primitives::FoundryReceiptEnvelope;
 use futures::{FutureExt, StreamExt, future::join_all};
@@ -2588,6 +2589,43 @@ async fn can_get_tx_by_sender_and_nonce_with_genesis_block_number() {
             .await
             .unwrap();
         assert_eq!(tx.unwrap().tx_hash(), hash, "nonce={nonce}");
+    }
+}
+
+/// A fork finds transactions mined before the fork block as well as local ones.
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_tx_by_sender_and_nonce_on_local_fork() {
+    let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let origin = origin_handle.http_provider();
+    let sender = origin_handle.dev_accounts().next().unwrap();
+
+    let send = async |provider: &RetryProvider| {
+        let tx = TransactionRequest::default().from(sender).to(Address::random());
+        let receipt = provider
+            .send_transaction(WithOtherFields::new(tx))
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        (receipt.transaction_hash, receipt.block_number.unwrap())
+    };
+
+    // Mined on the origin in blocks 1 and 2, then forked at block 2.
+    let mut tx_hashes = vec![send(&origin).await, send(&origin).await];
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+    let provider = handle.http_provider();
+    tx_hashes.push(send(&provider).await);
+    assert_eq!(tx_hashes.iter().map(|(_, block)| *block).collect::<Vec<_>>(), [1, 2, 3]);
+
+    for (nonce, (hash, _)) in tx_hashes.into_iter().enumerate() {
+        let tx: Option<AnyRpcTransaction> = provider
+            .client()
+            .request("eth_getTransactionBySenderAndNonce", (sender, U256::from(nonce)))
+            .await
+            .unwrap();
+        assert_eq!(tx.map(|tx| tx.tx_hash()), Some(hash), "nonce={nonce}");
     }
 }
 
