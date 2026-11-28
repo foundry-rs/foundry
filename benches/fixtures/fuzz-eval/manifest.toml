@@ -1,0 +1,77 @@
+# Seeded fuzzing benchmark over planted bugs. Every target shares `project/`, which is copied and
+# built once per evaluation.
+#
+# Budgets are deliberately small and tuned per target so that the default fuzzer finds each bug
+# with only some seeds (roughly 35-65% over 20 seeds when the budgets were set). That leaves
+# headroom and variance for comparing fuzzer changes. When a target reports "no headroom" in
+# SUMMARY.md for the baseline fuzzer, lower its budget rather than dropping it.
+
+[defaults]
+timeout_secs = 300
+
+[defaults.budget]
+fuzz_runs = 256
+invariant_runs = 8
+invariant_depth = 8
+
+[defaults.env]
+# Shrinking does not change whether a bug is found; skip it so durations track discovery.
+FOUNDRY_INVARIANT_SHRINK_RUN_LIMIT = "0"
+
+# Train split: changes may be tuned against these.
+
+[[targets]]
+name = "magic-lock"
+split = "train"
+path = "project"
+match_contract = "MagicLockTest"
+expected_failures = ["testFuzz_lockStaysClosed"]
+coverage_paths = ["src/MagicLock.sol"]
+budget = { fuzz_runs = 1000 }
+
+[[targets]]
+name = "fee-threshold"
+split = "train"
+path = "project"
+match_contract = "FeeScheduleTest"
+expected_failures = ["testFuzz_feeAlwaysCharged"]
+coverage_paths = ["src/FeeSchedule.sol"]
+budget = { fuzz_runs = 64 }
+
+[[targets]]
+name = "ether-bank-reentrancy"
+split = "train"
+path = "project"
+match_contract = "EtherBankInvariantTest"
+expected_failures = ["invariant_balancesMatchTotalDeposits"]
+coverage_paths = ["src/EtherBank.sol"]
+budget = { invariant_runs = 2, invariant_depth = 8 }
+
+[[targets]]
+name = "fee-config-access"
+split = "train"
+path = "project"
+match_contract = "FeeConfigInvariantTest"
+expected_failures = ["invariant_onlyAuthorizedFeeChanges"]
+coverage_paths = ["src/FeeConfig.sol"]
+budget = { invariant_runs = 8, invariant_depth = 8 }
+
+# Test split: held out; decides whether a change is kept.
+
+[[targets]]
+name = "share-vault-rounding"
+split = "test"
+path = "project"
+match_contract = "ShareVaultInvariantTest"
+expected_failures = ["invariant_depositRoundingIsBounded"]
+coverage_paths = ["src/ShareVault.sol"]
+budget = { invariant_runs = 4, invariant_depth = 16 }
+
+[[targets]]
+name = "escrow-state-machine"
+split = "test"
+path = "project"
+match_contract = "EscrowInvariantTest"
+expected_failures = ["invariant_disputesOnlySettledByArbiter"]
+coverage_paths = ["src/Escrow.sol"]
+budget = { invariant_runs = 32, invariant_depth = 48 }

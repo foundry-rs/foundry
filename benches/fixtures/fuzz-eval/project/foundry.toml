@@ -1,0 +1,20 @@
+[profile.default]
+src = "src"
+test = "test"
+out = "out"
+libs = []
+solc = "0.8.30"
+evm_version = "prague"
+optimizer = false
+dynamic_test_linking = false
+
+[fuzz]
+runs = 256
+
+[invariant]
+runs = 32
+depth = 32
+fail_on_revert = false
+
+[lint]
+lint_on_build = false
