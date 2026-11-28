@@ -31,9 +31,11 @@ pub struct IgnoredTraces {
 }
 
 impl Cheatcode for labelCall {
-    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { account, newLabel } = self;
-        state.labels.insert(*account, newLabel.clone());
+        let rpc = ccx.active_fork_url();
+        ccx.state.fork_labels.insert((rpc, *account), newLabel.clone());
+        ccx.state.core.labels.insert(*account, newLabel.clone());
         Ok(Default::default())
     }
 }

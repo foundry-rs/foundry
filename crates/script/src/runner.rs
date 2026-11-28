@@ -508,7 +508,8 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
             cheatcodes,
             ..
         } = res;
-        let breakpoints = cheatcodes.map(|cheats| cheats.breakpoints).unwrap_or_default();
+        let (breakpoints, fork_labels) =
+            cheatcodes.map(|cheats| (cheats.breakpoints, cheats.fork_labels)).unwrap_or_default();
 
         ScriptResult {
             returned: result,
@@ -528,6 +529,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
             exit_reason,
             address: None,
             breakpoints,
+            fork_labels,
             rpc_failure,
         }
     }

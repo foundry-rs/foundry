@@ -753,6 +753,9 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Breakpoints supplied by the `breakpoint` cheatcode.
     /// `char -> (address, pc)`
     pub breakpoints: Breakpoints,
+    /// Labels by the URL of the fork active when they were set, if any, so a script's broadcasts
+    /// on each chain record the labels set on that chain.
+    pub fork_labels: HashMap<(Option<String>, Address), String>,
 
     /// The revert data of each cheatcode error an RPC failure caused, and how it failed, oldest
     /// first.
@@ -910,6 +913,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             gas_snapshots: Default::default(),
             pc: Default::default(),
             breakpoints: Default::default(),
+            fork_labels: Default::default(),
             rpc_failures: Default::default(),
             ignored_traces: Default::default(),
             storage_load_hooks: Default::default(),

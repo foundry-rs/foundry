@@ -206,16 +206,24 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
         self,
         mut transactions: VecDeque<TransactionWithMetadata<FEN::Network>>,
     ) -> FilledTransactionsState<FEN> {
-        // Use the final script labels, including labels set after a deployment. Additional
-        // contracts are only known after transaction simulation.
-        let labels = &self.execution_result.labeled_addresses;
+        // Use the final script labels set on each transaction's fork, including labels set after a
+        // deployment, so an address deployed on several chains keeps each chain's label. Labels
+        // set while no fork was active apply to every chain. Additional contracts are only known
+        // after transaction simulation.
+        let labels = &self.execution_result.fork_labels;
         for transaction in &mut transactions {
+            let rpc = Some(transaction.rpc.clone());
+            let label = |address| {
+                labels
+                    .get(&(rpc.clone(), address))
+                    .or_else(|| labels.get(&(None, address)))
+                    .cloned()
+            };
             if transaction.call_kind.is_any_create() {
-                transaction.label =
-                    transaction.contract_address.and_then(|address| labels.get(&address)).cloned();
+                transaction.label = transaction.contract_address.and_then(label);
             }
             for contract in &mut transaction.additional_contracts {
-                contract.label = labels.get(&contract.address).cloned();
+                contract.label = label(contract.address);
             }
         }
 
