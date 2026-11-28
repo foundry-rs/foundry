@@ -4591,9 +4591,14 @@ impl<N: Network> Backend<N> {
                 }
             }
             TraceFilterBlockOption::Range { from_block, to_block } => {
+                // block_option rejects pending, so every tag resolves to a mined block.
                 let best_number = self.best_number();
-                let start = from_block.unwrap_or(best_number);
-                let end = to_block.unwrap_or(best_number);
+                let start = from_block.map_or(best_number, |block| {
+                    self.convert_block_number_at(Some(block), best_number)
+                });
+                let end = to_block.map_or(best_number, |block| {
+                    self.convert_block_number_at(Some(block), best_number)
+                });
                 if start > best_number || end > best_number {
                     return Err(BlockchainError::BlockNotFound);
                 }

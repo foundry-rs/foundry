@@ -2536,6 +2536,47 @@ async fn test_trace_get_rejects_integer_indices() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_trace_filter_safe_and_finalized_tags() {
+    // With one slot per epoch, safe is one block behind the head and finalized two.
+    let (api, handle) = spawn(NodeConfig::test().with_slots_in_an_epoch(1)).await;
+    let provider = handle.ws_provider();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let (from, to) = (accounts[0].address(), accounts[1].address());
+    for i in 0..6 {
+        let tx = TransactionRequest::default().to(to).value(U256::from(i)).from(from);
+        provider
+            .send_transaction(WithOtherFields::new(tx))
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+    }
+    let latest = provider.get_block_number().await.unwrap();
+
+    for (from_block, to_block, expected) in [
+        (BlockNumberOrTag::Safe, BlockNumberOrTag::Safe, vec![latest - 1]),
+        (BlockNumberOrTag::Finalized, BlockNumberOrTag::Finalized, vec![latest - 2]),
+        (
+            BlockNumberOrTag::Finalized,
+            BlockNumberOrTag::Latest,
+            vec![latest - 2, latest - 1, latest],
+        ),
+    ] {
+        let traces = api
+            .trace_filter(TraceFilter {
+                from_block: Some(from_block),
+                to_block: Some(to_block),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let blocks = traces.iter().map(|trace| trace.block_number.unwrap()).collect::<Vec<_>>();
+        assert_eq!(blocks, expected, "{from_block}..{to_block}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_trace_filter() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.ws_provider();
@@ -2569,18 +2610,46 @@ async fn test_trace_filter() {
     assert_eq!(traces.len(), 1);
     assert_eq!(traces[0].block_number, Some(latest));
 
-    let traces =
-        api.trace_filter(TraceFilter { from_block: Some(0), ..tracer.clone() }).await.unwrap();
+    let traces = api
+        .trace_filter(TraceFilter {
+            from_block: Some(BlockNumberOrTag::Number(0)),
+            ..tracer.clone()
+        })
+        .await
+        .unwrap();
     assert_eq!(traces.len(), 6);
 
+    // Tags resolve like explicit numbers, and pending is rejected.
+    for (from_block, to_block, expected) in [
+        (BlockNumberOrTag::Earliest, BlockNumberOrTag::Latest, 6),
+        (BlockNumberOrTag::Latest, BlockNumberOrTag::Latest, 1),
+    ] {
+        let traces = api
+            .trace_filter(TraceFilter {
+                from_block: Some(from_block),
+                to_block: Some(to_block),
+                ..tracer.clone()
+            })
+            .await
+            .unwrap();
+        assert_eq!(traces.len(), expected);
+    }
+    let err = api
+        .trace_filter(TraceFilter { from_block: Some(BlockNumberOrTag::Pending), ..tracer.clone() })
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("fromBlock and toBlock cannot be pending"), "{err}");
+
     // An explicit end before the implicit latest start is a reversed range.
-    let traces = api.trace_filter(TraceFilter { to_block: Some(1), ..tracer }).await;
+    let traces = api
+        .trace_filter(TraceFilter { to_block: Some(BlockNumberOrTag::Number(1)), ..tracer })
+        .await;
     assert!(traces.is_err());
 
     // Test filtering by address
     let tracer = TraceFilter {
         block_hash: None,
-        from_block: Some(provider.get_block_number().await.unwrap()),
+        from_block: Some(BlockNumberOrTag::Number(provider.get_block_number().await.unwrap())),
         to_block: None,
         from_address: vec![from_two],
         to_address: vec![to_two],
@@ -2613,7 +2682,7 @@ async fn test_trace_filter() {
     // Test TraceActions
     let tracer = TraceFilter {
         block_hash: None,
-        from_block: Some(provider.get_block_number().await.unwrap()),
+        from_block: Some(BlockNumberOrTag::Number(provider.get_block_number().await.unwrap())),
         to_block: None,
         from_address: vec![from, contract_addr],
         to_address: vec![], // Leave as 0 address
@@ -2641,8 +2710,8 @@ async fn test_trace_filter() {
     let latest = provider.get_block_number().await.unwrap();
     let tracer = TraceFilter {
         block_hash: None,
-        from_block: Some(latest),
-        to_block: Some(latest + 301),
+        from_block: Some(BlockNumberOrTag::Number(latest)),
+        to_block: Some(BlockNumberOrTag::Number(latest + 301)),
         from_address: vec![],
         to_address: vec![],
         mode: TraceFilterMode::Union,
@@ -2657,8 +2726,8 @@ async fn test_trace_filter() {
     let latest = provider.get_block_number().await.unwrap();
     let tracer = TraceFilter {
         block_hash: None,
-        from_block: Some(latest),
-        to_block: Some(latest),
+        from_block: Some(BlockNumberOrTag::Number(latest)),
+        to_block: Some(BlockNumberOrTag::Number(latest)),
         from_address: vec![],
         to_address: vec![],
         mode: TraceFilterMode::Union,
@@ -2673,8 +2742,8 @@ async fn test_trace_filter() {
     let latest = provider.get_block_number().await.unwrap();
     let tracer = TraceFilter {
         block_hash: None,
-        from_block: Some(latest + 10),
-        to_block: Some(latest),
+        from_block: Some(BlockNumberOrTag::Number(latest + 10)),
+        to_block: Some(BlockNumberOrTag::Number(latest)),
         from_address: vec![],
         to_address: vec![],
         mode: TraceFilterMode::Union,
@@ -2688,7 +2757,7 @@ async fn test_trace_filter() {
     // Test after and count
     let tracer = TraceFilter {
         block_hash: None,
-        from_block: Some(provider.get_block_number().await.unwrap()),
+        from_block: Some(BlockNumberOrTag::Number(provider.get_block_number().await.unwrap())),
         to_block: None,
         from_address: vec![],
         to_address: vec![],
