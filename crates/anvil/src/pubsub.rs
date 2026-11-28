@@ -76,26 +76,31 @@ where
                             continue;
                         }
                         let hash = block.hash;
-                        let (Some(block), Some(receipts)) =
-                            (self.storage.block(hash), self.storage.receipts(hash))
-                        else {
+                        let logs = self.storage.with_block_and_receipts(hash, |block, receipts| {
+                            let pruned = block.body.transactions.is_empty()
+                                && block.header.transactions_root()
+                                    != alloy_consensus::constants::EMPTY_ROOT_HASH;
+                            (!pruned).then(|| filter_logs(block, receipts, &self.filter))
+                        });
+                        match logs {
                             // Pruning keeps headers, so the block was unwound or dropped by a
                             // reset or state load. Its logs were never delivered, so its removed
                             // logs are dropped too.
-                            self.skipped.insert(hash);
-                            continue;
-                        };
-                        if block.body.transactions.len() != receipts.len()
-                            || (block.body.transactions.is_empty()
-                                && block.header.transactions_root()
-                                    != alloy_consensus::constants::EMPTY_ROOT_HASH)
-                        {
-                            tracing::warn!(target: "rpc::ws", ?hash, "Closing logs subscription because block data was pruned");
-                            return Poll::Ready(None);
+                            None => {
+                                self.skipped.insert(hash);
+                                continue;
+                            }
+                            Some(None) => {
+                                tracing::warn!(target: "rpc::ws", ?hash, "Closing logs subscription because block data was pruned");
+                                return Poll::Ready(None);
+                            }
+                            Some(Some(logs)) => {
+                                // A block re-mined with a skipped hash is delivered, so its
+                                // removal is too.
+                                self.skipped.remove(&hash);
+                                logs
+                            }
                         }
-                        // A block re-mined with a skipped hash is delivered, so its removal is too.
-                        self.skipped.remove(&hash);
-                        filter_logs(block, receipts, &self.filter)
                     }
                     ChainNotification::RemovedLogs(logs) => {
                         let mut removed = filter_removed_logs(&logs, &self.filter);
@@ -284,7 +289,7 @@ where
 }
 
 /// Returns all the logs that match the given filter
-pub fn filter_logs<R>(block: Block, receipts: Vec<R>, filter: &FilteredParams) -> Vec<Log>
+pub fn filter_logs<R>(block: &Block, receipts: &[&R], filter: &FilteredParams) -> Vec<Log>
 where
     R: TxReceipt<Log = alloy_primitives::Log>,
 {
@@ -311,10 +316,10 @@ where
     let block_hash = block.header.hash_slow();
     let mut logs = vec![];
     let mut log_index: u32 = 0;
-    for (receipt_index, receipt) in receipts.into_iter().enumerate() {
+    for (receipt_index, receipt) in receipts.iter().enumerate() {
         let transaction_hash = block.body.transactions[receipt_index].hash();
         for log in receipt.logs() {
-            if add_log(block_hash, log, &block, filter) {
+            if add_log(block_hash, log, block, filter) {
                 logs.push(Log {
                     inner: log.clone(),
                     block_hash: Some(block_hash),
