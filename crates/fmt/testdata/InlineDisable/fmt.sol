@@ -555,3 +555,13 @@ function disableStartAfterStatement(string[2][] memory rpcs) {
         // forgefmt: disable-end
     }
 }
+
+function adjacentDisabledComments() {
+    uint256   a=1; // forgefmt: disable-line
+    // forgefmt: disable-next-line
+    uint256   b   =   2;
+    /* forgefmt: disable-start */
+    uint256   c   =   3;
+    /* forgefmt: disable-end */
+    uint256 d = 4;
+}

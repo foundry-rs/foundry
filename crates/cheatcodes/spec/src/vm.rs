@@ -37,6 +37,16 @@ interface Vm {
         RecurrentPrank,
     }
 
+    /// The opcode used for an expected call.
+    enum CallKind {
+        /// CALL.
+        Call,
+        /// DELEGATECALL.
+        DelegateCall,
+        /// STATICCALL.
+        StaticCall,
+    }
+
     /// The kind of account access that occurred.
     enum AccountAccessKind {
         /// The account was called.
@@ -1342,6 +1352,11 @@ interface Vm {
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectDelegateCall(address callee, bytes calldata data) external;
 
+    /// Expects a call of the specified kind to an address with the specified calldata.
+    /// Calldata can either be a strict or a partial match.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectCall(CallKind kind, address callee, bytes calldata data) external;
+
     /// Expect a call to an address with the specified `msg.value` and calldata, and a *minimum* amount of gas.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectCallMinGas(address callee, uint256 msgValue, uint64 minGas, bytes calldata data) external;
@@ -2374,6 +2389,22 @@ interface Vm {
     #[cheatcode(group = Filesystem)]
     function getDeployments(string calldata contractName, uint64 chainId) external view returns (address[] memory deployedAddresses);
 
+    /// Returns the deployment whose recorded `vm.label` is `label` on the current `chainId`.
+    ///
+    /// Looks in the most recent broadcast on that chain, from any script, with a confirmed deployment carrying that label, including contracts created by other contracts.
+    /// Later broadcasts without a receipt for that label, such as an interrupted redeploy, are skipped, so the previous deployment is returned.
+    /// Reverts if no deployment has the label, or if several deployments in that broadcast share it.
+    #[cheatcode(group = Filesystem)]
+    function getDeploymentByLabel(string calldata label) external view returns (address deployedAddress);
+
+    /// Returns the deployment whose recorded `vm.label` is `label` on `chainId`.
+    ///
+    /// Looks in the most recent broadcast on that chain, from any script, with a confirmed deployment carrying that label, including contracts created by other contracts.
+    /// Later broadcasts without a receipt for that label, such as an interrupted redeploy, are skipped, so the previous deployment is returned.
+    /// Reverts if no deployment has the label, or if several deployments in that broadcast share it.
+    #[cheatcode(group = Filesystem)]
+    function getDeploymentByLabel(string calldata label, uint64 chainId) external view returns (address deployedAddress);
+
     // -------- Foreign Function Interface --------
 
     /// Performs a foreign function call via the terminal.
@@ -3337,6 +3368,37 @@ interface Vm {
     /// Raises error if none of the signers passed into the script have provided address.
     #[cheatcode(group = Crypto)]
     function signCompact(address signer, bytes32 digest) external pure returns (bytes32 r, bytes32 vs);
+
+    /// Signs human-readable typed data `jsonData` following the EIP-712 standard with `privateKey`
+    /// using the secp256k1 curve.
+    ///
+    /// `jsonData` uses the JSON format of `eth_signTypedData_v4`, like `eip712HashTypedData`.
+    #[cheatcode(group = Crypto)]
+    function signTypedData(uint256 privateKey, string calldata jsonData) external pure returns (uint8 v, bytes32 r, bytes32 s);
+
+    /// Signs human-readable typed data `jsonData` following the EIP-712 standard with signer
+    /// provided to script using the secp256k1 curve.
+    ///
+    /// The wallet backend controls what the device displays. The Ledger backend signs the domain
+    /// separator and message hash and may require blind signing.
+    ///
+    /// If `--sender` is provided, the signer with provided address is used, otherwise,
+    /// if exactly one signer is provided to the script, that signer is used.
+    ///
+    /// Raises error if signer passed through `--sender` does not match any unlocked signers or
+    /// if `--sender` is not provided and not exactly one signer is passed to the script.
+    #[cheatcode(group = Crypto)]
+    function signTypedData(string calldata jsonData) external pure returns (uint8 v, bytes32 r, bytes32 s);
+
+    /// Signs human-readable typed data `jsonData` following the EIP-712 standard with signer
+    /// provided to script using the secp256k1 curve.
+    ///
+    /// The wallet backend controls what the device displays. The Ledger backend signs the domain
+    /// separator and message hash and may require blind signing.
+    ///
+    /// Raises error if none of the signers passed into the script have provided address.
+    #[cheatcode(group = Crypto)]
+    function signTypedData(address signer, string calldata jsonData) external pure returns (uint8 v, bytes32 r, bytes32 s);
 
     /// Signs `digest` with `privateKey` using the secp256r1 curve.
     #[cheatcode(group = Crypto)]
