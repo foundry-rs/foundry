@@ -28,6 +28,18 @@ contract Rlp is Test {
         assertEq(decoded[1], hex"02");
     }
 
+    function testFromRlpRejectsTrailingBytes() public {
+        // 0xc20102 is a complete list, so the trailing 0xff is not part of it.
+        vm._expectCheatcodeRevert("Failed to decode RLP: unexpected length");
+        vm.fromRlp(hex"c20102ff");
+    }
+
+    function testFromRlpRejectsTrailingList() public {
+        // 0xc0 is a complete empty list, so the second 0xc0 is not part of it.
+        vm._expectCheatcodeRevert("Failed to decode RLP: unexpected length");
+        vm.fromRlp(hex"c0c0");
+    }
+
     function testRoundTrip() public {
         bytes[] memory original = new bytes[](3);
         original[0] = hex"deadbeef";

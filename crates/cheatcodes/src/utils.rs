@@ -6,7 +6,7 @@ use crate::{
 use alloy_dyn_abi::{DynSolType, DynSolValue, Resolver, TypedData, eip712_parser::EncodeType};
 use alloy_ens::namehash;
 use alloy_primitives::{B64, Bytes, I256, U256, aliases::B32, keccak256, map::HashMap};
-use alloy_rlp::{Decodable, Encodable};
+use alloy_rlp::{Encodable, decode_exact};
 use alloy_sol_types::SolValue;
 use foundry_common::{TYPE_BINDING_PREFIX, fs};
 use foundry_config::fs_permissions::FsAccessKind;
@@ -520,8 +520,8 @@ impl Cheatcode for fromRlpCall {
     fn apply_context_free(&self) -> Result {
         let Self { rlp } = self;
 
-        let decoded: Vec<Bytes> = Vec::<Bytes>::decode(&mut rlp.as_ref())
-            .map_err(|e| fmt_err!("Failed to decode RLP: {e}"))?;
+        let decoded: Vec<Bytes> =
+            decode_exact(rlp).map_err(|e| fmt_err!("Failed to decode RLP: {e}"))?;
 
         Ok(decoded.abi_encode())
     }
