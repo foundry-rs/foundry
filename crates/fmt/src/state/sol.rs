@@ -2449,9 +2449,13 @@ impl<'ast> State<'_, 'ast> {
 
         if let Some(expr) = expr {
             let is_simple = matches!(expr.kind, ast::ExprKind::Lit(..) | ast::ExprKind::Ident(..));
-            let allow_break = overflows && fits_alone;
-
             self.return_bin_expr = is_binary_expr(&expr.kind);
+            // Let a commented operator chain choose its own breaks. Moving a comment across an
+            // operator can change the flattened source width on the next formatting pass.
+            let allow_break = overflows
+                && fits_alone
+                && !(self.return_bin_expr
+                    && self.peek_comment_between(expr.span.lo(), expr.span.hi()).is_some());
             self.s.ibox(if is_simple || allow_break { self.ind } else { 0 });
 
             self.print_word("return");

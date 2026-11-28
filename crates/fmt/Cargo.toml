@@ -22,6 +22,7 @@ itertools.workspace = true
 similar = { version = "3", features = ["inline", "unicode"] }
 
 [dev-dependencies]
+ephyra.workspace = true
 foundry-test-utils.workspace = true
 
 toml.workspace = true

@@ -1609,3 +1609,28 @@ fn wrapped_line_tail_comment_keeps_for_body_braces() {
     });
     assert_data_eq!(format(source, Path::new("test.sol"), config), expected);
 }
+
+#[ephyra::test(tests = 64)]
+fn ephyra_format_commented_expression(
+    #[ephyra(gen = ephyra::gens::vec(ephyra::any::<bool>()).len(1..=12))] line_comments: Vec<bool>,
+    #[ephyra(gen = ephyra::gens::int(40..=120usize))] width: usize,
+) {
+    let mut source =
+        String::from("contract C { function f(uint x) external pure returns (uint) { return x");
+    for (i, &line) in line_comments.iter().enumerate() {
+        if line {
+            writeln!(source, " + // marker_{i}_").unwrap();
+        } else {
+            write!(source, " + /* marker_{i}_ */ ").unwrap();
+        }
+        write!(source, "{i}").unwrap();
+    }
+    source.push_str("; } }");
+    let config = Arc::new(FormatterConfig { line_length: width, ..Default::default() });
+    let path = Path::new("test.sol");
+    let formatted = format(&source, path, config.clone());
+    for i in 0..line_comments.len() {
+        assert_eq!(formatted.matches(&format!("marker_{i}_")).count(), 1, "{formatted}");
+    }
+    assert_eq!(format(&formatted, path, config), formatted);
+}
