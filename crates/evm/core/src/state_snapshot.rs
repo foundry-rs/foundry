@@ -28,10 +28,10 @@ impl<T> StateSnapshots<T> {
 
     /// Removes the state snapshot with the given `id`.
     ///
-    /// This will also remove any state snapshots taken after the state snapshot with the `id`.
-    /// e.g.: reverting to id 1 will delete snapshots with ids 1, 2, 3, etc.)
+    /// If the snapshot exists, also removes all snapshots taken after it.
+    /// If it is absent, returns `None` and preserves the remaining snapshots.
     pub fn remove(&mut self, id: U256) -> Option<T> {
-        let snapshot_state = self.state_snapshots.remove(&id);
+        let snapshot_state = self.state_snapshots.remove(&id)?;
 
         // Revert all state snapshots taken after the state snapshot with the `id`
         let mut to_revert = id + U256::ONE;
@@ -40,7 +40,7 @@ impl<T> StateSnapshots<T> {
             to_revert += U256::ONE;
         }
 
-        snapshot_state
+        Some(snapshot_state)
     }
 
     /// Removes all state snapshots.
@@ -73,5 +73,58 @@ impl<T> StateSnapshots<T> {
 impl<T> Default for StateSnapshots<T> {
     fn default() -> Self {
         Self { id: U256::ZERO, state_snapshots: HashMap::default() }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reverting_deleted_snapshot_preserves_newer_snapshot() {
+        let mut snapshots = StateSnapshots::default();
+        let old = snapshots.insert("old");
+        let new = snapshots.insert("new");
+        assert_eq!(snapshots.remove_at(old), Some("old"));
+        assert_eq!(snapshots.remove(old), None);
+        assert_eq!(snapshots.get(new), Some(&"new"));
+    }
+
+    #[derive(Clone, Debug, ephyra::Arbitrary)]
+    enum Op {
+        Save,
+        Delete(u8),
+        Revert(u8),
+    }
+
+    #[ephyra::test]
+    fn snapshot_operations_match_model(ops: Vec<Op>) {
+        let mut snapshots = StateSnapshots::default();
+        let mut model = Vec::new();
+        for op in ops {
+            match op {
+                Op::Save => {
+                    let id = model.len();
+                    assert_eq!(snapshots.insert(id), U256::from(id));
+                    model.push(Some(id));
+                }
+                Op::Delete(index) | Op::Revert(index) => {
+                    let index = usize::from(index) % (model.len() + 1);
+                    let expected = model.get_mut(index).and_then(Option::take);
+                    let id = U256::from(index);
+                    if matches!(op, Op::Revert(_)) {
+                        assert_eq!(snapshots.remove(id), expected);
+                        if expected.is_some() {
+                            model[index..].fill(None);
+                        }
+                    } else {
+                        assert_eq!(snapshots.remove_at(id), expected);
+                    }
+                }
+            }
+            for (index, value) in model.iter().enumerate() {
+                assert_eq!(snapshots.get(U256::from(index)), value.as_ref());
+            }
+        }
     }
 }
